@@ -3,6 +3,8 @@
 //   node scripts/invite.mjs create <name> [--max-uses 3]   → prints the token ONCE
 //   node scripts/invite.mjs list
 //   node scripts/invite.mjs revoke <name>
+//   node scripts/invite.mjs revoke-all                       → every active invite
+//   node scripts/invite.mjs panic                            → stop handing out keys at once (see README)
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { dirname } from 'node:path';
@@ -54,7 +56,22 @@ if (cmd === 'create' && name) {
     }
   }
   console.log(n ? `Revoked ${n} invite(s) for "${name}".` : `No active invite matches "${name}".`);
+} else if (cmd === 'revoke-all') {
+  let n = 0;
+  for (const key of keys()) {
+    const r = get(key);
+    if (r && !r.revoked) {
+      put(key, JSON.stringify({ ...r, revoked: true, revokedAt: new Date().toISOString() }));
+      n++;
+    }
+  }
+  console.log(`Revoked ${n} active invite(s).`);
+} else if (cmd === 'panic') {
+  // Without API_HASH the worker answers 503 broker_not_configured before touching KV,
+  // so no invite can hand out keys until the secret is put back.
+  execFileSync('npx', ['--yes', 'wrangler@latest', 'secret', 'delete', 'API_HASH'], { cwd, input: 'y\n', stdio: ['pipe', 'inherit', 'inherit'] });
+  console.log('Broker disabled: it now answers 503 to every invite. Restore with: npx wrangler secret put API_HASH');
 } else {
-  console.log('Usage: invite.mjs create <name> [--max-uses N] | list | revoke <name|hash-prefix>');
+  console.log('Usage: invite.mjs create <name> [--max-uses N] | list | revoke <name|hash-prefix> | revoke-all | panic');
   process.exit(1);
 }

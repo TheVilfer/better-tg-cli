@@ -38,3 +38,26 @@ printf '%s' "$API_HASH" | npx wrangler secret put API_HASH
 ```
 
 CI never deploys this. Tests live in `../test/broker.test.ts`.
+
+## Incident response
+
+**Someone is abusing the app keys** (spam reports, a leaked invite, a flood of logins in
+`invite.mjs list`). The goal is to stop new logins first and investigate afterwards.
+
+1. **Stop handing out keys (seconds):** `node scripts/invite.mjs panic`. This deletes the
+   `API_HASH` secret, so the worker answers `503 broker_not_configured` to every request before it
+   reads KV. The change can take up to a minute to reach every edge.
+2. **Revoke invites:** `node scripts/invite.mjs revoke <name>` for the culprit, or
+   `node scripts/invite.mjs revoke-all`.
+3. **Restore when it's safe:** `npx wrangler secret put API_HASH` and paste the hash from
+   my.telegram.org. Check with an invalid token: the answer should be `403 invalid_invite`, not `503`.
+
+**What this can't do.** People who already logged in through an invite keep a working session:
+it lives on their machine, and only they (with `telegram logout`) or Telegram can end it. The
+api_hash is never stored on their machines, so they can't log in again after a revoke. If Telegram
+blocks the app's `api_id`, every invite session stops working. Then create a new app, put its keys
+into the broker (`API_ID` and `API_HASH`), and hand out new invites.
+
+**Rate limiting and logs.** `[[ratelimits]]` in `wrangler.toml` allows 5 requests per minute per
+IP. Request logging stays off (`observability.enabled = false`) because PRIVACY.md promises it.
+Watch abuse through the per-invite `uses` and `last` columns of `invite.mjs list` instead.
