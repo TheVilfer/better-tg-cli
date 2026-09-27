@@ -3,6 +3,7 @@
 import './env.js';
 import { VERSION } from './version.js';
 import { Command } from 'commander';
+import { BACKGROUND_CHECK_COMMAND, maybeNotifyUpdate, runBackgroundCheck } from './update.js';
 import {
   authCommand,
   logoutCommand,
@@ -69,6 +70,7 @@ import {
   inlineCommand,
   storiesCommand,
   watchCommand,
+  updateCommand,
 } from './commands/index.js';
 
 
@@ -157,6 +159,7 @@ program.addCommand(writeAccessCommand);
 // Utilities
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
+program.addCommand(updateCommand);
 
 // Dense reference of every command and flag, generated from the definitions
 // above so it can never drift from the code. Cheaper for agents than N --help calls.
@@ -184,4 +187,9 @@ program
     console.log(lines.join('\n'));
   });
 
-program.parse();
+if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
+  void runBackgroundCheck();
+} else {
+  maybeNotifyUpdate();
+  program.parse();
+}

@@ -115,6 +115,7 @@ matches titles: exact first, then substring. For writes, prefer an ID or @userna
   it needs a phone code and 2FA, so never run it for them.
 
 - `command not found: telegram`: run `brew install thevilfer/tap/better-tg-cli` or `npm install -g better-tg-cli`, or build this folder (`npm install && npm run build && npm install -g .`, needs Bun)
+  `telegram update` upgrades an existing install (brew, npm or git checkout); `update --check` only reports.
   Never install `@skillhq/telegram` from npm: it is the old GramJS build, and bot replies show
   as `(no text)`.
 - `Write access is disabled`: the account is read-only on purpose, or a `--for` window expired. Ask

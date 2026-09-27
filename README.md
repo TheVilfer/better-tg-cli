@@ -23,6 +23,13 @@ ln -s ~/.agents/skills/telegram ~/.claude/skills/telegram
 To build from source you need Node >= 20 and [Bun](https://bun.sh) (the bundler):
 `npm install && npm run build && npm install -g .` (or `./install.sh`).
 
+### Updating
+
+`telegram update` updates the way it was installed: `brew upgrade`, `npm install -g better-tg-cli@latest`,
+or `git pull --ff-only` + build for a checkout. `telegram update --check` only reports.
+On a terminal the CLI checks npm once a day in the background and prints a one-line notice when a
+new version is out; piped output (agents) never gets it. `TG_NO_UPDATE_CHECK=1` turns it off.
+
 Do **not** install `@skillhq/telegram`. That is the old upstream build on GramJS (layer 198), and
 bot replies show up as `(no text)`.
 
