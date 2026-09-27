@@ -40,12 +40,12 @@
     "url": "https://github.com/TheVilfer/better-tg-cli/issues"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.2",
     "big-integer": "^1.6.52",
-    "commander": "^14.0.0",
+    "commander": "^15.0.0",
     "teleproto": "^1.229.0",
     "tsx": "^4.23.15",
-    "typescript": "^5.7.0",
+    "typescript": "^7.0.2",
     "vitest": "^5.0.2"
   },
   "engines": {
