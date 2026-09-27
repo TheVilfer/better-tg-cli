@@ -1,6 +1,6 @@
 {
   "name": "better-tg-cli",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "description": "Unofficial agent-friendly Telegram client for the command line (MTProto, layer 229)",
   "type": "module",
   "main": "dist/telegram.mjs",
