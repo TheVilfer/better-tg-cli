@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { authenticate } from '../auth.js';
 import { isConfigured, saveConfig } from '../config.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const authCommand = new Command('auth')
   .description('Authenticate with Telegram')

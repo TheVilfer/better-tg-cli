@@ -6,18 +6,24 @@ import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
+import { readTextArg } from '../text.js';
 
 export const sendFileCommand = new Command('send-file')
   .description('Send a photo or document to a chat')
   .argument('<target>', 'Chat name, username (@user), or ID')
   .argument('<path>', 'Path to file to send')
-  .option('-c, --caption <text>', 'Optional caption')
+  .option('-c, --caption <text>', 'Optional caption ("-" reads it from stdin)')
+  .option('--html', 'Parse the caption as HTML')
+  .option('--markdown', 'Parse the caption as Markdown')
+  .option('--silent', 'Send without a notification sound')
+  .option('--topic <id>', 'Post into this forum topic')
   .option('--as-document', 'Send images as uncompressed documents')
   .option('--reply-to <id>', 'Reply to a specific message ID')
   .option('--json', 'Output as JSON')
   .action(async (target, filePath, options) => {
     assertWriteEnabled();
+    if (options.caption) options.caption = readTextArg(options.caption);
 
     const absPath = resolve(filePath);
     if (!existsSync(absPath)) {
@@ -39,6 +45,9 @@ export const sendFileCommand = new Command('send-file')
         caption: options.caption,
         asDocument: options.asDocument,
         replyToMsgId: options.replyTo ? parseInt(options.replyTo, 10) : undefined,
+        parseMode: options.html ? 'html' : options.markdown ? 'md' : undefined,
+        silent: options.silent,
+        topic: options.topic ? parseInt(options.topic, 10) : undefined,
       });
 
       auditLog({

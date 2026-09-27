@@ -3,7 +3,7 @@ import { getClient, transferOwnership, disconnectClient } from '../client.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import { prompt, promptHidden } from '../prompt.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 import chalk from 'chalk';
 
 export const transferOwnerCommand = new Command('transfer-owner')

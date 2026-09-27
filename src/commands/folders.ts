@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { getClient, getFolders, disconnectClient } from '../client.js';
 import { formatFolders } from '../formatters/plain.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const foldersCommand = new Command('folders')
   .description('List all folders with their chats')

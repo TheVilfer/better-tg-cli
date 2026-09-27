@@ -4,7 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const reactCommand = new Command('react')
   .description('React to a message with an emoji (or remove your reaction)')

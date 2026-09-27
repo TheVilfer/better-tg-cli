@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { getClient, getUserStories, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const storiesCommand = new Command('stories')
   .description("List a user's currently active stories")

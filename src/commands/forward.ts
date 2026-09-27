@@ -4,7 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const forwardCommand = new Command('forward')
   .description('Forward one or more messages to another chat')

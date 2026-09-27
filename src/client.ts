@@ -1,4 +1,4 @@
-import { TelegramClient, Api, Rich } from 'teleproto';
+import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { CustomFile } from 'teleproto/client/uploads.js';
 import { Logger, LogLevel } from 'teleproto/extensions/Logger.js';
@@ -108,10 +108,17 @@ export interface ChatInfo {
   unreadCount: number;
   lastMessage?: string;
   lastMessageDate?: Date;
+  muted?: boolean;
+  archived?: boolean;
 }
 
-export async function getDialogs(client: TelegramClient, limit = 100): Promise<ChatInfo[]> {
-  const dialogs = await client.getDialogs({ limit });
+export async function getDialogs(
+  client: TelegramClient,
+  limit = 100,
+  options: { archived?: boolean } = {}
+): Promise<ChatInfo[]> {
+  const dialogs = await client.getDialogs({ limit, archived: options.archived });
+  const now = Math.floor(Date.now() / 1000);
   const chats: ChatInfo[] = [];
 
   for (const dialog of dialogs) {
@@ -123,12 +130,12 @@ export async function getDialogs(client: TelegramClient, limit = 100): Promise<C
       type = 'user';
       const entity = dialog.entity as Api.User;
       username = entity.username ?? undefined;
+    } else if (dialog.entity instanceof Api.Channel) {
+      // Check Channel first: GramJS reports megagroups as isGroup too
+      type = dialog.entity.megagroup ? 'supergroup' : 'channel';
+      username = dialog.entity.username ?? undefined;
     } else if (dialog.isGroup) {
       type = 'group';
-    } else if (dialog.isChannel) {
-      const entity = dialog.entity as Api.Channel;
-      type = entity.megagroup ? 'supergroup' : 'channel';
-      username = entity.username ?? undefined;
     }
 
     chats.push({
@@ -137,8 +144,10 @@ export async function getDialogs(client: TelegramClient, limit = 100): Promise<C
       type,
       username,
       unreadCount: dialog.unreadCount,
-      lastMessage: dialog.message?.message,
+      lastMessage: dialog.message instanceof Api.Message ? messageText(dialog.message) : undefined,
       lastMessageDate: dialog.message?.date ? new Date(dialog.message.date * 1000) : undefined,
+      muted: (dialog.dialog?.notifySettings?.muteUntil ?? 0) > now || undefined,
+      archived: dialog.archived || undefined,
     });
   }
 
@@ -219,6 +228,11 @@ export interface MessageInfo {
   isOutgoing: boolean;
   media?: MediaInfo;
   buttons?: ButtonLayout;
+  /** Set on results that span several chats (global search). */
+  chatId?: string;
+  chatTitle?: string;
+  /** Comment/reply count for channel posts and thread roots. */
+  replies?: number;
 }
 
 type RawButton = Api.KeyboardButton | Api.KeyboardInlineButton;
@@ -306,7 +320,8 @@ export function messageText(msg: Api.Message): string {
 async function resolveSender(client: TelegramClient, msg: Api.Message): Promise<{ sender: string; senderId?: string }> {
   let entity: unknown = msg.sender ?? undefined;
   if (!entity) {
-    const ref = msg.out ? undefined : (msg.fromId ?? (msg.peerId instanceof Api.PeerUser ? msg.peerId : undefined));
+    // Channel posts have no fromId: the channel itself is the sender
+    const ref = msg.out ? undefined : (msg.fromId ?? (msg.peerId instanceof Api.PeerChat ? undefined : msg.peerId));
     if (ref) {
       try {
         entity = await client.getEntity(ref);
@@ -415,9 +430,12 @@ function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
 
 export function parseTimeOffset(offset: string): Date {
   const now = new Date();
-  const match = offset.match(/^(\d+)([mhd])$/);
+  const match = offset.match(/^(\d+)([mhdw])$/);
   if (!match) {
-    throw new Error(`Invalid time offset: ${offset}. Use format like "1h", "30m", "7d"`);
+    // Absolute dates: "2026-09-01", "2026-09-01T12:00"
+    const abs = Date.parse(offset);
+    if (!Number.isNaN(abs)) return new Date(abs);
+    throw new Error(`Invalid time: ${offset}. Use "30m", "1h", "7d", "2w" or a date like "2026-09-01"`);
   }
   const value = parseInt(match[1]);
   const unit = match[2];
@@ -425,20 +443,54 @@ export function parseTimeOffset(offset: string): Date {
     case 'm': return new Date(now.getTime() - value * 60 * 1000);
     case 'h': return new Date(now.getTime() - value * 60 * 60 * 1000);
     case 'd': return new Date(now.getTime() - value * 24 * 60 * 60 * 1000);
+    case 'w': return new Date(now.getTime() - value * 7 * 24 * 60 * 60 * 1000);
     default: throw new Error(`Unknown time unit: ${unit}`);
   }
+}
+
+/** Convert a raw message into the CLI's MessageInfo shape. */
+export async function toMessageInfo(client: TelegramClient, msg: Api.Message): Promise<MessageInfo> {
+  const { sender, senderId } = await resolveSender(client, msg);
+  return {
+    id: msg.id,
+    date: new Date(msg.date * 1000),
+    sender,
+    senderId,
+    text: messageText(msg),
+    replyToMsgId: msg.replyTo?.replyToMsgId,
+    isOutgoing: msg.out ?? false,
+    media: extractMediaInfo(msg),
+    buttons: extractButtons(msg),
+    replies: msg.replies?.replies || undefined,
+  };
+}
+
+export interface GetMessagesOptions {
+  limit?: number;
+  /** Only messages older than this ID (exclusive). */
+  offsetId?: number;
+  /** Only messages newer than this ID (exclusive). */
+  minId?: number;
+  minDate?: Date;
+  maxDate?: Date;
+  /** Only messages sent by this user (@username, ID, or "me"). */
+  from?: string;
+  /** Read the replies thread of this message (channel post comments or a forum topic ID). */
+  thread?: number;
 }
 
 export async function getMessages(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { limit?: number; offsetId?: number; minDate?: Date; maxDate?: Date; minId?: number } = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string }> {
-  const { limit = 50, offsetId, minDate, maxDate, minId } = options;
+  options: GetMessagesOptions = {}
+): Promise<{ messages: MessageInfo[]; chatTitle: string; threadChatId?: string }> {
+  const { limit = 50, offsetId, minDate, maxDate, minId, from, thread } = options;
+  let threadChatId: string | undefined;
 
   // Find the chat by name or username
   const entity = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(entity);
+  const fromUser = from ? await resolveChat(client, from) : undefined;
 
   const messages: MessageInfo[] = [];
   const BATCH_SIZE = 100;
@@ -450,19 +502,40 @@ export async function getMessages(
   // or run out of history.
   while (messages.length < limit) {
     const batchLimit = Math.min(BATCH_SIZE, limit - messages.length + 50);
-    const params: { limit: number; offsetId?: number; offsetDate?: number; minId?: number } = { limit: batchLimit };
+    const offsetDate = !currentOffsetId && firstBatch && maxDate ? Math.floor(maxDate.getTime() / 1000) : undefined;
 
-    if (currentOffsetId) {
-      params.offsetId = currentOffsetId;
-    } else if (firstBatch && maxDate) {
-      // Server-side date filtering: start from maxDate on the first batch
-      params.offsetDate = Math.floor(maxDate.getTime() / 1000);
+    let batch: Api.TypeMessage[];
+    if (thread) {
+      // teleproto's iterMessages has no replyTo, so page messages.GetReplies directly
+      const res = await client.invoke(
+        new Api.messages.GetReplies({
+          peer: entity,
+          msgId: thread,
+          offsetId: currentOffsetId ?? 0,
+          offsetDate: offsetDate ?? 0,
+          addOffset: 0,
+          limit: batchLimit,
+          maxId: 0,
+          minId: minId ?? 0,
+          hash: bigInt(0),
+        })
+      );
+      batch = 'messages' in res ? res.messages : [];
+      // Channel comments live in the linked discussion group: report its ID so
+      // callers can reply there
+      const first = batch.find((m): m is Api.Message => m instanceof Api.Message);
+      if (first && !threadChatId) {
+        const peerId = utils.getPeerId(first.peerId).toString();
+        if (peerId !== utils.getPeerId(entity).toString()) threadChatId = peerId;
+      }
+    } else {
+      const params: { limit: number; offsetId?: number; offsetDate?: number; minId?: number; fromUser?: ResolvedEntity } = { limit: batchLimit };
+      if (currentOffsetId) params.offsetId = currentOffsetId;
+      else if (offsetDate) params.offsetDate = offsetDate;
+      if (minId) params.minId = minId;
+      if (fromUser) params.fromUser = fromUser;
+      batch = await client.getMessages(entity, params);
     }
-    if (minId) {
-      params.minId = minId;
-    }
-
-    const batch = await client.getMessages(entity, params);
     firstBatch = false;
     if (batch.length === 0) break;
 
@@ -470,6 +543,8 @@ export async function getMessages(
 
     for (const msg of batch) {
       if (!(msg instanceof Api.Message)) continue;
+      // GetReplies has no sender filter, so apply --from client-side for threads
+      if (thread && fromUser && !(msg.fromId instanceof Api.PeerUser && msg.fromId.userId.equals(fromUser.id))) continue;
 
       const msgDate = new Date(msg.date * 1000);
       if (maxDate && msgDate > maxDate) continue;
@@ -479,19 +554,7 @@ export async function getMessages(
       }
       if (messages.length >= limit) break;
 
-      const { sender, senderId } = await resolveSender(client, msg);
-
-      messages.push({
-        id: msg.id,
-        date: msgDate,
-        sender,
-        senderId,
-        text: messageText(msg),
-        replyToMsgId: msg.replyTo?.replyToMsgId,
-        isOutgoing: msg.out ?? false,
-        media: extractMediaInfo(msg),
-        buttons: extractButtons(msg),
-      });
+      messages.push(await toMessageInfo(client, msg));
     }
 
     if (reachedMinDate) break;
@@ -516,7 +579,26 @@ export async function getMessages(
     if (batch.length < batchLimit) break;
   }
 
-  return { messages, chatTitle };
+  return { messages, chatTitle, threadChatId };
+}
+
+/** Fetch specific messages by ID (missing/deleted IDs are skipped). */
+export async function getMessagesByIds(
+  client: TelegramClient,
+  chatIdentifier: string,
+  ids: number[]
+): Promise<{ messages: MessageInfo[]; chatTitle: string; missing: number[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const raw = await client.getMessages(entity, { ids });
+  const messages: MessageInfo[] = [];
+  const found = new Set<number>();
+  for (const msg of raw) {
+    if (msg instanceof Api.Message) {
+      messages.push(await toMessageInfo(client, msg));
+      found.add(msg.id);
+    }
+  }
+  return { messages, chatTitle: getChatTitle(entity), missing: ids.filter(id => !found.has(id)) };
 }
 
 export async function downloadMessageMedia(
@@ -597,39 +679,100 @@ export async function sendFileMessage(
   client: TelegramClient,
   chatIdentifier: string,
   filePath: string,
-  options: { caption?: string; asDocument?: boolean; replyToMsgId?: number } = {}
+  options: {
+    caption?: string;
+    asDocument?: boolean;
+    replyToMsgId?: number;
+    parseMode?: 'html' | 'md';
+    silent?: boolean;
+    topic?: number;
+  } = {}
 ): Promise<Api.Message> {
   const entity = await resolveChat(client, chatIdentifier);
+
+  const replyTo = options.topic
+    ? new Api.InputReplyToMessage({ replyToMsgId: options.replyToMsgId ?? options.topic, topMsgId: options.topic })
+    : options.replyToMsgId;
 
   const result = await client.sendFile(entity, {
     file: filePath,
     caption: options.caption,
     forceDocument: options.asDocument,
-    replyTo: options.replyToMsgId,
+    replyTo,
+    parseMode: options.parseMode,
+    silent: options.silent,
   });
 
   return result;
 }
 
+const SEARCH_FILTERS: Record<string, () => Api.TypeMessagesFilter> = {
+  photo: () => new Api.InputMessagesFilterPhotos(),
+  video: () => new Api.InputMessagesFilterVideo(),
+  media: () => new Api.InputMessagesFilterPhotoVideo(),
+  document: () => new Api.InputMessagesFilterDocument(),
+  url: () => new Api.InputMessagesFilterUrl(),
+  voice: () => new Api.InputMessagesFilterVoice(),
+  audio: () => new Api.InputMessagesFilterMusic(),
+  gif: () => new Api.InputMessagesFilterGif(),
+  round: () => new Api.InputMessagesFilterRoundVideo(),
+  location: () => new Api.InputMessagesFilterGeo(),
+  contact: () => new Api.InputMessagesFilterContacts(),
+  pinned: () => new Api.InputMessagesFilterPinned(),
+  mentions: () => new Api.InputMessagesFilterMyMentions(),
+};
+
+export const SEARCH_TYPES = Object.keys(SEARCH_FILTERS);
+
+export interface SearchOptions {
+  chat?: string;
+  limit?: number;
+  minDate?: Date;
+  maxDate?: Date;
+  /** Sender filter (@username, ID or "me"); requires `chat`. */
+  from?: string;
+  /** One of SEARCH_TYPES. */
+  type?: string;
+}
+
+function peerTitle(peer: Api.TypePeer, chats: Api.TypeChat[], users: Api.TypeUser[]): string | undefined {
+  if (peer instanceof Api.PeerUser) {
+    const u = users.find((x): x is Api.User => x instanceof Api.User && x.id.equals(peer.userId));
+    return u ? [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || undefined : undefined;
+  }
+  const id = peer instanceof Api.PeerChat ? peer.chatId : peer instanceof Api.PeerChannel ? peer.channelId : undefined;
+  const c = id ? chats.find(x => 'id' in x && x.id.equals(id)) : undefined;
+  return c && 'title' in c ? c.title : undefined;
+}
+
 export async function searchMessages(
   client: TelegramClient,
   query: string,
-  options: { chat?: string; limit?: number } = {}
+  options: SearchOptions = {}
 ): Promise<{ messages: MessageInfo[]; chatTitle?: string }[]> {
-  const { chat, limit = 50 } = options;
-  const results: { messages: MessageInfo[]; chatTitle?: string }[] = [];
+  const { chat, limit = 50, minDate, maxDate, from, type } = options;
+  if (type && !SEARCH_FILTERS[type]) {
+    throw new Error(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
+  }
+  if (from && !chat) {
+    throw new Error('--from needs --chat (Telegram global search cannot filter by sender)');
+  }
+  const filter = type ? SEARCH_FILTERS[type]() : new Api.InputMessagesFilterEmpty();
+  const minTs = minDate ? Math.floor(minDate.getTime() / 1000) : 0;
+  const maxTs = maxDate ? Math.floor(maxDate.getTime() / 1000) : 0;
 
   if (chat) {
     const entity = await resolveChat(client, chat);
-    const chatTitle = getChatTitle(entity);
+    const fromId = from ? await resolveChat(client, from) : undefined;
 
-    const searchResult = await client.invoke(
+    const res = await client.invoke(
       new Api.messages.Search({
         peer: entity,
         q: query,
-        filter: new Api.InputMessagesFilterEmpty(),
-        minDate: 0,
-        maxDate: 0,
+        fromId,
+        filter,
+        minDate: minTs,
+        maxDate: maxTs,
         offsetId: 0,
         addOffset: 0,
         limit,
@@ -640,67 +783,39 @@ export async function searchMessages(
     );
 
     const messages: MessageInfo[] = [];
-    if ('messages' in searchResult) {
-      for (const msg of searchResult.messages) {
-        if (msg instanceof Api.Message) {
-          let sender = msg.out ? 'You' : 'Unknown';
-          if ('users' in searchResult) {
-            const from = msg.fromId ?? (msg.out ? undefined : msg.peerId);
-            const wantedId = from instanceof Api.PeerUser ? from.userId : bigInt(0);
-            const user = searchResult.users.find((u): u is Api.User => u instanceof Api.User && u.id.equals(wantedId));
-            if (user) {
-              sender = user.firstName || user.username || 'Unknown';
-            }
-          }
-
-          messages.push({
-            id: msg.id,
-            date: new Date(msg.date * 1000),
-            sender,
-            text: messageText(msg),
-            replyToMsgId: msg.replyTo?.replyToMsgId,
-            isOutgoing: msg.out ?? false,
-          });
-        }
+    if ('messages' in res) {
+      for (const msg of res.messages) {
+        if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg));
       }
     }
-
-    results.push({ messages, chatTitle });
-  } else {
-    // Global search
-    const searchResult = await client.invoke(
-      new Api.messages.SearchGlobal({
-        q: query,
-        filter: new Api.InputMessagesFilterEmpty(),
-        minDate: 0,
-        maxDate: 0,
-        offsetRate: 0,
-        offsetPeer: new Api.InputPeerEmpty(),
-        offsetId: 0,
-        limit,
-      })
-    );
-
-    const messages: MessageInfo[] = [];
-    if ('messages' in searchResult) {
-      for (const msg of searchResult.messages) {
-        if (msg instanceof Api.Message) {
-          messages.push({
-            id: msg.id,
-            date: new Date(msg.date * 1000),
-            sender: (await resolveSender(client, msg)).sender,
-            text: messageText(msg),
-            replyToMsgId: msg.replyTo?.replyToMsgId,
-            isOutgoing: msg.out ?? false,
-          });
-        }
-      }
-    }
-
-    results.push({ messages });
+    return [{ messages, chatTitle: getChatTitle(entity) }];
   }
 
-  return results;
+  // Global search: results span chats, so tag each message with its chat
+  const res = await client.invoke(
+    new Api.messages.SearchGlobal({
+      q: query,
+      filter,
+      minDate: minTs,
+      maxDate: maxTs,
+      offsetRate: 0,
+      offsetPeer: new Api.InputPeerEmpty(),
+      offsetId: 0,
+      limit,
+    })
+  );
+
+  const messages: MessageInfo[] = [];
+  if ('messages' in res) {
+    for (const msg of res.messages) {
+      if (!(msg instanceof Api.Message)) continue;
+      const info = await toMessageInfo(client, msg);
+      info.chatId = utils.getPeerId(msg.peerId).toString();
+      info.chatTitle = peerTitle(msg.peerId, res.chats, res.users);
+      messages.push(info);
+    }
+  }
+  return [{ messages }];
 }
 
 export async function sendMessage(
@@ -708,13 +823,18 @@ export async function sendMessage(
   chatIdentifier: string,
   text: string,
   replyToMsgId?: number,
-  options: { parseMode?: 'html' | 'md'; schedule?: number; silent?: boolean } = {}
+  options: { parseMode?: 'html' | 'md'; schedule?: number; silent?: boolean; topic?: number } = {}
 ): Promise<Api.Message> {
   const entity = await resolveChat(client, chatIdentifier);
 
+  // Forum topics: the topic's root message is the thread; replies inside it keep topMsgId
+  const replyTo = options.topic
+    ? new Api.InputReplyToMessage({ replyToMsgId: replyToMsgId ?? options.topic, topMsgId: options.topic })
+    : replyToMsgId;
+
   const result = await client.sendMessage(entity, {
     message: text,
-    replyTo: replyToMsgId,
+    replyTo,
     parseMode: options.parseMode,
     schedule: options.schedule,
     silent: options.silent,
@@ -767,15 +887,30 @@ export async function getContactInfo(
 export async function getChatMembers(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { adminsOnly?: boolean; limit?: number } = {}
+  options: { adminsOnly?: boolean; limit?: number; query?: string } = {}
 ): Promise<{ id: string; name: string; username?: string; isAdmin: boolean }[]> {
-  const { adminsOnly = false, limit = 200 } = options;
+  const { adminsOnly = false, limit = 200, query } = options;
+  const all = await getChatMembersUnfiltered(client, chatIdentifier, { adminsOnly, limit, query });
+  if (!query) return all;
+  // Server-side search only covers supergroups; basic groups are filtered here
+  const q = query.toLowerCase();
+  return all.filter(m => m.name.toLowerCase().includes(q) || m.username?.toLowerCase().includes(q));
+}
+
+async function getChatMembersUnfiltered(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { adminsOnly: boolean; limit: number; query?: string }
+): Promise<{ id: string; name: string; username?: string; isAdmin: boolean }[]> {
+  const { adminsOnly, limit, query } = options;
   const entity = await resolveChat(client, chatIdentifier);
 
   if (entity instanceof Api.Channel) {
     const filter = adminsOnly
       ? new Api.ChannelParticipantsAdmins()
-      : new Api.ChannelParticipantsRecent();
+      : query
+        ? new Api.ChannelParticipantsSearch({ q: query })
+        : new Api.ChannelParticipantsRecent();
 
     const result = await client.invoke(
       new Api.channels.GetParticipants({
@@ -2405,4 +2540,176 @@ export async function transferOwnership(
   } catch (e: unknown) {
     return { success: false, message: friendlyTransferError(e) };
   }
+}
+
+// --- Chat info, forum topics, message links ---
+
+export interface ChatDetails {
+  id: string;
+  type: 'user' | 'bot' | 'group' | 'supergroup' | 'channel';
+  title: string;
+  username?: string;
+  about?: string;
+  members?: number;
+  online?: number;
+  admins?: number;
+  unread?: number;
+  linkedChatId?: string;
+  forum?: boolean;
+  slowmodeSeconds?: number;
+  inviteLink?: string;
+  phone?: string;
+  commonChats?: number;
+  blocked?: boolean;
+  isSelf?: boolean;
+}
+
+/** Everything useful about a chat, user or channel in one call. */
+export async function getChatInfo(client: TelegramClient, chatIdentifier: string): Promise<ChatDetails> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const id = utils.getPeerId(entity).toString();
+
+  if (entity instanceof Api.User) {
+    const full = await client.invoke(new Api.users.GetFullUser({ id: entity }));
+    return {
+      id,
+      type: entity.bot ? 'bot' : 'user',
+      title: [entity.firstName, entity.lastName].filter(Boolean).join(' ') || entity.username || id,
+      username: entity.username ?? undefined,
+      about: full.fullUser.about ?? undefined,
+      phone: entity.phone ?? undefined,
+      commonChats: full.fullUser.commonChatsCount || undefined,
+      blocked: full.fullUser.blocked || undefined,
+      isSelf: entity.self || undefined,
+    };
+  }
+
+  if (entity instanceof Api.Channel) {
+    const res = await client.invoke(new Api.channels.GetFullChannel({ channel: entity }));
+    const full = res.fullChat as Api.ChannelFull;
+    const linked = full.linkedChatId ? utils.getPeerId(new Api.PeerChannel({ channelId: full.linkedChatId })).toString() : undefined;
+    return {
+      id,
+      type: entity.megagroup ? 'supergroup' : 'channel',
+      title: entity.title,
+      username: entity.username ?? undefined,
+      about: full.about || undefined,
+      members: full.participantsCount ?? entity.participantsCount ?? undefined,
+      online: full.onlineCount || undefined,
+      admins: full.adminsCount || undefined,
+      unread: full.unreadCount || undefined,
+      linkedChatId: linked,
+      forum: entity.forum || undefined,
+      slowmodeSeconds: full.slowmodeSeconds || undefined,
+      inviteLink: full.exportedInvite instanceof Api.ChatInviteExported ? full.exportedInvite.link : undefined,
+    };
+  }
+
+  const res = await client.invoke(new Api.messages.GetFullChat({ chatId: entity.id }));
+  const full = res.fullChat as Api.ChatFull;
+  return {
+    id,
+    type: 'group',
+    title: entity.title,
+    about: full.about || undefined,
+    members: entity.participantsCount ?? undefined,
+    inviteLink: full.exportedInvite instanceof Api.ChatInviteExported ? full.exportedInvite.link : undefined,
+  };
+}
+
+export interface ForumTopicInfo {
+  id: number;
+  title: string;
+  unread: number;
+  topMessage: number;
+  closed?: boolean;
+  pinned?: boolean;
+}
+
+export async function getForumTopics(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { limit?: number; query?: string } = {}
+): Promise<{ chatTitle: string; topics: ForumTopicInfo[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel) || !entity.forum) {
+    throw new Error(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups)`);
+  }
+  const res = await client.invoke(
+    new Api.messages.GetForumTopics({
+      peer: entity,
+      q: options.query,
+      offsetDate: 0,
+      offsetId: 0,
+      offsetTopic: 0,
+      limit: options.limit ?? 100,
+    })
+  );
+  const topics: ForumTopicInfo[] = [];
+  for (const t of res.topics) {
+    if (t instanceof Api.ForumTopic) {
+      topics.push({
+        id: t.id,
+        title: t.title,
+        unread: t.unreadCount,
+        topMessage: t.topMessage,
+        closed: t.closed || undefined,
+        pinned: t.pinned || undefined,
+      });
+    }
+  }
+  return { chatTitle: entity.title, topics };
+}
+
+/** Public t.me link to a message (private chats/groups have no message links). */
+export async function getMessageLink(
+  client: TelegramClient,
+  chatIdentifier: string,
+  messageId: number,
+  options: { thread?: boolean } = {}
+): Promise<string> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('Message links exist only for channels and supergroups');
+  }
+  const res = await client.invoke(
+    new Api.channels.ExportMessageLink({ channel: entity, id: messageId, thread: options.thread })
+  );
+  return res.link;
+}
+
+/** Last read incoming message ID and unread count of a chat (from the dialog list). */
+export async function getReadState(
+  client: TelegramClient,
+  chatIdentifier: string
+): Promise<{ readInboxMaxId: number; unreadCount: number }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const peerId = utils.getPeerId(entity).toString();
+  const dialog = (await getDialogsCached(client)).find(d => d.id?.toString() === peerId);
+  if (!dialog || !(dialog.dialog instanceof Api.Dialog)) {
+    throw new Error(`No dialog for "${chatIdentifier}" in your chat list, so its unread state is unknown`);
+  }
+  return { readInboxMaxId: dialog.dialog.readInboxMaxId, unreadCount: dialog.unreadCount };
+}
+
+export interface ContactInfoRow {
+  id: string;
+  name: string;
+  username?: string;
+  phone?: string;
+  mutual?: boolean;
+}
+
+export async function listContacts(client: TelegramClient, query?: string): Promise<ContactInfoRow[]> {
+  const res = await client.invoke(new Api.contacts.GetContacts({ hash: bigInt(0) }));
+  if (!(res instanceof Api.contacts.Contacts)) return [];
+  const q = query?.toLowerCase();
+  const rows: ContactInfoRow[] = [];
+  for (const u of res.users) {
+    if (!(u instanceof Api.User)) continue;
+    const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.id.toString();
+    if (q && !(name.toLowerCase().includes(q) || u.username?.toLowerCase().includes(q) || u.phone?.includes(q))) continue;
+    rows.push({ id: u.id.toString(), name, username: u.username ?? undefined, phone: u.phone ?? undefined, mutual: u.mutualContact || undefined });
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
 }

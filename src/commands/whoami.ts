@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { getClient, getMe, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { formatUser } from '../formatters/plain.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const whoamiCommand = new Command('whoami')
   .description('Show logged-in account information')

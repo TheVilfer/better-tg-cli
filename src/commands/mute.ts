@@ -1,12 +1,14 @@
 import { Command } from 'commander';
 import { getClient, muteChat, disconnectClient } from '../client.js';
 import { assertWriteEnabled } from '../guard.js';
-import ora from 'ora';
+import ora from '../spinner.js';
+import { formatJson } from '../formatters/json.js';
 
 export const muteCommand = new Command('mute')
   .description('Mute a chat')
   .argument('<chat>', 'Chat name, username, or ID')
   .option('-d, --duration <duration>', 'Duration (1h, 8h, 1d, 1w, or forever)', 'forever')
+  .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
     assertWriteEnabled();
     const spinner = ora(`Muting "${chat}"...`).start();
@@ -16,9 +18,19 @@ export const muteCommand = new Command('mute')
       const result = await muteChat(client, chat, options.duration);
 
       if (result.success) {
-        spinner.succeed(result.message);
+        if (options.json) {
+          spinner.stop();
+          console.log(formatJson(result));
+        } else {
+          spinner.succeed(result.message);
+        }
       } else {
-        spinner.fail(result.message);
+        if (options.json) {
+          spinner.stop();
+          console.log(formatJson(result));
+        } else {
+          spinner.fail(result.message);
+        }
         process.exit(1);
       }
 

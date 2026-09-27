@@ -2,13 +2,15 @@ import { Command } from 'commander';
 import { getClient, kickUser, disconnectClient } from '../client.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
-import ora from 'ora';
+import ora from '../spinner.js';
+import { formatJson } from '../formatters/json.js';
 
 export const kickCommand = new Command('kick')
   .description('Kick/remove a user from a group')
   .argument('<group>', 'Group name or username')
   .argument('<user>', 'Username to kick (e.g., @username)')
-  .action(async (group, user) => {
+  .option('--json', 'Output as JSON')
+  .action(async (group, user, options) => {
     assertWriteEnabled();
     const spinner = ora(`Kicking ${user} from "${group}"...`).start();
 
@@ -18,9 +20,19 @@ export const kickCommand = new Command('kick')
       auditLog({ timestamp: new Date().toISOString(), command: 'kick', target: group, kickedUser: user, result: { success: result.success } });
 
       if (result.success) {
-        spinner.succeed(result.message);
+        if (options.json) {
+          spinner.stop();
+          console.log(formatJson(result));
+        } else {
+          spinner.succeed(result.message);
+        }
       } else {
-        spinner.fail(result.message);
+        if (options.json) {
+          spinner.stop();
+          console.log(formatJson(result));
+        } else {
+          spinner.fail(result.message);
+        }
         process.exit(1);
       }
 

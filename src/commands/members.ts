@@ -4,12 +4,13 @@ import { formatJson } from '../formatters/json.js';
 import { formatMembers } from '../formatters/plain.js';
 import { formatMembersMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const membersCommand = new Command('members')
   .description('List group members')
   .argument('<group>', 'Group name or username')
   .option('-n, --limit <number>', 'Maximum members to fetch', '200')
+  .option('-q, --query <text>', 'Only members whose name or @username matches')
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
   .action(async (group, options) => {
@@ -19,6 +20,7 @@ export const membersCommand = new Command('members')
       const client = await getClient();
       const members = await getChatMembers(client, group, {
         limit: parseInt(options.limit),
+        query: options.query,
       });
 
       spinner.stop();

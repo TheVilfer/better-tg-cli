@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import { getClient, downloadAvatar, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const avatarCommand = new Command('avatar')
   .description("Download a user's or chat's profile photo")

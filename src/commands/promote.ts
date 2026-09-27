@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { getClient, promoteAdmin, disconnectClient } from '../client.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const promoteCommand = new Command('promote')
   .description('Promote a group member to admin')

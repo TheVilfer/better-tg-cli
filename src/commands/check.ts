@@ -5,7 +5,7 @@ import { isSecretStoreAvailable } from '../secrets.js';
 import { isOnePasswordAvailable } from '../onepassword.js';
 import { isKeychainAvailable } from '../keychain.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 function getSecretBackendLabel(): string {
   if (isOnePasswordAvailable()) return '1Password';

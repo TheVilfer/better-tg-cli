@@ -4,7 +4,8 @@ import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
+import { readTextArg } from '../text.js';
 
 function parseScheduleToEpoch(value: string): number {
   const rel = value.match(/^(\d+)([mhd])$/);
@@ -20,22 +21,27 @@ function parseScheduleToEpoch(value: string): number {
 
 export const sendCommand = new Command('send')
   .description('Send a message')
-  .argument('<target>', 'Chat name, username (@user), or ID')
-  .argument('<message>', 'Message text')
+  .argument('<target>', 'Chat name, @username, numeric ID, or "me"')
+  .argument('<message>', 'Message text, or "-" to read it from stdin')
   .option('--markdown', 'Parse the message as Markdown (bold, links, etc.)')
   .option('--html', 'Parse the message as HTML')
   .option('--schedule <when>', 'Schedule for later: "30m", "2h", "1d", or an ISO date')
   .option('--silent', 'Send without a notification sound')
+  .option('--reply-to <id>', 'Reply to this message ID')
+  .option('--topic <id>', 'Post into this forum topic (ID from `telegram topics`)')
   .option('--json', 'Output as JSON')
-  .action(async (target, message, options) => {
+  .action(async (target, messageArg, options) => {
     assertWriteEnabled();
+    const message = readTextArg(messageArg);
     const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
     const schedule = options.schedule ? parseScheduleToEpoch(options.schedule) : undefined;
     const spinner = ora(`${schedule ? 'Scheduling' : 'Sending'} message to "${target}"...`).start();
 
     try {
       const client = await getClient();
-      const result = await sendMessage(client, target, message, undefined, { parseMode, schedule, silent: options.silent });
+      const result = await sendMessage(client, target, message, options.replyTo ? parseInt(options.replyTo, 10) : undefined, {
+        parseMode, schedule, silent: options.silent, topic: options.topic ? parseInt(options.topic, 10) : undefined,
+      });
       auditLog({ timestamp: new Date().toISOString(), command: 'send', target, message, result: { success: true, messageId: result.id } });
 
       spinner.succeed(chalk.green('Message sent'));

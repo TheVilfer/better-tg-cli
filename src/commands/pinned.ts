@@ -4,7 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { formatMessages } from '../formatters/plain.js';
 import { formatMessagesMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const pinnedCommand = new Command('pinned')
   .description('List pinned messages in a chat')

@@ -3,7 +3,7 @@ import { getClient, downloadMessageMedia, disconnectClient } from '../client.js'
 import { formatJson } from '../formatters/json.js';
 import { formatMediaLabel } from '../formatters/plain.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const downloadCommand = new Command('download')
   .description('Download media (photo/document) from a message')

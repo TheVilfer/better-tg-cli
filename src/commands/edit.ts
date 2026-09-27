@@ -4,18 +4,20 @@ import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
+import { readTextArg } from '../text.js';
 
 export const editCommand = new Command('edit')
   .description('Edit one of your own messages')
   .argument('<chat>', 'Chat name, username (@user), or ID')
   .argument('<messageId>', 'Message ID to edit')
-  .argument('<text>', 'New message text')
+  .argument('<text>', 'New message text, or "-" to read it from stdin')
   .option('--markdown', 'Parse the new text as Markdown')
   .option('--html', 'Parse the new text as HTML')
   .option('--json', 'Output as JSON')
-  .action(async (chat, messageId, text, options) => {
+  .action(async (chat, messageId, textArg, options) => {
     assertWriteEnabled();
+    const text = readTextArg(textArg);
     const id = parseInt(messageId, 10);
     if (!Number.isInteger(id)) {
       console.error('Message ID must be a number');

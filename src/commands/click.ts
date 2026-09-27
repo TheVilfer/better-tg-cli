@@ -4,7 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { formatClickOutcome } from '../formatters/plain.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const clickCommand = new Command('click')
   .description('Press a button on a bot message (inline callback, reply keyboard, etc.)')

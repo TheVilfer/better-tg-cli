@@ -13,7 +13,7 @@ import { formatMediaLabel } from '../formatters/plain.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 /** Per-chat sync checkpoints, keyed by chat ID (titles can change or collide). */
 interface SyncMeta {

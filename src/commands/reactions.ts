@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { getClient, getReactionsList, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const reactionsCommand = new Command('reactions')
   .description('List who reacted to a message and with what')

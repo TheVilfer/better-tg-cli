@@ -10,6 +10,11 @@ import {
   checkCommand,
   chatsCommand,
   readCommand,
+  getCommand,
+  infoCommand,
+  topicsCommand,
+  linkCommand,
+  contactsCommand,
   searchCommand,
   sendCommand,
   replyCommand,
@@ -85,6 +90,11 @@ program.addCommand(whoamiCommand);
 // Read commands
 program.addCommand(chatsCommand);
 program.addCommand(readCommand);
+program.addCommand(getCommand);
+program.addCommand(infoCommand);
+program.addCommand(topicsCommand);
+program.addCommand(linkCommand);
+program.addCommand(contactsCommand);
 program.addCommand(searchCommand);
 program.addCommand(inboxCommand);
 program.addCommand(buttonsCommand);

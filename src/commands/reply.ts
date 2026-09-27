@@ -4,19 +4,21 @@ import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
+import { readTextArg } from '../text.js';
 
 export const replyCommand = new Command('reply')
   .description('Reply to a message')
   .argument('<chat>', 'Chat name, username (@user), or ID')
   .argument('<msg-id>', 'Message ID to reply to')
-  .argument('<message>', 'Reply text')
+  .argument('<message>', 'Reply text, or "-" to read it from stdin')
   .option('--markdown', 'Parse the reply as Markdown')
   .option('--html', 'Parse the reply as HTML')
   .option('--silent', 'Send without a notification sound')
   .option('--json', 'Output as JSON')
-  .action(async (chat, msgId, message, options) => {
+  .action(async (chat, msgId, messageArg, options) => {
     assertWriteEnabled();
+    const message = readTextArg(messageArg);
     const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
     const spinner = ora('Sending reply...').start();
 

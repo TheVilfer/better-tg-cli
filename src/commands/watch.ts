@@ -3,7 +3,7 @@ import { Api } from 'teleproto';
 import { NewMessage, type NewMessageEvent } from 'teleproto/events/index.js';
 import { getClient, resolveChat, disconnectClient, messageText } from '../client.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const watchCommand = new Command('watch')
   .description('Stream new incoming messages in real time (until timeout / limit / Ctrl-C)')

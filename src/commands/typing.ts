@@ -3,7 +3,7 @@ import { getClient, sendTyping, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 const ACTIONS = ['typing', 'photo', 'video', 'audio', 'document', 'cancel'] as const;
 

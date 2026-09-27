@@ -4,7 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { formatContact } from '../formatters/plain.js';
 import { formatContactMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
-import ora from 'ora';
+import ora from '../spinner.js';
 
 export const contactCommand = new Command('contact')
   .description('Get contact information')
