@@ -4,7 +4,7 @@ import { isConfigured } from '../config.js';
 import { isSecretStoreAvailable } from '../secrets.js';
 import { isOnePasswordAvailable } from '../onepassword.js';
 import { isKeychainAvailable } from '../keychain.js';
-import chalk from 'chalk';
+import chalk from '../colors.js';
 import ora from '../spinner.js';
 
 function getSecretBackendLabel(): string {

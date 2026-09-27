@@ -12,7 +12,7 @@ import type { TelegramClient } from 'teleproto';
 import { formatMediaLabel } from '../formatters/plain.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { join, relative } from 'path';
-import chalk from 'chalk';
+import chalk from '../colors.js';
 import ora from '../spinner.js';
 
 /** Per-chat sync checkpoints, keyed by chat ID (titles can change or collide). */

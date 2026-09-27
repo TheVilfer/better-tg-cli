@@ -20,7 +20,8 @@ git clone https://github.com/TheVilfer/better-tg-cli.git ~/.agents/skills/telegr
 ln -s ~/.agents/skills/telegram ~/.claude/skills/telegram
 ```
 
-To build from source: `npm install && npm run build && npm install -g .` (or `./install.sh`).
+To build from source you need Node >= 20 and [Bun](https://bun.sh) (the bundler):
+`npm install && npm run build && npm install -g .` (or `./install.sh`).
 
 Do **not** install `@skillhq/telegram`. That is the old upstream build on GramJS (layer 198), and
 bot replies show up as `(no text)`.

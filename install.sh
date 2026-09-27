@@ -14,7 +14,7 @@ log() { echo "  $*" >&2; }
 err() { log "error: $*"; exit 1; }
 has() { command -v "$1" > /dev/null 2>&1; }
 
-for c in git node npm; do has "$c" || err "required command not found: $c"; done
+for c in git node npm bun; do has "$c" || err "required command not found: $c"; done
 
 if [ -d "$DIR/.git" ]; then
     log "Updating $DIR..."

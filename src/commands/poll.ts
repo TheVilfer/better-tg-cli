@@ -3,7 +3,7 @@ import { getClient, sendPoll, votePoll, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
-import chalk from 'chalk';
+import chalk from '../colors.js';
 import ora from '../spinner.js';
 
 export const pollCommand = new Command('poll')

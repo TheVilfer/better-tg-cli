@@ -11,7 +11,7 @@ name="better-tg-cli-${version}-${target}"
 stage="$(mktemp -d)"
 
 node scripts/gen-version.mjs
-bun build src/index.ts --compile --minify --target="bun-${target}" --outfile "${stage}/telegram"
+bun scripts/bundle.mjs "bun-${target}" "${stage}/telegram"
 
 # macOS arm64 refuses to run unsigned code: re-sign ad hoc after compiling
 if [[ "$target" == darwin-* && "$(uname)" == "Darwin" ]]; then

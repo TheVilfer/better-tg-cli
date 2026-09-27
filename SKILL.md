@@ -53,4 +53,4 @@ telegram mark-read <chat> ; telegram mute <chat> -d 8h
 
 ## If `telegram` is missing
 
-Reinstall from this folder with `cd ~/.agents/skills/telegram && npm install && npm run build && npm install -g .`. **Never** install `@skillhq/telegram` from npm or update this skill with the skills CLI: that is an old GramJS build, and bot replies come back as `(no text)`.
+Reinstall with `brew install thevilfer/tap/better-tg-cli` or `npm install -g better-tg-cli`, or from this folder with `npm install && npm run build && npm install -g .` (needs Bun). **Never** install `@skillhq/telegram` from npm or update this skill with the skills CLI: that is an old GramJS build, and bot replies come back as `(no text)`.

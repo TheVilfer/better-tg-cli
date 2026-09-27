@@ -29,7 +29,7 @@ describe('sync fetch options', () => {
 });
 
 describe('CLI surface (built dist)', () => {
-  const bin = 'dist/index.js';
+  const bin = 'dist/telegram.mjs';
   const run = (...args: string[]) => execFileSync(process.execPath, [bin, ...args], { encoding: 'utf8' });
 
   it.skipIf(!existsSync(bin))('help-all lists every command with its flags', () => {

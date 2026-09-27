@@ -4,7 +4,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import { prompt, promptHidden } from '../prompt.js';
 import ora from '../spinner.js';
-import chalk from 'chalk';
+import chalk from '../colors.js';
 
 export const transferOwnerCommand = new Command('transfer-owner')
   .description('Transfer group/channel ownership to another member (irreversible)')

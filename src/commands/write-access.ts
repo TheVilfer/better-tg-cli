@@ -4,7 +4,7 @@ import { platform } from 'node:os';
 import { secretGet, secretSet, secretDelete, isSecretStoreAvailable } from '../secrets.js';
 import { encodeWriteState, parseForDuration, parseWriteState } from '../write-state.js';
 import { prompt } from '../prompt.js';
-import chalk from 'chalk';
+import chalk from '../colors.js';
 
 /**
  * Enabling writes must be a human decision, not something an agent can do on its own:

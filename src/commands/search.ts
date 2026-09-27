@@ -4,7 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { formatMessages, truncate } from '../formatters/plain.js';
 import { formatMessagesMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
-import chalk from 'chalk';
+import chalk from '../colors.js';
 import ora from '../spinner.js';
 
 export const searchCommand = new Command('search')

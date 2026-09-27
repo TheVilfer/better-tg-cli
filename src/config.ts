@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import JSON5 from 'json5';
+import { parseConfigText, stringifyConfig } from './config-format.js';
 import {
   SECRET_KEYS,
   isSecretKey,
@@ -45,7 +45,7 @@ function readConfigFile(path: string, warn: (message: string) => void): Partial<
   }
   try {
     const raw = readFileSync(path, 'utf8');
-    const parsed = JSON5.parse(raw);
+    const parsed = parseConfigText(raw);
 
     // Validate that parsed result is a plain object
     if (!isPlainObject(parsed)) {
@@ -76,7 +76,7 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
     if (cleaned !== fileConfig) {
       // Secrets were migrated — rewrite the file without them
       try {
-        const content = JSON5.stringify(cleaned, null, 2);
+        const content = stringifyConfig(cleaned);
         writeFileSync(globalPath, content, { encoding: 'utf8', mode: 0o600 });
       } catch {
         // Non-fatal: secrets are already in keychain, file cleanup can retry next time
@@ -131,7 +131,7 @@ export function saveConfig(config: Partial<TgConfig>): void {
   if (existsSync(path)) {
     try {
       const raw = readFileSync(path, 'utf8');
-      const parsed = JSON5.parse(raw);
+      const parsed = parseConfigText(raw);
       if (isPlainObject(parsed)) {
         existing = parsed as Partial<TgConfig>;
       }
@@ -151,7 +151,7 @@ export function saveConfig(config: Partial<TgConfig>): void {
   }
 
   const merged = { ...existing, ...fileData };
-  const content = JSON5.stringify(merged, null, 2);
+  const content = stringifyConfig(merged);
 
   // Write with restrictive permissions (owner read/write only)
   writeFileSync(path, content, { encoding: 'utf8', mode: 0o600 });
@@ -213,10 +213,10 @@ export function clearSessionString(): void {
   if (existsSync(path)) {
     try {
       const raw = readFileSync(path, 'utf8');
-      const parsed = JSON5.parse(raw);
+      const parsed = parseConfigText(raw);
       if (isPlainObject(parsed)) {
         delete parsed.sessionString;
-        writeFileSync(path, JSON5.stringify(parsed, null, 2), { encoding: 'utf8', mode: 0o600 });
+        writeFileSync(path, stringifyConfig(parsed), { encoding: 'utf8', mode: 0o600 });
       }
     } catch {
       // If we can't parse, nothing to clear

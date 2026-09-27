@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { getClient, getUserStories, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
-import chalk from 'chalk';
+import chalk from '../colors.js';
 import ora from '../spinner.js';
 
 export const storiesCommand = new Command('stories')

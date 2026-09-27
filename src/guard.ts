@@ -1,6 +1,6 @@
 import { secretGet, isSecretStoreAvailable } from './secrets.js';
 import { parseWriteState } from './write-state.js';
-import chalk from 'chalk';
+import chalk from './colors.js';
 
 export function assertWriteEnabled(): void {
   if (!isSecretStoreAvailable()) {

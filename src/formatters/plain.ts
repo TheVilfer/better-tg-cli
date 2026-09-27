@@ -1,4 +1,4 @@
-import chalk from 'chalk';
+import chalk from '../colors.js';
 import { isTTY } from '../spinner.js';
 import type { ChatInfo, MessageInfo, FolderInfo, MediaInfo, ButtonInfo, ButtonLayout, ClickOutcome } from '../client.js';
 
