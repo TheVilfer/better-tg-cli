@@ -4,6 +4,7 @@ import './env.js';
 import { VERSION } from './version.js';
 import { Command } from 'commander';
 import { profile } from './paths.js';
+import { startMcpServer } from './mcp.js';
 import { BACKGROUND_CHECK_COMMAND, maybeNotifyUpdate, runBackgroundCheck } from './update.js';
 import {
   authCommand,
@@ -161,6 +162,10 @@ program.addCommand(writeAccessCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);
+program
+  .command('mcp')
+  .description('Run as an MCP server over stdio (tools: telegram_help, telegram_read, telegram_write)')
+  .action(() => startMcpServer(program.commands.map(c => c.name())));
 
 // Dense reference of every command and flag, generated from the definitions
 // above so it can never drift from the code. Cheaper for agents than N --help calls.

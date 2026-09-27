@@ -4,6 +4,11 @@ import chalk from './colors.js';
 import { setStrictChatResolution } from './resolve-mode.js';
 
 export function assertWriteEnabled(): void {
+  // Set by the MCP read tool: a hard stop even if a write command was misclassified as a read
+  if (process.env.TG_READ_ONLY) {
+    console.error(chalk.red('This command changes something; it cannot run as a read (use telegram_write).'));
+    process.exit(1);
+  }
   if (!isSecretStoreAvailable()) {
     console.error(chalk.red('Write access requires a secret store (macOS Keychain, Linux Secret Service or 1Password).'));
     console.error(chalk.gray('This ensures write permissions cannot be tampered with via config files.'));

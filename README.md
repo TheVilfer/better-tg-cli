@@ -100,6 +100,28 @@ Read commands take `--json`, and some also take `--markdown`. See all commands w
 `telegram help-all`. [reference.md](reference.md) covers the behaviour that the flag list can't
 explain: output shapes, threads, bot buttons, admin commands and troubleshooting.
 
+## MCP server
+
+For clients without a shell (Claude Desktop, Cursor, other MCP hosts), `telegram mcp` serves three
+tools over stdio:
+- `telegram_help`: a searchable flag reference;
+- `telegram_read`: read-only, so clients may auto-approve it;
+- `telegram_write`: marked destructive, and still needs `write-access on` from you.
+
+Log in with `telegram auth` in a terminal first.
+
+```bash
+claude mcp add telegram -- telegram mcp          # Claude Code
+```
+
+```json
+{ "mcpServers": { "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] } } }
+```
+
+Use the second form for Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`).
+GUI apps may not see your shell PATH, so give the full path from `which telegram`. To keep the MCP
+client off your main session, add `"env": {"TG_PROFILE": "work"}`.
+
 ## Development
 
 [DEVELOPMENT.md](DEVELOPMENT.md) covers:

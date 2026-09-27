@@ -7,7 +7,7 @@ description: Full-featured Telegram CLI on the user's own account — read, sear
 
 `telegram <command>` runs on the user's own account (MTProto, not a bot).
 
-**Before using an unfamiliar flag, run `telegram help-all -g <word>`.** It lists every command and flag, generated from the code, so it is always current. For behaviour details (threads, bot buttons, sync, JSON shapes, errors), read `reference.md` next to this file.
+**Before using an unfamiliar flag, run `telegram help-all -g <word>`.** It lists every command and flag, generated from the code, so it is always current. For behaviour details (threads, bot buttons, sync, JSON shapes, errors), read `reference.md` next to this file. If the `telegram_read` and `telegram_write` MCP tools are available (`telegram mcp`), they take the same argv as the CLI.
 
 ## Rules
 

@@ -102,6 +102,27 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
   run fetches everything after the checkpoint and ignores the default `--days` window.
 
+## MCP server (`telegram mcp`)
+
+- **Tools:**
+  - `telegram_help {grep?}`;
+  - `telegram_read {args}`, marked `readOnlyHint`;
+  - `telegram_write {args, stdin?}`, marked `destructiveHint`.
+
+  `args` is the CLI argv with the command first, for example `["read","@x","-n","20"]`. `stdin`
+  fills a `-` text argument.
+- **What runs where:**
+  - Read tool: only the read commands.
+  - Write tool: everything that changes the account or writes local files (`download`, `sync`,
+    `avatar`).
+  - Never over MCP: `auth`, `logout`, `transfer-owner`, `update`, and changing `write-access`.
+    Showing its status is allowed.
+- **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
+  command were misclassified.
+- **Execution:** each call is a separate CLI process with no stdin. Calls run one at a time, time
+  out after 120 s, and output is capped at 100 KB. `watch` needs `-t` or `-n`.
+- **Protocol:** MCP 2025-11-25 with the `initialize` handshake. Newer clients fall back to it.
+
 ## Chat identifiers
 
 `me` / `self` / `saved` / `Saved Messages` / `Избранное` → your Saved Messages. A numeric ID must
