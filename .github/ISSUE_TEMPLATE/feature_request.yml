@@ -1,0 +1,16 @@
+name: Feature request
+description: A command, flag or output change
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you want to do
+      description: The task, not the solution. Is it for a human at a terminal or for an agent?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed command or flags
+      placeholder: telegram read <chat> --only-media

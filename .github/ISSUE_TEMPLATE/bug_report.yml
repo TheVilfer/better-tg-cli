@@ -1,0 +1,39 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Command you ran, what you expected, what you got. Remove chat names, IDs and message text you don't want public.
+      placeholder: |
+        telegram read @somebot -n 5
+        expected the bot's reply text, got "(no text)"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `telegram --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed via
+      options: [Homebrew, npm, git checkout, release binary]
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 26.1 arm64 / Ubuntu 24.04 x64
+  - type: textarea
+    id: log
+    attributes:
+      label: Debug log (optional)
+      description: Re-run with `TG_LOG_LEVEL=debug` and paste the relevant stderr lines. Never paste session strings or api_hash.
+      render: text

@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      actions: { patterns: ["*"] }
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      # teleproto tracks Telegram's TL layer; keep it in its own PR
+      teleproto: { patterns: [teleproto] }
+      dev-dependencies: { dependency-type: development, exclude-patterns: [teleproto] }
