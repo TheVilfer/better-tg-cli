@@ -75,6 +75,17 @@ npm install -g better-tg-cli               # Node >= 20
 
 Не ставьте `@skillhq/telegram`. Это старая сборка апстрима на GramJS (layer 198).
 
+Все каналы получают одну и ту же версию из одного релиза:
+
+| Где | Что | Установка |
+|---|---|---|
+| [Homebrew](https://github.com/TheVilfer/homebrew-tap) | отдельный бинарник | `brew install thevilfer/tap/better-tg-cli` |
+| [npm](https://www.npmjs.com/package/better-tg-cli) | CLI и MCP-сервер (Node 20+) | `npm install -g better-tg-cli` |
+| [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | бинарники и SHA256SUMS | скачать вручную |
+| Плагин Claude Code | скилл и MCP-сервер | [см. ниже](#плагин-для-claude-code) |
+| [skills.sh](https://skills.sh) | скилл для любого агента с шеллом | `npx skills add TheVilfer/better-tg-cli` |
+| [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | запись MCP-сервера `io.github.TheVilfer/better-tg-cli` | через ваш MCP-клиент |
+
 ### Плагин для Claude Code
 
 Скилл и MCP-сервер ставятся вместе:
@@ -160,10 +171,18 @@ claude mcp add telegram -- telegram mcp          # Claude Code (или плаг�
 { "mcpServers": { "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] } } }
 ```
 
-Сервер также есть в [MCP Registry](https://registry.modelcontextprotocol.io) под именем
-`io.github.TheVilfer/better-tg-cli`. Второй вариант подходит для Claude Desktop (`claude_desktop_config.json`) и Cursor
+JSON-вариант подходит для Claude Desktop (`claude_desktop_config.json`) и Cursor
 (`.cursor/mcp.json`). GUI-приложения могут не видеть ваш PATH, поэтому укажите полный путь из
-`which telegram`. Чтобы MCP-клиент не трогал основную сессию, добавьте
+`which telegram`. Без глобальной установки сервер запускается через npx, как и в плагине
+Claude Code:
+
+```json
+{ "mcpServers": { "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] } } }
+```
+
+Сервер есть в [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli)
+под именем `io.github.TheVilfer/better-tg-cli`, так что клиенты и каталоги, которые читают
+реестр, найдут его по имени. Каждый релиз обновляет запись сам. Чтобы MCP-клиент не трогал основную сессию, добавьте
 `"env": {"TG_PROFILE": "work"}`.
 
 В чатах лежит текст, написанный другими людьми, и часть его может быть адресована вашему агенту
@@ -179,7 +198,7 @@ claude mcp add telegram -- telegram mcp          # Claude Code (или плаг�
 - отладка в редакторе и тесты.
 
 Релиз выпускает `scripts/release.sh patch|minor|major`. Тег собирает бинарники и публикует их в
-GitHub Releases, в npm (trusted publishing с provenance) и в Homebrew-тап. Подробнее в
+GitHub Releases, в npm (trusted publishing с provenance), в Homebrew-тап и в MCP Registry. Подробнее в
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Приватность

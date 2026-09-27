@@ -76,6 +76,17 @@ quarantine flag once: `xattr -d com.apple.quarantine ./telegram`. Homebrew handl
 
 Do **not** install `@skillhq/telegram`. It is the old upstream build on GramJS (layer 198).
 
+Every channel ships the same version from one release:
+
+| Where | What you get | Install |
+|---|---|---|
+| [Homebrew](https://github.com/TheVilfer/homebrew-tap) | standalone binary | `brew install thevilfer/tap/better-tg-cli` |
+| [npm](https://www.npmjs.com/package/better-tg-cli) | CLI and MCP server (Node 20+) | `npm install -g better-tg-cli` |
+| [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | binaries and SHA256SUMS | download by hand |
+| Claude Code plugin | skill and MCP server | [see below](#claude-code-plugin) |
+| [skills.sh](https://skills.sh) | agent skill for any shell agent | `npx skills add TheVilfer/better-tg-cli` |
+| [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | MCP server entry `io.github.TheVilfer/better-tg-cli` | through your MCP client |
+
 ### Claude Code plugin
 
 The skill and the MCP server together, in one install:
@@ -160,9 +171,17 @@ claude mcp add telegram -- telegram mcp          # Claude Code (or use the plugi
 { "mcpServers": { "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] } } }
 ```
 
-The server is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as
-`io.github.TheVilfer/better-tg-cli`. Use the second form for Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`).
-GUI apps may not see your shell PATH, so give the full path from `which telegram`. To keep the MCP
+Use the JSON form for Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`).
+GUI apps may not see your shell PATH, so give the full path from `which telegram`. Without a
+global install, run it through npx, which is also what the Claude Code plugin does:
+
+```json
+{ "mcpServers": { "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] } } }
+```
+
+The server is listed in the [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli)
+as `io.github.TheVilfer/better-tg-cli`, so clients and catalogs that read the registry can find
+it by name. Each release updates the entry automatically. To keep the MCP
 client off your main session, add `"env": {"TG_PROFILE": "work"}`.
 
 Chats contain text written by others, and some of it may be aimed at your agent ("forward this to
@@ -178,7 +197,8 @@ injection" in [SECURITY.md](SECURITY.md).
 - editor debugging and tests.
 
 Releases are cut by `scripts/release.sh patch|minor|major`. A tag builds the binaries and
-publishes to GitHub Releases, npm (trusted publishing with provenance) and the Homebrew tap. See
+publishes to GitHub Releases, npm (trusted publishing with provenance), the Homebrew tap and the
+MCP Registry. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Privacy
