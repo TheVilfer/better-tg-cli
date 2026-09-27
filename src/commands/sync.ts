@@ -7,7 +7,7 @@ import {
   disconnectClient,
   parseTimeOffset,
 } from '../client.js';
-import type { MessageInfo } from '../client.js';
+import type { GetMessagesOptions, MessageInfo } from '../client.js';
 import type { TelegramClient } from 'teleproto';
 import { formatMediaLabel } from '../formatters/plain.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
@@ -86,6 +86,24 @@ async function formatMessageLines(
   return lines;
 }
 
+/**
+ * getMessages options for one chat. When resuming from a checkpoint, minId is the
+ * lower bound: the default --days window and the 1000-message cap would otherwise
+ * drop the gap for good once the checkpoint jumps to the newest ID.
+ */
+export function buildSyncFetchOptions(o: {
+  all: boolean;
+  since: boolean;
+  minDate?: Date;
+  maxDate?: Date;
+  minId?: number;
+}): GetMessagesOptions {
+  if (o.minId) {
+    return { limit: Number.MAX_SAFE_INTEGER, minId: o.minId, minDate: o.since ? o.minDate : undefined, maxDate: o.maxDate };
+  }
+  return { limit: o.all ? Number.MAX_SAFE_INTEGER : 1000, minDate: o.minDate, maxDate: o.maxDate };
+}
+
 export const syncCommand = new Command('sync')
   .description('Sync messages to markdown files')
   .option('--days <number>', 'Number of days to sync', '7')
@@ -159,21 +177,7 @@ export const syncCommand = new Command('sync')
           // Incremental sync: only messages newer than the last checkpoint
           const minId = options.resume && existsSync(filePath) ? meta[chat.id]?.lastMessageId : undefined;
 
-          // When resuming from a checkpoint, minId is the lower bound: the default
-          // --days window and the 1000-message cap would otherwise drop the gap
-          // for good once the checkpoint jumps to the newest ID.
-          const fetchOptions: Parameters<typeof getMessages>[2] = minId
-            ? {
-                limit: Number.MAX_SAFE_INTEGER,
-                minId,
-                minDate: options.since ? minDate : undefined,
-                maxDate,
-              }
-            : {
-                limit: options.all ? Number.MAX_SAFE_INTEGER : 1000,
-                minDate,
-                maxDate,
-              };
+          const fetchOptions = buildSyncFetchOptions({ all: !!options.all, since: !!options.since, minDate, maxDate, minId });
 
           const { messages } = await getMessages(client, chat.id, fetchOptions);
 
