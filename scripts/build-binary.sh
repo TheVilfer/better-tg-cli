@@ -20,6 +20,7 @@ fi
 
 cp LICENSE README.md "${stage}/"
 mkdir -p "$out"
-tar -C "$stage" -czf "${out}/${name}.tar.gz" telegram LICENSE README.md
+# xz -9e: ~40% smaller than gzip for these binaries; Homebrew unpacks .tar.xz natively
+tar -C "$stage" -cf - telegram LICENSE README.md | xz -9e -T0 > "${out}/${name}.tar.xz"
 rm -rf "$stage"
-echo "${out}/${name}.tar.gz"
+echo "${out}/${name}.tar.xz"

@@ -61,8 +61,9 @@ build/test), because standalone binaries have no package.json.
 
 ## Build and size
 
-`npm run build` = typecheck (`tsc --noEmit`) + `bun scripts/bundle.mjs node` → one file `dist/telegram.mjs`
-(~1 MB, zero runtime dependencies; everything is in devDependencies). Binaries come from the same
+`npm run build` = typecheck (`tsc --noEmit`) + `bun scripts/bundle.mjs node` → one file `dist/telegram.mjs`:
+a ~0.3 MB loader holding the whole CJS bundle brotli-compressed (inflated at start, ~2 ms; zero
+runtime dependencies, everything is in devDependencies). Release archives are `.tar.xz`. Binaries come from the same
 script (`bun scripts/bundle.mjs bun-<target> <out>`). The bundle plugin shrinks teleproto:
 - TL schema re-encoded (`scripts/tl-compact.mjs`, 1.8 MB → 0.3 MB);
 - RPC error classes generated from a table (`scripts/errors-compact.mjs`);

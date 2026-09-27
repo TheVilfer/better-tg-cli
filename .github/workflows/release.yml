@@ -65,13 +65,13 @@ jobs:
         env:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          mkdir smoke && tar -xzf release/*.tar.gz -C smoke
+          mkdir smoke && tar -xJf release/*.tar.xz -C smoke
           test "$(./smoke/telegram --version)" = "$VERSION"
           ./smoke/telegram help-all -g thread | grep -q 'read <chat>'
       - uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.target }}
-          path: release/*.tar.gz
+          path: release/*.tar.xz
           if-no-files-found: error
 
   github-release:
@@ -86,7 +86,7 @@ jobs:
           path: release
           merge-multiple: true
       - name: Checksums
-        run: cd release && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS
+        run: cd release && sha256sum *.tar.xz > SHA256SUMS && cat SHA256SUMS
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}

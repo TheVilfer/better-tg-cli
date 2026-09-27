@@ -17,7 +17,7 @@ const sums = Object.fromEntries(
     .map(([sha, file]) => [file.replace(/^\*/, ''), sha])
 );
 const asset = target => {
-  const file = `better-tg-cli-${version}-${target}.tar.gz`;
+  const file = `better-tg-cli-${version}-${target}.tar.xz`;
   if (!sums[file]) throw new Error(`No checksum for ${file}`);
   return `url "https://github.com/TheVilfer/better-tg-cli/releases/download/v${version}/${file}"\n      sha256 "${sums[file]}"`;
 };

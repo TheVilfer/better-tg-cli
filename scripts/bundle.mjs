@@ -54,16 +54,72 @@ exports.default=exports;exports.getType=function(p){var m=/\\.([^./\\\\]+)$/.exe
 };
 
 const [mode, outfile] = process.argv.slice(2);
-const common = { entrypoints: ['src/index.ts'], minify: true, plugins: [shrink], metafile: !!process.env.BUNDLE_META };
+if (!mode || (mode !== 'node' && !outfile)) {
+  console.error('Usage: bun scripts/bundle.mjs node | <bun-target> <outfile>');
+  process.exit(1);
+}
 
-const result =
-  mode === 'node'
-    ? await Bun.build({ ...common, target: 'node', outdir: 'dist', naming: 'telegram.mjs' })
-    : await Bun.build({ ...common, compile: { target: mode, outfile } });
-
+// 1. Bundle the CLI (CommonJS, minified, teleproto shrunk) in memory
+const result = await Bun.build({
+  entrypoints: ['src/index.ts'],
+  target: 'node',
+  format: 'cjs',
+  minify: true,
+  plugins: [shrink],
+  metafile: !!process.env.BUNDLE_META,
+});
 if (!result.success) {
   for (const log of result.logs) console.error(log);
   process.exit(1);
 }
 if (process.env.BUNDLE_META) await Bun.write(process.env.BUNDLE_META, JSON.stringify(result.metafile));
-for (const out of result.outputs) console.log(`${out.path}  ${(out.size / 1048576).toFixed(2)} MB`);
+const code = (await result.outputs[0].text()).replace(/^#!.*\n/, '');
+
+// 2. Brotli it (max quality) and wrap it in a tiny loader that inflates and runs it
+const { brotliCompressSync, constants } = await import('node:zlib');
+const packed = brotliCompressSync(code, {
+  params: {
+    [constants.BROTLI_PARAM_QUALITY]: 11,
+    [constants.BROTLI_PARAM_LGWIN]: 24,
+    [constants.BROTLI_PARAM_SIZE_HINT]: code.length,
+  },
+}).toString('base64');
+
+const loader = `#!/usr/bin/env node
+// better-tg-cli — the CLI below is minified and brotli-compressed to keep installs small.
+// Readable source: https://github.com/TheVilfer/better-tg-cli (built by scripts/bundle.mjs).
+import { brotliDecompressSync } from 'node:zlib';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const file = fileURLToPath(import.meta.url);
+const code = brotliDecompressSync(Buffer.from(${JSON.stringify(packed)}, 'base64')).toString('utf8');
+const module = { exports: {} };
+new Function('exports', 'require', 'module', '__filename', '__dirname', code)(module.exports, createRequire(file), module, file, dirname(file));
+`;
+
+const mb = n => (n / 1048576).toFixed(2) + ' MB';
+console.error(`bundle ${mb(code.length)} → brotli+base64 ${mb(packed.length)}`);
+
+// 3. Emit: the npm entry point, or a standalone binary built from the same loader
+if (mode === 'node') {
+  await Bun.write('dist/telegram.mjs', loader);
+  (await import('node:fs')).chmodSync('dist/telegram.mjs', 0o755);
+  console.log(`dist/telegram.mjs  ${mb(loader.length)}`);
+} else {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'tg-bundle-'));
+  try {
+    writeFileSync(join(dir, 'telegram.mjs'), loader);
+    const bin = await Bun.build({ entrypoints: [join(dir, 'telegram.mjs')], compile: { target: mode, outfile } });
+    if (!bin.success) {
+      for (const log of bin.logs) console.error(log);
+      process.exit(1);
+    }
+    console.log(`${outfile}  ${mb((await import('node:fs')).statSync(outfile).size)}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
