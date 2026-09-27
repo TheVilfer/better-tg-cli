@@ -11,14 +11,18 @@ export const replyCommand = new Command('reply')
   .argument('<chat>', 'Chat name, username (@user), or ID')
   .argument('<msg-id>', 'Message ID to reply to')
   .argument('<message>', 'Reply text')
+  .option('--markdown', 'Parse the reply as Markdown')
+  .option('--html', 'Parse the reply as HTML')
+  .option('--silent', 'Send without a notification sound')
   .option('--json', 'Output as JSON')
   .action(async (chat, msgId, message, options) => {
     assertWriteEnabled();
+    const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
     const spinner = ora('Sending reply...').start();
 
     try {
       const client = await getClient();
-      const result = await sendMessage(client, chat, message, parseInt(msgId));
+      const result = await sendMessage(client, chat, message, parseInt(msgId), { parseMode, silent: options.silent });
       auditLog({ timestamp: new Date().toISOString(), command: 'reply', target: chat, message, replyToMsgId: parseInt(msgId), result: { success: true, messageId: result.id } });
 
       spinner.succeed(chalk.green('Reply sent'));

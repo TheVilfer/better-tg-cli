@@ -1,7 +1,14 @@
 import { Command } from 'commander';
-import { getClient, getDialogs, getMessages, disconnectClient } from '../client.js';
+import {
+  getClient,
+  getDialogs,
+  getMessages,
+  downloadMessageMedia,
+  disconnectClient,
+} from '../client.js';
+import { formatMediaLabel } from '../formatters/plain.js';
 import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, relative } from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 
@@ -10,6 +17,7 @@ export const syncCommand = new Command('sync')
   .option('--days <number>', 'Number of days to sync', '7')
   .option('--chat <name>', 'Sync specific chat only')
   .option('--output <dir>', 'Output directory', './telegram-sync')
+  .option('--media', 'Also download photos and documents alongside markdown')
   .action(async (options) => {
     const spinner = ora('Starting sync...').start();
 
@@ -72,18 +80,51 @@ export const syncCommand = new Command('sync')
           // Sort messages chronologically
           messages.sort((a, b) => a.date.getTime() - b.date.getTime());
 
+          const safeTitle = chat.title.replace(/[/\\?%*:|"<>]/g, '-');
+          const chatMediaDir = join(outputDir, safeTitle, 'media');
+
           for (const msg of messages) {
             const time = msg.date.toISOString().replace('T', ' ').substring(0, 19);
             const sender = msg.isOutgoing ? 'You' : msg.sender;
             const reply = msg.replyToMsgId ? ` (reply to #${msg.replyToMsgId})` : '';
 
             lines.push(`**${sender}** - ${time}${reply}`);
+
+            if (msg.media) {
+              if (options.media) {
+                try {
+                  const result = await downloadMessageMedia(
+                    client,
+                    chat.title,
+                    msg.id,
+                    chatMediaDir
+                  );
+                  if (result) {
+                    const rel = relative(outputDir, result.filePath);
+                    lines.push(`> [${formatMediaLabel(result.media)}](${rel})`);
+                  } else {
+                    lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
+                  }
+                } catch (mediaErr) {
+                  lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
+                  console.error(
+                    chalk.yellow(
+                      `\nWarning: media download failed for ${chat.title}#${msg.id}: ${
+                        mediaErr instanceof Error ? mediaErr.message : mediaErr
+                      }`
+                    )
+                  );
+                }
+              } else {
+                lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
+              }
+            }
+
             lines.push(`> ${msg.text || '(no text)'}`);
             lines.push(`*#${msg.id}*\n`);
           }
 
           // Write file
-          const safeTitle = chat.title.replace(/[/\\?%*:|"<>]/g, '-');
           const filename = `${safeTitle}.md`;
           writeFileSync(join(outputDir, filename), lines.join('\n'));
 
@@ -97,6 +138,7 @@ export const syncCommand = new Command('sync')
       spinner.succeed(chalk.green(`Synced ${synced} chats to ${outputDir}`));
 
       await disconnectClient();
+      process.exit(0);
     } catch (error) {
       spinner.fail('Sync failed');
       console.error(error instanceof Error ? error.message : error);

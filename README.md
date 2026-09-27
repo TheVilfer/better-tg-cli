@@ -78,6 +78,56 @@ telegram send "GroupName" "Hello everyone"   # Send to group
 telegram reply "ChatName" 12345 "Response"   # Reply to message ID
 ```
 
+### Bot Buttons
+
+```bash
+telegram buttons @SomeBot 12345              # List buttons on a message
+telegram click @SomeBot 12345 2              # Press button #2 (by index)
+telegram click @SomeBot 12345 "Settings"     # Press by label
+telegram click @SomeBot 12345 1 --json       # Machine-readable outcome
+```
+
+Buttons show up inline in `read`/`inbox`/`search` output. After a callback
+press, `click` re-reads the message so you see the bot's edited reply and its
+new buttons — enough to navigate a bot's menus step by step. `click` needs
+write access enabled.
+
+### Reactions, Forwarding & Pinning
+
+```bash
+telegram react "ChatName" 12345 👍           # React with an emoji (--big, --remove)
+telegram reactions "ChatName" 12345          # List who reacted
+telegram forward "FromChat" 12345 "ToChat"   # Forward message(s); comma-separate IDs
+telegram pin "ChatName" 12345                # Pin (--notify to alert members)
+telegram unpin "ChatName" 12345              # Unpin one; omit ID to unpin all
+```
+
+### Editing, Deleting, Polls & Formatting
+
+```bash
+telegram edit "Chat" 12345 "new text"        # Edit your own message
+telegram delete "Chat" 12,13 --just-me       # Delete (revoke by default)
+telegram mark-read "Chat"                    # Clear unread badge
+telegram pinned "Chat"                       # List pinned messages
+telegram send @user "<b>hi</b>" --html       # HTML/Markdown formatting (--markdown)
+telegram send @user "later" --schedule 2h    # Schedule a message
+telegram poll "Chat" "Q?" A B C              # Send a poll
+telegram vote "Chat" 12345 2                 # Vote for option #2
+```
+
+### Real-time, Chats & Profile
+
+```bash
+telegram watch "Chat" -t 30                  # Stream new messages (timeout/limit required)
+telegram join @channel                       # Join (also invite links); leave/create-group/create-channel
+telegram archive "Chat"                      # Archive / unarchive; invite-link "Chat"
+telegram block @user                         # block/unblock; add-contact/del-contact
+telegram set-name "First" "Last"             # set-bio / set-username / set-avatar
+telegram avatar @user                        # Download avatar; inline @gif "cat"; stories @user
+```
+
+All of the above except reads (`reactions`, `pinned`, `watch`, `avatar`, `inline`, `stories`) are write operations and need write access enabled.
+
 ### Contacts & Groups
 
 ```bash

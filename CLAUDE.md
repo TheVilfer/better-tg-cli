@@ -24,3 +24,13 @@ Follow conventional commits style:
 - `Fix <bug>` for bug fixes
 - `Update <component>` for changes
 - Include `Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>` at the end
+
+## MTProto library
+
+The client is `teleproto` (GramJS fork, current TL layer; `telegram`/GramJS is deprecated and
+stuck on layer 198, which returns bot replies as `MessageMediaUnsupported` with empty text).
+Layer 229 differences the code relies on: one `KeyboardButton`/`KeyboardInlineButton` class with a
+`type` object (`ButtonType*` / `InlineButtonType*`) instead of a constructor per button kind;
+`Poll` needs `hash`; outgoing poll answers are `InputPollAnswer`; `ImportChatInvite` returns
+`messages.ChatInviteJoinResult*`; message text may live in `richMessage` — always read it through
+`messageText()` in `src/client.ts`.

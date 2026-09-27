@@ -1,5 +1,85 @@
 import chalk from 'chalk';
-import type { ChatInfo, MessageInfo, FolderInfo } from '../client.js';
+import type { ChatInfo, MessageInfo, FolderInfo, MediaInfo, ButtonInfo, ButtonLayout, ClickOutcome } from '../client.js';
+
+function buttonTypeHint(b: ButtonInfo): string {
+  switch (b.type) {
+    case 'callback': return b.requiresPassword ? 'callback 🔒' : 'callback';
+    case 'url': return `url → ${b.url}`;
+    case 'url_auth': return `url-auth → ${b.url}`;
+    case 'webview': return `webapp → ${b.url}`;
+    case 'switch_inline': return `switch-inline "${b.query ?? ''}"`;
+    case 'switch_inline_current': return `switch-inline (here) "${b.query ?? ''}"`;
+    case 'copy': return `copy "${b.copyText ?? ''}"`;
+    case 'text': return 'sends text';
+    case 'game': return 'game';
+    case 'buy': return 'buy';
+    case 'request_phone': return 'shares phone';
+    case 'request_geo': return 'shares location';
+    case 'request_poll': return 'creates poll';
+    case 'request_peer': return 'shares a peer';
+    case 'user_profile': return 'user profile';
+    default: return b.type;
+  }
+}
+
+export function formatButtonLayout(layout: ButtonLayout, indent = '  '): string {
+  const kind = layout.isInline ? 'inline keyboard' : 'reply keyboard';
+  const lines: string[] = [`${indent}${chalk.yellow(`⌨ ${kind}:`)}`];
+  for (const row of layout.rows) {
+    for (const b of row) {
+      const idx = chalk.bold(`[${b.index}]`);
+      const label = chalk.cyan(b.text || '(no label)');
+      const hint = chalk.gray(`— ${buttonTypeHint(b)}`);
+      lines.push(`${indent}  ${idx} ${label} ${hint}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+function mediaIcon(kind: MediaInfo['kind']): string {
+  switch (kind) {
+    case 'photo': return '📷';
+    case 'video': return '🎬';
+    case 'video_note': return '⭕';
+    case 'voice': return '🎤';
+    case 'audio': return '🎵';
+    case 'sticker': return '🎨';
+    case 'gif': return '🎞';
+    default: return '📎';
+  }
+}
+
+function formatBytes(size?: number): string {
+  if (!size || !Number.isFinite(size)) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = size;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatDuration(seconds?: number): string {
+  if (!seconds || !Number.isFinite(seconds)) return '';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+export function formatMediaLabel(media: MediaInfo): string {
+  const icon = mediaIcon(media.kind);
+  const parts: string[] = [media.kind];
+  if (media.fileName) parts.push(media.fileName);
+  const meta: string[] = [];
+  if (media.mimeType && !media.fileName) meta.push(media.mimeType);
+  if (media.size) meta.push(formatBytes(media.size));
+  if (media.duration) meta.push(formatDuration(media.duration));
+  if (media.width && media.height) meta.push(`${media.width}×${media.height}`);
+  const metaStr = meta.length ? ` · ${meta.join(' · ')}` : '';
+  return `${icon} ${parts.join(' ')}${metaStr}`;
+}
 
 export function formatChats(chats: ChatInfo[]): string {
   const lines: string[] = [];
@@ -33,9 +113,57 @@ export function formatMessages(messages: MessageInfo[], chatTitle?: string): str
     const reply = msg.replyToMsgId ? chalk.gray(` [reply to #${msg.replyToMsgId}]`) : '';
 
     lines.push(`${chalk.gray(time)} ${sender}${reply}:`);
-    lines.push(`  ${msg.text || chalk.gray('(no text)')}`);
+    if (msg.media) {
+      lines.push(`  ${chalk.magenta(`[${formatMediaLabel(msg.media)}]`)}`);
+    }
+    if (msg.text) {
+      lines.push(`  ${msg.text}`);
+    } else if (!msg.media) {
+      lines.push(`  ${chalk.gray('(no text)')}`);
+    }
+    if (msg.buttons) {
+      lines.push(formatButtonLayout(msg.buttons));
+    }
     lines.push(chalk.gray(`  #${msg.id}`));
     lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+export function formatClickOutcome(o: ClickOutcome): string {
+  const lines: string[] = [];
+  lines.push(`${chalk.green('✓ Pressed')} ${chalk.cyan(`[${o.button.index}] ${o.button.text || '(no label)'}`)} ${chalk.gray(`(${o.button.type})`)}`);
+
+  if (o.answerText) {
+    const tag = o.isAlert ? chalk.yellow('⚠ alert') : chalk.gray('💬 toast');
+    lines.push(`  ${tag}: ${o.answerText}`);
+  }
+  if (o.url) lines.push(`  ${chalk.blue('🔗 url:')} ${o.url}`);
+  if (o.query != null) lines.push(`  ${chalk.gray('inline query:')} ${o.query}`);
+  if (o.copyText) lines.push(`  ${chalk.gray('copy text:')} ${o.copyText}`);
+  if (o.sentMessageId) lines.push(`  ${chalk.gray(`sent message #${o.sentMessageId}`)}`);
+  if (o.note) lines.push(`  ${chalk.gray(o.note)}`);
+
+  if (o.edited) {
+    lines.push('');
+    lines.push(chalk.bold.blue(`↻ Message #${o.edited.id} updated by the bot:`));
+    if (o.edited.text) lines.push(`  ${o.edited.text.replace(/\n/g, '\n  ')}`);
+    if (o.edited.layout) lines.push(formatButtonLayout(o.edited.layout));
+  }
+
+  if (o.newMessages?.length) {
+    lines.push('');
+    lines.push(chalk.bold.blue('✉ New bot message(s):'));
+    for (const m of o.newMessages) {
+      if (m.text) lines.push(`  ${m.text.replace(/\n/g, '\n  ')}`);
+      if (m.layout) lines.push(formatButtonLayout(m.layout));
+      lines.push(chalk.gray(`  #${m.id}`));
+    }
+  }
+
+  if (!o.edited && !o.newMessages?.length && (o.action === 'callback' || o.action === 'game')) {
+    lines.push(chalk.gray('  (no visible change to the message)'));
   }
 
   return lines.join('\n');

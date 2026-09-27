@@ -1,4 +1,16 @@
-import type { ChatInfo, MessageInfo } from '../client.js';
+import type { ChatInfo, MessageInfo, ButtonLayout } from '../client.js';
+import { formatMediaLabel } from './plain.js';
+
+function buttonsMarkdown(layout: ButtonLayout): string {
+  const lines: string[] = [`\n**${layout.isInline ? 'Inline' : 'Reply'} keyboard:**`];
+  for (const row of layout.rows) {
+    for (const b of row) {
+      const extra = b.url ? ` → ${b.url}` : b.query != null ? ` (query: ${b.query})` : b.copyText ? ` (copies: ${b.copyText})` : '';
+      lines.push(`- \`[${b.index}]\` ${b.text || '(no label)'} — *${b.type}*${extra}`);
+    }
+  }
+  return lines.join('\n');
+}
 
 export function formatChatsMarkdown(chats: ChatInfo[]): string {
   const lines: string[] = ['# Telegram Chats\n'];
@@ -41,7 +53,17 @@ export function formatMessagesMarkdown(messages: MessageInfo[], chatTitle?: stri
 
     lines.push(`### ${sender} - ${time}${reply}`);
     lines.push(`*Message ID: ${msg.id}*\n`);
-    lines.push(msg.text || '*(no text)*');
+    if (msg.media) {
+      lines.push(`**Media:** ${formatMediaLabel(msg.media)}\n`);
+    }
+    if (msg.text) {
+      lines.push(msg.text);
+    } else if (!msg.media) {
+      lines.push('*(no text)*');
+    }
+    if (msg.buttons) {
+      lines.push(buttonsMarkdown(msg.buttons));
+    }
     lines.push('\n---\n');
   }
 

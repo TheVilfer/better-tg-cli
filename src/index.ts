@@ -26,6 +26,41 @@ import {
   folderAddCommand,
   folderRemoveCommand,
   writeAccessCommand,
+  downloadCommand,
+  sendFileCommand,
+  buttonsCommand,
+  clickCommand,
+  reactCommand,
+  forwardCommand,
+  pinCommand,
+  unpinCommand,
+  editCommand,
+  deleteCommand,
+  markReadCommand,
+  pinnedCommand,
+  pollCommand,
+  voteCommand,
+  reactionsCommand,
+  blockCommand,
+  unblockCommand,
+  addContactCommand,
+  delContactCommand,
+  joinCommand,
+  leaveCommand,
+  inviteLinkCommand,
+  archiveCommand,
+  unarchiveCommand,
+  createGroupCommand,
+  createChannelCommand,
+  typingCommand,
+  setNameCommand,
+  setBioCommand,
+  setUsernameCommand,
+  setAvatarCommand,
+  avatarCommand,
+  inlineCommand,
+  storiesCommand,
+  watchCommand,
 } from './commands/index.js';
 
 const require = createRequire(import.meta.url);
@@ -49,6 +84,13 @@ program.addCommand(chatsCommand);
 program.addCommand(readCommand);
 program.addCommand(searchCommand);
 program.addCommand(inboxCommand);
+program.addCommand(buttonsCommand);
+program.addCommand(pinnedCommand);
+program.addCommand(reactionsCommand);
+program.addCommand(storiesCommand);
+program.addCommand(avatarCommand);
+program.addCommand(inlineCommand);
+program.addCommand(watchCommand);
 
 // Contact/group commands
 program.addCommand(contactCommand);
@@ -68,11 +110,39 @@ program.addCommand(folderRemoveCommand);
 // Write commands
 program.addCommand(sendCommand);
 program.addCommand(replyCommand);
+program.addCommand(sendFileCommand);
+program.addCommand(clickCommand);
+program.addCommand(reactCommand);
+program.addCommand(forwardCommand);
+program.addCommand(pinCommand);
+program.addCommand(unpinCommand);
+program.addCommand(editCommand);
+program.addCommand(deleteCommand);
+program.addCommand(markReadCommand);
+program.addCommand(pollCommand);
+program.addCommand(voteCommand);
+program.addCommand(blockCommand);
+program.addCommand(unblockCommand);
+program.addCommand(addContactCommand);
+program.addCommand(delContactCommand);
+program.addCommand(joinCommand);
+program.addCommand(leaveCommand);
+program.addCommand(inviteLinkCommand);
+program.addCommand(archiveCommand);
+program.addCommand(unarchiveCommand);
+program.addCommand(createGroupCommand);
+program.addCommand(createChannelCommand);
+program.addCommand(typingCommand);
+program.addCommand(setNameCommand);
+program.addCommand(setBioCommand);
+program.addCommand(setUsernameCommand);
+program.addCommand(setAvatarCommand);
 
 // Configuration
 program.addCommand(writeAccessCommand);
 
 // Utilities
 program.addCommand(syncCommand);
+program.addCommand(downloadCommand);
 
 program.parse();
