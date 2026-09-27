@@ -115,7 +115,8 @@ function compactMessage(msg: MessageInfo, maxText?: number, chatTitle?: string):
   const media = msg.media ? `[${formatMediaLabel(msg.media)}] ` : '';
   // Collapse blank lines and indent continuation lines under the header
   const text = truncate(msg.text, maxText).replace(/\n\s*\n/g, '\n').trim().replace(/\n/g, '\n  ');
-  const lines = [`#${msg.id} ${isoMinute(msg.date)}${where}${sender}${reply}: ${media}${text || (media ? '' : '(no text)')}`.trimEnd()];
+  const comments = msg.replies ? ` 💬${msg.replies}` : '';
+  const lines = [`#${msg.id} ${isoMinute(msg.date)}${where}${sender}${reply}${comments}: ${media}${text || (media ? '' : '(no text)')}`.trimEnd()];
   if (msg.buttons) lines.push(compactButtons(msg.buttons));
   return lines.join('\n');
 }

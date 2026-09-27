@@ -30,7 +30,7 @@ code. This file only covers behaviour that the flag list can't tell you.
 
 - Off a TTY (agents and pipes), output is compact: one line per item with the ID first, JSON on
   one line, and null or empty fields dropped. Set `TG_JSON_PRETTY=1` to indent JSON.
-- Message line format: `#id YYYY-MM-DD HH:MM Sender ↩replyTo: [media] text`. Continuation lines
+- Message line format: `#id YYYY-MM-DD HH:MM Sender ↩replyTo 💬comments: [media] text`. Continuation lines
   are indented. The sender is omitted when it is the chat itself, as in channel posts.
 - Chat line format: `id type [muted,archived] unread=N Title @username | preview`.
 - JSON shapes:

@@ -28,7 +28,7 @@ telegram chats -q "name"                       # find a chat's ID; --unread, --t
 telegram read <chat> -n 20                     # newest first; --asc, --since 1d, --until 2026-09-01
 telegram read <chat> --unread                  # only what the user hasn't read yet
 telegram read <chat> --from @user              # one sender; --before/--after <msgId> for paging
-telegram read <chat> --thread <postId>         # comments under a channel post / replies thread
+telegram read <chat> --thread <postId>         # comments under a post; posts with comments show 💬N in read output
 telegram topics <forum> ; telegram read <forum> --topic <id>
 telegram get <chat> <id> [id...]               # exact messages
 telegram search "query" -n 20                  # global; --chat <c> [--from @u], --type photo|url|document|voice|mentions, --since 7d
@@ -49,7 +49,7 @@ telegram mark-read <chat> ; telegram mute <chat> -d 8h
 
 ## JSON shapes (with `--json`)
 
-`chats`, `contacts` and `members` return an array. `read` and `get` return `{chatTitle, messages[]}`. `search` returns an array of `{messages[]}`, and global hits carry `chatId` and `chatTitle`. `inbox` returns `{totalUnread, chatsWithUnread, chats[]}`. Empty fields are omitted.
+`chats`, `contacts` and `members` return an array. `read` and `get` return `{chatTitle, messages[]}`. `search` returns an array of `{messages[]}`, and global hits carry `chatId` and `chatTitle`. `inbox` returns `{totalUnread, chatsWithUnread, chats[]}`; it skips archived chats unless you pass `--include-archived`, and the totals cover all chats even when `-n` cuts the list. Chat objects have `id`, `title`, `type`, `username`, `unreadCount`, `muted`, `archived` and `lastMessage`. Messages have `id`, `date`, `sender`, `senderId`, `text`, `replyToMsgId`, `isOutgoing`, `media`, `buttons` and `replies` (the comment count). Empty fields are omitted.
 
 ## If `telegram` is missing
 
