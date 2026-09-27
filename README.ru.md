@@ -84,6 +84,7 @@ npm install -g better-tg-cli               # Node >= 20
 | [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | бинарники и SHA256SUMS | скачать вручную |
 | Плагин Claude Code | скилл и MCP-сервер | [см. ниже](#плагин-для-claude-code) |
 | Расширение Claude Desktop | MCP-сервер на встроенном Node из Claude | [скачать `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) и открыть |
+| Плагин Grok Build | скилл и MCP-сервер | [см. ниже](#плагин-для-grok-build) |
 | Расширение Gemini CLI | скилл и MCP-сервер | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
 | Cursor, VS Code | MCP-сервер | [кнопки в один клик](#mcp-сервер) |
 | [skills.sh](https://skills.sh) | скилл для любого агента с шеллом | `npx skills add TheVilfer/better-tg-cli` |
@@ -100,6 +101,16 @@ npm install -g better-tg-cli               # Node >= 20
 
 MCP-сервер запускается через `npx`, так что хватит Node 20+. Один раз войдите в терминале:
 `telegram auth --qr` (или `npx better-tg-cli auth --qr`).
+
+### Плагин для Grok Build
+
+[Grok Build](https://x.ai/cli) ставит тот же плагин, скилл и MCP-сервер вместе:
+
+```bash
+grok plugin install TheVilfer/better-tg-cli --trust
+# или сначала маркетплейс, потом установка из меню /plugins:
+grok plugin marketplace add TheVilfer/better-tg-cli && grok plugin install better-tg-cli --trust
+```
 
 ### Как скилл для агента
 

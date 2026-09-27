@@ -85,6 +85,7 @@ Every channel ships the same version from one release:
 | [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | binaries and SHA256SUMS | download by hand |
 | Claude Code plugin | skill and MCP server | [see below](#claude-code-plugin) |
 | Claude Desktop extension | MCP server, runs on Claude's built-in Node | [download `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) and open it |
+| Grok Build plugin | skill and MCP server | [see below](#grok-build-plugin) |
 | Gemini CLI extension | skill and MCP server | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
 | Cursor, VS Code | MCP server | [one-click buttons](#mcp-server) |
 | [skills.sh](https://skills.sh) | agent skill for any shell agent | `npx skills add TheVilfer/better-tg-cli` |
@@ -101,6 +102,16 @@ The skill and the MCP server together, in one install:
 
 It runs the MCP server through `npx`, so Node 20+ is enough. Log in once with `telegram auth --qr`
 (or `npx better-tg-cli auth --qr`) in a terminal.
+
+### Grok Build plugin
+
+[Grok Build](https://x.ai/cli) installs the same plugin, skill and MCP server together:
+
+```bash
+grok plugin install TheVilfer/better-tg-cli --trust
+# or add the marketplace first, then install from the /plugins menu:
+grok plugin marketplace add TheVilfer/better-tg-cli && grok plugin install better-tg-cli --trust
+```
 
 ### As an agent skill
 
