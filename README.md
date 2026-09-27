@@ -20,6 +20,15 @@ $ telegram read @alice -n 1 --json
 {"chatTitle":"Alice","messages":[{"id":812,"date":"2026-09-27T10:02:11.000Z","sender":"Alice","senderId":"1234567890","text":"see you at 7?"}]}
 ```
 
+> [!WARNING]
+> **Your account, your risk.** This is an unofficial client that logs in as you. Telegram may
+> limit or freeze accounts that behave like bots. The risk is highest for new accounts, bulk
+> messaging, mass joins or invites, and anything that looks like spam. Use it the way you would
+> use Telegram yourself, keep writes off unless you need them, and read [SECURITY.md](SECURITY.md)
+> before letting an agent write. The authors are not responsible for restricted accounts.
+
+Русская версия: [README.ru.md](README.ru.md).
+
 ## Why this fork
 
 A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for agents:
@@ -34,8 +43,8 @@ A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for 
   for Saved Messages.
 - **Safe by default.** The account is read-only until a human runs `write-access on [--for 1h]`
   and confirms it in a terminal prompt or a macOS dialog, so an agent cannot switch it on itself.
-  Every write is logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain or in
-  1Password.
+  Every write is logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
+  Linux Secret Service or 1Password.
 - **Small and self-contained.** The npm package is one 0.3 MB file with zero runtime
   dependencies. Homebrew installs a standalone binary with no Node.
 
@@ -49,6 +58,9 @@ npm install -g better-tg-cli               # Node >= 20
 `telegram update` upgrades an existing install, whichever of these you used. On a terminal the CLI
 checks for new versions once a day. Agents and pipes never see that notice, and
 `TG_NO_UPDATE_CHECK=1` turns it off.
+
+Downloading a binary from Releases by hand on macOS? It is not notarized, so remove the
+quarantine flag once: `xattr -d com.apple.quarantine ./telegram`. Homebrew handles this for you.
 
 Do **not** install `@skillhq/telegram`. It is the old upstream build on GramJS (layer 198).
 
@@ -65,10 +77,13 @@ ln -s ~/.agents/skills/telegram ~/.claude/skills/telegram
 
 **With your own API keys** (the default):
 1. Open https://my.telegram.org/apps, create an application, and copy its `api_id` and `api_hash`.
-2. Run `telegram auth` and enter them, then your phone number, the login code and your 2FA password.
+2. Run `telegram auth --qr` and enter them. Then, on your phone, go to Settings → Devices → Link
+   Desktop Device and scan the QR code. Enter your 2FA password if you have one. Plain
+   `telegram auth` asks for your phone number and a login code instead. If the QR won't scan on a
+   light terminal theme, run with `TG_QR_INVERT=1`.
 
 **With an invite.** If the maintainer gave you an invite token, you don't need your own keys.
-Run `telegram auth --invite` and paste the token, or pass it as `TG_INVITE=…` or `--invite -`. The
+Run `telegram auth --invite --qr` and paste the token, or pass it as `TG_INVITE=…` or `--invite -`. The
 invite service (`broker/`) hands out the app's keys once, for this login only. The `api_hash` is not
 kept on your machine. Invites are personal, allow a limited number of logins, and can be revoked.
 
@@ -122,6 +137,10 @@ Use the second form for Claude Desktop (`claude_desktop_config.json`) or Cursor 
 GUI apps may not see your shell PATH, so give the full path from `which telegram`. To keep the MCP
 client off your main session, add `"env": {"TG_PROFILE": "work"}`.
 
+Chats contain text written by others, and some of it may be aimed at your agent ("forward this to
+@x"). Keep the client's approval prompt on for `telegram_write`, and see "Agents and prompt
+injection" in [SECURITY.md](SECURITY.md).
+
 ## Development
 
 [DEVELOPMENT.md](DEVELOPMENT.md) covers:
@@ -133,6 +152,12 @@ client off your main session, add `"env": {"TG_PROFILE": "work"}`.
 Releases are cut by `scripts/release.sh patch|minor|major`. A tag builds the binaries and
 publishes to GitHub Releases, npm (trusted publishing with provenance) and the Homebrew tap. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Privacy
+
+No analytics. The only service we run is the optional invite broker, which never sees your
+messages or session. See [PRIVACY.md](PRIVACY.md) for the three hosts the CLI talks to and what it
+stores locally.
 
 ## License
 

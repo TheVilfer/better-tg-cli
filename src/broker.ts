@@ -8,6 +8,7 @@ const ERRORS: Record<string, string> = {
   invalid_invite: 'This invite is not valid. Check that you pasted the whole token.',
   invite_revoked: 'This invite was revoked. Ask for a new one.',
   invite_used_up: 'This invite has been used the maximum number of times. Ask for a new one.',
+  rate_limited: 'Too many attempts from your network. Wait a minute and try again.',
   broker_not_configured: 'The invite service is not configured yet. Try again later.',
 };
 

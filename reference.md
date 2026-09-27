@@ -137,8 +137,9 @@ matches titles.
 ## Troubleshooting
 
 - `Not configured`: the user must log in themselves with `telegram auth` (their own keys from
-  my.telegram.org) or `telegram auth --invite` (a token from the maintainer). It is interactive:
-  it needs a phone code and 2FA, so never run it for them.
+  my.telegram.org) or `telegram auth --invite` (a token from the maintainer). It is interactive,
+  so never run it for them. `--qr` logs in by scanning a QR code in the Telegram app instead of
+  typing a code (`TG_QR_INVERT=1` for light terminals).
 
 - `command not found: telegram`: run `brew install thevilfer/tap/better-tg-cli` or `npm install -g better-tg-cli`, or build this folder (`npm install && npm run build && npm install -g .`, needs Bun)
   `telegram update` upgrades an existing install (brew, npm or git checkout); `update --check` only reports.

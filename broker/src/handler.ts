@@ -12,6 +12,8 @@ export interface Env {
   INVITES: KV;
   API_ID: string;
   API_HASH: string;
+  /** Workers rate limiting binding ([[ratelimits]] in wrangler.toml); absent in tests */
+  LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 }
 
 export interface Invite {
@@ -41,6 +43,13 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
   if (url.pathname === '/health') return json(200, { ok: true });
   if (url.pathname !== '/v1/credentials') return json(404, { error: 'not_found' });
   if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
+
+  // Per-IP limit before any KV work: slows token guessing and scripted abuse
+  if (env.LIMITER) {
+    const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+    const { success } = await env.LIMITER.limit({ key: ip });
+    if (!success) return json(429, { error: 'rate_limited' });
+  }
 
   let invite: unknown;
   try {

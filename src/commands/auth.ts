@@ -17,8 +17,9 @@ export const authCommand = new Command('auth')
   .option('--invite [token]', 'Log in with an invite instead of your own API keys (omit the token to be prompted; "-" reads stdin)')
   .option('--broker <url>', 'Invite service URL (default: built-in, or TG_BROKER_URL)')
   .option('--op-vault <vault>', 'Set 1Password vault for secret storage')
+  .option('--qr', 'Log in by scanning a QR code in the Telegram app instead of an SMS/app code')
   .option('--test-dc', "Log in on Telegram's test servers (for development; use with TG_PROFILE)")
-  .action(async (opts: { invite?: string | true; broker?: string; opVault?: string; testDc?: boolean }) => {
+  .action(async (opts: { invite?: string | true; broker?: string; opVault?: string; testDc?: boolean; qr?: boolean }) => {
     // Save op vault config if provided (before auth, so secrets route there)
     if (opts.opVault) {
       saveConfig({ opVault: opts.opVault });
@@ -40,7 +41,7 @@ export const authCommand = new Command('auth')
         invite = await fetchInviteCredentials(token, opts.broker);
         console.log('Invite accepted.');
       }
-      const client = await authenticate(invite, !!opts.testDc);
+      const client = await authenticate(invite, !!opts.testDc, !!opts.qr);
       await client.disconnect();
     } catch (error) {
       console.error('Authentication failed:', error instanceof Error ? error.message : error);

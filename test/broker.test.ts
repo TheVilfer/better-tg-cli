@@ -58,4 +58,17 @@ describe('credential broker', () => {
     expect((await handle(post({ invite: TOKEN }), e)).status).toBe(503);
     expect(JSON.parse([...store.values()][0]).uses).toBe(0);
   });
+  it('rate-limits per IP before touching KV', async () => {
+    const seen: string[] = [];
+    const { e, store } = await env({});
+    e.LIMITER = { limit: async ({ key }) => { seen.push(key); return { success: false }; } };
+    const req = new Request('https://broker.test/v1/credentials', {
+      method: 'POST', body: JSON.stringify({ invite: 'x'.repeat(30) }), headers: { 'cf-connecting-ip': '203.0.113.9' },
+    });
+    const res = await handle(req, e);
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: 'rate_limited' });
+    expect(seen).toEqual(['203.0.113.9']);
+    expect(JSON.parse(store.values().next().value!).uses).toBe(0); // no use consumed
+  });
 });
