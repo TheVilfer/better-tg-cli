@@ -160,4 +160,30 @@ program.addCommand(writeAccessCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 
+// Dense reference of every command and flag, generated from the definitions
+// above so it can never drift from the code. Cheaper for agents than N --help calls.
+program
+  .command('help-all')
+  .description('Print every command with its arguments and flags (compact reference)')
+  .option('-g, --grep <text>', 'Only commands whose name, description or flags mention this text')
+  .action((options) => {
+    const needle = options.grep?.toLowerCase();
+    const lines: string[] = [];
+    for (const cmd of program.commands) {
+      if (cmd.name() === 'help-all') continue;
+      const desc = cmd.description();
+      const haystack = [cmd.name(), desc, ...cmd.options.map(o => `${o.flags} ${o.description}`)].join(' ').toLowerCase();
+      if (needle && !haystack.includes(needle)) continue;
+      const args = cmd.registeredArguments.map(a => (a.required ? `<${a.name()}${a.variadic ? '...' : ''}>` : `[${a.name()}${a.variadic ? '...' : ''}]`)).join(' ');
+      lines.push(`${cmd.name()}${args ? ' ' + args : ''} — ${desc}`);
+      for (const opt of cmd.options) {
+        if (opt.long === '--json' || opt.long === '--markdown') continue;
+        const def = opt.defaultValue !== undefined && typeof opt.defaultValue !== 'boolean' ? ` (default ${opt.defaultValue})` : '';
+        lines.push(`  ${opt.flags} — ${opt.description}${def}`);
+      }
+    }
+    lines.push('', 'Most read commands accept --json; --markdown where noted in `<cmd> --help`.');
+    console.log(lines.join('\n'));
+  });
+
 program.parse();
