@@ -1,7 +1,6 @@
 import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { configFile, secretPrefix } from './paths.js';
 
 let opAvailableCache: boolean | null = null;
 let opBinaryPath: string | null = null;
@@ -29,7 +28,7 @@ function resolveVault(): string | null {
 
   // Fall back to config file (read directly to avoid circular dep with config.ts)
   try {
-    const configPath = join(homedir(), '.config', 'tg', 'config.json5');
+    const configPath = configFile('config.json5');
     if (existsSync(configPath)) {
       const raw = readFileSync(configPath, 'utf8');
       // Use dynamic import to avoid bundling JSON5 parse at module level
@@ -53,7 +52,7 @@ function getToken(): string | undefined {
 }
 
 function itemName(key: string): string {
-  return `tg-cli-${key}`;
+  return `${secretPrefix()}-${key}`;
 }
 
 export function isOnePasswordAvailable(): boolean {

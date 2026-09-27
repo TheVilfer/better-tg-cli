@@ -37,3 +37,17 @@ describe('detectInstall', () => {
     expect(updateCommandFor(got)).toContain('pull --ff-only');
   });
 });
+
+describe('isCompiledBinary', () => {
+  it('only the embedded /$bunfs path counts, not `bun src/index.ts`', async () => {
+    const { isCompiledBinary } = await import('../src/update.js');
+    const had = process.versions.bun;
+    Object.defineProperty(process.versions, 'bun', { value: '1.3.0', configurable: true });
+    try {
+      expect(isCompiledBinary('/$bunfs/root/telegram')).toBe(true);
+      expect(isCompiledBinary('/Users/x/better-tg-cli/src/index.ts')).toBe(false);
+    } finally {
+      if (had === undefined) delete (process.versions as Record<string, string>).bun;
+    }
+  });
+});

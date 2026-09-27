@@ -1,6 +1,7 @@
 import { TelegramClient } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
-import { setCredentials, setInviteCredentials, setSessionString } from './config.js';
+import { clientParams } from './client-options.js';
+import { loadConfig, saveConfig, setCredentials, setInviteCredentials, setSessionString } from './config.js';
 import { prompt, promptHidden } from './prompt.js';
 
 async function askOwnCredentials(): Promise<{ apiId: number; apiHash: string }> {
@@ -26,23 +27,26 @@ async function askOwnCredentials(): Promise<{ apiId: number; apiHash: string }> 
  * Log in and save the session. With `invite` credentials (from the broker) only the
  * api_id is kept: the api_hash is used for this login and then forgotten.
  */
-export async function authenticate(invite?: { apiId: number; apiHash: string }): Promise<TelegramClient> {
-  console.log('\nTelegram Authentication Setup\n');
+export async function authenticate(
+  invite?: { apiId: number; apiHash: string },
+  testServers = false,
+): Promise<TelegramClient> {
+  console.log(testServers ? '\nTelegram Authentication Setup (TEST servers)\n' : '\nTelegram Authentication Setup\n');
 
   const { apiId, apiHash } = invite ?? (await askOwnCredentials());
 
   console.log('\nConnecting to Telegram...');
 
   const session = new StringSession('');
-  const client = new TelegramClient(session, apiId, apiHash, {
-    connectionRetries: 5,
-  });
+  const client = new TelegramClient(session, apiId, apiHash, clientParams(testServers));
 
   await client.start({
     phoneNumber: async () => await prompt('Enter your phone number (with country code, e.g., +1234567890): '),
     // Hidden input: the 2FA password must not end up in terminal scrollback
     password: async () => await promptHidden('Enter your 2FA password (press Enter if none): '),
     phoneCode: async () => await prompt('Enter the code you received: '),
+    // Only asked for a phone with no account yet (typical for test-DC numbers)
+    firstAndLastNames: async () => [(await prompt('New account. First name: ')) || 'Dev', (await prompt('Last name (optional): ')) || ''],
     onError: (err) => console.error('Error:', err),
   });
 
@@ -52,6 +56,8 @@ export async function authenticate(invite?: { apiId: number; apiHash: string }):
   } else {
     setCredentials(apiId, apiHash);
   }
+  // Only touch the flag when it is or was set, so ordinary configs stay unchanged
+  if (testServers || loadConfig(() => {}).testServers) saveConfig({ testServers });
   setSessionString((client.session as StringSession).save());
 
   console.log('\nAuthentication successful! Session saved.');

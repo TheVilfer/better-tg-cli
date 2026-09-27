@@ -3,6 +3,7 @@
 import './env.js';
 import { VERSION } from './version.js';
 import { Command } from 'commander';
+import { profile } from './paths.js';
 import { BACKGROUND_CHECK_COMMAND, maybeNotifyUpdate, runBackgroundCheck } from './update.js';
 import {
   authCommand,
@@ -186,6 +187,13 @@ program
     lines.push('', 'Most read commands accept --json; --markdown where noted in `<cmd> --help`.');
     console.log(lines.join('\n'));
   });
+
+try {
+  profile();
+} catch (error) {
+  console.error((error as Error).message);
+  process.exit(2);
+}
 
 if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   void runBackgroundCheck();

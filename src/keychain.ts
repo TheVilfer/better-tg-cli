@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { platform } from 'node:os';
+import { secretPrefix } from './paths.js';
 
-const SERVICE_NAME = 'tg-cli';
 const SECURITY_PATH = '/usr/bin/security';
 export const SECRET_KEYS = new Set(['apiHash', 'sessionString', 'writeEnabled']);
 
@@ -36,7 +36,7 @@ export function keychainGet(key: string): string | null {
   try {
     const result = execFileSync(SECURITY_PATH, [
       'find-generic-password',
-      '-s', SERVICE_NAME,
+      '-s', secretPrefix(),
       '-a', key,
       '-w',
     ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -61,7 +61,7 @@ export function keychainSet(key: string, value: string): boolean {
     // (e.g. the session string) never shows up in `ps` output while it is written.
     const command = [
       'add-generic-password',
-      '-s', quoteForSecurityShell(SERVICE_NAME),
+      '-s', quoteForSecurityShell(secretPrefix()),
       '-a', quoteForSecurityShell(key),
       '-w', quoteForSecurityShell(value),
       '-U', // update if entry already exists
@@ -80,7 +80,7 @@ export function keychainDelete(key: string): boolean {
   try {
     execFileSync(SECURITY_PATH, [
       'delete-generic-password',
-      '-s', SERVICE_NAME,
+      '-s', secretPrefix(),
       '-a', key,
     ], { stdio: 'ignore' });
     return true;

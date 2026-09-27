@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { configFile } from './paths.js';
 import { parseConfigText, stringifyConfig } from './config-format.js';
 import {
   SECRET_KEYS,
@@ -20,6 +20,8 @@ export interface TgConfig {
   opVault?: string;
   /** 'invite': api credentials came from the broker; api_hash is deliberately not stored. */
   credentialSource?: 'own' | 'invite';
+  /** Session lives on Telegram's test DCs (`telegram auth --test-dc`). */
+  testServers?: boolean;
 }
 
 const DEFAULT_CONFIG: TgConfig = {
@@ -32,7 +34,7 @@ let cachedConfigTime: number = 0;
 const CONFIG_CACHE_TTL_MS = 1000; // 1 second cache
 
 function getGlobalConfigPath(): string {
-  return join(homedir(), '.config', 'tg', 'config.json5');
+  return configFile('config.json5');
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

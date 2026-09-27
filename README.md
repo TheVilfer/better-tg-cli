@@ -30,6 +30,8 @@ or `git pull --ff-only` + build for a checkout. `telegram update --check` only r
 On a terminal the CLI checks npm once a day in the background and prints a one-line notice when a
 new version is out; piped output (agents) never gets it. `TG_NO_UPDATE_CHECK=1` turns it off.
 
+Hacking on the CLI: see [DEVELOPMENT.md](DEVELOPMENT.md) (run from source, isolated dev profile, debugger).
+
 Do **not** install `@skillhq/telegram`. That is the old upstream build on GramJS (layer 198), and
 bot replies show up as `(no text)`.
 

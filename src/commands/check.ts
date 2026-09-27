@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { getClient, getMe, disconnectClient } from '../client.js';
-import { isConfigured } from '../config.js';
+import { isConfigured, loadConfig } from '../config.js';
+import { configDir, profile } from '../paths.js';
 import { isSecretStoreAvailable } from '../secrets.js';
 import { isOnePasswordAvailable } from '../onepassword.js';
 import { isKeychainAvailable } from '../keychain.js';
@@ -17,7 +18,10 @@ export const checkCommand = new Command('check')
   .description('Verify session and credentials')
   .action(async () => {
     if (!isConfigured()) {
-      console.log(chalk.red('Not configured. Run "tg auth" first.'));
+      const p = profile();
+      console.log(chalk.red(p
+        ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram auth [--test-dc]`
+        : 'Not configured. Run "telegram auth" first.'));
       process.exit(1);
     }
 
@@ -30,12 +34,14 @@ export const checkCommand = new Command('check')
       spinner.succeed(chalk.green('Session valid'));
       console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
       console.log(`Secret storage: ${getSecretBackendLabel()}`);
+      if (profile()) console.log(`Profile: ${profile()} (${configDir()})`);
+      if (loadConfig(() => {}).testServers) console.log('Servers: TEST (not production)');
 
       await disconnectClient();
     } catch (error) {
       spinner.fail(chalk.red('Session invalid or expired'));
       console.error(error instanceof Error ? error.message : error);
-      console.log('\nRun "tg auth" to re-authenticate.');
+      console.log('\nRun "telegram auth" to re-authenticate.');
       process.exit(1);
     }
   });

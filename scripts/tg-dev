@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run the CLI straight from src/ (no build) against an isolated profile.
+#   scripts/tg-dev read me -n 5          # profile "dev" (~/.config/tg-dev, Keychain tg-cli-dev)
+#   TG_PROFILE=test scripts/tg-dev ...   # another profile
+#   TG_PROFILE= scripts/tg-dev ...       # your real account (the default profile)
+#   TG_LOG_LEVEL=debug scripts/tg-dev check   # MTProto log on stderr
+# Never writes dist/, which the installed `telegram` runs live.
+set -euo pipefail
+root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+[ -f "$root/src/version.ts" ] || node "$root/scripts/gen-version.mjs"
+export TG_PROFILE="${TG_PROFILE-dev}" TG_NO_UPDATE_CHECK=1
+exec bun "$root/src/index.ts" "$@"

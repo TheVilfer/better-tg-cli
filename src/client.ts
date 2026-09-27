@@ -1,7 +1,7 @@
 import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { CustomFile } from 'teleproto/client/uploads.js';
-import { Logger, LogLevel } from 'teleproto/extensions/Logger.js';
+import { clientParams } from './client-options.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
 import { getCredentials, getSessionString, setSessionString, isConfigured, loadConfig } from './config.js';
@@ -24,15 +24,8 @@ export async function getClient(): Promise<TelegramClient> {
   const sessionString = getSessionString() || '';
   const session = new StringSession(sessionString);
 
-  // GramJS logs connection chatter to stdout at INFO/WARN (including a version
-  // banner in the constructor) — start it at ERROR so command output, and
-  // especially --json / `watch --json`, stays clean and parseable.
-  const baseLogger = new Logger(LogLevel.ERROR);
-
-  clientInstance = new TelegramClient(session, apiId, apiHash, {
-    connectionRetries: 5,
-    baseLogger,
-  });
+  // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
+  clientInstance = new TelegramClient(session, apiId, apiHash, clientParams());
 
   await clientInstance.connect();
 
@@ -50,9 +43,7 @@ export async function getClient(): Promise<TelegramClient> {
 
 export async function createClient(apiId: number, apiHash: string): Promise<TelegramClient> {
   const session = new StringSession('');
-  const client = new TelegramClient(session, apiId, apiHash, {
-    connectionRetries: 5,
-  });
+  const client = new TelegramClient(session, apiId, apiHash, clientParams());
   await client.connect();
   return client;
 }

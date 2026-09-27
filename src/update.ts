@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
+import { configFile } from './paths.js';
 import { VERSION } from './version.js';
 
 export const PACKAGE = 'better-tg-cli';
@@ -27,11 +27,16 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/** `bun build --compile` output; `bun src/index.ts` also sets process.versions.bun, so check the embedded path. */
+export function isCompiledBinary(scriptPath = process.argv[1] ?? ''): boolean {
+  return !!process.versions.bun && (scriptPath.startsWith('/$bunfs/') || scriptPath.startsWith('B:/~BUN/'));
+}
+
 /** Works out how this copy was installed from where the running file lives. */
 export function detectInstall(
   execPath = process.execPath,
   scriptPath = process.argv[1] ?? '',
-  isBinary = !!process.versions.bun,
+  isBinary = isCompiledBinary(scriptPath),
 ): InstallMethod {
   if (isBinary) {
     return /\/(Cellar|linuxbrew)\//.test(execPath) ? { kind: 'brew' } : { kind: 'binary', path: execPath };
@@ -67,7 +72,7 @@ export function updateCommandFor(method: InstallMethod): string {
 interface CheckCache { checkedAt: number; latest?: string }
 
 export function cachePath(): string {
-  return process.env.TG_UPDATE_CACHE ?? join(homedir(), '.config', 'tg', 'update-check.json');
+  return process.env.TG_UPDATE_CACHE ?? configFile('update-check.json');
 }
 
 function readCache(): CheckCache | undefined {
@@ -107,7 +112,7 @@ export function maybeNotifyUpdate(argv = process.argv.slice(2)): void {
   if (!cache || Date.now() - cache.checkedAt > CHECK_INTERVAL_MS) {
     // Mark first so parallel runs don't all spawn a check.
     writeCache({ checkedAt: Date.now(), latest: cache?.latest });
-    const args = process.versions.bun ? [BACKGROUND_CHECK_COMMAND] : [process.argv[1], BACKGROUND_CHECK_COMMAND];
+    const args = isCompiledBinary() ? [BACKGROUND_CHECK_COMMAND] : [process.argv[1], BACKGROUND_CHECK_COMMAND];
     try {
       spawn(process.execPath, args, { detached: true, stdio: 'ignore', env: { ...process.env, TG_NO_UPDATE_CHECK: '1' } }).unref();
     } catch { /* offline or sandboxed: skip */ }

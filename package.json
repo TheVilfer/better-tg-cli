@@ -10,10 +10,15 @@
   "scripts": {
     "build": "node scripts/gen-version.mjs && tsc --noEmit && rm -rf dist && bun scripts/bundle.mjs node",
     "prepublishOnly": "npm run build",
+    "dev": "scripts/tg-dev",
+    "dev:node": "TG_PROFILE=${TG_PROFILE-dev} TG_NO_UPDATE_CHECK=1 tsx src/index.ts",
+    "dev:debug": "TG_PROFILE=${TG_PROFILE-dev} TG_NO_UPDATE_CHECK=1 tsx --inspect-brk src/index.ts",
+    "dev:dist": "npm run build && TG_PROFILE=${TG_PROFILE-dev} TG_NO_UPDATE_CHECK=1 node dist/telegram.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "pretest": "node scripts/gen-version.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch --preserveWatchOutput"
   },
   "keywords": [
     "telegram",
@@ -39,6 +44,7 @@
     "big-integer": "^1.6.52",
     "commander": "^14.0.0",
     "teleproto": "^1.229.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.0",
     "vitest": "^5.0.2"
   },

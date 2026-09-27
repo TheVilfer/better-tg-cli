@@ -1,6 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { configDir, configFile } from './paths.js';
 
 export interface AuditEntry {
   timestamp: string;
@@ -17,15 +16,14 @@ export interface AuditEntry {
   };
 }
 
-const AUDIT_PATH = join(homedir(), '.config', 'tg', 'audit.jsonl');
 
 export function auditLog(entry: AuditEntry): void {
   try {
-    const dir = join(homedir(), '.config', 'tg');
+    const dir = configDir();
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
-    appendFileSync(AUDIT_PATH, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
+    appendFileSync(configFile('audit.jsonl'), JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
   } catch {
     // Never throw — audit failures must not break the caller
   }

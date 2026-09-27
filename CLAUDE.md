@@ -45,6 +45,15 @@ change. Never `npm i -g @skillhq/telegram` or update the skill via the skills CL
 this fork with upstream (GramJS, layer 198). Pull upstream with `git fetch upstream && git merge
 upstream/main`, keeping `teleproto` imports and reading text through `messageText()`.
 
+## Development
+
+See `DEVELOPMENT.md`. The short version:
+- `scripts/tg-dev <args>` runs `src/` with Bun under `TG_PROFILE=dev`. That profile is `~/.config/tg-dev`
+  plus the Keychain service `tg-cli-dev`, isolated from the real session.
+- Never add a watch mode that writes `dist/`, because the installed `telegram` runs it live.
+- All state paths go through `src/paths.ts`, and every TelegramClient is built with `clientParams()`
+  from `src/client-options.ts` (stderr logger, `TG_LOG_LEVEL`, the profile's `testServers`).
+
 ## Releasing
 
 `scripts/release.sh patch|minor|major` bumps the version, tests, commits, tags `vX.Y.Z` and pushes.
