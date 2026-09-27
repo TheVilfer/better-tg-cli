@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import './env.js';
+import { VERSION } from './version.js';
 import { Command } from 'commander';
-import { createRequire } from 'module';
 import {
   authCommand,
   logoutCommand,
@@ -71,15 +71,13 @@ import {
   watchCommand,
 } from './commands/index.js';
 
-const require = createRequire(import.meta.url);
-const pkg = require('../package.json');
 
 const program = new Command();
 
 program
   .name('tg')
   .description('Fast Telegram CLI for reading, searching, and sending messages')
-  .version(pkg.version);
+  .version(VERSION);
 
 // Auth commands
 program.addCommand(authCommand);

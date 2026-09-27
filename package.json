@@ -13,13 +13,18 @@
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prebuild": "node scripts/gen-version.mjs",
+    "pretest": "node scripts/gen-version.mjs"
   },
   "keywords": [
     "telegram",
     "cli",
-    "messaging",
-    "chat"
+    "mtproto",
+    "agent",
+    "ai-agent",
+    "claude-code",
+    "skill"
   ],
   "author": "Sergei Polin (fork of skillhq/telegram by Derek Rein)",
   "license": "MIT",
@@ -45,14 +50,17 @@
     "vitest": "^5.0.2"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20"
   },
   "files": [
-    "LICENSE",
-    "README.md",
+    "dist/**/*.js",
     "SKILL.md",
-    "dist",
-    "reference.md"
+    "reference.md",
+    "LICENSE",
+    "README.md"
   ],
-  "private": true
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

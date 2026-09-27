@@ -8,16 +8,26 @@ about 60 commands. Run `telegram help-all` for the full command and flag list.
 ## Installation
 
 ```bash
-git clone https://github.com/TheVilfer/better-tg-cli.git ~/.agents/skills/telegram
-cd ~/.agents/skills/telegram
-npm install && npm run build && npm install -g .
+brew install thevilfer/tap/better-tg-cli   # standalone binary, macOS and Linux, no Node needed
+npm install -g better-tg-cli               # Node >= 20
 ```
 
-Or run `./install.sh`. The folder doubles as the agent skill (`SKILL.md` + `reference.md`): link it into
-`~/.claude/skills/telegram` or `~/.codex/skills/telegram`.
+Both install the `telegram` command. To use it as an agent skill (Claude Code, Codex), clone the
+repo into the skills folder. That folder is the skill (`SKILL.md` + `reference.md`):
 
-Do **not** install `@skillhq/telegram` from npm. That package is the old GramJS build (layer 198), and
-bot replies show as `(no text)`.
+```bash
+git clone https://github.com/TheVilfer/better-tg-cli.git ~/.agents/skills/telegram
+ln -s ~/.agents/skills/telegram ~/.claude/skills/telegram
+```
+
+To build from source: `npm install && npm run build && npm install -g .` (or `./install.sh`).
+
+Do **not** install `@skillhq/telegram`. That is the old upstream build on GramJS (layer 198), and
+bot replies show up as `(no text)`.
+
+**Linux note:** secrets go to the macOS Keychain or to 1Password (`telegram auth --op-vault`).
+Without either, the session is kept in `~/.config/tg/config.json5` (mode 0600), and write
+commands stay disabled.
 
 ## Authentication
 

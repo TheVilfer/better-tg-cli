@@ -1,0 +1,156 @@
+name: Release
+
+# Push a tag vX.Y.Z (scripts/release.sh does it) to publish that version everywhere:
+# GitHub Release with standalone binaries → npm (OIDC trusted publishing) → Homebrew tap.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - id: v
+        name: Tag must match package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  binaries:
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          # macOS binaries are built on macOS so they can be ad-hoc signed
+          - { os: macos-latest, target: darwin-arm64, smoke: true }
+          - { os: macos-latest, target: darwin-x64, smoke: false }
+          - { os: ubuntu-latest, target: linux-x64, smoke: true }
+          - { os: ubuntu-latest, target: linux-arm64, smoke: false }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: scripts/build-binary.sh "$TARGET" release
+        env:
+          TARGET: ${{ matrix.target }}
+      - name: Smoke test (native targets)
+        if: matrix.smoke
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir smoke && tar -xzf release/*.tar.gz -C smoke
+          test "$(./smoke/telegram --version)" = "$VERSION"
+          ./smoke/telegram help-all -g thread | grep -q 'read <chat>'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: release/*.tar.gz
+          if-no-files-found: error
+
+  github-release:
+    needs: [verify, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: release
+          merge-multiple: true
+      - name: Checksums
+        run: cd release && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "better-tg-cli $GITHUB_REF_NAME" \
+            --generate-notes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sha256sums
+          path: release/SHA256SUMS
+
+  npm:
+    needs: [verify, github-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) + provenance; no NPM_TOKEN
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
+      - run: npm ci
+      - run: npm run build
+      - name: Publish (skipped if this version is already on npm)
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          if npm view "better-tg-cli@$VERSION" version >/dev/null 2>&1; then
+            echo "better-tg-cli@$VERSION is already published"
+          else
+            npm publish --provenance --access public
+          fi
+
+  homebrew:
+    needs: [verify, github-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sha256sums
+          path: .
+      - name: Render formula
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: node scripts/homebrew-formula.mjs "$VERSION" SHA256SUMS > better-tg-cli.rb
+      - name: Push to TheVilfer/homebrew-tap
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap_key && chmod 600 ~/.ssh/tap_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:TheVilfer/homebrew-tap.git tap
+          mkdir -p tap/Formula && cp better-tg-cli.rb tap/Formula/better-tg-cli.rb
+          cd tap
+          git config user.name "better-tg-cli release"
+          git config user.email "actions@users.noreply.github.com"
+          git add Formula/better-tg-cli.rb
+          git diff --cached --quiet && { echo "Formula unchanged"; exit 0; }
+          git commit -m "better-tg-cli $VERSION"
+          git push origin HEAD
