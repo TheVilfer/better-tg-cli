@@ -1,6 +1,7 @@
 import { secretGet, isSecretStoreAvailable } from './secrets.js';
 import { parseWriteState } from './write-state.js';
 import chalk from './colors.js';
+import { setStrictChatResolution } from './resolve-mode.js';
 
 export function assertWriteEnabled(): void {
   if (!isSecretStoreAvailable()) {
@@ -16,4 +17,5 @@ export function assertWriteEnabled(): void {
     console.error(chalk.gray('Ask the user to run: telegram write-access on [--for 1h] (needs their confirmation)'));
     process.exit(1);
   }
+  setStrictChatResolution(true);
 }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Api } from 'teleproto';
 import bigInt from 'big-integer';
+import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { disconnectClient, getMessages, parseTimeOffset, resolveChat, searchMessages } from '../src/client.js';
 
 type Fake = Record<string, ReturnType<typeof vi.fn>>;
@@ -86,6 +87,41 @@ describe('resolveChat', () => {
     await resolveChat(client as never, 'Gamers');
     await resolveChat(client as never, '-1006');
     expect(client.getDialogs).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('resolveChat for writes (strict)', () => {
+  afterEach(() => setStrictChatResolution(false));
+
+  it('refuses a substring match and lists candidates instead of guessing', async () => {
+    setStrictChatResolution(true);
+    const client = fakeClient();
+    await expect(resolveChat(client as never, 'gamer')).rejects.toThrow(/titled exactly "gamer"[\s\S]*-1006 .*Gamers/);
+    expect(client.getEntity).not.toHaveBeenCalled();
+  });
+
+  it('refuses a title shared by several chats', async () => {
+    setStrictChatResolution(true);
+    const twin = channel(7, 'News');
+    const client = fakeClient({
+      getDialogs: vi.fn(async () => [dialog('-1005', 'News', news), dialog('-1007', 'News', twin)]),
+    });
+    await expect(resolveChat(client as never, 'news')).rejects.toThrow(/matches 2 chats[\s\S]*-1005[\s\S]*-1007/);
+  });
+
+  it('still accepts exact titles, IDs and me', async () => {
+    setStrictChatResolution(true);
+    const client = fakeClient();
+    expect(await resolveChat(client as never, 'NEWS')).toBe(news);
+    expect(await resolveChat(client as never, '-1006')).toBe(game);
+    expect(await resolveChat(client as never, 'me')).toBe(me);
+  });
+
+  it('a lenient read resolved earlier in the process is not reused for a write', async () => {
+    const client = fakeClient();
+    expect(await resolveChat(client as never, 'gamer')).toBe(game);
+    setStrictChatResolution(true);
+    await expect(resolveChat(client as never, 'gamer')).rejects.toThrow(/titled exactly/);
   });
 });
 

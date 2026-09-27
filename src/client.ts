@@ -2,6 +2,7 @@ import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
+import { isStrictChatResolution } from './resolve-mode.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
 import { getCredentials, getSessionString, setSessionString, isConfigured, loadConfig } from './config.js';
@@ -1043,7 +1044,7 @@ export async function getAdminGroups(client: TelegramClient): Promise<ChatInfo[]
 export type ResolvedEntity = Api.User | Api.Chat | Api.Channel;
 
 export async function resolveChat(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
-  const key = cacheKey(identifier);
+  const key = `${isStrictChatResolution() ? 'strict:' : ''}${cacheKey(identifier)}`;
   const cached = resolvedChatCache.get(key);
   if (cached) return cached;
 
@@ -1078,10 +1079,25 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     // Numeric IDs are matched against dialog peer IDs, never against titles
     dialog = dialogs.find(d => d.id?.toString() === identifier);
   } else {
-    // Exact title match first, then partial match
-    dialog = dialogs.find(d => d.title?.toLowerCase() === identifier.toLowerCase());
-    if (!dialog) {
-      dialog = dialogs.find(d => d.title?.toLowerCase().includes(identifier.toLowerCase()));
+    const needle = identifier.trim().toLowerCase();
+    const exact = dialogs.filter(d => d.title?.trim().toLowerCase() === needle);
+    if (isStrictChatResolution()) {
+      // Writes: exactly one exact title, or refuse with the candidates
+      if (exact.length > 1) {
+        throw new Error(`"${identifier}" matches ${exact.length} chats; use an ID:\n${describeCandidates(exact)}`);
+      }
+      dialog = exact[0];
+      if (!dialog) {
+        const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
+        if (partial.length) {
+          throw new Error(
+            `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial)}`,
+          );
+        }
+      }
+    } else {
+      // Reads: exact title first, then partial match
+      dialog = exact[0] ?? dialogs.find(d => d.title?.toLowerCase().includes(needle));
     }
   }
 
@@ -1102,6 +1118,16 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
   } catch {
     throw new Error(`Chat not found: ${identifier}`);
   }
+}
+
+function describeCandidates(dialogs: Awaited<ReturnType<TelegramClient['getDialogs']>>): string {
+  const lines = dialogs.slice(0, 5).map(d => {
+    const kind = d.isUser ? 'user' : d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
+    const username = (d.entity as { username?: string } | undefined)?.username;
+    return `  ${d.id} ${kind} ${d.title}${username ? ` @${username}` : ''}`;
+  });
+  if (dialogs.length > 5) lines.push(`  … and ${dialogs.length - 5} more`);
+  return lines.join('\n');
 }
 
 function getChatTitle(entity: ResolvedEntity): string {

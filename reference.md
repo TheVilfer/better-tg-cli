@@ -106,7 +106,12 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 
 `me` / `self` / `saved` / `Saved Messages` / `Избранное` → your Saved Messages. A numeric ID must
 exactly match a dialog ID (the `id` from `chats`). `@username` resolves exactly. Anything else
-matches titles: exact first, then substring. For writes, prefer an ID or @username.
+matches titles.
+
+- **Reads:** an exact title first, then a substring.
+- **Writes** (every command gated by write access) accept only an exact, unique title. A substring
+  or a title shared by several chats is refused with up to 5 candidates (`id type title @username`).
+  Retry with the ID.
 
 ## Troubleshooting
 
