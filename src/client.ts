@@ -4,7 +4,7 @@ import { CustomFile } from 'teleproto/client/uploads.js';
 import { Logger, LogLevel } from 'teleproto/extensions/Logger.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
-import { getCredentials, getSessionString, setSessionString, isConfigured } from './config.js';
+import { getCredentials, getSessionString, setSessionString, isConfigured, loadConfig } from './config.js';
 import bigInt from 'big-integer';
 import { existsSync, mkdirSync, statSync } from 'fs';
 import { basename, join } from 'path';
@@ -17,7 +17,7 @@ export async function getClient(): Promise<TelegramClient> {
   }
 
   if (!isConfigured()) {
-    throw new Error('Not configured. Run "tg auth" first to set up your API credentials.');
+    throw new Error('Not configured. Run "telegram auth" (own API keys) or "telegram auth --invite".');
   }
 
   const { apiId, apiHash } = getCredentials();
@@ -37,7 +37,12 @@ export async function getClient(): Promise<TelegramClient> {
   await clientInstance.connect();
 
   if (!await clientInstance.isUserAuthorized()) {
-    throw new Error('Not authenticated. Run "tg auth" to log in.');
+    const invited = loadConfig(() => {}).credentialSource === 'invite';
+    throw new Error(
+      invited
+        ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --invite'
+        : 'Not authenticated. Run "telegram auth" to log in.'
+    );
   }
 
   return clientInstance;

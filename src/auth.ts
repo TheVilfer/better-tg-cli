@@ -1,31 +1,35 @@
 import { TelegramClient } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
-import { setCredentials, setSessionString } from './config.js';
+import { setCredentials, setInviteCredentials, setSessionString } from './config.js';
 import { prompt, promptHidden } from './prompt.js';
 
-export async function authenticate(): Promise<TelegramClient> {
-  console.log('\nTelegram Authentication Setup\n');
+async function askOwnCredentials(): Promise<{ apiId: number; apiHash: string }> {
   console.log('To get your API credentials:');
   console.log('1. Go to https://my.telegram.org/apps');
   console.log('2. Log in with your phone number');
   console.log('3. Create a new application (if you haven\'t already)');
   console.log('4. Copy the api_id and api_hash\n');
 
-  const apiIdStr = await prompt('Enter your API ID: ');
-  const apiId = parseInt(apiIdStr, 10);
-
+  const apiId = parseInt(await prompt('Enter your API ID: '), 10);
   if (isNaN(apiId)) {
     throw new Error('Invalid API ID');
   }
 
   const apiHash = await promptHidden('Enter your API Hash: ');
-
   if (!apiHash) {
     throw new Error('Invalid API Hash');
   }
+  return { apiId, apiHash };
+}
 
-  // Save credentials
-  setCredentials(apiId, apiHash);
+/**
+ * Log in and save the session. With `invite` credentials (from the broker) only the
+ * api_id is kept: the api_hash is used for this login and then forgotten.
+ */
+export async function authenticate(invite?: { apiId: number; apiHash: string }): Promise<TelegramClient> {
+  console.log('\nTelegram Authentication Setup\n');
+
+  const { apiId, apiHash } = invite ?? (await askOwnCredentials());
 
   console.log('\nConnecting to Telegram...');
 
@@ -42,9 +46,13 @@ export async function authenticate(): Promise<TelegramClient> {
     onError: (err) => console.error('Error:', err),
   });
 
-  // Save session
-  const sessionString = (client.session as StringSession).save();
-  setSessionString(sessionString);
+  // Save credentials only after a successful login
+  if (invite) {
+    setInviteCredentials(apiId);
+  } else {
+    setCredentials(apiId, apiHash);
+  }
+  setSessionString((client.session as StringSession).save());
 
   console.log('\nAuthentication successful! Session saved.');
 

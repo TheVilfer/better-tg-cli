@@ -1,6 +1,6 @@
 {
   "name": "better-telegram-cli",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Agent-friendly Telegram CLI on your own account (MTProto, layer 229)",
   "type": "module",
   "main": "dist/index.js",

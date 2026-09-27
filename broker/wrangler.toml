@@ -1,0 +1,11 @@
+name = "tg-cli-broker"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+# No request/response logging: bodies carry invite tokens and the api_hash
+observability = { enabled = false }
+
+# kv_namespaces is filled in by `wrangler kv namespace create INVITES`
+[[kv_namespaces]]
+binding = "INVITES"
+id = "4320febbafa14fa19579bcda05c8aebc"

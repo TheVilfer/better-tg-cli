@@ -18,6 +18,8 @@ export interface TgConfig {
   sessionString?: string;
   defaultFormat?: 'plain' | 'json' | 'markdown';
   opVault?: string;
+  /** 'invite': api credentials came from the broker; api_hash is deliberately not stored. */
+  credentialSource?: 'own' | 'invite';
 }
 
 const DEFAULT_CONFIG: TgConfig = {
@@ -162,20 +164,34 @@ export function getConfigPath(): string {
   return getGlobalConfigPath();
 }
 
+/**
+ * api_hash is only sent to Telegram at login (auth.sendCode). Invite users never keep
+ * it, so after login the client runs with this placeholder; teleproto just needs a
+ * non-empty value for its constructor.
+ */
+export const INVITE_HASH_PLACEHOLDER = 'invite-no-hash-stored';
+
 export function isConfigured(): boolean {
   const config = loadConfig(() => {});
-  return (config.apiId ?? 0) > 0 && (config.apiHash ?? '') !== '';
+  if ((config.apiId ?? 0) <= 0) return false;
+  return (config.apiHash ?? '') !== '' || config.credentialSource === 'invite';
+}
+
+/** Save only the api_id of the broker's app; drop any stored api_hash. */
+export function setInviteCredentials(apiId: number): void {
+  if (isSecretStoreAvailable()) secretDelete('apiHash');
+  saveConfig({ apiId, credentialSource: 'invite' });
 }
 
 export function setCredentials(apiId: number, apiHash: string): void {
-  saveConfig({ apiId, apiHash });
+  saveConfig({ apiId, apiHash, credentialSource: 'own' });
 }
 
 export function getCredentials(): { apiId: number; apiHash: string } {
   const config = loadConfig(() => {});
   return {
     apiId: config.apiId ?? 0,
-    apiHash: config.apiHash ?? '',
+    apiHash: config.apiHash || (config.credentialSource === 'invite' ? INVITE_HASH_PLACEHOLDER : ''),
   };
 }
 

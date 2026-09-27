@@ -8,3 +8,4 @@ dist/
 config.json5
 .env
 .env.*
+.wrangler/

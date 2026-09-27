@@ -21,17 +21,23 @@ bot replies show as `(no text)`.
 
 ## Authentication
 
-First, get your API credentials:
-1. Go to https://my.telegram.org/apps
-2. Log in with your phone number
-3. Create a new application
-4. Copy the `api_id` and `api_hash`
+**Your own API keys (default, for everyone):**
+1. Go to https://my.telegram.org/apps and log in with your phone number
+2. Create an application and copy its `api_id` and `api_hash`
+3. Run `telegram auth` and enter them, then your phone, the login code and your 2FA password
 
-Then authenticate:
+**With an invite.** If the maintainer gave you an invite token, you don't need your own keys:
 
 ```bash
-telegram auth
+telegram auth --invite        # paste the token when asked (or: TG_INVITE=... / --invite -)
 ```
+
+The invite service (`broker/`) hands out the app's keys once for your login. The `api_hash` is
+not stored on your machine afterwards, only the `api_id` and your session. Invites are personal,
+limited to a few logins, and can be revoked.
+
+Your session is stored in the macOS Keychain (service `tg-cli`), or in 1Password with
+`--op-vault`. `telegram logout` removes it.
 
 ## Commands
 
