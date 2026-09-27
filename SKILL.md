@@ -12,7 +12,7 @@ description: Full-featured Telegram CLI on the user's own account — read, sear
 ## Rules
 
 - **Chat identifiers:** `me` means Saved Messages. A numeric ID is matched exactly (use the ID shown first in `chats`/`inbox`/`search` output). `@username` resolves exactly. Any other text matches chat titles by **substring**. For writes, use an ID or @username.
-- **Writes are off by default.** A write fails with "Write access is disabled". Ask the user before running `telegram write-access on`. Get explicit approval for every message sent to other people, and show the final text first.
+- **Writes are off by default.** A write fails with "Write access is disabled". Only the user can turn writes on. `telegram write-access on --for 1h` shows them a confirmation dialog, which you cannot click yourself. Ask first, run it, and wait for their click. Get explicit approval for every message to other people and show the final text first.
 - **Save tokens:**
   - Start with `inbox --unmuted`, `chats -q <name>` or `search`, not a full `read`.
   - Add `--max-text 200` when skimming.

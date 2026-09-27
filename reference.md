@@ -44,7 +44,11 @@ code. This file only covers behaviour that the flag list can't tell you.
 | `info` | object |
 | `topics` | `{chatTitle, topics[]}` |
 
-## Writing (needs `telegram write-access on`; every write goes to `~/.config/tg/audit.jsonl`)
+## Writing (needs write access; every write goes to `~/.config/tg/audit.jsonl`)
+
+- `write-access on [--for 30m|2h|1d]` asks the user: a y/N prompt on a terminal, otherwise a macOS
+  dialog (it times out as "no" after 2 minutes). `--for` switches writes off again automatically.
+  `write-access off` needs no confirmation. The flag lives in Keychain, not in the config file.
 
 - Pass `-` as the text argument (`send`, `reply`, `edit`, `send-file -c`) to read the text from
   stdin: `printf '%s' "$text" | telegram send @user -`. This avoids shell quoting problems.
@@ -109,8 +113,8 @@ matches titles: exact first, then substring. For writes, prefer an ID or @userna
 - `command not found: telegram`: run `cd ~/.agents/skills/telegram && npm install && npm run build && npm install -g .`
   Never install `@skillhq/telegram` from npm: it is the old GramJS build, and bot replies show
   as `(no text)`.
-- `Write access is disabled`: the account is read-only on purpose. Ask the user before running
-  `telegram write-access on`.
+- `Write access is disabled`: the account is read-only on purpose, or a `--for` window expired. Ask
+  the user, then run `telegram write-access on --for 1h`; they confirm it in a dialog.
 - `CHANNELS_TOO_MUCH` on `join`: the account hit Telegram's channel limit, so leave some first.
 - `Could not find the input entity`: the ID is not in your dialogs. Use `@username` or open the
   chat first.

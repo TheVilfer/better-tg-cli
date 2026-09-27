@@ -1,7 +1,7 @@
 import { TelegramClient } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { setCredentials, setSessionString } from './config.js';
-import { prompt } from './prompt.js';
+import { prompt, promptHidden } from './prompt.js';
 
 export async function authenticate(): Promise<TelegramClient> {
   console.log('\nTelegram Authentication Setup\n');
@@ -18,7 +18,7 @@ export async function authenticate(): Promise<TelegramClient> {
     throw new Error('Invalid API ID');
   }
 
-  const apiHash = await prompt('Enter your API Hash: ');
+  const apiHash = await promptHidden('Enter your API Hash: ');
 
   if (!apiHash) {
     throw new Error('Invalid API Hash');
@@ -36,7 +36,8 @@ export async function authenticate(): Promise<TelegramClient> {
 
   await client.start({
     phoneNumber: async () => await prompt('Enter your phone number (with country code, e.g., +1234567890): '),
-    password: async () => await prompt('Enter your 2FA password (press Enter if none): '),
+    // Hidden input: the 2FA password must not end up in terminal scrollback
+    password: async () => await promptHidden('Enter your 2FA password (press Enter if none): '),
     phoneCode: async () => await prompt('Enter the code you received: '),
     onError: (err) => console.error('Error:', err),
   });

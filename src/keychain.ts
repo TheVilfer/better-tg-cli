@@ -47,19 +47,28 @@ export function keychainGet(key: string): string | null {
   }
 }
 
+/** Quote a value for `security -i`'s command parser (double quotes, backslash escapes). */
+export function quoteForSecurityShell(value: string): string {
+  if (/[\r\n\0]/.test(value)) throw new Error('Secret values cannot contain newlines or NUL');
+  return '"' + value.replace(/[\\"]/g, ch => '\\' + ch) + '"';
+}
+
 export function keychainSet(key: string, value: string): boolean {
   if (!isKeychainAvailable()) return false;
 
   try {
-    execFileSync(SECURITY_PATH, [
+    // Feed the command through stdin (`security -i`) instead of argv, so the secret
+    // (e.g. the session string) never shows up in `ps` output while it is written.
+    const command = [
       'add-generic-password',
-      '-s', SERVICE_NAME,
-      '-a', key,
-      '-w', value,
+      '-s', quoteForSecurityShell(SERVICE_NAME),
+      '-a', quoteForSecurityShell(key),
+      '-w', quoteForSecurityShell(value),
       '-U', // update if entry already exists
-    ], { stdio: 'ignore' });
+    ].join(' ');
+    execFileSync(SECURITY_PATH, ['-i'], { input: command + '\n', stdio: ['pipe', 'ignore', 'ignore'] });
 
-    return true;
+    return keychainGet(key) === value;
   } catch {
     return false;
   }

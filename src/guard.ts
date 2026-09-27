@@ -1,4 +1,5 @@
 import { secretGet, isSecretStoreAvailable } from './secrets.js';
+import { parseWriteState } from './write-state.js';
 import chalk from 'chalk';
 
 export function assertWriteEnabled(): void {
@@ -8,10 +9,11 @@ export function assertWriteEnabled(): void {
     process.exit(1);
   }
 
-  const value = secretGet('writeEnabled');
-  if (value !== 'true') {
-    console.error(chalk.red('Write access is disabled (read-only mode).'));
-    console.error(chalk.gray('To enable writes: telegram write-access on'));
+  const state = parseWriteState(secretGet('writeEnabled'));
+  if (!state.enabled) {
+    const why = state.expired ? `expired at ${state.until!.toLocaleString()}` : 'read-only mode';
+    console.error(chalk.red(`Write access is disabled (${why}).`));
+    console.error(chalk.gray('Ask the user to run: telegram write-access on [--for 1h] (needs their confirmation)'));
     process.exit(1);
   }
 }
