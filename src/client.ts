@@ -69,11 +69,24 @@ export async function disconnectClient(): Promise<void> {
     clientInstance = null;
   }
   resolvedChatCache.clear();
+  dialogsCache = null;
 }
 
 // Cache resolved chat entities by identifier (normalized) to avoid re-fetching
 // getDialogs({limit: 500}) on every call, which triggers FLOOD_WAIT on messages.GetDialogs.
 const resolvedChatCache = new Map<string, ResolvedEntity>();
+
+// One dialogs snapshot per process: resolving many chats (e.g. sync over 100 chats)
+// must not refetch the full dialog list for every chat.
+let dialogsCache: ReturnType<TelegramClient['getDialogs']> | null = null;
+
+function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['getDialogs']> {
+  if (!dialogsCache) {
+    dialogsCache = client.getDialogs({ limit: 500 });
+    dialogsCache.catch(() => { dialogsCache = null; });
+  }
+  return dialogsCache;
+}
 
 function cacheKey(identifier: string): string {
   return identifier.trim().toLowerCase();
@@ -843,7 +856,7 @@ export async function getChatMembers(
 }
 
 export async function getAdminGroups(client: TelegramClient): Promise<ChatInfo[]> {
-  const dialogs = await client.getDialogs({ limit: 500 });
+  const dialogs = await getDialogsCached(client);
   const adminGroups: ChatInfo[] = [];
 
   for (const dialog of dialogs) {
@@ -926,7 +939,7 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     throw new Error(`Invalid entity type for: ${identifier}`);
   }
 
-  const dialogs = await client.getDialogs({ limit: 500 });
+  const dialogs = await getDialogsCached(client);
   const isNumericId = /^-?\d+$/.test(identifier);
 
   let dialog;

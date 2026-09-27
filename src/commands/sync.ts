@@ -159,14 +159,21 @@ export const syncCommand = new Command('sync')
           // Incremental sync: only messages newer than the last checkpoint
           const minId = options.resume && existsSync(filePath) ? meta[chat.id]?.lastMessageId : undefined;
 
-          const fetchOptions: Parameters<typeof getMessages>[2] = {
-            limit: options.all ? Number.MAX_SAFE_INTEGER : 1000,
-            minDate,
-            maxDate,
-          };
-          if (minId) {
-            fetchOptions.minId = minId;
-          }
+          // When resuming from a checkpoint, minId is the lower bound: the default
+          // --days window and the 1000-message cap would otherwise drop the gap
+          // for good once the checkpoint jumps to the newest ID.
+          const fetchOptions: Parameters<typeof getMessages>[2] = minId
+            ? {
+                limit: Number.MAX_SAFE_INTEGER,
+                minId,
+                minDate: options.since ? minDate : undefined,
+                maxDate,
+              }
+            : {
+                limit: options.all ? Number.MAX_SAFE_INTEGER : 1000,
+                minDate,
+                maxDate,
+              };
 
           const { messages } = await getMessages(client, chat.id, fetchOptions);
 

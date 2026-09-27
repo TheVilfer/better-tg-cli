@@ -26,9 +26,15 @@ Use this skill when the user:
 
 ## 📦 Install
 
+This is a personal fork (teleproto, layer 229) living in `~/.agents/skills/telegram`.
+If `telegram` is missing from PATH, reinstall **from that directory**:
+
 ```bash
-npm install -g @skillhq/telegram
+cd ~/.agents/skills/telegram && npm install && npm run build && npm install -g .
 ```
+
+**Never** run `npm install -g @skillhq/telegram` or update this skill via the skills CLI — the
+published package is the old GramJS build (layer 198) and bot replies come back as `(no text)`.
 
 ## 🔐 Authentication
 
