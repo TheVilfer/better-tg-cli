@@ -1,7 +1,7 @@
 {
-  "name": "@skillhq/telegram",
+  "name": "better-telegram-cli",
   "version": "0.14.0",
-  "description": "Fast Telegram CLI for reading, searching, and sending messages",
+  "description": "Agent-friendly Telegram CLI on your own account (MTProto, layer 229)",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -19,15 +19,15 @@
     "messaging",
     "chat"
   ],
-  "author": "Derek Rein",
+  "author": "Sergei Polin (fork of skillhq/telegram by Derek Rein)",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/skillhq/telegram.git"
+    "url": "git+https://github.com/TheVilfer/better-telegram-cli.git"
   },
-  "homepage": "https://github.com/skillhq/telegram#readme",
+  "homepage": "https://github.com/TheVilfer/better-telegram-cli#readme",
   "bugs": {
-    "url": "https://github.com/skillhq/telegram/issues"
+    "url": "https://github.com/TheVilfer/better-telegram-cli/issues"
   },
   "dependencies": {
     "big-integer": "^1.6.52",
@@ -48,5 +48,6 @@
     "dist",
     "SKILL.md",
     "reference.md"
-  ]
+  ],
+  "private": true
 }

@@ -1,4 +1,4 @@
-# Claude Instructions for @skillhq/telegram
+# Claude Instructions for better-telegram-cli
 
 ## Version and Release Workflow
 
@@ -38,7 +38,8 @@ Layer 229 differences the code relies on: one `KeyboardButton`/`KeyboardInlineBu
 ## Personal fork
 
 This checkout is a fork of `skillhq/telegram` (remote `upstream`, push disabled); `origin` is the
-private `TheVilfer/telegram-cli`. The global `telegram` binary is an `npm install -g <this dir>`
+private `TheVilfer/better-telegram-cli`. The package is `better-telegram-cli`, but the binary and the skill stay
+`telegram` (agents, triggers and symlinks depend on it). The global binary is an `npm install -g <this dir>`
 symlink under homebrew node (`/opt/homebrew/bin/telegram`), so `npm run build` is enough to ship a
 change. Never `npm i -g @skillhq/telegram` or update the skill via the skills CLI — both replace
 this fork with upstream (GramJS, layer 198). Pull upstream with `git fetch upstream && git merge

@@ -1,38 +1,23 @@
-# telegram - Telegram CLI
+# better-telegram-cli
 
-Fast Telegram CLI for reading, searching, and sending messages. Designed for both interactive use and AI agent integration.
+Agent-friendly Telegram CLI on your own account (MTProto via `teleproto`, TL layer 229).
+The binary is `telegram`. Fork of [skillhq/telegram](https://github.com/skillhq/telegram) with bot
+buttons, rich (layer 228+) bot replies, threads and forum topics, compact output for agents, and
+about 60 commands. Run `telegram help-all` for the full command and flag list.
 
 ## Installation
 
-### Quick install (with onboarding)
-
 ```bash
-curl -sSfL https://github.com/skillhq/telegram/raw/main/install.sh | bash
+git clone https://github.com/TheVilfer/better-telegram-cli.git ~/.agents/skills/telegram
+cd ~/.agents/skills/telegram
+npm install && npm run build && npm install -g .
 ```
 
-This installs the CLI, offers to set up the Telegram skill for AI agents, authenticates, and runs a test query.
+Or run `./install.sh`. The folder doubles as the agent skill (`SKILL.md` + `reference.md`): link it into
+`~/.claude/skills/telegram` or `~/.codex/skills/telegram`.
 
-### As a Claude Code Skill (recommended)
-
-```bash
-npx skills add https://github.com/skillhq/telegram --skill telegram
-```
-
-### Global npm install
-
-```bash
-npm install -g @skillhq/telegram
-```
-
-### From source
-
-```bash
-git clone https://github.com/skillhq/telegram.git
-cd telegram
-npm install
-npm run build
-npm link
-```
+Do **not** install `@skillhq/telegram` from npm. That package is the old GramJS build (layer 198), and
+bot replies show as `(no text)`.
 
 ## Authentication
 
