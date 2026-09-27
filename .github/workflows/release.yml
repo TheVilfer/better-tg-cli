@@ -68,7 +68,7 @@ jobs:
           mkdir smoke && tar -xJf release/*.tar.xz -C smoke
           test "$(./smoke/telegram --version)" = "$VERSION"
           ./smoke/telegram help-all -g thread | grep -q 'read <chat>'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.target }}
           path: release/*.tar.xz
@@ -80,7 +80,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: bin-*
           path: release
@@ -95,7 +95,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "better-tg-cli $GITHUB_REF_NAME" \
             --generate-notes
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sha256sums
           path: release/SHA256SUMS
@@ -131,7 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sha256sums
           path: .
