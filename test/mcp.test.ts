@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { EXCLUDED_COMMANDS, READ_COMMANDS, handleMessage, isWriteCommand, planCall, setKnownCommands } from '../src/mcp.js';
+import { EXCLUDED_COMMANDS, READ_COMMANDS, handleMessage, isWriteCommand, planCall, setKnownCommands, useWorkers } from '../src/mcp.js';
 
 const CLI = 'dist/telegram.mjs';
 // Unconfigured profile: nothing here can reach a real account
@@ -64,9 +64,21 @@ describe('protocol', () => {
   });
 });
 
-describe('telegram mcp over stdio', () => {
+describe('worker mode', () => {
+  it('runs calls in worker threads under Electron (Claude Desktop) or when forced', () => {
+    expect(useWorkers({}, undefined)).toBe(false);
+    expect(useWorkers({}, '44.4.3')).toBe(true);
+    expect(useWorkers({ TG_MCP_WORKER: '1' }, undefined)).toBe(true);
+  });
+});
+
+// Child processes everywhere else; worker threads inside Claude Desktop (forced here with TG_MCP_WORKER)
+describe.each([
+  ['child processes', {}],
+  ['worker threads', { TG_MCP_WORKER: '1' }],
+])('telegram mcp over stdio (%s)', (_mode, extraEnv) => {
   it('serves initialize, tools/list and real tool calls, then exits when stdin closes', async () => {
-    const child = spawn(process.execPath, [CLI, 'mcp'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [CLI, 'mcp'], { env: { ...env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
     const lines: any[] = [];
     let buf = '';
     child.stdout.on('data', d => {
@@ -80,15 +92,23 @@ describe('telegram mcp over stdio', () => {
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
     send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'telegram_help', arguments: { grep: 'thread' } } });
     send({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'telegram_write', arguments: { args: ['send', 'me', '-'], stdin: 'hi' } } });
+    send({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'telegram_help', arguments: {} } });
+    send({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'telegram_read', arguments: { args: ['whoami'] } } });
     child.stdin.end();
     const code = await new Promise(r => child.on('close', r));
 
     expect(code).toBe(0);
-    expect(lines.map(l => l.id)).toEqual([1, 2, 3, 4]); // in order, nothing for the notification
+    expect(lines.map(l => l.id)).toEqual([1, 2, 3, 4, 5, 6]); // in order, nothing for the notification
     expect(lines[1].result.tools.map((t: any) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write']);
     expect(lines[2].result.content[0].text).toMatch(/read <chat>/);
     // Unconfigured profile has no write access: the guard refuses, reported as a tool error
     expect(lines[3].result.isError).toBe(true);
     expect(lines[3].result.content[0].text).toMatch(/Write access|secret store/);
+    // Full output survives process.exit right after the write
+    const direct = spawnSync(process.execPath, [CLI, 'help-all'], { encoding: 'utf8', env }).stdout.trimEnd();
+    expect(lines[4].result.content[0].text).toBe(direct);
+    // A real read on the unconfigured profile fails cleanly instead of hanging on a prompt
+    expect(lines[5].result.isError).toBe(true);
+    expect(lines[5].result.content[0].text).toMatch(/not configured|not authenticated|auth/i);
   }, 30_000);
 });

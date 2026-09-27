@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import './env.js';
+import { isMainThread } from 'node:worker_threads';
 import { VERSION } from './version.js';
 import { Command } from 'commander';
 import { profile } from './paths.js';
@@ -204,5 +205,19 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   void runBackgroundCheck();
 } else {
   maybeNotifyUpdate();
-  program.parse();
+  // Always node-style argv: commander would read it Electron-style inside Claude Desktop's
+  // built-in Node (an Electron utility process) and take the script path for a command
+  if (isMainThread) {
+    program.parse(process.argv, { from: 'node' });
+  } else {
+    // An MCP call in a worker thread (src/mcp.ts): its piped stdin keeps the thread alive,
+    // so end it once the command is done, as a child process would exit on its own
+    program.parseAsync(process.argv, { from: 'node' }).then(
+      () => process.exit(process.exitCode ?? 0),
+      (error: unknown) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      },
+    );
+  }
 }

@@ -1,0 +1,15 @@
+{
+  "name": "better-tg-cli",
+  "version": "0.23.1",
+  "description": "Telegram on your own account: the better-tg-cli skill plus an MCP server (read, search, send, bot buttons). Writes stay off until you allow them.",
+  "mcpServers": {
+    "telegram": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "better-tg-cli@latest",
+        "mcp"
+      ]
+    }
+  }
+}

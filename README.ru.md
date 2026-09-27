@@ -83,6 +83,9 @@ npm install -g better-tg-cli               # Node >= 20
 | [npm](https://www.npmjs.com/package/better-tg-cli) | CLI и MCP-сервер (Node 20+) | `npm install -g better-tg-cli` |
 | [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | бинарники и SHA256SUMS | скачать вручную |
 | Плагин Claude Code | скилл и MCP-сервер | [см. ниже](#плагин-для-claude-code) |
+| Расширение Claude Desktop | MCP-сервер на встроенном Node из Claude | [скачать `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) и открыть |
+| Расширение Gemini CLI | скилл и MCP-сервер | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
+| Cursor, VS Code | MCP-сервер | [кнопки в один клик](#mcp-сервер) |
 | [skills.sh](https://skills.sh) | скилл для любого агента с шеллом | `npx skills add TheVilfer/better-tg-cli` |
 | [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | запись MCP-сервера `io.github.TheVilfer/better-tg-cli` | через ваш MCP-клиент |
 
@@ -161,7 +164,15 @@ stdio три инструмента:
 - `telegram_read` — только чтение, клиенты могут разрешать его без вопросов;
 - `telegram_write` — помечен как опасный и по-прежнему требует от вас `write-access on`.
 
-Сначала войдите через `telegram auth` в терминале.
+Сначала войдите через `telegram auth` в терминале. Затем установите сервер в один клик:
+
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=telegram&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJldHRlci10Zy1jbGlAbGF0ZXN0IiwibWNwIl19)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_MCP-000000?style=flat&colorA=000000&colorB=000000)](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522telegram%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522better-tg-cli%2540latest%2522%252C%2522mcp%2522%255D%257D)
+[![Claude Desktop extension](https://img.shields.io/badge/Claude_Desktop-.mcpb-000000?style=flat&colorA=000000&colorB=000000&logo=claude)](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb)
+
+Расширению для Claude Desktop не нужны ни Node, ни npm, ни brew: скачайте `.mcpb` из последнего
+релиза и откройте его. Gemini CLI ставит скилл и сервер вместе:
+`gemini extensions install https://github.com/TheVilfer/better-tg-cli`. Или добавьте вручную:
 
 ```bash
 claude mcp add telegram -- telegram mcp          # Claude Code (или плагин выше)

@@ -59,6 +59,12 @@ A dev profile can use:
   The built-in debugger can't attach to Bun, which is why these entries use Node and tsx.
 - `bun --inspect-wait src/index.ts <args>` gives a debug.bun.sh URL, if you prefer Bun's inspector.
 - teleproto logs go to stderr only, so `--json` output stays parseable at any `TG_LOG_LEVEL`.
+- **MCP in Claude Desktop.** The `.mcpb` extension (`node scripts/mcpb.mjs <out>` after a build)
+  runs on Claude's built-in Node, an Electron utility process: its `execPath` is an app helper that
+  won't start as Node, so there `telegram mcp` runs each call in a worker thread instead of a child
+  process. `TG_MCP_WORKER=1` forces that path anywhere (the stdio e2e test runs both). Server logs:
+  `~/Library/Logs/Claude/mcp-server-Telegram (better-tg-cli).log`. Never launch binaries from
+  inside `Claude.app` to test this: it starts a second copy of the app.
 
 ## TypeScript
 

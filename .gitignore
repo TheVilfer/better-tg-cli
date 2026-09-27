@@ -10,3 +10,5 @@ config.json5
 .env.*
 .wrangler/
 __pycache__/
+release/
+*.mcpb

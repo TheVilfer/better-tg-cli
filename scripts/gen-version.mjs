@@ -11,8 +11,8 @@ try {
 } catch {}
 if (current !== out) writeFileSync(path, out);
 
-// Keep the plugin manifest and the MCP Registry entry on the package version
-for (const file of ['../.claude-plugin/plugin.json', '../server.json']) {
+// Keep the Claude Code plugin, MCP Registry entry and Gemini CLI extension on the package version
+for (const file of ['../.claude-plugin/plugin.json', '../server.json', '../gemini-extension.json']) {
   const url = new URL(file, import.meta.url);
   const text = readFileSync(url, 'utf8');
   const json = JSON.parse(text);

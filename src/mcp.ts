@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
+import { resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
+import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
 
@@ -117,13 +119,35 @@ function cliBase(): string[] {
   return isCompiledBinary() ? [process.execPath] : [process.execPath, process.argv[1]];
 }
 
-function runCli(plan: { argv: string[]; readOnly: boolean; stdin?: string }): Promise<ToolResult> {
+type Plan = { argv: string[]; readOnly: boolean; stdin?: string };
+
+const cap = (s: string) =>
+  s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
+
+function childEnv(plan: Plan): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1' };
+  if (plan.readOnly) env.TG_READ_ONLY = '1';
+  return env;
+}
+
+function result(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
+  if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out)}`, true);
+  if (code !== 0) return text(cap([err.trim(), out.trim()].filter(Boolean).join('\n')) || `exit ${code}`, true);
+  return text(cap(out.trimEnd() || err.trim() || '(no output)'));
+}
+
+/** Claude Desktop runs extensions in an Electron utility process whose execPath is an app helper
+ * that refuses to start as Node, so there each call runs in a worker thread instead: a fresh
+ * isolate with its own env (TG_READ_ONLY), argv and stdio, ended by process.exit like a child. */
+export function useWorkers(env = process.env, electron = process.versions.electron): boolean {
+  return Boolean(electron) || env.TG_MCP_WORKER === '1';
+}
+
+function runChild(plan: Plan): Promise<ToolResult> {
   return new Promise(resolve => {
     const [bin, ...pre] = cliBase();
-    const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1' };
-    if (plan.readOnly) env.TG_READ_ONLY = '1';
     const child = spawn(bin, [...pre, ...plan.argv], {
-      env,
+      env: childEnv(plan),
       // No stdin unless given: any prompt (2FA, confirmation) hits EOF instead of hanging
       stdio: [plan.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
@@ -133,16 +157,49 @@ function runCli(plan: { argv: string[]; readOnly: boolean; stdin?: string }): Pr
     child.stderr!.on('data', d => { if (err.length < MAX_OUTPUT) err += d; });
     if (plan.stdin !== undefined) child.stdin!.end(plan.stdin);
     const timer = setTimeout(() => { child.kill('SIGKILL'); }, CALL_TIMEOUT_MS);
-    const cap = (s: string) =>
-      s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
     child.on('error', e => { clearTimeout(timer); resolve(text(`Failed to start the CLI: ${e.message}`, true)); });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      if (signal === 'SIGKILL') return resolve(text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out)}`, true));
-      if (code !== 0) return resolve(text(cap([err.trim(), out.trim()].filter(Boolean).join('\n')) || `exit ${code}`, true));
-      resolve(text(cap(out.trimEnd() || err.trim() || '(no output)')));
+      resolve(result(code, signal === 'SIGKILL', out, err));
     });
   });
+}
+
+function runWorker(plan: Plan): Promise<ToolResult> {
+  return new Promise(resolve => {
+    let worker: Worker;
+    try {
+      worker = new Worker(resolvePath(process.argv[1]), { argv: plan.argv, env: childEnv(plan), stdin: true, stdout: true, stderr: true });
+    } catch (e) {
+      return resolve(text(`Failed to start the CLI: ${e instanceof Error ? e.message : String(e)}`, true));
+    }
+    let out = '';
+    let err = '';
+    let timedOut = false;
+    let failure: Error | undefined;
+    worker.stdout.on('data', d => { if (out.length < MAX_OUTPUT * 2) out += d; });
+    worker.stderr.on('data', d => { if (err.length < MAX_OUTPUT) err += d; });
+    // Always end stdin (after the text, if any): any prompt hits EOF instead of hanging
+    worker.stdin!.end(plan.stdin ?? '');
+    const timer = setTimeout(() => { timedOut = true; void worker.terminate(); }, CALL_TIMEOUT_MS);
+    worker.on('error', (e: unknown) => { failure = e instanceof Error ? e : new Error(String(e)); });
+    // Resolve once the thread has exited and both output streams are drained
+    let pending = 3;
+    let exitCode: number | null = null;
+    const done = () => {
+      if (--pending) return;
+      clearTimeout(timer);
+      if (failure && !timedOut) err = [err, failure.message].filter(Boolean).join('\n');
+      resolve(result(failure && exitCode === 0 ? 1 : exitCode, timedOut, out, err));
+    };
+    worker.stdout.on('end', done);
+    worker.stderr.on('end', done);
+    worker.on('exit', code => { exitCode = code; done(); });
+  });
+}
+
+function runCli(plan: Plan): Promise<ToolResult> {
+  return useWorkers() ? runWorker(plan) : runChild(plan);
 }
 
 type RpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
