@@ -41,8 +41,9 @@ A dev profile can use:
   profile, and `check` prints `Servers: TEST`. Since mid-2025 the `99966XYYYY` test numbers with
   code `XXXXX` from the docs have been rejected with `PHONE_CODE_INVALID` for ordinary apps (see
   [tdlib#3361](https://github.com/tdlib/td/issues/3361)). Instead, create the test account with a
-  real number in an official mobile app's test mode first. In Telegram iOS: tap Settings 10 times →
-  Accounts → Login to another account → Test. After that, the code arrives in that app.
+  real number in an official mobile app's hidden test mode first (the maintainer's advice in that
+  thread). On iOS this reportedly means tapping the Settings tab about 10 times, then Accounts →
+  Login to another account → Test. After that, the code arrives in that app.
 - **Your real account, read-only.** This is the default profile plus the write guard. It is good for
   debugging reads, because you get real data.
 
