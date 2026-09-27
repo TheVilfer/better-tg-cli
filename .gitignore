@@ -9,3 +9,4 @@ config.json5
 .env
 .env.*
 .wrangler/
+__pycache__/

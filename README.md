@@ -1,9 +1,23 @@
-# better-tg-cli
+<div align="center">
+  <picture>
+    <source srcset="https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/assets/banner-dark.png" media="(prefers-color-scheme: dark)"/>
+    <source srcset="https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/assets/banner-light.png" media="(prefers-color-scheme: light)"/>
+    <img src="https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/assets/banner-light.png" alt="better-tg-cli"/>
+  </picture>
 
-[![CI](https://github.com/TheVilfer/better-tg-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/TheVilfer/better-tg-cli/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/better-tg-cli?color=cb3837&logo=npm)](https://www.npmjs.com/package/better-tg-cli)
-[![Homebrew](https://img.shields.io/badge/brew-thevilfer%2Ftap-fbb040?logo=homebrew)](https://github.com/TheVilfer/homebrew-tap)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+  [![npm version](https://img.shields.io/npm/v/better-tg-cli?style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
+  [![CI](https://img.shields.io/github/actions/workflow/status/TheVilfer/better-tg-cli/ci.yml?branch=main&label=ci&style=flat&colorA=000000&colorB=000000)](https://github.com/TheVilfer/better-tg-cli/actions/workflows/ci.yml)
+  [![npm provenance](https://img.shields.io/badge/npm-provenance-000000?style=flat&colorA=000000&colorB=000000&logo=npm)](https://www.npmjs.com/package/better-tg-cli#provenance)
+  [![install size](https://img.shields.io/npm/unpacked-size/better-tg-cli?label=size&style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
+  [![dependencies](https://img.shields.io/badge/dependencies-0-000000?style=flat&colorA=000000&colorB=000000)](package.json)
+  [![MCP](https://img.shields.io/badge/MCP-server-000000?style=flat&colorA=000000&colorB=000000)](#mcp-server)
+  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux-000000?style=flat&colorA=000000&colorB=000000&logo=apple)](#install)
+  [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
+
+  <p>
+    <a href="#install">Install</a> · <a href="reference.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a>
+  </p>
+</div>
 
 An unofficial, agent-friendly command-line client for Telegram that runs **on your own account**
 (MTProto via [`teleproto`](https://www.npmjs.com/package/teleproto), TL layer 229). The command is
@@ -26,8 +40,6 @@ $ telegram read @alice -n 1 --json
 > messaging, mass joins or invites, and anything that looks like spam. Use it the way you would
 > use Telegram yourself, keep writes off unless you need them, and read [SECURITY.md](SECURITY.md)
 > before letting an agent write. The authors are not responsible for restricted accounts.
-
-Русская версия: [README.ru.md](README.ru.md).
 
 ## Why this fork
 
