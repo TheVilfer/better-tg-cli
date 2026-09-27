@@ -5,19 +5,97 @@ import {
   getMessages,
   downloadMessageMedia,
   disconnectClient,
+  parseTimeOffset,
 } from '../client.js';
+import type { MessageInfo } from '../client.js';
+import type { TelegramClient } from 'teleproto';
 import { formatMediaLabel } from '../formatters/plain.js';
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 
+/** Per-chat sync checkpoints, keyed by chat ID (titles can change or collide). */
+interface SyncMeta {
+  [chatId: string]: {
+    title: string;
+    lastMessageId: number;
+    lastSyncDate: string;
+  };
+}
+
+function readSyncMeta(outputDir: string): SyncMeta {
+  const metaPath = join(outputDir, '.sync-meta.json');
+  if (existsSync(metaPath)) {
+    try {
+      return JSON.parse(readFileSync(metaPath, 'utf-8'));
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function writeSyncMeta(outputDir: string, meta: SyncMeta): void {
+  writeFileSync(join(outputDir, '.sync-meta.json'), JSON.stringify(meta, null, 2));
+}
+
+async function formatMessageLines(
+  client: TelegramClient,
+  chatId: string,
+  chatTitle: string,
+  msg: MessageInfo,
+  outputDir: string,
+  chatMediaDir: string,
+  downloadMedia: boolean
+): Promise<string[]> {
+  const time = msg.date.toISOString().replace('T', ' ').substring(0, 19);
+  const sender = msg.isOutgoing ? 'You' : msg.sender;
+  const reply = msg.replyToMsgId ? ` (reply to #${msg.replyToMsgId})` : '';
+  const lines: string[] = [`**${sender}** - ${time}${reply}`];
+
+  if (msg.media) {
+    if (downloadMedia) {
+      try {
+        const result = await downloadMessageMedia(client, chatId, msg.id, chatMediaDir);
+        if (result) {
+          const rel = relative(outputDir, result.filePath);
+          lines.push(`> [${formatMediaLabel(result.media)}](${rel})`);
+        } else {
+          lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
+        }
+      } catch (mediaErr) {
+        lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
+        console.error(
+          chalk.yellow(
+            `\nWarning: media download failed for ${chatTitle}#${msg.id}: ${
+              mediaErr instanceof Error ? mediaErr.message : mediaErr
+            }`
+          )
+        );
+      }
+    } else {
+      lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
+    }
+  }
+
+  if (msg.text || !msg.media) {
+    lines.push(`> ${msg.text || '(no text)'}`);
+  }
+  lines.push(`*#${msg.id}*\n`);
+  return lines;
+}
+
 export const syncCommand = new Command('sync')
   .description('Sync messages to markdown files')
   .option('--days <number>', 'Number of days to sync', '7')
+  .option('--since <time>', 'Start from time offset (e.g., "1h", "30m", "7d")')
+  .option('--until <time>', 'End at time offset (e.g., "1h", "30m", "7d")')
+  .option('--all', 'Sync entire chat history (no time limit)')
   .option('--chat <name>', 'Sync specific chat only')
   .option('--output <dir>', 'Output directory', './telegram-sync')
   .option('--media', 'Also download photos and documents alongside markdown')
+  .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
   .action(async (options) => {
     const spinner = ora('Starting sync...').start();
 
@@ -29,16 +107,32 @@ export const syncCommand = new Command('sync')
         mkdirSync(outputDir, { recursive: true });
       }
 
-      const minDate = new Date();
-      minDate.setDate(minDate.getDate() - parseInt(options.days));
+      // Determine date range
+      let minDate: Date | undefined;
+      let maxDate: Date | undefined;
+
+      if (options.all) {
+        // No date filtering
+      } else if (options.since) {
+        minDate = parseTimeOffset(options.since);
+      } else {
+        minDate = new Date();
+        minDate.setDate(minDate.getDate() - parseInt(options.days));
+      }
+
+      if (options.until) {
+        maxDate = parseTimeOffset(options.until);
+      }
+
+      // Checkpoints are always written, but only read with --resume
+      const meta = readSyncMeta(outputDir);
 
       let chats;
       if (options.chat) {
-        // Sync specific chat
         const allChats = await getDialogs(client, 500);
-        chats = allChats.filter(c =>
-          c.title.toLowerCase().includes(options.chat.toLowerCase())
-        );
+        const needle = options.chat.toLowerCase();
+        const exact = allChats.filter(c => c.id === options.chat || c.title.toLowerCase() === needle);
+        chats = exact.length > 0 ? exact : allChats.filter(c => c.title.toLowerCase().includes(needle));
 
         if (chats.length === 0) {
           spinner.fail(`No chat found matching "${options.chat}"`);
@@ -53,89 +147,75 @@ export const syncCommand = new Command('sync')
       spinner.text = `Syncing ${chats.length} chats...`;
 
       let synced = 0;
+      let newMessages = 0;
       for (const chat of chats) {
         try {
           spinner.text = `Syncing "${chat.title}"...`;
 
-          const { messages } = await getMessages(client, chat.title, {
-            limit: 1000,
+          const safeTitle = chat.title.replace(/[/\\?%*:|"<>]/g, '-');
+          const filePath = join(outputDir, `${safeTitle}.md`);
+          const chatMediaDir = join(outputDir, safeTitle, 'media');
+
+          // Incremental sync: only messages newer than the last checkpoint
+          const minId = options.resume && existsSync(filePath) ? meta[chat.id]?.lastMessageId : undefined;
+
+          const fetchOptions: Parameters<typeof getMessages>[2] = {
+            limit: options.all ? Number.MAX_SAFE_INTEGER : 1000,
             minDate,
-          });
+            maxDate,
+          };
+          if (minId) {
+            fetchOptions.minId = minId;
+          }
+
+          const { messages } = await getMessages(client, chat.id, fetchOptions);
 
           if (messages.length === 0) {
             continue;
           }
 
-          // Generate markdown
-          const lines: string[] = [];
-          lines.push(`# ${chat.title}`);
-          lines.push(`\nType: ${chat.type}`);
-          if (chat.username) {
-            lines.push(`Username: @${chat.username}`);
-          }
-          lines.push(`\nSynced: ${new Date().toISOString()}`);
-          lines.push(`Messages: ${messages.length}`);
-          lines.push('\n---\n');
-
           // Sort messages chronologically
           messages.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-          const safeTitle = chat.title.replace(/[/\\?%*:|"<>]/g, '-');
-          const chatMediaDir = join(outputDir, safeTitle, 'media');
-
+          const body: string[] = [];
           for (const msg of messages) {
-            const time = msg.date.toISOString().replace('T', ' ').substring(0, 19);
-            const sender = msg.isOutgoing ? 'You' : msg.sender;
-            const reply = msg.replyToMsgId ? ` (reply to #${msg.replyToMsgId})` : '';
-
-            lines.push(`**${sender}** - ${time}${reply}`);
-
-            if (msg.media) {
-              if (options.media) {
-                try {
-                  const result = await downloadMessageMedia(
-                    client,
-                    chat.title,
-                    msg.id,
-                    chatMediaDir
-                  );
-                  if (result) {
-                    const rel = relative(outputDir, result.filePath);
-                    lines.push(`> [${formatMediaLabel(result.media)}](${rel})`);
-                  } else {
-                    lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
-                  }
-                } catch (mediaErr) {
-                  lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
-                  console.error(
-                    chalk.yellow(
-                      `\nWarning: media download failed for ${chat.title}#${msg.id}: ${
-                        mediaErr instanceof Error ? mediaErr.message : mediaErr
-                      }`
-                    )
-                  );
-                }
-              } else {
-                lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
-              }
-            }
-
-            lines.push(`> ${msg.text || '(no text)'}`);
-            lines.push(`*#${msg.id}*\n`);
+            body.push(...(await formatMessageLines(client, chat.id, chat.title, msg, outputDir, chatMediaDir, !!options.media)));
           }
 
-          // Write file
-          const filename = `${safeTitle}.md`;
-          writeFileSync(join(outputDir, filename), lines.join('\n'));
+          let content: string;
+          if (minId) {
+            // Append new messages to the existing file
+            content = readFileSync(filePath, 'utf-8').trimEnd() + '\n\n' + body.join('\n');
+          } else {
+            const header: string[] = [`# ${chat.title}`, `\nType: ${chat.type}`];
+            if (chat.username) {
+              header.push(`Username: @${chat.username}`);
+            }
+            header.push(`\nSynced: ${new Date().toISOString()}`);
+            header.push(`Messages: ${messages.length}`);
+            header.push('\n---\n');
+            content = [...header, ...body].join('\n');
+          }
+
+          writeFileSync(filePath, content);
+
+          meta[chat.id] = {
+            title: chat.title,
+            lastMessageId: Math.max(minId ?? 0, ...messages.map(m => m.id)),
+            lastSyncDate: new Date().toISOString(),
+          };
 
           synced++;
+          newMessages += messages.length;
         } catch (error) {
           // Skip chats that fail
           console.error(chalk.yellow(`\nWarning: Could not sync "${chat.title}": ${error instanceof Error ? error.message : error}`));
         }
       }
 
-      spinner.succeed(chalk.green(`Synced ${synced} chats to ${outputDir}`));
+      writeSyncMeta(outputDir, meta);
+
+      spinner.succeed(chalk.green(`Synced ${newMessages} messages from ${synced} chats to ${outputDir}`));
 
       await disconnectClient();
       process.exit(0);

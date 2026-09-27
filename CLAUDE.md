@@ -34,3 +34,12 @@ Layer 229 differences the code relies on: one `KeyboardButton`/`KeyboardInlineBu
 `Poll` needs `hash`; outgoing poll answers are `InputPollAnswer`; `ImportChatInvite` returns
 `messages.ChatInviteJoinResult*`; message text may live in `richMessage` — always read it through
 `messageText()` in `src/client.ts`.
+
+## Personal fork
+
+This checkout is a fork of `skillhq/telegram` (remote `upstream`, push disabled); `origin` is the
+private `TheVilfer/telegram-cli`. The global `telegram` binary is an `npm install -g <this dir>`
+symlink under homebrew node (`/opt/homebrew/bin/telegram`), so `npm run build` is enough to ship a
+change. Never `npm i -g @skillhq/telegram` or update the skill via the skills CLI — both replace
+this fork with upstream (GramJS, layer 198). Pull upstream with `git fetch upstream && git merge
+upstream/main`, keeping `teleproto` imports and reading text through `messageText()`.

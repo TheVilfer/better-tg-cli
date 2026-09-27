@@ -117,7 +117,7 @@ post_install() {
                 echo "" >&2
                 log "Fetching unread inbox..."
                 echo "" >&2
-                "$BINARY" inbox -n 5 || log "Inbox query failed."
+                "$BINARY" inbox || log "Inbox query failed."
                 ;;
         esac
     fi

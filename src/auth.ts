@@ -1,21 +1,7 @@
 import { TelegramClient } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
-import { createInterface } from 'readline';
 import { setCredentials, setSessionString } from './config.js';
-
-function prompt(question: string): Promise<string> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
+import { prompt } from './prompt.js';
 
 export async function authenticate(): Promise<TelegramClient> {
   console.log('\nTelegram Authentication Setup\n');

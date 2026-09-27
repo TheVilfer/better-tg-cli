@@ -18,6 +18,8 @@ Use this skill when the user:
 - Needs to look up group members or admins
 - Wants to mute/unmute a noisy chat or group
 - Needs to kick/remove a user from a group
+- Wants to promote a member to admin
+- Wants to transfer ownership of a group/channel to someone else
 - Wants to export or sync chat history to files
 - Asks to organize chats into folders
 - Wants to check their logged-in account or session status
@@ -53,7 +55,15 @@ telegram read "ChatName" --since "1h"        # Messages from last hour
 telegram read "ChatName" --until "2h"        # Messages up to 2 hours ago
 telegram read @username -n 20                # Read DM with user
 telegram read 123456789 -n 10               # Read by chat ID
+telegram read me -n 10                       # Saved Messages (also: self, saved, "Saved Messages", Избранное)
+telegram read -1001099860397 -n 10           # By chat ID as printed by `chats --json`
 ```
+
+> **Chat identifiers:** `me`/`self`/`Saved Messages` always mean your own Saved Messages.
+> Numeric IDs are matched against dialog IDs exactly (use the `id` from `chats --json`).
+> Anything else is matched by title — exact first, then **substring**, so short names can
+> hit the wrong chat. Prefer `@username` or the numeric ID for anything that writes.
+
 
 ### Searching
 ```bash
@@ -245,7 +255,18 @@ telegram admins "GroupName"                  # List admins only
 telegram groups                              # List all groups
 telegram groups --admin                      # Groups where you're admin
 telegram kick "GroupName" @username           # Remove user from group
+telegram promote "GroupName" @username        # Promote a member to admin
+telegram promote "GroupName" @username --rank "Mod"  # Promote with a custom admin title
+telegram promote "GroupName" @username --add-admins  # Allow them to add admins too
+telegram transfer-owner "GroupName" @username # Hand over ownership (prompts for 2FA password)
 ```
+
+**`transfer-owner` notes:**
+- Irreversible: you drop to a regular admin/member and only the new owner can transfer it back.
+- Requires two-step verification (cloud password) on your account; it is prompted for securely at runtime.
+- Supergroups and channels only - convert a basic group to a supergroup first.
+- The target must already be a member. Telegram also blocks transfer for ~24h after a new login and ~7 days after setting/changing your 2FA password.
+- Prompts you to retype the group name to confirm; pass `-y` to skip that confirmation.
 
 ### Muting
 ```bash
@@ -268,10 +289,21 @@ telegram folder-remove "Work" "ProjectChat"  # Remove chat from folder
 ```bash
 telegram sync                                # Sync last 7 days to ./telegram-sync
 telegram sync --days 30                      # Sync last 30 days
+telegram sync --since "12h"                  # Sync messages from last 12 hours
+telegram sync --until "2d"                   # Sync messages up to 2 days ago
+telegram sync --all                          # Sync entire chat history (no time limit)
 telegram sync --chat "ChatName"              # Sync specific chat only
 telegram sync --output ~/exports             # Custom output directory
 telegram sync --chat "ChatName" --media      # Also download photos/documents into <chat>/media/
+telegram sync --resume                       # Incremental: only fetch new messages
+telegram sync --resume --all                 # Keep a complete archive up to date
 ```
+
+**Incremental sync (`--resume`):**
+- Tracks last synced message ID per chat in `.sync-meta.json`
+- On subsequent runs, only fetches messages newer than last sync
+- Appends new messages to existing markdown files
+- Combine with `--all` to maintain a complete, up-to-date archive
 
 ## 📤 Output Formats
 
@@ -294,6 +326,35 @@ telegram members "Group" --markdown          # Markdown member list
 
 **Supported on:** `inbox`, `read`, `search`, `chats`, `members`, `groups`, `contact`, `whoami`, `buttons`, `click`
 
+**JSON shapes differ per command** — don't assume a wrapper key:
+
+| Command | Top-level shape | jq example |
+|---------|-----------------|------------|
+| `chats` | array of chats (`id`, `title`, `type`, `unreadCount`, ...) | `.[] \| .title` |
+| `read` | object `{chatTitle, messages: [...]}` | `.messages[] \| .text` |
+| `search` | array of `{messages: [...]}` | `.[].messages[]` |
+| `inbox` | object `{totalUnread, chatsWithUnread, chats: [...]}` | `.chats[]` |
+| `whoami` | object `{id, firstName, lastName, username, phone}` | `.username` |
+
+## 📎 Media Metadata
+
+Messages containing media (photos, videos, documents, voice notes, stickers, etc.) now include metadata instead of showing "(no text)":
+
+| Media Type | Display |
+|-----------|---------|
+| Photo | `[📷 Photo]` |
+| Video | `[🎥 Video (2.1 MB)]` |
+| Document | `[📎 report.pdf (540.0 KB)]` |
+| Voice | `[🎤 Voice message]` |
+| Audio | `[🎵 song.mp3 (3.2 MB)]` |
+| Sticker | `[😀 Sticker]` |
+| GIF | `[🎬 GIF]` |
+| Location | `[📍 Location]` |
+| Contact | `[👤 Contact]` |
+| Poll | `[📊 Poll]` |
+
+In JSON output, messages include `mediaType`, `fileName`, and `fileSize` fields when media is present.
+
 ## 🤖 AI Agent Guidance
 
 When using this CLI as an AI agent:
@@ -302,11 +363,15 @@ When using this CLI as an AI agent:
 - **For displaying to the user**: use default or `--markdown`
 - **Chat identification**: names are partial-matched (e.g., "MetaDAO" matches "MetaDAO Community"), usernames must start with `@`, numeric IDs also work
 - **Read operations are safe** to run without confirmation
-- **Write operations** (`send`, `reply`, `edit`, `delete`, `kick`, `click`, `react`, `forward`, `pin`, `unpin`, `poll`, `vote`, `block`, `unblock`, `add-contact`, `del-contact`, `join`, `leave`, `create-group`, `create-channel`, `archive`, `set-name`, `set-bio`, `set-username`, `set-avatar`, `mark-read`, `typing`, `invite-link`) should be confirmed with the user before executing — especially destructive ones (`delete`, `leave`, `block`, `set-*` which change the user's own profile) and `click` when the button mutates state
+- **Write operations** (`send`, `reply`, `edit`, `delete`, `kick`, `click`, `react`, `forward`, `pin`, `unpin`, `poll`, `vote`, `block`, `unblock`, `add-contact`, `del-contact`, `join`, `leave`, `create-group`, `create-channel`, `archive`, `set-name`, `set-bio`, `set-username`, `set-avatar`, `mark-read`, `typing`, `invite-link`, `promote`, `transfer-owner`) should be confirmed with the user before executing — especially destructive ones (`delete`, `leave`, `block`, `set-*` which change the user's own profile) and `click` when the button mutates state
 - **`watch` runs until stopped** — always pass `-t <seconds>` or `-n <count>` when running it non-interactively so it terminates on its own
 - **Pressing bot buttons**: run `read`/`buttons` first to get the message `#id` and the button `[index]`, then `click <chat> <id> <index|text>`; after a callback press, read the returned edited message + new buttons to decide the next press
+- **`transfer-owner` is irreversible and interactive** (it prompts for a 2FA password and a typed confirmation), so it cannot be run unattended; never script it on a user's behalf without explicit instruction
 - **Rate limiting**: avoid rapid successive calls; the Telegram API has rate limits
 - **Large groups**: use `-n` to limit `members` output on very large groups
+- **Full archive**: use `telegram sync --all --chat "Name"` to export complete chat history
+- **Keeping archives fresh**: use `telegram sync --resume` to incrementally update previous exports
+- **Media-rich chats**: messages with photos/videos/files now show metadata, not just "(no text)"
 
 ## 💡 Examples
 
@@ -340,9 +405,14 @@ Send a message:
 telegram send @username "Hello, checking in!"
 ```
 
-Export a chat's history:
+Export a chat's complete history:
 ```bash
-telegram sync --chat "Project Chat" --days 14 --output ~/exports
+telegram sync --all --chat "Project Chat" --output ~/exports
+```
+
+Incrementally update an existing export:
+```bash
+telegram sync --resume --output ~/exports
 ```
 
 Filter chats by type:
@@ -353,6 +423,16 @@ telegram chats --type channel --json
 Kick a user from a group:
 ```bash
 telegram kick "My Group" @spammer
+```
+
+Promote a member to admin:
+```bash
+telegram promote "My Group" @trustedmember
+```
+
+Transfer ownership of a group to someone else:
+```bash
+telegram transfer-owner "My Group" @newowner
 ```
 
 ## 📝 Notes
@@ -368,3 +448,5 @@ telegram kick "My Group" @spammer
   (MTProto layer 229) and renders those blocks to plain text, so `read`/`search`/`watch`/`click`
   show the real reply (with its inline keyboard) rather than `(no text)`. If a bot reply ever shows
   as `(no text)` with `MessageMediaUnsupported` again, the TL layer is behind — bump `teleproto`.
+- Sync metadata (`.sync-meta.json`) enables incremental sync with `--resume`
+- Messages paginate automatically — no silent truncation for large chats

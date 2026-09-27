@@ -3,6 +3,7 @@ import { StringSession } from 'teleproto/sessions/index.js';
 import { CustomFile } from 'teleproto/client/uploads.js';
 import { Logger, LogLevel } from 'teleproto/extensions/Logger.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
+import { computeCheck } from 'teleproto/Password.js';
 import { getCredentials, getSessionString, setSessionString, isConfigured } from './config.js';
 import bigInt from 'big-integer';
 import { existsSync, mkdirSync, statSync } from 'fs';
@@ -399,37 +400,70 @@ function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
   return undefined;
 }
 
+export function parseTimeOffset(offset: string): Date {
+  const now = new Date();
+  const match = offset.match(/^(\d+)([mhd])$/);
+  if (!match) {
+    throw new Error(`Invalid time offset: ${offset}. Use format like "1h", "30m", "7d"`);
+  }
+  const value = parseInt(match[1]);
+  const unit = match[2];
+  switch (unit) {
+    case 'm': return new Date(now.getTime() - value * 60 * 1000);
+    case 'h': return new Date(now.getTime() - value * 60 * 60 * 1000);
+    case 'd': return new Date(now.getTime() - value * 24 * 60 * 60 * 1000);
+    default: throw new Error(`Unknown time unit: ${unit}`);
+  }
+}
+
 export async function getMessages(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { limit?: number; offsetId?: number; minDate?: Date; maxDate?: Date } = {}
+  options: { limit?: number; offsetId?: number; minDate?: Date; maxDate?: Date; minId?: number } = {}
 ): Promise<{ messages: MessageInfo[]; chatTitle: string }> {
-  const { limit = 50, offsetId, minDate, maxDate } = options;
+  const { limit = 50, offsetId, minDate, maxDate, minId } = options;
 
   // Find the chat by name or username
   const entity = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(entity);
 
   const messages: MessageInfo[] = [];
+  const BATCH_SIZE = 100;
 
-  // Use iterMessages for better control over parameters
-  const iterParams: { limit: number; offsetId?: number; reverse?: boolean } = {
-    limit: limit * 2, // Get more to filter by date
-  };
+  let currentOffsetId = offsetId;
+  let firstBatch = true;
 
-  if (offsetId) {
-    iterParams.offsetId = offsetId;
-  }
+  // Page backwards (newest first) until we have `limit` messages, cross minDate,
+  // or run out of history.
+  while (messages.length < limit) {
+    const batchLimit = Math.min(BATCH_SIZE, limit - messages.length + 50);
+    const params: { limit: number; offsetId?: number; offsetDate?: number; minId?: number } = { limit: batchLimit };
 
-  const result = await client.getMessages(entity, iterParams);
+    if (currentOffsetId) {
+      params.offsetId = currentOffsetId;
+    } else if (firstBatch && maxDate) {
+      // Server-side date filtering: start from maxDate on the first batch
+      params.offsetDate = Math.floor(maxDate.getTime() / 1000);
+    }
+    if (minId) {
+      params.minId = minId;
+    }
 
-  for (const msg of result) {
-    if (msg instanceof Api.Message) {
+    const batch = await client.getMessages(entity, params);
+    firstBatch = false;
+    if (batch.length === 0) break;
+
+    let reachedMinDate = false;
+
+    for (const msg of batch) {
+      if (!(msg instanceof Api.Message)) continue;
+
       const msgDate = new Date(msg.date * 1000);
-
-      // Filter by date if specified
-      if (minDate && msgDate < minDate) continue;
       if (maxDate && msgDate > maxDate) continue;
+      if (minDate && msgDate < minDate) {
+        reachedMinDate = true;
+        break;
+      }
       if (messages.length >= limit) break;
 
       const { sender, senderId } = await resolveSender(client, msg);
@@ -446,6 +480,27 @@ export async function getMessages(
         buttons: extractButtons(msg),
       });
     }
+
+    if (reachedMinDate) break;
+    if (messages.length >= limit) break;
+
+    // Page by the oldest Api.Message in the batch: Telegram mixes MessageService /
+    // MessageEmpty items into raw batches, and paging by batch[batch.length - 1]
+    // silently stops as soon as the oldest raw item is a service message.
+    let oldestMessageInBatch: Api.Message | null = null;
+    for (let i = batch.length - 1; i >= 0; i--) {
+      const candidate = batch[i];
+      if (candidate instanceof Api.Message) {
+        oldestMessageInBatch = candidate;
+        break;
+      }
+    }
+    if (!oldestMessageInBatch) break; // batch was all service messages
+    if (currentOffsetId === oldestMessageInBatch.id) break; // no progress
+    currentOffsetId = oldestMessageInBatch.id;
+
+    // If batch was smaller than requested, no more messages
+    if (batch.length < batchLimit) break;
   }
 
   return { messages, chatTitle };
@@ -853,7 +908,15 @@ export async function resolveChat(client: TelegramClient, identifier: string): P
   return entity;
 }
 
+const SELF_ALIASES = new Set(['me', 'self', 'saved', 'saved messages', 'избранное']);
+
 async function resolveChatUncached(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
+  // Saved Messages: resolve to our own user before any title matching, otherwise
+  // "me" substring-matches arbitrary chat titles ("Game", "Meetup", ...).
+  if (SELF_ALIASES.has(identifier.trim().toLowerCase())) {
+    return await client.getMe();
+  }
+
   // Check if it's a username (starts with @)
   if (identifier.startsWith('@')) {
     const entity = await client.getEntity(identifier);
@@ -863,15 +926,19 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     throw new Error(`Invalid entity type for: ${identifier}`);
   }
 
-  // Try to find by exact name in dialogs
   const dialogs = await client.getDialogs({ limit: 500 });
+  const isNumericId = /^-?\d+$/.test(identifier);
 
-  // First try exact match
-  let dialog = dialogs.find(d => d.title?.toLowerCase() === identifier.toLowerCase());
-
-  // Then try partial match
-  if (!dialog) {
-    dialog = dialogs.find(d => d.title?.toLowerCase().includes(identifier.toLowerCase()));
+  let dialog;
+  if (isNumericId) {
+    // Numeric IDs are matched against dialog peer IDs, never against titles
+    dialog = dialogs.find(d => d.id?.toString() === identifier);
+  } else {
+    // Exact title match first, then partial match
+    dialog = dialogs.find(d => d.title?.toLowerCase() === identifier.toLowerCase());
+    if (!dialog) {
+      dialog = dialogs.find(d => d.title?.toLowerCase().includes(identifier.toLowerCase()));
+    }
   }
 
   if (dialog && dialog.entity) {
@@ -883,7 +950,7 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
 
   // Try as a direct entity identifier
   try {
-    const entity = await client.getEntity(identifier);
+    const entity = await client.getEntity(isNumericId ? bigInt(identifier) : identifier);
     if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
       return entity;
     }
@@ -2128,4 +2195,201 @@ export async function getUserStories(
     }
   }
   return { name: getChatTitle(entity), stories };
+}
+
+// --- Admin Management Functions ---
+
+async function resolveUser(client: TelegramClient, userIdentifier: string): Promise<Api.User> {
+  const entity = await client.getEntity(userIdentifier);
+  if (!(entity instanceof Api.User)) {
+    throw new Error('Target is not a user');
+  }
+  return entity;
+}
+
+function userLabel(user: Api.User): string {
+  return user.username ? `@${user.username}` : (user.firstName || user.id.toString());
+}
+
+function friendlyAdminError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.includes('USER_NOT_PARTICIPANT') || msg.includes('USER_NOT_MUTUAL_CONTACT')) {
+    return 'The target must be a member of the group first.';
+  }
+  if (msg.includes('CHAT_ADMIN_REQUIRED') || msg.includes('ADMIN_RIGHT')) {
+    return 'You lack the rights to add admins in this group.';
+  }
+  if (msg.includes('USER_PRIVACY_RESTRICTED')) {
+    return "The target's privacy settings prevent this action.";
+  }
+  if (msg.includes('USER_CREATOR')) {
+    return 'That user is the group creator and cannot be changed this way.';
+  }
+  if (msg.includes('USER_ADMIN_INVALID')) {
+    return "You can't edit this user's admin status (they may have been promoted by someone else).";
+  }
+  if (msg.includes('RIGHT_FORBIDDEN')) {
+    return 'One of the requested admin rights is not allowed in this group.';
+  }
+  if (msg.includes('ADMINS_TOO_MUCH')) {
+    return 'This group already has the maximum number of admins.';
+  }
+  return msg;
+}
+
+function friendlyTransferError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.includes('PASSWORD_HASH_INVALID')) {
+    return 'Incorrect 2FA password.';
+  }
+  if (msg.includes('PASSWORD_MISSING')) {
+    return 'No 2FA password is set on your account. Enable two-step verification first.';
+  }
+  if (msg.includes('SRP_PASSWORD_CHANGED') || msg.includes('SRP_ID_INVALID')) {
+    return 'Your 2FA password state changed mid-request. Please try again.';
+  }
+  if (msg.includes('PASSWORD_TOO_FRESH')) {
+    return 'Your 2FA password was set too recently. Telegram blocks ownership transfer for ~7 days after enabling or changing it.';
+  }
+  if (msg.includes('SESSION_TOO_FRESH') || msg.includes('FRESH_CHANGE_ADMINS_FORBIDDEN')) {
+    return 'This login session is too new. Telegram blocks ownership transfer for ~24h after a new login.';
+  }
+  if (msg.includes('CHAT_ADMIN_REQUIRED') || msg.includes('CHANNEL_PRIVATE')) {
+    return 'You must be the creator of this group to transfer ownership.';
+  }
+  if (msg.includes('USER_NOT_PARTICIPANT') || msg.includes('USER_NOT_MUTUAL_CONTACT')) {
+    return 'The target must be a member of the group first.';
+  }
+  if (msg.includes('USER_PRIVACY_RESTRICTED')) {
+    return "The target's privacy settings prevent the transfer. Ask them to adjust their privacy settings or add you as a contact.";
+  }
+  if (msg.includes('USER_CHANNELS_TOO_MUCH')) {
+    return 'The target is in too many groups/channels and cannot receive ownership right now.';
+  }
+  if (msg.includes('CHANNELS_ADMIN_PUBLIC_TOO_MUCH')) {
+    return 'The target already owns too many public groups/channels.';
+  }
+  return msg;
+}
+
+export async function promoteAdmin(
+  client: TelegramClient,
+  chatIdentifier: string,
+  userIdentifier: string,
+  options: { rank?: string; canAddAdmins?: boolean } = {}
+): Promise<{ success: boolean; message: string }> {
+  const chat = await resolveChat(client, chatIdentifier);
+
+  let user: Api.User;
+  try {
+    user = await resolveUser(client, userIdentifier);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'Target is not a user') {
+      return { success: false, message: msg };
+    }
+    return { success: false, message: `User not found: ${userIdentifier}` };
+  }
+
+  if (chat instanceof Api.Channel) {
+    try {
+      await client.invoke(
+        new Api.channels.EditAdmin({
+          channel: chat,
+          userId: user,
+          adminRights: new Api.ChatAdminRights({
+            changeInfo: true,
+            postMessages: true,
+            editMessages: true,
+            deleteMessages: true,
+            banUsers: true,
+            inviteUsers: true,
+            pinMessages: true,
+            manageCall: true,
+            other: true,
+            addAdmins: options.canAddAdmins ?? false,
+          }),
+          rank: options.rank ?? '',
+        })
+      );
+      return { success: true, message: `Promoted ${userLabel(user)} to admin in "${chat.title}"` };
+    } catch (e: unknown) {
+      return { success: false, message: friendlyAdminError(e) };
+    }
+  } else if (chat instanceof Api.Chat) {
+    // Basic groups only support a single all-or-nothing admin toggle.
+    try {
+      await client.invoke(
+        new Api.messages.EditChatAdmin({
+          chatId: chat.id,
+          userId: user,
+          isAdmin: true,
+        })
+      );
+      const ignoredNote = (options.rank || options.canAddAdmins)
+        ? ' (basic groups grant full admin rights; --rank/--add-admins ignored)'
+        : '';
+      return { success: true, message: `Promoted ${userLabel(user)} to admin in "${chat.title}"${ignoredNote}` };
+    } catch (e: unknown) {
+      return { success: false, message: friendlyAdminError(e) };
+    }
+  }
+
+  return { success: false, message: 'Not a group chat' };
+}
+
+export async function transferOwnership(
+  client: TelegramClient,
+  chatIdentifier: string,
+  userIdentifier: string,
+  password: string
+): Promise<{ success: boolean; message: string }> {
+  const chat = await resolveChat(client, chatIdentifier);
+
+  if (!(chat instanceof Api.Channel)) {
+    return {
+      success: false,
+      message: 'Ownership transfer is only supported for supergroups and channels. Convert a basic group to a supergroup first.',
+    };
+  }
+
+  let user: Api.User;
+  try {
+    user = await resolveUser(client, userIdentifier);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg === 'Target is not a user') {
+      return { success: false, message: msg };
+    }
+    return { success: false, message: `User not found: ${userIdentifier}` };
+  }
+
+  let passwordInfo: Api.account.Password;
+  try {
+    passwordInfo = await client.invoke(new Api.account.GetPassword());
+  } catch (e: unknown) {
+    return { success: false, message: e instanceof Error ? e.message : String(e) };
+  }
+
+  if (!passwordInfo.hasPassword) {
+    return {
+      success: false,
+      message: 'Ownership transfer requires two-step verification (a cloud password) on your account. Enable it in Telegram > Settings > Privacy and Security first.',
+    };
+  }
+
+  try {
+    const srpCheck = await computeCheck(passwordInfo, password);
+    await client.invoke(
+      // Layer 229 replaced channels.editCreator with messages.editChatCreator
+      new Api.messages.EditChatCreator({
+        peer: chat,
+        userId: user,
+        password: srpCheck,
+      })
+    );
+    return { success: true, message: `Transferred ownership of "${chat.title}" to ${userLabel(user)}` };
+  } catch (e: unknown) {
+    return { success: false, message: friendlyTransferError(e) };
+  }
 }
