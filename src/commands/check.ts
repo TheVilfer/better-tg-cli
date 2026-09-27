@@ -5,12 +5,14 @@ import { configDir, profile } from '../paths.js';
 import { isSecretStoreAvailable } from '../secrets.js';
 import { isOnePasswordAvailable } from '../onepassword.js';
 import { isKeychainAvailable } from '../keychain.js';
+import { isLibsecretAvailable } from '../libsecret.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 
 function getSecretBackendLabel(): string {
   if (isOnePasswordAvailable()) return '1Password';
   if (isKeychainAvailable()) return 'macOS Keychain';
+  if (isLibsecretAvailable()) return 'Secret Service (libsecret)';
   return 'config file (plaintext)';
 }
 

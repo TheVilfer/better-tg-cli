@@ -125,6 +125,10 @@ matches titles.
   as `(no text)`.
 - `Write access is disabled`: the account is read-only on purpose, or a `--for` window expired. Ask
   the user, then run `telegram write-access on --for 1h`; they confirm it in a dialog.
+- `FLOOD_WAIT` (rate limit): waits of up to 60 s are retried automatically, and stderr says
+  `Telegram rate limit on <method>: waiting Ns`. Longer waits fail with the wait in the error
+  message. `TG_FLOOD_WAIT_MAX=<seconds>` changes the limit: `0` fails fast, a larger value suits
+  long `sync` runs. Don't retry in a loop, because Telegram extends the ban.
 - `CHANNELS_TOO_MUCH` on `join`: the account hit Telegram's channel limit, so leave some first.
 - `Could not find the input entity`: the ID is not in your dialogs. Use `@username` or open the
   chat first.

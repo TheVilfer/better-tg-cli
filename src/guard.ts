@@ -5,7 +5,7 @@ import { setStrictChatResolution } from './resolve-mode.js';
 
 export function assertWriteEnabled(): void {
   if (!isSecretStoreAvailable()) {
-    console.error(chalk.red('Write access requires a secret store (macOS Keychain or 1Password).'));
+    console.error(chalk.red('Write access requires a secret store (macOS Keychain, Linux Secret Service or 1Password).'));
     console.error(chalk.gray('This ensures write permissions cannot be tampered with via config files.'));
     process.exit(1);
   }

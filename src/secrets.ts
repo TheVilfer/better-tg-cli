@@ -12,14 +12,16 @@ import {
   opGet,
   opSet,
 } from './onepassword.js';
+import { isLibsecretAvailable, libsecretDelete, libsecretGet, libsecretSet } from './libsecret.js';
 
 export { SECRET_KEYS, isSecretKey };
 
-type Provider = 'op' | 'keychain' | 'none';
+type Provider = 'op' | 'keychain' | 'libsecret' | 'none';
 
 function activeProvider(): Provider {
   if (isOnePasswordAvailable()) return 'op';
   if (isKeychainAvailable()) return 'keychain';
+  if (isLibsecretAvailable()) return 'libsecret';
   return 'none';
 }
 
@@ -31,6 +33,7 @@ export function secretGet(key: string): string | null {
   const provider = activeProvider();
   if (provider === 'op') return opGet(key);
   if (provider === 'keychain') return keychainGet(key);
+  if (provider === 'libsecret') return libsecretGet(key);
   return null;
 }
 
@@ -38,6 +41,7 @@ export function secretSet(key: string, value: string): boolean {
   const provider = activeProvider();
   if (provider === 'op') return opSet(key, value);
   if (provider === 'keychain') return keychainSet(key, value);
+  if (provider === 'libsecret') return libsecretSet(key, value);
   return false;
 }
 
@@ -45,6 +49,7 @@ export function secretDelete(key: string): boolean {
   const provider = activeProvider();
   if (provider === 'op') return opDelete(key);
   if (provider === 'keychain') return keychainDelete(key);
+  if (provider === 'libsecret') return libsecretDelete(key);
   return false;
 }
 

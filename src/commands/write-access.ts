@@ -38,7 +38,7 @@ export const writeAccessCommand = new Command('write-access')
   .option('--for <duration>', 'With "on": turn writes off again automatically after 30m / 2h / 1d / 1w')
   .action(async (action: string | undefined, options: { for?: string }) => {
     if (!isSecretStoreAvailable()) {
-      console.error(chalk.red('No secret store available (macOS Keychain or 1Password required).'));
+      console.error(chalk.red('No secret store available (macOS Keychain, Linux Secret Service via secret-tool, or 1Password required).'));
       console.error(chalk.gray('Write access control requires a secret store to prevent tampering.'));
       process.exit(1);
     }
