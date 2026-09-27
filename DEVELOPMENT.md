@@ -60,6 +60,13 @@ A dev profile can use:
 - `bun --inspect-wait src/index.ts <args>` gives a debug.bun.sh URL, if you prefer Bun's inspector.
 - teleproto logs go to stderr only, so `--json` output stays parseable at any `TG_LOG_LEVEL`.
 
+## TypeScript
+
+`tsc` is TypeScript 7 (the native compiler, `@typescript/native`). It has no JS API and no
+tsserver, so `typescript` in devDependencies is an alias for TypeScript 6 (`tsc6`), used by editors
+and any tool that imports the compiler. `.vscode/settings.json` points the editor at it. Accept
+"Use Workspace Version" if Cursor asks.
+
 ## Checks
 
 ```bash

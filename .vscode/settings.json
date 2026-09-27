@@ -1,0 +1,6 @@
+{
+  // TypeScript 7 (`tsc`, @typescript/native) is a native binary with no tsserver.
+  // The editor uses TS 6 (the `typescript` alias) for IntelliSense; types match.
+  "typescript.tsdk": "node_modules/@typescript/old/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
+}
