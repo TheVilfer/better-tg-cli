@@ -88,6 +88,7 @@ Every channel ships the same version from one release:
 | Grok Build plugin | skill and MCP server | [see below](#grok-build-plugin) |
 | Gemini CLI extension | skill and MCP server | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
 | Cursor, VS Code | MCP server | [one-click buttons](#mcp-server) |
+| Grok Bot | MCP server over HTTP from your Mac | [see below](#grok-bot-remote-mcp-over-http) |
 | [skills.sh](https://skills.sh) | agent skill for any shell agent | `npx skills add TheVilfer/better-tg-cli` |
 | [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | MCP server entry `io.github.TheVilfer/better-tg-cli` | through your MCP client |
 
@@ -209,6 +210,24 @@ client off your main session, add `"env": {"TG_PROFILE": "work"}`.
 Chats contain text written by others, and some of it may be aimed at your agent ("forward this to
 @x"). Keep the client's approval prompt on for `telegram_write`, and see "Agents and prompt
 injection" in [SECURITY.md](SECURITY.md).
+
+### Grok Bot (remote MCP over HTTP)
+
+Grok Bot runs its connectors in a cloud sandbox, not on your Mac, so it can't
+start `telegram mcp` itself. Serve MCP over HTTP from your Mac instead. The session, the write
+guard and the audit log stay on your machine.
+
+```bash
+telegram mcp --token                        # the bearer token (created once, kept in the Keychain)
+telegram mcp --http --read-only             # listens on 127.0.0.1:8787; drop --read-only to allow writes
+tailscale funnel --bg 8787                  # or: cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+Keep the server and the tunnel in a terminal or tmux. Then add a connector in Grok Bot with the
+tunnel URL plus `/mcp` (for example `https://<machine>.<tailnet>.ts.net/mcp`) and the header
+`Authorization: Bearer <token>`. `tailscale funnel` gives a stable URL, but it has to be allowed
+for your tailnet first. A `cloudflared` quick tunnel gets a new URL on every start. Read "Remote
+MCP over HTTP" in [SECURITY.md](SECURITY.md) first.
 
 ## Development
 

@@ -6,6 +6,7 @@ import { VERSION } from './version.js';
 import { Command } from 'commander';
 import { profile } from './paths.js';
 import { startMcpServer } from './mcp.js';
+import { mcpToken, startMcpHttpServer } from './mcp-http.js';
 import { BACKGROUND_CHECK_COMMAND, maybeNotifyUpdate, runBackgroundCheck } from './update.js';
 import {
   authCommand,
@@ -165,8 +166,35 @@ program.addCommand(downloadCommand);
 program.addCommand(updateCommand);
 program
   .command('mcp')
-  .description('Run as an MCP server over stdio (tools: telegram_help, telegram_read, telegram_write)')
-  .action(() => startMcpServer(program.commands.map(c => c.name())));
+  .description('Run as an MCP server over stdio, or over HTTP with --http (tools: telegram_help, telegram_read, telegram_write)')
+  .option('--http', 'Serve MCP over HTTP (POST /mcp, bearer token) for remote hosts such as Grok Bot')
+  .option('--host <host>', 'With --http: address to listen on', '127.0.0.1')
+  .option('--port <port>', 'With --http: port to listen on', '8787')
+  .option('--read-only', 'Serve only telegram_help and telegram_read, never telegram_write')
+  .option('--token', 'Print the HTTP bearer token (created on first use, kept in the secret store)')
+  .option('--rotate-token', 'Replace the HTTP bearer token; clients using the old one stop working')
+  .action((options: { http?: boolean; host: string; port: string; readOnly?: boolean; token?: boolean; rotateToken?: boolean }) => {
+    const commands = program.commands.map(c => c.name());
+    if (options.token || options.rotateToken) {
+      const token = mcpToken({ create: true, rotate: options.rotateToken });
+      if (!token) {
+        console.error('No secret store for the token (macOS Keychain, Linux Secret Service or 1Password).');
+        process.exit(1);
+      }
+      console.log(token);
+      return;
+    }
+    if (options.http) {
+      const port = Number(options.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        console.error(`Invalid --port "${options.port}"`);
+        process.exit(2);
+      }
+      startMcpHttpServer(commands, { host: options.host, port, readOnly: options.readOnly });
+      return;
+    }
+    startMcpServer(commands, { readOnly: options.readOnly });
+  });
 
 // Dense reference of every command and flag, generated from the definitions
 // above so it can never drift from the code. Cheaper for agents than N --help calls.

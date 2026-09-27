@@ -204,7 +204,7 @@ function runCli(plan: Plan): Promise<ToolResult> {
 
 type RpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 
-export async function handleMessage(msg: RpcMessage, run = runCli): Promise<object | undefined> {
+export async function handleMessage(msg: RpcMessage, run = runCli, options: { readOnly?: boolean } = {}): Promise<object | undefined> {
   const reply = (result: unknown) => ({ jsonrpc: '2.0', id: msg.id, result });
   const fail = (code: number, message: string) => ({ jsonrpc: '2.0', id: msg.id ?? null, error: { code, message } });
   if (msg.method === undefined) return msg.id === undefined ? undefined : fail(-32600, 'Invalid request');
@@ -227,9 +227,11 @@ export async function handleMessage(msg: RpcMessage, run = runCli): Promise<obje
     case 'ping':
       return reply({});
     case 'tools/list':
-      return reply({ tools: TOOLS });
+      return reply({ tools: options.readOnly ? TOOLS.filter(t => t.name !== 'telegram_write') : TOOLS });
     case 'tools/call': {
-      const plan = planCall(String(msg.params?.name ?? ''), (msg.params?.arguments ?? {}) as Record<string, unknown>);
+      const name = String(msg.params?.name ?? '');
+      if (options.readOnly && name === 'telegram_write') return reply(text('This server is read-only (started with --read-only)', true));
+      const plan = planCall(name, (msg.params?.arguments ?? {}) as Record<string, unknown>);
       return reply(typeof plan === 'string' ? text(plan, true) : await run(plan));
     }
     default:
@@ -237,7 +239,7 @@ export async function handleMessage(msg: RpcMessage, run = runCli): Promise<obje
   }
 }
 
-export function startMcpServer(commands: Iterable<string>): void {
+export function startMcpServer(commands: Iterable<string>, options: { readOnly?: boolean } = {}): void {
   setKnownCommands(commands);
   let queue: Promise<void> = Promise.resolve();
   const send = (obj: object) => process.stdout.write(JSON.stringify(obj) + '\n');
@@ -253,7 +255,7 @@ export function startMcpServer(commands: Iterable<string>): void {
     }
     queue = queue.then(async () => {
       try {
-        const res = await handleMessage(msg);
+        const res = await handleMessage(msg, runCli, options);
         if (res) send(res);
       } catch (e) {
         send({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } });

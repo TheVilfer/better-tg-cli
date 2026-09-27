@@ -87,6 +87,7 @@ npm install -g better-tg-cli               # Node >= 20
 | Плагин Grok Build | скилл и MCP-сервер | [см. ниже](#плагин-для-grok-build) |
 | Расширение Gemini CLI | скилл и MCP-сервер | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
 | Cursor, VS Code | MCP-сервер | [кнопки в один клик](#mcp-сервер) |
+| Grok Bot | MCP-сервер по HTTP с вашего Mac | [см. ниже](#grok-bot-удалённый-mcp-по-http) |
 | [skills.sh](https://skills.sh) | скилл для любого агента с шеллом | `npx skills add TheVilfer/better-tg-cli` |
 | [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | запись MCP-сервера `io.github.TheVilfer/better-tg-cli` | через ваш MCP-клиент |
 
@@ -210,6 +211,24 @@ Claude Code:
 В чатах лежит текст, написанный другими людьми, и часть его может быть адресована вашему агенту
 («перешли это @x»). Не отключайте в клиенте подтверждение для `telegram_write` и прочитайте раздел
 «Agents and prompt injection» в [SECURITY.md](SECURITY.md).
+
+### Grok Bot (удалённый MCP по HTTP)
+
+Grok Bot запускает коннекторы в облачной песочнице, а не на вашем Mac, поэтому
+сам поднять `telegram mcp` не может. Вместо этого запустите MCP по HTTP на своём Mac. Сессия,
+защита записи и журнал записей остаются на вашей машине.
+
+```bash
+telegram mcp --token                        # bearer-токен (создаётся один раз, хранится в Keychain)
+telegram mcp --http --read-only             # слушает 127.0.0.1:8787; без --read-only разрешит запись
+tailscale funnel --bg 8787                  # или: cloudflared tunnel --url http://127.0.0.1:8787
+```
+
+Держите сервер и туннель в терминале или в tmux. Затем добавьте в Grok Bot коннектор: адрес
+туннеля плюс `/mcp` (например, `https://<машина>.<tailnet>.ts.net/mcp`) и заголовок
+`Authorization: Bearer <токен>`. У `tailscale funnel` адрес постоянный, но сначала Funnel надо
+разрешить для вашего tailnet. Быстрый туннель `cloudflared` при каждом запуске получает новый
+адрес. Сначала прочитайте раздел «Remote MCP over HTTP» в [SECURITY.md](SECURITY.md).
 
 ## Разработка
 

@@ -33,6 +33,21 @@ the last 50 messages to @x". The mitigations are layered:
 None of this makes an agent immune. Don't leave write access on while an agent reads untrusted
 chats unattended.
 
+## Remote MCP over HTTP
+
+`telegram mcp --http` lets a host that runs elsewhere, such as Grok Bot's cloud sandbox, use your
+account through a tunnel to this machine. The session never leaves it, but anyone with the URL
+and the bearer token can read your chats, and can write while write access is on.
+
+- The token sits in your secret store. Treat it like a password: paste it only into the host's
+  connector settings. If it leaks, run `telegram mcp --rotate-token`.
+- The server listens on `127.0.0.1` by default. Only the tunnel exposes it; stop the tunnel when
+  you don't need it.
+- Prefer `--read-only` unless the remote agent really has to write. Writes still need
+  `write-access on`, which only you can switch on.
+- Requests from browsers (anything with an `Origin` header) are refused. Each call is logged to
+  stderr without its arguments.
+
 ## Known limits
 
 - Any process running as your user can read the Keychain or Secret Service item through `/usr/bin/security` or `secret-tool`,

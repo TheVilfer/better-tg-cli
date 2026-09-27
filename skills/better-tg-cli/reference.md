@@ -119,9 +119,14 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
     Showing its status is allowed.
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
-- **Execution:** each call is a separate CLI process with no stdin. Calls run one at a time, time
-  out after 120 s, and output is capped at 100 KB. `watch` needs `-t` or `-n`.
+- **Execution:** each call is a separate CLI process with no stdin (a worker thread inside Claude
+  Desktop). Calls run one at a time, time out after 120 s, and output is capped at 100 KB.
+  `watch` needs `-t` or `-n`.
 - **Protocol:** MCP 2025-11-25 with the `initialize` handshake. Newer clients fall back to it.
+- **HTTP:** `telegram mcp --http [--host 127.0.0.1] [--port 8787]` serves the same tools on
+  `POST /mcp` (stateless, JSON responses) for remote hosts such as Grok Bot. Every request needs
+  `Authorization: Bearer <token>` (`telegram mcp --token`, `--rotate-token`). Requests with an
+  `Origin` header are refused. `--read-only` drops `telegram_write` (also works over stdio).
 
 ## Chat identifiers
 
