@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#install">Install</a> · <a href="reference.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a>
+    <a href="#install">Install</a> · <a href="skills/better-tg-cli/reference.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a>
   </p>
 </div>
 
@@ -78,11 +78,14 @@ Do **not** install `@skillhq/telegram`. It is the old upstream build on GramJS (
 
 ### As an agent skill
 
-The repo itself is the skill (`SKILL.md` + `reference.md`):
+The skill ([`skills/better-tg-cli`](skills/better-tg-cli/SKILL.md)) teaches any agent with a shell
+(Claude Code, Codex, Cursor, Gemini CLI, OpenCode and others) to use the CLI safely. It checks the
+setup, never logs in on its own, keeps writes behind your approval, and avoids ban-prone patterns.
+Install it with the [skills](https://skills.sh) CLI:
 
 ```bash
-git clone https://github.com/TheVilfer/better-tg-cli.git ~/.agents/skills/telegram
-ln -s ~/.agents/skills/telegram ~/.claude/skills/telegram
+npx skills add TheVilfer/better-tg-cli          # pick agents interactively
+npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 ```
 
 ## Log in
@@ -124,7 +127,7 @@ telegram click @SomeBot 4410 "Settings"       # press an inline button
 ```
 
 Read commands take `--json`, and some also take `--markdown`. See all commands with
-`telegram help-all`. [reference.md](reference.md) covers the behaviour that the flag list can't
+`telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
 explain: output shapes, threads, bot buttons, admin commands and troubleshooting.
 
 ## MCP server

@@ -35,9 +35,10 @@ for old in @skillhq/telegram better-telegram-cli; do
 done
 npm install -g --no-fund --no-audit .
 
+# Link the skill folder (not the whole checkout) into agents that are present
 for agent in "$HOME/.claude/skills" "$HOME/.codex/skills"; do
-    if [ -d "$(dirname "$agent")" ] && [ ! -e "$agent/telegram" ]; then
-        mkdir -p "$agent" && ln -s "$DIR" "$agent/telegram" && log "Linked skill into $agent/telegram"
+    if [ -d "$(dirname "$agent")" ] && [ ! -e "$agent/better-tg-cli" ]; then
+        mkdir -p "$agent" && ln -s "$DIR/skills/better-tg-cli" "$agent/better-tg-cli" && log "Linked skill into $agent/better-tg-cli"
     fi
 done
 

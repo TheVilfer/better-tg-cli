@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#установка">Установка</a> · <a href="reference.md">Справка</a> · <a href="SECURITY.md">Безопасность</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a>
+    <a href="#установка">Установка</a> · <a href="skills/better-tg-cli/reference.md">Справка</a> · <a href="SECURITY.md">Безопасность</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a>
   </p>
 </div>
 
@@ -77,11 +77,14 @@ npm install -g better-tg-cli               # Node >= 20
 
 ### Как скилл для агента
 
-Сам репозиторий и есть скилл (`SKILL.md` + `reference.md`):
+Скилл ([`skills/better-tg-cli`](skills/better-tg-cli/SKILL.md)) учит любого агента с шеллом
+(Claude Code, Codex, Cursor, Gemini CLI, OpenCode и других) безопасно работать с CLI. Он проверяет
+установку, никогда не входит сам, держит запись под вашим подтверждением и обходит действия, за
+которые банят. Ставится через CLI [skills](https://skills.sh):
 
 ```bash
-git clone https://github.com/TheVilfer/better-tg-cli.git ~/.agents/skills/telegram
-ln -s ~/.agents/skills/telegram ~/.claude/skills/telegram
+npx skills add TheVilfer/better-tg-cli          # агенты выбираются интерактивно
+npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 ```
 
 ## Вход
@@ -124,7 +127,7 @@ telegram click @SomeBot 4410 "Настройки"      # нажать инлай
 ```
 
 Команды чтения принимают `--json`, а некоторые и `--markdown`. Все команды выводит
-`telegram help-all`. В [reference.md](reference.md) описано то, чего не видно по списку флагов:
+`telegram help-all`. В [reference.md](skills/better-tg-cli/reference.md) описано то, чего не видно по списку флагов:
 форматы вывода, треды, кнопки ботов, админские команды, решение проблем.
 
 ## MCP-сервер

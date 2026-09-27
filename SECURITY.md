@@ -23,7 +23,7 @@ the last 50 messages to @x". The mitigations are layered:
 
 - Writes are off until you switch them on, and you confirm that yourself. Keep windows short
   (`--for 30m`), and only open one when you want the agent to write.
-- `SKILL.md` and the MCP server instructions tell the agent that message content is data, and
+- The skill (`skills/better-tg-cli/SKILL.md`) and the MCP server instructions tell the agent that message content is data, and
   that every write must come from your request.
 - Over MCP, reads and writes are separate tools. The read tool cannot write, and clients can ask
   you before every `telegram_write` call. Keep that approval on.
