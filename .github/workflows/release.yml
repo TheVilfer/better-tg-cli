@@ -156,3 +156,35 @@ jobs:
           git diff --cached --quiet && { echo "Formula unchanged"; exit 0; }
           git commit -m "better-tg-cli $VERSION"
           git push origin HEAD
+
+  mcp-registry:
+    # Lists the MCP server on registry.modelcontextprotocol.io (name io.github.TheVilfer/better-tg-cli).
+    # The registry checks mcpName in the published npm package, so wait until npm serves it.
+    needs: [verify, npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC login to the registry; no token stored
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      PUBLISHER: v1.8.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Wait for npm to serve this version
+        run: |
+          for i in $(seq 1 40); do
+            [ "$(npm view "better-tg-cli@$VERSION" mcpName 2>/dev/null)" = "io.github.TheVilfer/better-tg-cli" ] && exit 0
+            sleep 30
+          done
+          echo "::error::better-tg-cli@$VERSION did not appear on npm within 20 minutes"; exit 1
+      - name: Install mcp-publisher (pinned, checksum-verified)
+        run: |
+          base="https://github.com/modelcontextprotocol/registry/releases/download/$PUBLISHER"
+          curl -fsSLO "$base/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL "$base/registry_${PUBLISHER#v}_checksums.txt" | grep ' mcp-publisher_linux_amd64.tar.gz$' | sha256sum -c -
+          tar xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+      - name: Publish to the MCP Registry
+        run: |
+          test "$(jq -r .version server.json)" = "$VERSION"
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

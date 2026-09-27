@@ -76,6 +76,18 @@ quarantine flag once: `xattr -d com.apple.quarantine ./telegram`. Homebrew handl
 
 Do **not** install `@skillhq/telegram`. It is the old upstream build on GramJS (layer 198).
 
+### Claude Code plugin
+
+The skill and the MCP server together, in one install:
+
+```
+/plugin marketplace add TheVilfer/better-tg-cli
+/plugin install better-tg-cli@better-tg-cli
+```
+
+It runs the MCP server through `npx`, so Node 20+ is enough. Log in once with `telegram auth --qr`
+(or `npx better-tg-cli auth --qr`) in a terminal.
+
 ### As an agent skill
 
 The skill ([`skills/better-tg-cli`](skills/better-tg-cli/SKILL.md)) teaches any agent with a shell
@@ -141,14 +153,15 @@ tools over stdio:
 Log in with `telegram auth` in a terminal first.
 
 ```bash
-claude mcp add telegram -- telegram mcp          # Claude Code
+claude mcp add telegram -- telegram mcp          # Claude Code (or use the plugin above)
 ```
 
 ```json
 { "mcpServers": { "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] } } }
 ```
 
-Use the second form for Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`).
+The server is also listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.TheVilfer/better-tg-cli`. Use the second form for Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`).
 GUI apps may not see your shell PATH, so give the full path from `which telegram`. To keep the MCP
 client off your main session, add `"env": {"TG_PROFILE": "work"}`.
 

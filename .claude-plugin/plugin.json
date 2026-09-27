@@ -1,0 +1,29 @@
+{
+  "name": "better-tg-cli",
+  "displayName": "better-tg-cli (Telegram)",
+  "description": "Telegram on your own account for Claude: a skill for the telegram CLI plus an MCP server (read, search, send, bot buttons). Writes stay off until you allow them.",
+  "author": {
+    "name": "Sergei Polin",
+    "url": "https://github.com/TheVilfer"
+  },
+  "homepage": "https://github.com/TheVilfer/better-tg-cli",
+  "repository": "https://github.com/TheVilfer/better-tg-cli",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "mtproto",
+    "cli",
+    "mcp"
+  ],
+  "mcpServers": {
+    "telegram": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "better-tg-cli@latest",
+        "mcp"
+      ]
+    }
+  },
+  "version": "0.22.3"
+}

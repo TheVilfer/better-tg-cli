@@ -75,6 +75,18 @@ npm install -g better-tg-cli               # Node >= 20
 
 Не ставьте `@skillhq/telegram`. Это старая сборка апстрима на GramJS (layer 198).
 
+### Плагин для Claude Code
+
+Скилл и MCP-сервер ставятся вместе:
+
+```
+/plugin marketplace add TheVilfer/better-tg-cli
+/plugin install better-tg-cli@better-tg-cli
+```
+
+MCP-сервер запускается через `npx`, так что хватит Node 20+. Один раз войдите в терминале:
+`telegram auth --qr` (или `npx better-tg-cli auth --qr`).
+
 ### Как скилл для агента
 
 Скилл ([`skills/better-tg-cli`](skills/better-tg-cli/SKILL.md)) учит любого агента с шеллом
@@ -141,14 +153,15 @@ stdio три инструмента:
 Сначала войдите через `telegram auth` в терминале.
 
 ```bash
-claude mcp add telegram -- telegram mcp          # Claude Code
+claude mcp add telegram -- telegram mcp          # Claude Code (или плагин выше)
 ```
 
 ```json
 { "mcpServers": { "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] } } }
 ```
 
-Второй вариант подходит для Claude Desktop (`claude_desktop_config.json`) и Cursor
+Сервер также есть в [MCP Registry](https://registry.modelcontextprotocol.io) под именем
+`io.github.TheVilfer/better-tg-cli`. Второй вариант подходит для Claude Desktop (`claude_desktop_config.json`) и Cursor
 (`.cursor/mcp.json`). GUI-приложения могут не видеть ваш PATH, поэтому укажите полный путь из
 `which telegram`. Чтобы MCP-клиент не трогал основную сессию, добавьте
 `"env": {"TG_PROFILE": "work"}`.

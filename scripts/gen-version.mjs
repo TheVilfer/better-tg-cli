@@ -10,3 +10,14 @@ try {
   current = readFileSync(path, 'utf8');
 } catch {}
 if (current !== out) writeFileSync(path, out);
+
+// Keep the plugin manifest and the MCP Registry entry on the package version
+for (const file of ['../.claude-plugin/plugin.json', '../server.json']) {
+  const url = new URL(file, import.meta.url);
+  const text = readFileSync(url, 'utf8');
+  const json = JSON.parse(text);
+  json.version = version;
+  for (const pkg of json.packages ?? []) pkg.version = version;
+  const next = JSON.stringify(json, null, 2) + '\n';
+  if (next !== text) writeFileSync(url, next);
+}
