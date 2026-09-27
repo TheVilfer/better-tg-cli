@@ -181,4 +181,5 @@ npm run dev                            # Watch mode
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). Based on [skillhq/telegram](https://github.com/skillhq/telegram)
+by Derek Rein. Not affiliated with or endorsed by Telegram; "Telegram" is a trademark of its owner.
