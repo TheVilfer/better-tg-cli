@@ -2,9 +2,12 @@ import { isTTY } from '../spinner.js';
 
 const pretty = isTTY || process.env.TG_JSON_PRETTY === '1';
 
-/** Drop null/undefined/empty-string fields: absent means "none". Arrays are kept. */
+/** Keys that must always be present so jq filters like `.text | test(...)` don't hit null. */
+const ALWAYS_KEEP = new Set(['', 'text', 'title', 'sender']);
+
+/** Drop null/undefined/empty-string optional fields: absent means "none". Arrays are kept. */
 function prune(key: string, value: unknown): unknown {
-  if (key !== '' && (value === null || value === undefined || value === '')) return undefined;
+  if (!ALWAYS_KEEP.has(key) && (value === null || value === undefined || value === '')) return undefined;
   return value;
 }
 
