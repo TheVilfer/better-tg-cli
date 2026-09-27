@@ -1,5 +1,5 @@
 #!/bin/sh
-# better-telegram-cli installer
+# better-tg-cli installer
 # Usage: ./install.sh   (or: curl -sSfL <raw url>/install.sh | sh, needs repo access)
 #
 # Clones/updates the fork into ~/.agents/skills/telegram, builds it, installs the
@@ -7,7 +7,7 @@
 
 set -e
 
-REPO="https://github.com/TheVilfer/better-telegram-cli.git"
+REPO="https://github.com/TheVilfer/better-tg-cli.git"
 DIR="${TG_SKILL_DIR:-$HOME/.agents/skills/telegram}"
 
 log() { echo "  $*" >&2; }
@@ -29,8 +29,10 @@ cd "$DIR"
 npm install --no-fund --no-audit
 npm run build
 
-# Replace an npm-registry install of the old package, if any: it owns the same `telegram` binary
-npm ls -g @skillhq/telegram > /dev/null 2>&1 && npm rm -g @skillhq/telegram
+# Remove installs under older package names: they own the same `telegram` binary
+for old in @skillhq/telegram better-telegram-cli; do
+    npm ls -g "$old" > /dev/null 2>&1 && npm rm -g "$old"
+done
 npm install -g --no-fund --no-audit .
 
 for agent in "$HOME/.claude/skills" "$HOME/.codex/skills"; do
