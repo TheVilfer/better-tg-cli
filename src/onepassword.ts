@@ -9,7 +9,10 @@ let resolvedVault: string | null = null;
 function getOpBinary(): string | null {
   if (opBinaryPath !== null) return opBinaryPath;
   try {
-    opBinaryPath = execSync('which op', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // `where` lists every match on Windows; take the first
+    opBinaryPath = execSync(process.platform === 'win32' ? 'where op' : 'which op', {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+    }).trim().split(/\r?\n/)[0];
   } catch {
     opBinaryPath = '';
   }
@@ -80,6 +83,7 @@ export function isOnePasswordAvailable(): boolean {
     execFileSync(binary, ['whoami'], {
       encoding: 'utf8',
       stdio: 'ignore',
+      windowsHide: true,
       env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
     });
     opAvailableCache = true;
@@ -102,6 +106,7 @@ export function opGet(key: string): string | null {
     ], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
       env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
     });
     return result.trim() || null;
@@ -124,6 +129,7 @@ export function opSet(key: string, value: string): boolean {
     try {
       execFileSync(binary, ['item', 'get', name, '--vault', vault], {
         stdio: 'ignore',
+        windowsHide: true,
         env,
       });
       exists = true;
@@ -136,7 +142,7 @@ export function opSet(key: string, value: string): boolean {
         'item', 'edit', name,
         '--vault', vault,
         `credential=${value}`,
-      ], { stdio: 'ignore', env });
+      ], { stdio: 'ignore', env, windowsHide: true });
     } else {
       execFileSync(binary, [
         'item', 'create',
@@ -144,7 +150,7 @@ export function opSet(key: string, value: string): boolean {
         '--vault', vault,
         '--title', name,
         `credential=${value}`,
-      ], { stdio: 'ignore', env });
+      ], { stdio: 'ignore', env, windowsHide: true });
     }
 
     return true;
@@ -164,6 +170,7 @@ export function opDelete(key: string): boolean {
       'item', 'delete', itemName(key), '--vault', vault,
     ], {
       stdio: 'ignore',
+      windowsHide: true,
       env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
     });
     return true;

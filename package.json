@@ -59,7 +59,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "node scripts/gen-version.mjs && tsc --noEmit && rm -rf dist && bun scripts/bundle.mjs node",
+    "build": "node scripts/gen-version.mjs && tsc --noEmit && node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && bun scripts/bundle.mjs node",
     "prepublishOnly": "npm run build",
     "dev": "scripts/tg-dev",
     "dev:node": "TG_PROFILE=${TG_PROFILE-dev} TG_NO_UPDATE_CHECK=1 tsx src/index.ts",

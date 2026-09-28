@@ -1,5 +1,7 @@
 import { Command } from 'commander';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { encodedCommand } from '../dpapi.js';
 import { platform } from 'node:os';
 import { secretGet, secretSet, secretDelete, isSecretStoreAvailable } from '../secrets.js';
 import { encodeWriteState, parseForDuration, parseWriteState } from '../write-state.js';
@@ -15,6 +17,7 @@ async function confirmByHuman(what: string): Promise<boolean> {
     const answer = await prompt(`${what} [y/N] `);
     return /^(y|yes|д|да)$/i.test(answer);
   }
+  if (platform() === 'win32') return confirmOnWindows(what);
   if (platform() !== 'darwin') {
     console.error(chalk.red('No terminal to confirm on. Run this command yourself in a terminal.'));
     return false;
@@ -32,13 +35,37 @@ async function confirmByHuman(what: string): Promise<boolean> {
   }
 }
 
+/**
+ * The Windows counterpart of the macOS dialog: a topmost Yes/No box with "No" as the default.
+ * MessageBox has no timeout of its own, so the spawn gives up after ~2 minutes and that counts as No.
+ */
+export function windowsConfirmScript(text: string): string {
+  const quoted = "'" + text.replace(/'/g, "''") + "'";
+  return 'Add-Type -AssemblyName System.Windows.Forms;' +
+    // A hidden topmost owner keeps the box above the agent's window instead of behind it
+    '$owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; $owner.ShowInTaskbar = $false;' +
+    `$r = [System.Windows.Forms.MessageBox]::Show($owner, ${quoted}, 'Telegram CLI', 'YesNo', 'Warning', 'Button2');` +
+    "if ($r -eq 'Yes') { [Console]::Out.Write('ALLOW') } else { [Console]::Out.Write('DENY') }";
+}
+
+function confirmOnWindows(what: string): boolean {
+  const text = `${what}\n\nЕсли об этом просит агент, а вы не ожидали — нажмите «Нет».`;
+  const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const res = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-NoLogo', '-STA', '-EncodedCommand', encodedCommand(windowsConfirmScript(text))], {
+    encoding: 'utf8',
+    timeout: 125_000,
+    windowsHide: true,
+  });
+  return res.status === 0 && res.stdout.trim() === 'ALLOW';
+}
+
 export const writeAccessCommand = new Command('write-access')
   .description('Manage write access (read-only by default; turning it on needs the user\'s confirmation)')
   .argument('[action]', 'on, off, or omit to show status')
   .option('--for <duration>', 'With "on": turn writes off again automatically after 30m / 2h / 1d / 1w')
   .action(async (action: string | undefined, options: { for?: string }) => {
     if (!isSecretStoreAvailable()) {
-      console.error(chalk.red('No secret store available (macOS Keychain, Linux Secret Service via secret-tool, or 1Password required).'));
+      console.error(chalk.red('No secret store available (macOS Keychain, Linux Secret Service via secret-tool, Windows DPAPI, or 1Password required).'));
       console.error(chalk.gray('Write access control requires a secret store to prevent tampering.'));
       process.exit(1);
     }

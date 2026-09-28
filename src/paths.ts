@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 
 /**
@@ -17,7 +17,9 @@ export function profile(): string | undefined {
 
 const suffix = (): string => (profile() ? `-${profile()}` : '');
 
-export function configDir(): string {
+/** ~/.config/tg on macOS and Linux (existing installs depend on it), %APPDATA%\\tg on Windows. */
+export function configDir(env: NodeJS.ProcessEnv = process.env, os: NodeJS.Platform = platform()): string {
+  if (os === 'win32' && env.APPDATA) return join(env.APPDATA, `tg${suffix()}`);
   return join(homedir(), '.config', `tg${suffix()}`);
 }
 

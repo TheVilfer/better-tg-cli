@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build one standalone `telegram` binary with Bun and pack it for release.
 # Usage: scripts/build-binary.sh <target> [outdir]
-#   target: darwin-arm64 | darwin-x64 | linux-x64 | linux-arm64
+#   target: darwin-arm64 | darwin-x64 | linux-x64 | linux-arm64 | windows-x64
 set -euo pipefail
 
 target="$1"
@@ -20,6 +20,14 @@ fi
 
 cp LICENSE README.md "${stage}/"
 mkdir -p "$out"
+if [[ "$target" == windows-* ]]; then
+  # Bun names the Windows build telegram.exe; Scoop and Explorer unpack .zip natively
+  zipfile="$(cd "$out" && pwd)/${name}.zip"
+  (cd "$stage" && zip -q -9 "$zipfile" telegram.exe LICENSE README.md)
+  rm -rf "$stage"
+  echo "${out}/${name}.zip"
+  exit 0
+fi
 # xz -9e: ~40% smaller than gzip for these binaries; Homebrew unpacks .tar.xz natively
 tar -C "$stage" -cf - telegram LICENSE README.md | xz -9e -T0 > "${out}/${name}.tar.xz"
 rm -rf "$stage"

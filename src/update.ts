@@ -5,6 +5,7 @@ import { configFile } from './paths.js';
 import { VERSION } from './version.js';
 
 export const PACKAGE = 'better-tg-cli';
+const WIN = process.platform === 'win32';
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE}/latest`;
 const RELEASES_URL = 'https://github.com/TheVilfer/better-tg-cli/releases/latest';
 const CHECK_INTERVAL_MS = 24 * 3600e3;
@@ -13,6 +14,7 @@ export const BACKGROUND_CHECK_COMMAND = '__update-check';
 export type InstallMethod =
   | { kind: 'brew' }
   | { kind: 'npm' }
+  | { kind: 'scoop' }
   | { kind: 'source'; root: string }
   | { kind: 'binary'; path: string };
 
@@ -39,11 +41,13 @@ export function detectInstall(
   isBinary = isCompiledBinary(scriptPath),
 ): InstallMethod {
   if (isBinary) {
-    return /\/(Cellar|linuxbrew)\//.test(execPath) ? { kind: 'brew' } : { kind: 'binary', path: execPath };
+    if (/\/(Cellar|linuxbrew)\//.test(execPath)) return { kind: 'brew' };
+    if (/[\\/]scoop[\\/]apps[\\/]/i.test(execPath)) return { kind: 'scoop' };
+    return { kind: 'binary', path: execPath };
   }
   let script = scriptPath;
   try { script = realpathSync(scriptPath); } catch { /* keep as given */ }
-  if (script.includes(`${sep}node_modules${sep}${PACKAGE}${sep}`)) return { kind: 'npm' };
+  if (new RegExp(`[\\\\/]node_modules[\\\\/]${PACKAGE}[\\\\/]`).test(script)) return { kind: 'npm' };
   // dist/telegram.mjs inside a checkout
   const root = dirname(dirname(script));
   if (existsSync(join(root, '.git'))) return { kind: 'source', root };
@@ -61,6 +65,7 @@ export async function fetchLatestVersion(timeoutMs = 5000): Promise<string> {
 export function updateCommandFor(method: InstallMethod): string {
   switch (method.kind) {
     case 'brew': return 'brew upgrade better-tg-cli';
+    case 'scoop': return 'scoop update better-tg-cli';
     case 'npm': return `npm install -g ${PACKAGE}@latest`;
     case 'source': return `git -C ${JSON.stringify(method.root)} pull --ff-only && npm --prefix ${JSON.stringify(method.root)} run build`;
     case 'binary': return `download the archive from ${RELEASES_URL} and replace ${method.path}`;
@@ -114,7 +119,7 @@ export function maybeNotifyUpdate(argv = process.argv.slice(2)): void {
     writeCache({ checkedAt: Date.now(), latest: cache?.latest });
     const args = isCompiledBinary() ? [BACKGROUND_CHECK_COMMAND] : [process.argv[1], BACKGROUND_CHECK_COMMAND];
     try {
-      spawn(process.execPath, args, { detached: true, stdio: 'ignore', env: { ...process.env, TG_NO_UPDATE_CHECK: '1' } }).unref();
+      spawn(process.execPath, args, { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, TG_NO_UPDATE_CHECK: '1' } }).unref();
     } catch { /* offline or sandboxed: skip */ }
   }
 }
@@ -129,10 +134,14 @@ export function runUpdate(method: InstallMethod): number {
     }
     const pull = spawnSync('git', ['-C', method.root, 'pull', '--ff-only'], { stdio: 'inherit' });
     if (pull.status !== 0) return pull.status ?? 1;
-    return spawnSync('npm', ['--prefix', method.root, 'run', 'build'], { stdio: 'inherit' }).status ?? 1;
+    return spawnSync('npm', ['--prefix', method.root, 'run', 'build'], { stdio: 'inherit', shell: WIN }).status ?? 1;
   }
   const [bin, ...args] = method.kind === 'brew'
     ? ['brew', 'upgrade', 'better-tg-cli']
-    : ['npm', 'install', '-g', `${PACKAGE}@latest`];
-  return spawnSync(bin, args, { stdio: 'inherit' }).status ?? 1;
+    : method.kind === 'scoop'
+      ? ['scoop', 'update', 'better-tg-cli']
+      : ['npm', 'install', '-g', `${PACKAGE}@latest`];
+  // npm and scoop are .cmd/.ps1 shims on Windows, which Node only starts through a shell;
+  // the arguments are constants, so the shell is safe here
+  return spawnSync(bin, args, { stdio: 'inherit', shell: WIN }).status ?? 1;
 }

@@ -46,7 +46,7 @@ const manifest = {
   keywords: ['telegram', 'mtproto', 'messages', 'chat', 'cli'],
   license: 'MIT',
   privacy_policies: [`${repo}/blob/main/PRIVACY.md`],
-  compatibility: { platforms: ['darwin', 'linux'], runtimes: { node: '>=20.0.0' } },
+  compatibility: { platforms: ['darwin', 'linux', 'win32'], runtimes: { node: '>=20.0.0' } },
   user_config: {
     profile: {
       type: 'string',

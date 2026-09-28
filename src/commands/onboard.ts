@@ -16,9 +16,12 @@ const HUMAN: Record<OnboardEvent['event'], (e: never) => string> = {
 };
 
 function openBrowser(url: string): void {
-  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  const [cmd, ...args] = process.platform === 'darwin' ? ['open', url]
+    // explorer.exe mangles URLs with query strings; the URL protocol handler opens the default browser
+    : process.platform === 'win32' ? ['rundll32', 'url.dll,FileProtocolHandler', url]
+    : ['xdg-open', url];
   try {
-    spawn(cmd, [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+    spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => {}).unref();
   } catch { /* the URL is printed anyway */ }
 }
 

@@ -149,6 +149,8 @@ function runChild(plan: Plan): Promise<ToolResult> {
     const [bin, ...pre] = cliBase();
     const child = spawn(bin, [...pre, ...plan.argv], {
       env: childEnv(plan),
+      // GUI hosts (Claude Desktop, Cursor) would flash a console window per call on Windows
+      windowsHide: true,
       // No stdin unless given: any prompt (2FA, confirmation) hits EOF instead of hanging
       stdio: [plan.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });

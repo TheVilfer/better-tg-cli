@@ -30,3 +30,28 @@ jobs:
       - run: npm run build
       # Offline tests only: no Telegram session or network is ever used in CI
       - run: npm test
+
+  windows:
+    # Windows: DPAPI secret store, PowerShell dialogs, backslash paths, .cmd shims
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Smoke test the CLI
+        shell: bash
+        env:
+          TG_NO_UPDATE_CHECK: '1'
+        run: |
+          node dist/telegram.mjs --version
+          node dist/telegram.mjs help-all -g onboard | grep -q onboard
+          node dist/telegram.mjs skill status | grep -q claude-code
