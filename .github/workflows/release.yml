@@ -56,6 +56,8 @@ jobs:
           - { os: macos-latest, target: darwin-x64, smoke: false }
           - { os: ubuntu-latest, target: linux-x64, smoke: true }
           - { os: ubuntu-latest, target: linux-arm64, smoke: false }
+          # Cross-compiled and zipped on Linux; run on a real Windows runner in windows-smoke
+          - { os: ubuntu-latest, target: windows-x64, smoke: false }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,11 +81,30 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bin-${{ matrix.target }}
-          path: release/*.tar.xz
+          path: release/*
           if-no-files-found: error
 
-  github-release:
+  windows-smoke:
     needs: [verify, binaries]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bin-windows-x64
+          path: release
+      - name: Run telegram.exe
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          TG_NO_UPDATE_CHECK: '1'
+        run: |
+          Expand-Archive -Path (Get-ChildItem release/*.zip).FullName -DestinationPath smoke
+          $v = & ./smoke/telegram.exe --version
+          if ($v -ne $env:VERSION) { throw "version $v != $env:VERSION" }
+          if (-not ((& ./smoke/telegram.exe help-all -g thread) -match 'read <chat>')) { throw 'help-all failed' }
+
+  github-release:
+    needs: [verify, binaries, windows-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -98,7 +119,7 @@ jobs:
           name: mcpb
           path: release
       - name: Checksums
-        run: cd release && sha256sum *.tar.xz *.mcpb > SHA256SUMS && cat SHA256SUMS
+        run: cd release && sha256sum *.tar.xz *.zip *.mcpb > SHA256SUMS && cat SHA256SUMS
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -166,6 +187,37 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add Formula/better-tg-cli.rb
           git diff --cached --quiet && { echo "Formula unchanged"; exit 0; }
+          git commit -m "better-tg-cli $VERSION"
+          git push origin HEAD
+
+  scoop:
+    needs: [verify, github-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sha256sums
+          path: .
+      - name: Render manifest
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: node scripts/scoop-manifest.mjs "$VERSION" SHA256SUMS > better-tg-cli.json
+      - name: Push to TheVilfer/scoop-bucket
+        env:
+          SCOOP_DEPLOY_KEY: ${{ secrets.SCOOP_DEPLOY_KEY }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SCOOP_DEPLOY_KEY" > ~/.ssh/scoop_key && chmod 600 ~/.ssh/scoop_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/scoop_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:TheVilfer/scoop-bucket.git bucket
+          mkdir -p bucket/bucket && cp better-tg-cli.json bucket/bucket/better-tg-cli.json
+          cd bucket
+          git config user.name "better-tg-cli release"
+          git config user.email "actions@users.noreply.github.com"
+          git add bucket/better-tg-cli.json
+          git diff --cached --quiet && { echo "Manifest unchanged"; exit 0; }
           git commit -m "better-tg-cli $VERSION"
           git push origin HEAD
 

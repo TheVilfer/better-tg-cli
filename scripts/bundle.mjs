@@ -118,7 +118,9 @@ if (mode === 'node') {
       for (const log of bin.logs) console.error(log);
       process.exit(1);
     }
-    console.log(`${outfile}  ${mb((await import('node:fs')).statSync(outfile).size)}`);
+    // Windows targets get .exe appended; report the file Bun actually wrote
+    const out = bin.outputs[0]?.path ?? outfile;
+    console.log(`${out}  ${mb((await import('node:fs')).statSync(out).size)}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

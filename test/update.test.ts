@@ -38,6 +38,16 @@ describe('detectInstall', () => {
   });
 });
 
+describe('detectInstall on Windows', () => {
+  it('knows Scoop and npm paths with backslashes', () => {
+    expect(detectInstall('C:\\Users\\a\\scoop\\apps\\better-tg-cli\\current\\telegram.exe', '', true)).toEqual({ kind: 'scoop' });
+    expect(updateCommandFor({ kind: 'scoop' })).toBe('scoop update better-tg-cli');
+    expect(detectInstall('C:\\Program Files\\nodejs\\node.exe',
+      'C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\better-tg-cli\\dist\\telegram.mjs', false)).toEqual({ kind: 'npm' });
+    expect(detectInstall('C:\\tools\\telegram.exe', '', true)).toEqual({ kind: 'binary', path: 'C:\\tools\\telegram.exe' });
+  });
+});
+
 describe('isCompiledBinary', () => {
   it('only the embedded /$bunfs path counts, not `bun src/index.ts`', async () => {
     const { isCompiledBinary } = await import('../src/update.js');

@@ -13,15 +13,17 @@ import {
   opSet,
 } from './onepassword.js';
 import { isLibsecretAvailable, libsecretDelete, libsecretGet, libsecretSet } from './libsecret.js';
+import { dpapiDelete, dpapiGet, dpapiSet, isDpapiAvailable } from './dpapi.js';
 
 export { SECRET_KEYS, isSecretKey };
 
-type Provider = 'op' | 'keychain' | 'libsecret' | 'none';
+type Provider = 'op' | 'keychain' | 'libsecret' | 'dpapi' | 'none';
 
 function activeProvider(): Provider {
   if (isOnePasswordAvailable()) return 'op';
   if (isKeychainAvailable()) return 'keychain';
   if (isLibsecretAvailable()) return 'libsecret';
+  if (isDpapiAvailable()) return 'dpapi';
   return 'none';
 }
 
@@ -34,6 +36,7 @@ export function secretGet(key: string): string | null {
   if (provider === 'op') return opGet(key);
   if (provider === 'keychain') return keychainGet(key);
   if (provider === 'libsecret') return libsecretGet(key);
+  if (provider === 'dpapi') return dpapiGet(key);
   return null;
 }
 
@@ -42,6 +45,7 @@ export function secretSet(key: string, value: string): boolean {
   if (provider === 'op') return opSet(key, value);
   if (provider === 'keychain') return keychainSet(key, value);
   if (provider === 'libsecret') return libsecretSet(key, value);
+  if (provider === 'dpapi') return dpapiSet(key, value);
   return false;
 }
 
@@ -50,6 +54,7 @@ export function secretDelete(key: string): boolean {
   if (provider === 'op') return opDelete(key);
   if (provider === 'keychain') return keychainDelete(key);
   if (provider === 'libsecret') return libsecretDelete(key);
+  if (provider === 'dpapi') return dpapiDelete(key);
   return false;
 }
 

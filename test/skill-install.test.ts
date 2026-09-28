@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { SKILL_FILES } from '../src/skill-files.js';
 import {
   agentStatus, installSkill, knownAgents, selectAgents, SKILL_NAME, uninstallSkill,
@@ -26,17 +26,17 @@ describe('knownAgents', () => {
   it('follows the agents\' own home variables', () => {
     const agents = knownAgents('/h', { CLAUDE_CONFIG_DIR: '/c', CODEX_HOME: '/x', GROK_HOME: '/g', XDG_CONFIG_HOME: '/cfg' });
     const dir = (id: string) => agents.find(a => a.id === id)!.skillsDir;
-    expect(dir('claude-code')).toBe('/c/skills');
-    expect(dir('codex')).toBe('/x/skills');
-    expect(dir('grok')).toBe('/g/skills');
-    expect(dir('opencode')).toBe('/cfg/opencode/skills');
-    expect(dir('cursor')).toBe('/h/.cursor/skills');
+    expect(dir('claude-code')).toBe(join('/c', 'skills'));
+    expect(dir('codex')).toBe(join('/x', 'skills'));
+    expect(dir('grok')).toBe(join('/g', 'skills'));
+    expect(dir('opencode')).toBe(join('/cfg', 'opencode', 'skills'));
+    expect(dir('cursor')).toBe(join('/h', '.cursor', 'skills'));
   });
 
   it('never targets the shared ~/.agents/skills folder or a folder named after the binary', () => {
     for (const a of knownAgents('/h', {})) {
-      expect(a.skillsDir).not.toBe('/h/.agents/skills');
-      expect(join(a.skillsDir, SKILL_NAME)).toMatch(/\/better-tg-cli$/);
+      expect(a.skillsDir).not.toBe(join('/h', '.agents', 'skills'));
+      expect(join(a.skillsDir, SKILL_NAME)).toMatch(/[\\/]better-tg-cli$/);
     }
   });
 });
@@ -82,9 +82,12 @@ describe('install / uninstall', () => {
     writeFileSync(join(checkout, 'SKILL.md'), '---\nname: better-tg-cli\n---\nlocal edits\n');
     mkdirSync(a.skillsDir, { recursive: true });
     const path = join(a.skillsDir, SKILL_NAME);
-    symlinkSync(checkout, path);
+    // Windows needs a privilege for directory symlinks; a junction is what tools create there
+    symlinkSync(checkout, path, process.platform === 'win32' ? 'junction' : 'dir');
 
-    expect(agentStatus(a).state).toEqual({ kind: 'linked', target: checkout });
+    const linked = agentStatus(a).state;
+    expect(linked.kind).toBe('linked');
+    expect(resolve((linked as { target: string }).target)).toBe(resolve(checkout));
     const skipped = installSkill(a);
     expect(skipped.action).toBe('skipped');
     expect(uninstallSkill(a).action).toBe('skipped');

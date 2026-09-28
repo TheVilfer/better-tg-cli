@@ -65,8 +65,17 @@ $ telegram inbox -n 3
 
 ```bash
 brew install thevilfer/tap/better-tg-cli   # отдельный бинарник, macOS и Linux
-npm install -g better-tg-cli               # Node >= 20
+npm install -g better-tg-cli               # Node >= 20, любая ОС
 ```
+
+На Windows (экспериментально) через [Scoop](https://scoop.sh) или npm:
+
+```powershell
+scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket
+scoop install better-tg-cli
+```
+
+`telegram.exe` для Windows не подписан, поэтому SmartScreen может предупредить при скачивании из релиза.
 
 `telegram update` обновляет CLI тем же способом, каким он был установлен. В терминале CLI раз в
 сутки проверяет, не вышла ли новая версия. Агенты и пайпы этого уведомления не видят, а
@@ -83,6 +92,7 @@ npm install -g better-tg-cli               # Node >= 20
 |---|---|---|
 | [Homebrew](https://github.com/TheVilfer/homebrew-tap) | отдельный бинарник | `brew install thevilfer/tap/better-tg-cli` |
 | [npm](https://www.npmjs.com/package/better-tg-cli) | CLI и MCP-сервер (Node 20+) | `npm install -g better-tg-cli` |
+| [Scoop](https://github.com/TheVilfer/scoop-bucket) (Windows, экспериментально) | отдельный `telegram.exe` | `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket`, затем `scoop install better-tg-cli` |
 | [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | бинарники и SHA256SUMS | скачать вручную |
 | Плагин Claude Code | скилл и MCP-сервер | [см. ниже](#плагин-для-claude-code) |
 | Расширение Claude Desktop | MCP-сервер на встроенном Node из Claude | [скачать `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) и открыть |
@@ -167,7 +177,9 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 KeePassXC) через `secret-tool`, для этого нужен пакет `libsecret-tools`. Сессия, которая уже лежит
 в конфиге, переедет туда сама. Если хранилища секретов нет, сессия лежит в
 `~/.config/tg/config.json5` (права 0600), а запись остаётся выключенной. На Linux
-`write-access on` подтверждается в терминале.
+`write-access on` подтверждается в терминале. На Windows секреты лежат в
+`%APPDATA%\tg\secrets.dpapi`, зашифрованные DPAPI для вашего пользователя Windows (расшифровать их
+можете только вы на этой машине), а `write-access on` без терминала спрашивает в окне «Да/Нет».
 
 ## Использование
 
@@ -277,7 +289,9 @@ tailscale funnel --bg 8787                  # или: cloudflared tunnel --url h
 Да, через `TG_PROFILE`: у каждого профиля свой вход, конфиг и записи в Keychain, например `TG_PROFILE=work telegram auth --qr`. Удобное переключение аккаунтов — в [#5](https://github.com/TheVilfer/better-tg-cli/issues/5).
 
 **Работает ли на Windows?**
-Пока нет. CLI собирается и проверяется на macOS и Linux и опирается на их хранилища секретов.
+Да, экспериментально: `scoop install better-tg-cli` или npm. Секреты хранятся через Windows DPAPI,
+тесты гоняются на Windows в CI, но вживую там проверено меньше, чем на macOS и Linux. О проблемах
+пишите в issues.
 
 **Можно ли пользоваться из Grok Bot, ChatGPT или другого облачного агента?**
 Облачный агент не может запустить программу на вашем компьютере, поэтому поднимите MCP-сервер по HTTP и откройте к нему туннель. См. [Grok Bot](#grok-bot-удалённый-mcp-по-http).

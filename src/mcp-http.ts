@@ -111,7 +111,7 @@ export function createMcpHttpHandler(token: string, options: { readOnly?: boolea
 export function startMcpHttpServer(commands: Iterable<string>, options: { host: string; port: number; readOnly?: boolean }): void {
   const token = mcpToken({ create: true });
   if (!token) {
-    console.error('The HTTP server needs a secret store for its token (macOS Keychain, Linux Secret Service or 1Password).');
+    console.error('The HTTP server needs a secret store for its token (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).');
     process.exit(1);
   }
   setKnownCommands(commands);

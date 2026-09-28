@@ -182,7 +182,7 @@ program
     if (options.token || options.rotateToken) {
       const token = mcpToken({ create: true, rotate: options.rotateToken });
       if (!token) {
-        console.error('No secret store for the token (macOS Keychain, Linux Secret Service or 1Password).');
+        console.error('No secret store for the token (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).');
         process.exit(1);
       }
       console.log(token);

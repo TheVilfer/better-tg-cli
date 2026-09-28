@@ -7,10 +7,11 @@ not in public issues.
 ## What the CLI protects
 
 - **Secrets:** the session, api_hash and write-access flag are kept in the macOS Keychain (service
-  `tg-cli`), the Linux Secret Service (`secret-tool`), or 1Password, not in the config file. Only
+  `tg-cli`), the Linux Secret Service (`secret-tool`), 1Password, or on Windows
+  `%APPDATA%\tg\secrets.dpapi` encrypted with DPAPI for the current Windows user, not in the config file. Only
   without any of these does the config file (mode 0600) hold them, and then writes stay disabled.
 - **Writes:** off by default. `write-access on` requires a human to confirm it, in a terminal prompt
-  or a macOS dialog, and can expire (`--for 1h`). Every write is appended to
+  or a macOS/Windows dialog, and can expire (`--for 1h`). Every write is appended to
   `~/.config/tg/audit.jsonl`.
 - **Invites:** the broker hands out the app's `api_hash` for a single login. It is not stored
   locally. Tokens are stored hashed, limited in uses and revocable.

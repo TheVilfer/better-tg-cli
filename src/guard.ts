@@ -10,7 +10,7 @@ export function assertWriteEnabled(): void {
     process.exit(1);
   }
   if (!isSecretStoreAvailable()) {
-    console.error(chalk.red('Write access requires a secret store (macOS Keychain, Linux Secret Service or 1Password).'));
+    console.error(chalk.red('Write access requires a secret store (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).'));
     console.error(chalk.gray('This ensures write permissions cannot be tampered with via config files.'));
     process.exit(1);
   }

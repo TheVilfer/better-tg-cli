@@ -22,8 +22,10 @@ The page checks for bots with Cloudflare Turnstile.
 
 ## Data on your machine
 
-- **Session, api_hash and the write-access flag:** macOS Keychain, the Linux Secret Service or
-  1Password (see [SECURITY.md](SECURITY.md)).
+- **Session, api_hash and the write-access flag:** macOS Keychain, the Linux Secret Service,
+  1Password, or on Windows `%APPDATA%\tg\secrets.dpapi` encrypted with DPAPI for your Windows user
+  (see [SECURITY.md](SECURITY.md)).
+- **On Windows** the config dir below is `%APPDATA%\tg\` instead of `~/.config/tg/`.
 - **`~/.config/tg/config.json5`:** api_id and preferences.
 - **`~/.config/tg/audit.jsonl`:** one line per write, including the target chat and the text you
   sent. Delete it whenever you like.
