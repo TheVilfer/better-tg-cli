@@ -12,7 +12,8 @@ A Cloudflare Worker that gives invited users the maintainer's `api_id`/`api_hash
 - Secrets are `API_ID` and `API_HASH` (`wrangler secret put`). Logging is off, since request
   bodies carry invite tokens.
 - `GET /` is the signup page (see below). There is no admin HTTP endpoint. Invites are managed locally through wrangler.
-- Deployed at `https://tg-cli-broker.login-c2d.workers.dev` (Cloudflare account "Anything* team").
+- Deployed at `https://tg-cli-broker.login-c2d.workers.dev` (Cloudflare account "Anything* team"); the
+  signup page is also on `https://better-tg-cli.com` (custom domain, `www` redirects there).
 
 ## Signup page
 

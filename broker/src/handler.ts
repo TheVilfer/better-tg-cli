@@ -51,6 +51,9 @@ function json(status: number, body: unknown): Response {
 export async function handle(request: Request, env: Env, now = new Date()): Promise<Response> {
   const url = new URL(request.url);
 
+  if (url.hostname === 'www.better-tg-cli.com') {
+    return Response.redirect(`https://better-tg-cli.com${url.pathname}${url.search}`, 301);
+  }
   if (url.pathname === '/health') return json(200, { ok: true });
   if (url.pathname === '/' && request.method === 'GET') return pageResponse(await signupsOpen(env), env.TURNSTILE_SITE_KEY);
   if (url.pathname === '/v1/invites') return handleSignup(request, env, now);
