@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { request } from 'node:http';
-import type { LoginDriver } from '../src/auth.js';
+import { rpcCode, type LoginDriver } from '../src/auth.js';
+import { RPCError } from 'teleproto/errors/index.js';
 import { startOnboarding, type OnboardEvent, type OnboardSession } from '../src/onboard.js';
 
 // Raw HTTP so the tests control Host and Origin exactly (fetch won't set Host)
@@ -154,5 +155,14 @@ describe('telegram onboard server', () => {
   it('refuses a password nobody asked for', async () => {
     const { post } = await start();
     expect((await post('password', { password: 'x' })).status).toBe(409);
+  });
+});
+
+describe('rpcCode', () => {
+  it('reads the RPC code, not the readable message', () => {
+    const e = new RPCError('PASSWORD_HASH_INVALID', undefined, 400);
+    Object.defineProperty(e, 'message', { value: 'The password (and thus its hash value) you entered is invalid' });
+    expect(rpcCode(e)).toBe('PASSWORD_HASH_INVALID');
+    expect(rpcCode(new Error('plain'))).toBe('plain');
   });
 });

@@ -98,25 +98,37 @@ export interface LoginDriver {
   ): Promise<{ session: string; user: LoginUser }>;
 }
 
+/** Known RPC errors carry a readable message ("The password … is invalid"); the code is in errorMessage. */
+export function rpcCode(err: Error): string {
+  return (err as Error & { errorMessage?: string }).errorMessage ?? err.message;
+}
+
 /** QR login on a fresh session; wrong 2FA passwords are asked again instead of failing. */
 export function qrLoginDriver(testServers = false): LoginDriver {
   return {
     async login(creds, io) {
       const client = new TelegramClient(new StringSession(''), creds.apiId, creds.apiHash, clientParams(testServers));
+      // teleproto reports a stop as AUTH_USER_CANCEL; keep the real cause to show instead
+      let cause: string | undefined;
       try {
         await client.connect();
         const user = await client.signInUserWithQrCode(creds, {
           qrCode: async ({ token }) => io.onQr(`tg://login?token=${Buffer.from(token).toString('base64url')}`),
           password: async (hint?: string) => io.password(hint),
           onError: async (err: Error) => {
-            if (/PASSWORD_HASH_INVALID/.test(err.message)) {
-              io.onPasswordError(err.message);
+            const code = rpcCode(err);
+            if (code === 'PASSWORD_HASH_INVALID') {
+              io.onPasswordError(code);
               return false;
             }
+            cause = code;
             return true;
           },
           abortSignal: io.signal,
-        } as Parameters<TelegramClient['signInUserWithQrCode']>[1]);
+        } as Parameters<TelegramClient['signInUserWithQrCode']>[1]).catch((e: unknown) => {
+          if (cause && e instanceof Error && e.message === 'AUTH_USER_CANCEL') throw new Error(cause);
+          throw e;
+        });
         const u = user as unknown as { id: { toString(): string }; firstName?: string; lastName?: string; username?: string };
         return {
           session: (client.session as StringSession).save(),
