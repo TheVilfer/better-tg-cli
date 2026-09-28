@@ -41,6 +41,8 @@ $ telegram read @alice -n 1 --json
 > use Telegram yourself, keep writes off unless you need them, and read [SECURITY.md](SECURITY.md)
 > before letting an agent write. The authors are not responsible for restricted accounts.
 
+**Contents:** [Why this fork](#why-this-fork) · [Install](#install) · [Log in](#log-in) · [Usage](#usage) · [MCP server](#mcp-server) · [FAQ](#faq) · [Development](#development) · [Privacy](#privacy) · [License](#license)
+
 ## Why this fork
 
 A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for agents:
@@ -229,6 +231,38 @@ tunnel URL plus `/mcp` (for example `https://<machine>.<tailnet>.ts.net/mcp`) an
 `Authorization: Bearer <token>`. `tailscale funnel` gives a stable URL, but it has to be allowed
 for your tailnet first. A `cloudflared` quick tunnel gets a new URL on every start. Read "Remote
 MCP over HTTP" in [SECURITY.md](SECURITY.md) first.
+
+## FAQ
+
+**Will Telegram ban my account?**
+Using your own account from a third-party client is allowed by the [Telegram API terms](https://core.telegram.org/api/terms). What gets accounts limited is behaviour that looks like a bot: bulk messaging, mass joins or invites, spam, and brand-new accounts doing a lot at once. Use it the way you would use Telegram yourself. The skill tells agents to avoid these patterns.
+
+**Is this a bot?**
+No. It logs in as you over MTProto, like Telegram Desktop, and sees exactly what you see. Bots can't read your chats; this can.
+
+**Can an agent send messages on its own?**
+Only after you turn writes on. `telegram write-access on` asks you to confirm in the terminal or in a macOS dialog, which an agent can't answer. Writes then need an exact chat, and each one is logged. Over MCP, writing is a separate tool that clients can ask you to approve every time. Details are in [SECURITY.md](SECURITY.md).
+
+**Does reading mark messages as read?**
+No. `read`, `inbox` and `search` leave chats unread. Only `telegram mark-read` marks them.
+
+**Do I need my own API keys?**
+Yes, from [my.telegram.org/apps](https://my.telegram.org/apps). They are free and take a minute to create. If the maintainer gave you an invite, `telegram auth --invite --qr` logs you in without them.
+
+**Where is my session stored, and who can see my messages?**
+The session is in the macOS Keychain, the Linux Secret Service or 1Password. The CLI talks to Telegram directly and has no analytics. The only other hosts are npm for a daily version check and the invite service at login. See [PRIVACY.md](PRIVACY.md).
+
+**Can I use several accounts?**
+Yes, with `TG_PROFILE`: each profile has its own login, config and Keychain items, for example `TG_PROFILE=work telegram auth --qr`. Switching accounts properly is tracked in [#5](https://github.com/TheVilfer/better-tg-cli/issues/5).
+
+**Does it work on Windows?**
+Not yet. It is built and tested on macOS and Linux, and relies on their secret stores.
+
+**Can I use it from Grok Bot, ChatGPT or another cloud agent?**
+Cloud agents can't start a program on your computer, so run the MCP server over HTTP and reach it through a tunnel. See [Grok Bot](#grok-bot-remote-mcp-over-http).
+
+**How do I update?**
+Run `telegram update`. It uses the same channel you installed from: Homebrew, npm or a release binary.
 
 ## Development
 
