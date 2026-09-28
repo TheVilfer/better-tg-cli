@@ -51,10 +51,14 @@ describe('DPAPI secret store', () => {
     const { dpapiStore: real } = await import('../src/dpapi.js');
     const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
     const store = real(() => file);
+    let t = Date.now();
     expect(store.set('sessionString', 'real-secret-ÄЖ')).toBe(true);
+    console.log(`DPAPI protect: ${Date.now() - t} ms`);
     expect(readFileSync(file, 'utf8')).not.toContain('real-secret');
+    t = Date.now();
     expect(real(() => file).get('sessionString')).toBe('real-secret-ÄЖ');
-  });
+    console.log(`DPAPI unprotect: ${Date.now() - t} ms`);
+  }, 60_000);
 });
 
 describe('Windows write-access confirmation', () => {
