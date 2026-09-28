@@ -28,7 +28,7 @@
 $ telegram inbox -n 3
 48 unread in 7 chats (showing 3)
 1234567890 user unread=2 Алиса @alice | в 7 в силе?
--1001234567 supergroup muted unread=41 Rust Moscow @rust_msk | кто уже пробовал 1.90?
+-1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | кто уже пробовал 1.90?
 -1009876543 channel unread=5 Changelog | вышла v2.4
 ```
 
@@ -159,7 +159,8 @@ telegram download "Чат" 812                   # сохранить вложе
 telegram sync --chat "Чат" --output ./export --resume   # инкрементальная выгрузка в markdown
 
 telegram write-access on --for 1h             # подтверждает человек
-printf '%s' "$text" | telegram send @alice -  # текст из stdin, без проблем с кавычками
+telegram send @alice "уже еду"
+printf '%s' "$text" | telegram send @alice -  # длинный или многострочный текст: из stdin, без проблем с кавычками
 telegram reply "Чат" 812 "беру" --silent
 telegram click @SomeBot 4410 "Настройки"      # нажать инлайн-кнопку
 ```
