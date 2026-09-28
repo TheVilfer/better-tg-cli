@@ -188,7 +188,7 @@ describe('self-serve signup', () => {
   });
 
   it('limits resends per email and codes per IP, and caps invites per day', async () => {
-    const { e, mails } = await open({ SIGNUP_DAILY_CAP: '1' });
+    const { e, mails } = await open({ SIGNUP_DAILY_CAP: '1', SIGNUP_CODES_PER_IP: '6', SIGNUP_CODES_PER_EMAIL: '3' });
     expect((await ask(e, 'a@b.co')).status).toBe(202);
     expect((await ask(e, 'a@b.co')).status).toBe(429); // resend_wait
     expect((await ask(e, 'a@b.co', undefined, later(61_000))).status).toBe(202);
@@ -203,6 +203,13 @@ describe('self-serve signup', () => {
     const capped = await confirm(e, 'd@b.co', codeOf(mails.filter(m => m.to === 'd@b.co')));
     expect(capped.status).toBe(429);
     expect(await capped.json()).toEqual({ error: 'daily_limit' });
+  });
+
+  it('falls back to conservative limits when the secrets are missing', async () => {
+    const { e } = await open();
+    const codes = [];
+    for (const who of ['a', 'b', 'c', 'd', 'e']) codes.push((await ask(e, `${who}@b.co`)).status);
+    expect(codes).toEqual([202, 202, 202, 202, 429]); // 4 codes per IP per day by default
   });
 
   it('reports a mail failure', async () => {

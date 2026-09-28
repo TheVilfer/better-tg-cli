@@ -149,7 +149,9 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
    `telegram auth` asks for your phone number and a login code instead. If the QR won't scan on a
    light terminal theme, run with `TG_QR_INVERT=1`.
 
-**With an invite.** If the maintainer gave you an invite token, you don't need your own keys.
+**With an invite.** You don't need your own keys with an invite token. Get one at
+[better-tg-cli.com](https://better-tg-cli.com) (confirm your email with a code; the page is in Russian
+and also has an install guide), or from the maintainer.
 Run `telegram auth --invite --qr` and paste the token, or pass it as `TG_INVITE=…` or `--invite -`. The
 invite service (`broker/`) hands out the app's keys once, for this login only. The `api_hash` is not
 kept on your machine. Invites are personal, allow a limited number of logins, and can be revoked.
@@ -259,7 +261,7 @@ Only after you turn writes on. `telegram write-access on` asks you to confirm in
 No. `read`, `inbox` and `search` leave chats unread. Only `telegram mark-read` marks them.
 
 **Do I need my own API keys?**
-Yes, from [my.telegram.org/apps](https://my.telegram.org/apps). They are free and take a minute to create. If the maintainer gave you an invite, `telegram auth --invite --qr` logs you in without them.
+Yes, from [my.telegram.org/apps](https://my.telegram.org/apps). They are free and take a minute to create. With an invite from [better-tg-cli.com](https://better-tg-cli.com), `telegram auth --invite --qr` logs you in without them.
 
 **Where is my session stored, and who can see my messages?**
 The session is in the macOS Keychain, the Linux Secret Service or 1Password. The CLI talks to Telegram directly and has no analytics. The only other hosts are npm for a daily version check and the invite service at login. See [PRIVACY.md](PRIVACY.md).

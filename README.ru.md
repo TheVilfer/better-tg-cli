@@ -148,7 +148,9 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
    Обычный `telegram auth` вместо QR спрашивает номер телефона и код. Если в светлой теме
    терминала QR не сканируется, запустите с `TG_QR_INVERT=1`.
 
-**По инвайту.** Если мейнтейнер дал вам инвайт-токен, свои ключи не нужны. Запустите
+**По инвайту.** С инвайт-токеном свои ключи не нужны. Получите его на
+[better-tg-cli.com](https://better-tg-cli.com) (почта подтверждается кодом, там же гайд по установке)
+или у мейнтейнера. Запустите
 `telegram auth --invite --qr` и вставьте токен. Его также можно передать через `TG_INVITE=…` или
 `--invite -`. Сервис инвайтов (`broker/`) выдаёт ключи приложения один раз, только для этого входа.
 `api_hash` на вашей машине не сохраняется. Инвайты персональные, число входов по ним ограничено, и
@@ -260,7 +262,7 @@ tailscale funnel --bg 8787                  # или: cloudflared tunnel --url h
 Нет. `read`, `inbox` и `search` оставляют чаты непрочитанными. Отмечает только `telegram mark-read`.
 
 **Нужны ли свои API-ключи?**
-Да, с [my.telegram.org/apps](https://my.telegram.org/apps). Они бесплатные, их создание занимает минуту. Если мейнтейнер дал вам инвайт, `telegram auth --invite --qr` войдёт без своих ключей.
+Да, с [my.telegram.org/apps](https://my.telegram.org/apps). Они бесплатные, их создание занимает минуту. С инвайтом с [better-tg-cli.com](https://better-tg-cli.com) `telegram auth --invite --qr` войдёт без своих ключей.
 
 **Где хранится сессия и кто видит мои сообщения?**
 Сессия лежит в Keychain macOS, в Secret Service на Linux или в 1Password. CLI общается с Telegram напрямую, аналитики нет. Кроме Telegram, он ходит только в npm (раз в день за номером версии) и в сервис инвайтов при входе. Подробнее в [PRIVACY.md](PRIVACY.md).

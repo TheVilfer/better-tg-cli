@@ -2,14 +2,20 @@
  * Self-serve invites: the page at / trades a verified email (kept only for notifications) for a
  * one-login invite: a six-digit code goes to the address, and only the code gets the invite. This hands the maintainer's app keys to strangers, so every guard fails closed:
  * signups are off unless KV `config:signups` is "on", Turnstile must pass server-side, and there
- * are per-IP and daily caps. `invite.mjs signups off` closes the page; `/v1/credentials` and
+ * are per-IP, per-email and daily caps (Worker secrets, see LIMIT_DEFAULTS). `invite.mjs signups off` closes the page; `/v1/credentials` and
  * invites already issued keep working.
  */
 import { sha256Hex, type Env, type Invite } from './handler';
 
 export const SIGNUPS_KEY = 'config:signups';
-const DAILY_CAP_DEFAULT = 30;
-const PER_IP_PER_DAY = 2;
+// Conservative fallbacks; the live limits are Worker secrets (SIGNUP_DAILY_CAP, SIGNUP_CODES_PER_IP,
+// SIGNUP_CODES_PER_EMAIL) so the exact thresholds aren't published with the code
+const LIMIT_DEFAULTS = { SIGNUP_DAILY_CAP: 10, SIGNUP_CODES_PER_IP: 4, SIGNUP_CODES_PER_EMAIL: 3 };
+
+function limit(env: Env, name: keyof typeof LIMIT_DEFAULTS): number {
+  const n = parseInt(env[name] ?? '', 10);
+  return n > 0 ? n : LIMIT_DEFAULTS[name];
+}
 const DAY_SECONDS = 86_400;
 
 export type SelfServeInvite = Invite & { source: 'self-serve' };
@@ -64,7 +70,6 @@ async function bump(env: Env, key: string, cap: number): Promise<boolean> {
 const CODE_TTL_SECONDS = 15 * 60;
 const CODE_ATTEMPTS = 5;
 const RESEND_AFTER_MS = 60_000;
-const CODES_PER_EMAIL_PER_DAY = 3;
 
 interface PendingCode { codeHash: string; attempts: number; sentAt: string }
 
@@ -136,8 +141,8 @@ export async function handleSignup(request: Request, env: Env, now = new Date(),
 
   const day = now.toISOString().slice(0, 10);
   // Per-email first, so a refused resend doesn't also eat the IP's allowance
-  if (!(await bump(env, `count:mail:${day}:${id}`, CODES_PER_EMAIL_PER_DAY))) return json(429, { error: 'rate_limited' });
-  if (!(await bump(env, `count:ip:${day}:${await sha256Hex(ip)}`, PER_IP_PER_DAY * CODES_PER_EMAIL_PER_DAY))) {
+  if (!(await bump(env, `count:mail:${day}:${id}`, limit(env, 'SIGNUP_CODES_PER_EMAIL')))) return json(429, { error: 'rate_limited' });
+  if (!(await bump(env, `count:ip:${day}:${await sha256Hex(ip)}`, limit(env, 'SIGNUP_CODES_PER_IP')))) {
     return json(429, { error: 'rate_limited' });
   }
 
@@ -183,8 +188,7 @@ export async function handleVerify(request: Request, env: Env, now = new Date())
   const emailKey = `email:${id}`;
   if (await env.INVITES.get(emailKey)) return json(409, { error: 'email_used' });
   const day = now.toISOString().slice(0, 10);
-  const cap = parseInt(env.SIGNUP_DAILY_CAP ?? '', 10) || DAILY_CAP_DEFAULT;
-  if (!(await bump(env, `count:day:${day}`, cap))) return json(429, { error: 'daily_limit' });
+  if (!(await bump(env, `count:day:${day}`, limit(env, 'SIGNUP_DAILY_CAP')))) return json(429, { error: 'daily_limit' });
 
   const token = newToken();
   const inviteKey = `invite:${await sha256Hex(token)}`;

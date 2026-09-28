@@ -35,6 +35,7 @@ name = "EMAIL"
 
 [vars]
 MAIL_FROM = "invites@better-tg-cli.com"
-SIGNUP_DAILY_CAP = "30"
+# Signup limits (SIGNUP_DAILY_CAP, SIGNUP_CODES_PER_IP, SIGNUP_CODES_PER_EMAIL) are secrets, not vars,
+# so the exact thresholds stay out of the repo; see src/signup.ts for the fallbacks
 # Turnstile widget "better-tg-cli invites" (public); TURNSTILE_SECRET is a secret
 TURNSTILE_SITE_KEY = "0x4AAAAAAFGjz6sghgDCcgsK"

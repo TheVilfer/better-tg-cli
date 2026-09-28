@@ -22,6 +22,8 @@ export interface Env {
   TURNSTILE_SECRET?: string;
   TURNSTILE_SITE_KEY?: string;
   SIGNUP_DAILY_CAP?: string;
+  SIGNUP_CODES_PER_IP?: string;
+  SIGNUP_CODES_PER_EMAIL?: string;
   /** Cloudflare Email Sending ([[send_email]]) and the verified sender address for signup codes */
   EMAIL?: { send(message: { to: string; from: { email: string; name?: string }; subject: string; text: string; html: string }): Promise<unknown> };
   MAIL_FROM?: string;

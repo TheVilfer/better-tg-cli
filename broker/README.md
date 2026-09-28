@@ -27,9 +27,11 @@ It hands the app keys to strangers, so it fails closed:
   must be an address on a domain onboarded to Cloudflare Email Sending (Workers Paid): it is
   `invites@better-tg-cli.com`. Closed means a "signups closed" page and `503 signups_closed`.
 - Cloudflare Turnstile is verified server-side (widget "better-tg-cli invites", Managed).
-- Limits: 6 requests per minute per IP (`SIGNUP_LIMITER`), 6 codes per IP and 3 per email per day,
-  a 60-second resend wait, 5 tries per code (15 minutes), and
-  `SIGNUP_DAILY_CAP` (30) invites per day overall, as soft KV counters.
+- Limits: a per-minute limiter per IP (`SIGNUP_LIMITER`), a 60-second resend wait, 5 tries per code
+  (15 minutes), and daily caps per IP, per email and overall as soft KV counters. The daily caps
+  are Worker secrets (`SIGNUP_DAILY_CAP`, `SIGNUP_CODES_PER_IP`, `SIGNUP_CODES_PER_EMAIL`), so the
+  exact numbers aren't in the repo; without them the conservative fallbacks in `src/signup.ts`
+  apply. Change one with `npx wrangler secret put SIGNUP_DAILY_CAP`.
 - One invite per email. Each invite allows one login and is marked `source: "self-serve"`.
 - The email is stored in plaintext under `email:<sha256(email)>` → `{email, inviteKey, createdAt}`,
   only for notifications.
