@@ -23,7 +23,8 @@ It hands the app keys to strangers, so it fails closed:
 
 - Closed unless KV `config:signups` is `on` **and** the `TURNSTILE_SECRET` secret, the
   `TURNSTILE_SITE_KEY` var, the `EMAIL` send binding and the `MAIL_FROM` var are set. `MAIL_FROM`
-  must be an address on a domain onboarded to Cloudflare Email Sending (Workers Paid). Closed means a "signups closed" page and `503 signups_closed`.
+  must be an address on a domain onboarded to Cloudflare Email Sending (Workers Paid): it is
+  `invites@better-tg-cli.com`. Closed means a "signups closed" page and `503 signups_closed`.
 - Cloudflare Turnstile is verified server-side (widget "better-tg-cli invites", Managed).
 - Limits: 6 requests per minute per IP (`SIGNUP_LIMITER`), 6 codes per IP and 3 per email per day,
   a 60-second resend wait, 5 tries per code (15 minutes), and

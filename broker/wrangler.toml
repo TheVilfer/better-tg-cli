@@ -23,12 +23,13 @@ name = "SIGNUP_LIMITER"
 namespace_id = "7002"
 simple = { limit = 6, period = 60 }
 
-# Signup codes go out through Cloudflare Email Sending. Until MAIL_FROM is set to an address on a
-# domain onboarded to Email Service, signups stay closed (see src/signup.ts).
+# Signup codes go out through Cloudflare Email Sending from better-tg-cli.com (onboarded in Email
+# Service). Without MAIL_FROM, signups stay closed (see src/signup.ts).
 [[send_email]]
 name = "EMAIL"
 
 [vars]
+MAIL_FROM = "invites@better-tg-cli.com"
 SIGNUP_DAILY_CAP = "30"
 # Turnstile widget "better-tg-cli invites" (public); TURNSTILE_SECRET is a secret
 TURNSTILE_SITE_KEY = "0x4AAAAAAFGjz6sghgDCcgsK"
