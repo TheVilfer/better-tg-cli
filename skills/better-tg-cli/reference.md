@@ -152,7 +152,7 @@ matches titles.
   interactive, so never run it for them. `--qr` logs in by scanning a QR code in the Telegram app instead of
   typing a code (`TG_QR_INVERT=1` for light terminals).
 
-- `command not found: telegram`: run `brew install thevilfer/tap/better-tg-cli` or `npm install -g better-tg-cli`, or build this folder (`npm install && npm run build && npm install -g .`, needs Bun)
+- `command not found: telegram`: run `brew install thevilfer/tap/better-tg-cli`, `scoop install better-tg-cli` (Windows, after `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket`) or `npm install -g better-tg-cli`, or build this folder (`npm install && npm run build && npm install -g .`, needs Bun)
   `telegram update` upgrades an existing install (brew, npm or git checkout); `update --check` only reports.
   `telegram skill install|status|uninstall [-a <agent>...]` copies this skill into coding agents' global
   skills folders; only run it when the user asks.

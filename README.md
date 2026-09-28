@@ -66,8 +66,17 @@ A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for 
 
 ```bash
 brew install thevilfer/tap/better-tg-cli   # standalone binary, macOS and Linux
-npm install -g better-tg-cli               # Node >= 20
+npm install -g better-tg-cli               # Node >= 20, any OS
 ```
+
+On Windows (experimental), with [Scoop](https://scoop.sh) or npm:
+
+```powershell
+scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket
+scoop install better-tg-cli
+```
+
+The Windows `telegram.exe` is not code-signed, so SmartScreen may warn about the release download.
 
 `telegram update` upgrades an existing install, whichever of these you used. On a terminal the CLI
 checks for new versions once a day. Agents and pipes never see that notice, and
@@ -84,6 +93,7 @@ Every channel ships the same version from one release:
 |---|---|---|
 | [Homebrew](https://github.com/TheVilfer/homebrew-tap) | standalone binary | `brew install thevilfer/tap/better-tg-cli` |
 | [npm](https://www.npmjs.com/package/better-tg-cli) | CLI and MCP server (Node 20+) | `npm install -g better-tg-cli` |
+| [Scoop](https://github.com/TheVilfer/scoop-bucket) (Windows, experimental) | standalone `telegram.exe` | `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` then `scoop install better-tg-cli` |
 | [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | binaries and SHA256SUMS | download by hand |
 | Claude Code plugin | skill and MCP server | [see below](#claude-code-plugin) |
 | Claude Desktop extension | MCP server, runs on Claude's built-in Node | [download `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) and open it |
@@ -167,7 +177,9 @@ The session is stored in the macOS Keychain (service `tg-cli`), or in 1Password 
 Keyring, KWallet, KeePassXC) through `secret-tool`, which needs the `libsecret-tools` package. A
 session already saved in the config file moves there automatically. Without any secret store, the
 session is kept in `~/.config/tg/config.json5` (mode 0600) and write commands stay disabled.
-On Linux, `write-access on` is confirmed at a terminal prompt.
+On Linux, `write-access on` is confirmed at a terminal prompt. On Windows the secrets live in
+`%APPDATA%\tg\secrets.dpapi`, encrypted with DPAPI for your Windows user (only you on this machine
+can decrypt it), and `write-access on` asks in a Yes/No window when there's no terminal.
 
 ## Usage
 
@@ -276,7 +288,9 @@ The session is in the macOS Keychain, the Linux Secret Service or 1Password. The
 Yes, with `TG_PROFILE`: each profile has its own login, config and Keychain items, for example `TG_PROFILE=work telegram auth --qr`. Switching accounts properly is tracked in [#5](https://github.com/TheVilfer/better-tg-cli/issues/5).
 
 **Does it work on Windows?**
-Not yet. It is built and tested on macOS and Linux, and relies on their secret stores.
+Yes, experimentally: `scoop install better-tg-cli` or npm. Secrets are stored with Windows DPAPI
+and CI runs the tests on Windows, but live use there is less tested than on macOS and Linux. Please
+report problems in the issues.
 
 **Can I use it from Grok Bot, ChatGPT or another cloud agent?**
 Cloud agents can't start a program on your computer, so run the MCP server over HTTP and reach it through a tunnel. See [Grok Bot](#grok-bot-remote-mcp-over-http).

@@ -71,6 +71,13 @@ The tag runs `.github/workflows/release.yml`:
 5. `Formula/better-tg-cli.rb` rendered by `scripts/homebrew-formula.mjs` and pushed to
    `TheVilfer/homebrew-tap` with the `TAP_DEPLOY_KEY` deploy key
 6. MCP Registry entry (`server.json`, GitHub OIDC) once npm serves the version
+7. Windows: `windows-x64` is cross-compiled and zipped on Linux, run on `windows-latest` in
+   `windows-smoke` (it gates the GitHub Release), and `scripts/scoop-manifest.mjs` pushes
+   `bucket/better-tg-cli.json` to `TheVilfer/scoop-bucket` with the `SCOOP_DEPLOY_KEY` deploy key
+
+Windows specifics: secrets in `%APPDATA%\tg\secrets.dpapi` (DPAPI through the built-in
+PowerShell 5.1, `src/dpapi.ts`), `write-access` asks in a MessageBox, every spawn sets
+`windowsHide`, and npm/scoop shims need `shell: true`. CI runs the tests and the `.exe` on Windows.
 
 `scripts/gen-version.mjs` also embeds `skills/better-tg-cli/*` into `src/skill-files.ts` for
 `telegram skill install` (a test fails if the two drift). On this machine the agents' skill folders
