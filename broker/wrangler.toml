@@ -15,3 +15,14 @@ id = "4320febbafa14fa19579bcda05c8aebc"
 name = "LIMITER"
 namespace_id = "7001"
 simple = { limit = 5, period = 60 }
+
+# Self-serve signup page (src/signup.ts): 3 attempts per minute per IP, separate from credentials
+[[ratelimits]]
+name = "SIGNUP_LIMITER"
+namespace_id = "7002"
+simple = { limit = 3, period = 60 }
+
+[vars]
+SIGNUP_DAILY_CAP = "30"
+# Turnstile widget "better-tg-cli invites" (public); TURNSTILE_SECRET is a secret
+TURNSTILE_SITE_KEY = "0x4AAAAAAFGjz6sghgDCcgsK"

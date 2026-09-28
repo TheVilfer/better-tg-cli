@@ -12,3 +12,4 @@ config.json5
 __pycache__/
 release/
 *.mcpb
+.dev.vars

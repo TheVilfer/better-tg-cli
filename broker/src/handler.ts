@@ -2,10 +2,12 @@
  * Credential broker: hands the app's api_id/api_hash to invited users at login time.
  * Invites live in KV under sha256(token); the raw token is never stored or logged.
  */
+import { pageResponse } from './page';
+import { handleSignup, signupsOpen } from './signup';
 
 export interface KV {
   get(key: string): Promise<string | null>;
-  put(key: string, value: string): Promise<void>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
 }
 
 export interface Env {
@@ -14,6 +16,11 @@ export interface Env {
   API_HASH: string;
   /** Workers rate limiting binding ([[ratelimits]] in wrangler.toml); absent in tests */
   LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
+  /** Self-serve signup page (src/signup.ts): its own limiter, Turnstile keys and daily cap */
+  SIGNUP_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
+  TURNSTILE_SECRET?: string;
+  TURNSTILE_SITE_KEY?: string;
+  SIGNUP_DAILY_CAP?: string;
 }
 
 export interface Invite {
@@ -41,6 +48,8 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
   const url = new URL(request.url);
 
   if (url.pathname === '/health') return json(200, { ok: true });
+  if (url.pathname === '/' && request.method === 'GET') return pageResponse(await signupsOpen(env), env.TURNSTILE_SITE_KEY);
+  if (url.pathname === '/v1/invites') return handleSignup(request, env, now);
   if (url.pathname !== '/v1/credentials') return json(404, { error: 'not_found' });
   if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
 

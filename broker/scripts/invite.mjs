@@ -3,7 +3,9 @@
 //   node scripts/invite.mjs create <name> [--max-uses 3]   → prints the token ONCE
 //   node scripts/invite.mjs list
 //   node scripts/invite.mjs revoke <name>
-//   node scripts/invite.mjs revoke-all                       → every active invite
+//   node scripts/invite.mjs revoke-all [--self-serve]        → every active invite (or only page signups)
+//   node scripts/invite.mjs signups on|off|status            → open or close the signup page at /
+//   node scripts/invite.mjs emails                           → CSV of signup emails (for notifications only)
 //   node scripts/invite.mjs panic                            → stop handing out keys at once (see README)
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -44,7 +46,7 @@ if (cmd === 'create' && name) {
     const r = get(key);
     if (!r) continue;
     const state = r.revoked ? 'revoked' : r.uses >= r.maxUses ? 'used up' : 'active';
-    console.log(`${r.name}\t${state}\tuses ${r.uses}/${r.maxUses}\tcreated ${r.createdAt.slice(0, 10)}\tlast ${r.lastUsedAt?.slice(0, 16) ?? '-'}\t${key.slice(7, 19)}`);
+    console.log(`${r.source === 'self-serve' ? '[page] ' : ''}${r.name}\t${state}\tuses ${r.uses}/${r.maxUses}\tcreated ${r.createdAt.slice(0, 10)}\tlast ${r.lastUsedAt?.slice(0, 16) ?? '-'}\t${key.slice(7, 19)}`);
   }
 } else if (cmd === 'revoke' && name) {
   let n = 0;
@@ -57,21 +59,37 @@ if (cmd === 'create' && name) {
   }
   console.log(n ? `Revoked ${n} invite(s) for "${name}".` : `No active invite matches "${name}".`);
 } else if (cmd === 'revoke-all') {
+  const selfServe = [name, ...rest].includes('--self-serve');
   let n = 0;
   for (const key of keys()) {
     const r = get(key);
-    if (r && !r.revoked) {
+    if (r && !r.revoked && (!selfServe || r.source === 'self-serve')) {
       put(key, JSON.stringify({ ...r, revoked: true, revokedAt: new Date().toISOString() }));
       n++;
     }
   }
   console.log(`Revoked ${n} active invite(s).`);
+} else if (cmd === 'signups' && ['on', 'off', 'status'].includes(name)) {
+  // The worker only opens signups when this key is exactly "on" (and Turnstile is configured)
+  if (name !== 'status') {
+    put('config:signups', name);
+    if (get('config:signups') !== name) throw new Error('Write did not read back from remote KV');
+  }
+  let state = 'off';
+  try { state = wrangler('key', 'get', 'config:signups', '--text').trim() || 'off'; } catch {}
+  console.log(`Signup page: ${state === 'on' ? 'open' : 'closed'}. Issued invites keep working either way.`);
+} else if (cmd === 'emails') {
+  console.log('email,created_at');
+  for (const { name: key } of JSON.parse(wrangler('key', 'list', '--prefix', 'email:'))) {
+    const r = get(key);
+    if (r) console.log(`${r.email},${r.createdAt}`);
+  }
 } else if (cmd === 'panic') {
   // Without API_HASH the worker answers 503 broker_not_configured before touching KV,
   // so no invite can hand out keys until the secret is put back.
   execFileSync('npx', ['--yes', 'wrangler@latest', 'secret', 'delete', 'API_HASH'], { cwd, input: 'y\n', stdio: ['pipe', 'inherit', 'inherit'] });
   console.log('Broker disabled: it now answers 503 to every invite. Restore with: npx wrangler secret put API_HASH');
 } else {
-  console.log('Usage: invite.mjs create <name> [--max-uses N] | list | revoke <name|hash-prefix> | revoke-all | panic');
+  console.log('Usage: invite.mjs create <name> [--max-uses N] | list | revoke <name|hash-prefix> | revoke-all [--self-serve] | signups on|off|status | emails | panic');
   process.exit(1);
 }

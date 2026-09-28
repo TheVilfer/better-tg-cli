@@ -11,8 +11,36 @@ A Cloudflare Worker that gives invited users the maintainer's `api_id`/`api_hash
   Use counts are soft limits, because KV is eventually consistent.
 - Secrets are `API_ID` and `API_HASH` (`wrangler secret put`). Logging is off, since request
   bodies carry invite tokens.
-- There is no admin HTTP endpoint. Invites are managed locally through wrangler.
+- `GET /` is the signup page (see below). There is no admin HTTP endpoint. Invites are managed locally through wrangler.
 - Deployed at `https://tg-cli-broker.login-c2d.workers.dev` (Cloudflare account "Anything* team").
+
+## Signup page
+
+`GET /` serves a page where people trade an email for a self-serve invite (`POST /v1/invites`).
+It hands the app keys to strangers, so it fails closed:
+
+- Closed unless KV `config:signups` is `on` **and** the `TURNSTILE_SECRET` secret and
+  `TURNSTILE_SITE_KEY` var are set. Closed means a "signups closed" page and `503 signups_closed`.
+- Cloudflare Turnstile is verified server-side (widget "better-tg-cli invites", Managed).
+- Limits: 3 attempts per minute per IP (`SIGNUP_LIMITER`), 2 invites per IP per day and
+  `SIGNUP_DAILY_CAP` (30) invites per day overall, as soft KV counters.
+- One invite per email. Each invite allows one login and is marked `source: "self-serve"`.
+- The email is stored in plaintext under `email:<sha256(email)>` → `{email, inviteKey, createdAt}`,
+  only for notifications.
+
+```bash
+node scripts/invite.mjs signups on|off|status   # open or close the page; issued invites keep working
+node scripts/invite.mjs emails                  # CSV of signup emails
+node scripts/invite.mjs revoke-all --self-serve # revoke only page invites
+```
+
+The page tells people to have their agent install the CLI and skill, and to run
+`telegram auth --invite` themselves. The token never goes into an agent prompt or argv.
+
+Local run: put `TURNSTILE_SECRET=1x0000000000000000000000000000000AA` (Cloudflare's always-pass test
+secret) with fake `API_ID`/`API_HASH` into `broker/.dev.vars` (gitignored), then
+`npx wrangler dev --local --var TURNSTILE_SITE_KEY:1x00000000000000000000AA` and
+`npx wrangler kv key put config:signups on --binding INVITES --local`.
 
 ## Invites
 

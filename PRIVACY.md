@@ -15,6 +15,11 @@ The invite service stores invites by their SHA-256 hash with a use counter and n
 tokens. Its request logging is off. It never sees your phone number, login code, session or
 messages, because the login itself goes straight to Telegram.
 
+If you get an invite from the signup page on the same service, it also stores the email you enter,
+lowercased, next to that invite. The email is used only to notify you about important updates or
+revoked keys. It is never shared or used for marketing. Ask in a GitHub issue to have it deleted.
+The page checks for bots with Cloudflare Turnstile.
+
 ## Data on your machine
 
 - **Session, api_hash and the write-access flag:** macOS Keychain, the Linux Secret Service or
