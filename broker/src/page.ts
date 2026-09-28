@@ -2,7 +2,19 @@
 
 import { escape, GUIDE_CSS, GUIDE_JS, guideHtml } from './guide';
 
-export function pageResponse(open: boolean, siteKey: string | undefined): Response {
+/**
+ * `telegram onboard` sends people here with ?return=<its loopback callback>. Only that exact shape
+ * is accepted: anything else would be an open redirect that leaks invite tokens.
+ */
+export function loopbackReturn(raw: string | null): string | null {
+  if (!raw) return null;
+  const m = /^http:\/\/127\.0\.0\.1:(\d{4,5})\/s\/[A-Za-z0-9_-]{32,64}\/cb$/.exec(raw);
+  if (!m) return null;
+  const port = Number(m[1]);
+  return port >= 1024 && port <= 65535 ? raw : null;
+}
+
+export function pageResponse(open: boolean, siteKey: string | undefined, returnTo: string | null = null): Response {
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
   const csp = [
     "default-src 'none'",
@@ -16,7 +28,7 @@ export function pageResponse(open: boolean, siteKey: string | undefined): Respon
     "form-action 'none'",
     "frame-ancestors 'none'",
   ].join('; ');
-  return new Response(page(nonce, open, siteKey ?? ''), {
+  return new Response(page(nonce, open, siteKey ?? '', returnTo), {
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
@@ -27,7 +39,7 @@ export function pageResponse(open: boolean, siteKey: string | undefined): Respon
   });
 }
 
-function page(nonce: string, open: boolean, siteKey: string): string {
+function page(nonce: string, open: boolean, siteKey: string, returnTo: string | null): string {
   const form = open
     ? `<form id="f" novalidate>
   <label for="email">Почта</label>
@@ -77,6 +89,7 @@ button:disabled{opacity:.5;cursor:default}
 .vhint{margin:0 0 10px}
 .vrow{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
 .link{background:none;color:var(--accent);padding:0;font-weight:400;font-size:14px}
+.cli{padding:12px 14px;border:1px solid var(--accent);border-radius:10px;margin:0 0 24px;font-size:15px}
 .err{color:var(--err);font-size:14px;margin:12px 0 0}
 .closed{padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 a{color:var(--accent)}
@@ -90,16 +103,18 @@ code,.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:.92em}
 ${GUIDE_CSS}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
 [hidden]{display:none!important}
-</style></head><body><main>
+</style></head><body><main${returnTo ? ` data-return="${escape(returnTo)}"` : ''}>
 <div class="brand"><svg viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="12" fill="currentColor"/><rect x="2" y="2" width="2" height="8" fill="var(--bg)"/><rect x="4" y="5" width="2" height="2" fill="var(--bg)"/><rect x="6" y="8" width="4" height="2" fill="var(--accent)"/></svg><span>BETTER-TG-CLI<i>.</i></span></div>
 <h1>Инвайт для входа в better-tg-cli</h1>
 <p class="lead">Инвайт позволяет войти в свой Telegram через CLI без своих API-ключей с my.telegram.org.
 Подтвердите почту кодом из письма: одна почта — один инвайт на один вход. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.</p>
+${returnTo ? '<p class="cli">Вас прислал <span class="mono">telegram onboard</span>. После подтверждения почты инвайт сам вернётся в CLI — копировать ничего не нужно.</p>' : ''}
 <section id="start">${form}</section>
 <section id="done" hidden>
   <h2 class="done-h">Ваш инвайт</h2>
   <p class="done-p">Показываем один раз. Сохраните его и не отправляйте агенту или кому-то ещё — он понадобится на шаге входа.</p>
   <div class="box token"><pre id="tok"></pre><button type="button" data-copy>Копировать</button></div>
+  <p class="done-p" id="back-cli" hidden>Передаём инвайт в CLI… Если страница CLI не открылась, скопируйте инвайт и вставьте его там.</p>
   <p class="done-p"><a href="#guide">Дальше — установка ↓</a></p>
 </section>
 ${guideHtml()}
@@ -157,6 +172,9 @@ if (v) v.addEventListener('submit', async e => {
     $('tok').textContent = data.invite;
     $('start').hidden = true; $('done').hidden = false;
     $('done').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Back to telegram onboard: the token rides in the fragment, which never reaches a server
+    const back = document.querySelector('main').dataset.return;
+    if (back) { $('back-cli').hidden = false; location.assign(back + '#invite=' + encodeURIComponent(data.invite)); }
   } catch (x) {
     err.textContent = x.message; err.hidden = false;
   } finally { go.disabled = false; }

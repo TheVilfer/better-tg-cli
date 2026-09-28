@@ -142,6 +142,12 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 
 ## Log in
 
+**Through your agent** (easiest): ask it to set up Telegram, or run `telegram onboard` yourself. It
+opens a page on 127.0.0.1 where you get an invite from [better-tg-cli.com](https://better-tg-cli.com)
+(it comes back to the page by itself) or enter your own keys, scan a QR code and type your 2FA
+password. The agent only starts the command and waits: it never sees the invite, the QR code or the
+password. The page answers only on a random secret path and closes when you're done.
+
 **With your own API keys** (the default):
 1. Open https://my.telegram.org/apps, create an application, and copy its `api_id` and `api_hash`.
 2. Run `telegram auth --qr` and enter them. Then, on your phone, go to Settings → Devices → Link

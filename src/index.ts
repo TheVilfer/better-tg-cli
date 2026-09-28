@@ -76,6 +76,7 @@ import {
   watchCommand,
   updateCommand,
   skillCommand,
+  onboardCommand,
 } from './commands/index.js';
 
 
@@ -88,6 +89,7 @@ program
 
 // Auth commands
 program.addCommand(authCommand);
+program.addCommand(onboardCommand);
 program.addCommand(logoutCommand);
 program.addCommand(checkCommand);
 program.addCommand(whoamiCommand);

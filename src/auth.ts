@@ -69,19 +69,64 @@ export async function authenticate(
     onError: (err) => console.error('Error:', err),
   });
 
-  // Save credentials only after a successful login
-  if (invite) {
-    setInviteCredentials(apiId);
-  } else {
-    setCredentials(apiId, apiHash);
-  }
-  // Only touch the flag when it is or was set, so ordinary configs stay unchanged
-  if (testServers || loadConfig(() => {}).testServers) saveConfig({ testServers });
-  setSessionString((client.session as StringSession).save());
+  saveLogin((client.session as StringSession).save(), { apiId, apiHash }, !!invite, testServers);
 
   console.log('\nAuthentication successful! Session saved.');
 
   return client;
+}
+
+/**
+ * Save a finished login. Invite logins keep only the api_id: the api_hash was for this login and
+ * is forgotten. Called only after Telegram accepted the login.
+ */
+export function saveLogin(session: string, creds: { apiId: number; apiHash: string }, invite: boolean, testServers = false): void {
+  if (invite) setInviteCredentials(creds.apiId);
+  else setCredentials(creds.apiId, creds.apiHash);
+  // Only touch the flag when it is or was set, so ordinary configs stay unchanged
+  if (testServers || loadConfig(() => {}).testServers) saveConfig({ testServers });
+  setSessionString(session);
+}
+
+export interface LoginUser { id: string; name: string; username?: string }
+
+/** What `telegram onboard` needs from a login; the tests pass a fake. */
+export interface LoginDriver {
+  login(
+    creds: { apiId: number; apiHash: string },
+    io: { onQr(url: string): void; password(hint?: string): Promise<string>; onPasswordError(message: string): void; signal: AbortSignal },
+  ): Promise<{ session: string; user: LoginUser }>;
+}
+
+/** QR login on a fresh session; wrong 2FA passwords are asked again instead of failing. */
+export function qrLoginDriver(testServers = false): LoginDriver {
+  return {
+    async login(creds, io) {
+      const client = new TelegramClient(new StringSession(''), creds.apiId, creds.apiHash, clientParams(testServers));
+      try {
+        await client.connect();
+        const user = await client.signInUserWithQrCode(creds, {
+          qrCode: async ({ token }) => io.onQr(`tg://login?token=${Buffer.from(token).toString('base64url')}`),
+          password: async (hint?: string) => io.password(hint),
+          onError: async (err: Error) => {
+            if (/PASSWORD_HASH_INVALID/.test(err.message)) {
+              io.onPasswordError(err.message);
+              return false;
+            }
+            return true;
+          },
+          abortSignal: io.signal,
+        } as Parameters<TelegramClient['signInUserWithQrCode']>[1]);
+        const u = user as unknown as { id: { toString(): string }; firstName?: string; lastName?: string; username?: string };
+        return {
+          session: (client.session as StringSession).save(),
+          user: { id: u.id.toString(), name: [u.firstName, u.lastName].filter(Boolean).join(' '), username: u.username },
+        };
+      } finally {
+        await client.disconnect().catch(() => {});
+      }
+    },
+  };
 }
 
 /** Terminal QR for a dark background (verified by decoding); TG_QR_INVERT=1 for light terminals. */

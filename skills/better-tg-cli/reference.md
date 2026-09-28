@@ -115,7 +115,7 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
   - Read tool: only the read commands.
   - Write tool: everything that changes the account or writes local files (`download`, `sync`,
     `avatar`).
-  - Never over MCP: `auth`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
+  - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
     Showing its status is allowed.
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
@@ -141,9 +141,15 @@ matches titles.
 
 ## Troubleshooting
 
-- `Not configured`: the user must log in themselves with `telegram auth` (their own keys from
-  my.telegram.org) or `telegram auth --invite` (a token from the maintainer). It is interactive,
-  so never run it for them. `--qr` logs in by scanning a QR code in the Telegram app instead of
+- `Not configured`: run `telegram onboard --json`. It serves a one-shot page on 127.0.0.1 (random
+  secret path, closes when done, `--timeout` 15 min by default) where the user gets an invite from
+  better-tg-cli.com (it comes back to the page by itself), or enters their own keys, then scans a QR
+  code and types their 2FA password. Events: `url`, `waiting_invite`, `waiting_scan`, `need_password`,
+  `done` (exit 0), `error`, `timeout` (exit 1); `already_logged_in` exits 0 without changes.
+  `--no-open` only prints the URL. You never get tokens, codes or passwords, and you must not ask
+  for them or fill in the page. Without a browser on this machine (SSH), the user runs
+  `telegram auth --qr` (own keys) or `telegram auth --invite --qr` in their terminal; that is
+  interactive, so never run it for them. `--qr` logs in by scanning a QR code in the Telegram app instead of
   typing a code (`TG_QR_INVERT=1` for light terminals).
 
 - `command not found: telegram`: run `brew install thevilfer/tap/better-tg-cli` or `npm install -g better-tg-cli`, or build this folder (`npm install && npm run build && npm install -g .`, needs Bun)

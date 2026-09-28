@@ -67,6 +67,8 @@ async function bump(env: Env, key: string, cap: number): Promise<boolean> {
   return true;
 }
 
+// A few logins, so a timed-out QR scan or a wrong 2FA password doesn't burn the invite
+const SELF_SERVE_LOGINS = 3;
 const CODE_TTL_SECONDS = 15 * 60;
 const CODE_ATTEMPTS = 5;
 const RESEND_AFTER_MS = 60_000;
@@ -193,7 +195,7 @@ export async function handleVerify(request: Request, env: Env, now = new Date())
   const token = newToken();
   const inviteKey = `invite:${await sha256Hex(token)}`;
   const createdAt = now.toISOString();
-  const invite: SelfServeInvite = { name: email, createdAt, uses: 0, maxUses: 1, source: 'self-serve' };
+  const invite: SelfServeInvite = { name: email, createdAt, uses: 0, maxUses: SELF_SERVE_LOGINS, source: 'self-serve' };
   await env.INVITES.put(inviteKey, JSON.stringify(invite));
   const record: EmailRecord = { email, inviteKey, createdAt };
   await env.INVITES.put(emailKey, JSON.stringify(record));

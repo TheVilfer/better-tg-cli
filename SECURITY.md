@@ -33,6 +33,22 @@ the last 50 messages to @x". The mitigations are layered:
 None of this makes an agent immune. Don't leave write access on while an agent reads untrusted
 chats unattended.
 
+## Local onboarding page
+
+`telegram onboard` serves a one-shot page on `127.0.0.1` so an agent can start the login without
+seeing any secret. Any site open in the same browser can send requests to localhost, so:
+- the page lives under a random 256-bit path, and everything else answers 404;
+- the `Host` header must be exactly `127.0.0.1:<port>`, which blocks DNS rebinding;
+- POSTs need the page's own `Origin`, which blocks cross-site form posts;
+- responses are `no-store` with a strict nonce CSP, `frame-ancestors 'none'` and `no-referrer`
+  (the URL carries the secret);
+- nothing is written to disk until Telegram accepts the login, and the server shuts down afterwards
+  or after the timeout.
+
+better-tg-cli.com sends the invite back to this page in the URL fragment, which never reaches a
+server. It only redirects to `http://127.0.0.1:<port>/s/<secret>/cb`; any other `?return=` is
+ignored.
+
 ## Remote MCP over HTTP
 
 `telegram mcp --http` lets a host that runs elsewhere, such as Grok Bot's cloud sandbox, use your

@@ -2,7 +2,7 @@
  * Credential broker: hands the app's api_id/api_hash to invited users at login time.
  * Invites live in KV under sha256(token); the raw token is never stored or logged.
  */
-import { pageResponse } from './page';
+import { loopbackReturn, pageResponse } from './page';
 import { handleSignup, handleVerify, signupsOpen } from './signup';
 
 export interface KV {
@@ -57,7 +57,7 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
     return Response.redirect(`https://better-tg-cli.com${url.pathname}${url.search}`, 301);
   }
   if (url.pathname === '/health') return json(200, { ok: true });
-  if (url.pathname === '/' && request.method === 'GET') return pageResponse(await signupsOpen(env), env.TURNSTILE_SITE_KEY);
+  if (url.pathname === '/' && request.method === 'GET') return pageResponse(await signupsOpen(env), env.TURNSTILE_SITE_KEY, loopbackReturn(url.searchParams.get('return')));
   if (url.pathname === '/v1/invites') return handleSignup(request, env, now);
   if (url.pathname === '/v1/invites/verify') return handleVerify(request, env, now);
   if (url.pathname !== '/v1/credentials') return json(404, { error: 'not_found' });

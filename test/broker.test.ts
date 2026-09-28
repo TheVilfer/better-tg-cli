@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { handle, sha256Hex, type Env, type Invite } from '../broker/src/handler.js';
 import { handleSignup, handleVerify, normalizeEmail, SIGNUPS_KEY } from '../broker/src/signup.js';
+import { loopbackReturn } from '../broker/src/page.js';
 
 const TOKEN = 'tok_' + 'x'.repeat(40);
 
@@ -166,13 +167,14 @@ describe('self-serve signup', () => {
     expect(keysBesides(store).some(k => k.startsWith('verify:'))).toBe(false); // the code is spent
 
     const rec = JSON.parse(store.get(`invite:${await sha256Hex(invite)}`)!);
-    expect(rec).toMatchObject({ name: 'alice@example.com', maxUses: 1, uses: 0, source: 'self-serve' });
+    expect(rec).toMatchObject({ name: 'alice@example.com', maxUses: 3, uses: 0, source: 'self-serve' });
     const email = JSON.parse(store.get(`email:${await sha256Hex('alice@example.com')}`)!);
     expect(email).toMatchObject({ email: 'alice@example.com', inviteKey: `invite:${await sha256Hex(invite)}` });
 
     expect((await confirm(e, 'alice@example.com', code)).status).toBe(410);
     expect((await ask(e, 'alice@example.com', '198.51.100.8')).status).toBe(409);
-    expect((await handle(post({ invite }), e)).status).toBe(200);
+    // A few logins, so a failed QR scan or a wrong 2FA password doesn't burn the invite
+    for (let i = 0; i < 3; i++) expect((await handle(post({ invite }), e)).status).toBe(200);
     expect((await handle(post({ invite }), e)).status).toBe(429);
   });
 
@@ -229,6 +231,22 @@ describe('self-serve signup', () => {
     expect(verified).toBe(false);
     expect([...store.keys()]).toEqual([SIGNUPS_KEY]);
     expect(mails).toEqual([]);
+  });
+
+  it('accepts only a telegram onboard loopback callback as ?return=', async () => {
+    const good = 'http://127.0.0.1:54321/s/' + 'a'.repeat(43) + '/cb';
+    expect(loopbackReturn(good)).toBe(good);
+    for (const bad of [
+      null, '', 'https://evil.example/cb', 'http://localhost:54321/s/' + 'a'.repeat(43) + '/cb',
+      'http://127.0.0.1:54321/s/short/cb', 'http://127.0.0.1:80/s/' + 'a'.repeat(43) + '/cb',
+      good + '?x=1', good + '/', 'http://127.0.0.1:54321@evil.example/s/' + 'a'.repeat(43) + '/cb',
+      'http://127.0.0.1:99999/s/' + 'a'.repeat(43) + '/cb', 'javascript:alert(1)//http://127.0.0.1:5000/s/' + 'a'.repeat(43) + '/cb',
+    ]) expect(loopbackReturn(bad)).toBeNull();
+
+    const { e } = await open();
+    const html = async (q: string) => (await handle(new Request(`https://broker.test/?return=${encodeURIComponent(q)}`), e)).text();
+    expect(await html(good)).toContain(`data-return="${good}"`);
+    expect(await html('https://evil.example/cb')).not.toContain('data-return');
   });
 
   it('normalizes emails', () => {

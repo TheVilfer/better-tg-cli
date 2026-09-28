@@ -14,7 +14,7 @@ telegram help-all -g read >/dev/null && telegram check
 ```
 
 - **`telegram` is missing, or it has no `help-all`.** A different program is installed under that name. Ask the user before installing anything, then run `brew install thevilfer/tap/better-tg-cli` (macOS or Linux) or `npm install -g better-tg-cli` (Node 20 or newer). Never install `@skillhq/telegram`: it is an old build, and bot replies come back as `(no text)`.
-- **"Not configured" or "Not authenticated".** Logging in is interactive and needs the user's phone, so never run it yourself. Ask the user to run `telegram auth --qr` in their terminal. It uses their own API keys from my.telegram.org and a QR scan in the Telegram app. If the maintainer gave them an invite, the command is `telegram auth --invite --qr`.
+- **"Not configured" or "Not authenticated".** Run `telegram onboard --json` (in the background if your tool times out before ~15 minutes). It opens a page on 127.0.0.1 where the user gets an invite or enters their own API keys, scans a QR code and types their 2FA password. You never see any of that. Tell the user the page is open (relay the `url` event if the browser didn't open), wait for the `done` event, then confirm with `telegram whoami`. Never run `telegram auth` yourself. Never ask for a login code, 2FA password, invite token or api_hash in chat, and never fill in the onboarding page yourself. If the user is on SSH or `onboard` can't open a page, ask them to run `telegram auth --qr` in their own terminal.
 
 Before you use an unfamiliar flag, run `telegram help-all -g <word>`. It is generated from the code, so it is always current. For behaviour details (threads, bot buttons, sync, JSON shapes, errors), read `reference.md` next to this file.
 
