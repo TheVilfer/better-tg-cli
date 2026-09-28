@@ -130,7 +130,7 @@ describe('self-serve signup', () => {
       const html = await (await handle(new Request('https://broker.test/'), e)).text();
       const tabs = [...html.matchAll(/role="tab" id="tab-([a-z-]+)"/g)].map(m => m[1]);
       expect(tabs).toEqual(['auto', 'pro', 'claude-code', 'codex', 'cursor', 'claude-desktop']);
-      expect(html).toContain('npx skills add TheVilfer/better-tg-cli -g -y'); // the Auto prompt
+      expect(html).toContain('telegram onboard --json'); // the Auto prompt
       expect(html).toContain('telegram auth --invite --qr');
       expect(html).not.toMatch(/ style="/); // blocked by the nonce CSP
     }

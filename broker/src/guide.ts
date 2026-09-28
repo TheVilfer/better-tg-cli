@@ -94,8 +94,8 @@ const TABS: Tab[] = [
 export const AUTO_PROMPT = [
   'Подключи мне Telegram через better-tg-cli (https://github.com/TheVilfer/better-tg-cli):',
   '1. Установи CLI: `brew install thevilfer/tap/better-tg-cli`. Если Homebrew нет — `npm install -g better-tg-cli` (нужен Node 20+).',
-  '2. Установи скилл для себя: `npx skills add TheVilfer/better-tg-cli -g -y`.',
-  '3. Не входи в Telegram сам: вход интерактивный. Попроси меня выполнить в терминале `telegram auth --invite --qr` и подожди, пока я скажу «готово».',
+  '2. Запусти `telegram onboard --json` (в фоне, если твой таймаут короче 15 минут). Откроется страница, где я сам получу инвайт, отсканирую QR и введу пароль. Дождись события `done`. Не проси у меня коды, пароли и инвайт и не заполняй страницу сам.',
+  '3. Установи себе скилл: `telegram skill install`.',
   '4. Проверь вход командой `telegram whoami` и коротко расскажи, что ты теперь умеешь в Telegram.',
 ].join('\n');
 
@@ -104,11 +104,11 @@ const AUTO_SCREEN = terminal('агент', [
   '',
   `${a('⏺')} ${b('Bash')}${d('(brew install thevilfer/tap/better-tg-cli)')}`,
   `  ${d('⎿')} ${g('✓')} ${d('better-tg-cli installed')}`,
-  `${a('⏺')} ${b('Bash')}${d('(npx skills add TheVilfer/better-tg-cli -g -y)')}`,
-  `  ${d('⎿')} ${g('✓')} ${d('Installed better-tg-cli')}`,
-  `${a('⏺')} Всё готово. Теперь войдите сами — в терминале:`,
-  `  ${a('telegram auth --invite --qr')}`,
-  `  Вставьте инвайт, отсканируйте QR и напишите «готово».`,
+  `${a('⏺')} ${b('Bash')}${d('(telegram onboard --json)')}`,
+  `  ${d('⎿')} ${d('waiting_scan … need_password …')} ${g('done')}`,
+  `${a('⏺')} ${b('Bash')}${d('(telegram skill install)')}`,
+  `  ${d('⎿')} ${g('✓')} ${d('Claude Code installed')}`,
+  `${a('⏺')} Готово: вы вошли как Алиса (@alice).`,
 ]);
 
 function tablist(label: string, items: { id: string; label: string; body: string }[], cls: string): string {
@@ -124,12 +124,12 @@ const LOGIN_NOTE = '<p class="note">Вставьте инвайт с этой с
 function autoHtml(): string {
   return `<ol class="steps">
 <li><h3>Вставьте промпт своему агенту</h3>
-  <p>Claude Code, Codex, Cursor или любой другой агент с терминалом. Он сам поставит CLI и скилл.</p>${code(AUTO_PROMPT, true)}
+  <p>Claude Code, Codex, Cursor или любой другой агент с терминалом. Он поставит CLI и скилл и откроет страницу входа.</p>${code(AUTO_PROMPT, true)}
   ${AUTO_SCREEN}</li>
-<li><h3>Войдите, когда агент попросит</h3>
-  <p>Вход делаете вы, а не агент. В терминале:</p>${code('telegram auth --invite --qr')}${LOGIN_NOTE}</li>
+<li><h3>Пройдите страницу входа</h3>
+  <p>Агент откроет её в браузере на вашем компьютере. Там: «Получить инвайт» (почта подтверждается кодом, инвайт вернётся сам), QR в Telegram — Настройки → Устройства → Подключить устройство, и облачный пароль, если он есть. Агент ничего из этого не видит.</p></li>
 <li><h3>Готово</h3>
-  <p>Скажите агенту «готово» и спросите, например: «что у меня непрочитанного в телеге?» Писать от вашего имени он сможет, только когда вы разрешите: <span class="mono">telegram write-access on --for 1h</span>.</p>
+  <p>Спросите агента, например: «что у меня непрочитанного в телеге?» Писать от вашего имени он сможет, только когда вы разрешите: <span class="mono">telegram write-access on --for 1h</span>.</p>
   <p class="note">Claude Desktop без терминала так не умеет — для него режим PRO.</p></li>
 </ol>`;
 }
