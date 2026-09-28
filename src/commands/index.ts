@@ -48,3 +48,4 @@ export { watchCommand } from './watch.js';
 export { infoCommand, topicsCommand, linkCommand } from './info.js';
 export { contactsCommand } from './contacts.js';
 export { updateCommand } from './update.js';
+export { skillCommand } from './skill.js';

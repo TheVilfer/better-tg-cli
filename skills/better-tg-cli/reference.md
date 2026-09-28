@@ -115,7 +115,7 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
   - Read tool: only the read commands.
   - Write tool: everything that changes the account or writes local files (`download`, `sync`,
     `avatar`).
-  - Never over MCP: `auth`, `logout`, `transfer-owner`, `update`, and changing `write-access`.
+  - Never over MCP: `auth`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
     Showing its status is allowed.
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
@@ -148,6 +148,8 @@ matches titles.
 
 - `command not found: telegram`: run `brew install thevilfer/tap/better-tg-cli` or `npm install -g better-tg-cli`, or build this folder (`npm install && npm run build && npm install -g .`, needs Bun)
   `telegram update` upgrades an existing install (brew, npm or git checkout); `update --check` only reports.
+  `telegram skill install|status|uninstall [-a <agent>...]` copies this skill into coding agents' global
+  skills folders; only run it when the user asks.
   Never install `@skillhq/telegram` from npm: it is the old GramJS build, and bot replies show
   as `(no text)`.
 - `Write access is disabled`: the account is read-only on purpose, or a `--for` window expired. Ask

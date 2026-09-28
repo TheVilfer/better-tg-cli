@@ -75,6 +75,7 @@ import {
   storiesCommand,
   watchCommand,
   updateCommand,
+  skillCommand,
 } from './commands/index.js';
 
 
@@ -164,6 +165,7 @@ program.addCommand(writeAccessCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);
+program.addCommand(skillCommand);
 program
   .command('mcp')
   .description('Run as an MCP server over stdio, or over HTTP with --http (tools: telegram_help, telegram_read, telegram_write)')
@@ -205,18 +207,25 @@ program
   .action((options) => {
     const needle = options.grep?.toLowerCase();
     const lines: string[] = [];
-    for (const cmd of program.commands) {
-      if (cmd.name() === 'help-all') continue;
+    const emit = (cmd: Command, name: string): void => {
+      // A group (e.g. `skill`) is listed through its subcommands
+      if (cmd.commands.length) {
+        for (const sub of cmd.commands) emit(sub, `${name} ${sub.name()}`);
+        return;
+      }
       const desc = cmd.description();
-      const haystack = [cmd.name(), desc, ...cmd.options.map(o => `${o.flags} ${o.description}`)].join(' ').toLowerCase();
-      if (needle && !haystack.includes(needle)) continue;
+      const haystack = [name, desc, ...cmd.options.map(o => `${o.flags} ${o.description}`)].join(' ').toLowerCase();
+      if (needle && !haystack.includes(needle)) return;
       const args = cmd.registeredArguments.map(a => (a.required ? `<${a.name()}${a.variadic ? '...' : ''}>` : `[${a.name()}${a.variadic ? '...' : ''}]`)).join(' ');
-      lines.push(`${cmd.name()}${args ? ' ' + args : ''} — ${desc}`);
+      lines.push(`${name}${args ? ' ' + args : ''} — ${desc}`);
       for (const opt of cmd.options) {
         if (opt.long === '--json' || opt.long === '--markdown') continue;
         const def = opt.defaultValue !== undefined && typeof opt.defaultValue !== 'boolean' ? ` (default ${opt.defaultValue})` : '';
         lines.push(`  ${opt.flags} — ${opt.description}${def}`);
       }
+    };
+    for (const cmd of program.commands) {
+      if (cmd.name() !== 'help-all') emit(cmd, cmd.name());
     }
     lines.push('', 'Most read commands accept --json; --markdown where noted in `<cmd> --help`.');
     console.log(lines.join('\n'));

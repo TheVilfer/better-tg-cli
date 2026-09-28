@@ -91,6 +91,7 @@ Every channel ships the same version from one release:
 | Gemini CLI extension | skill and MCP server | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
 | Cursor, VS Code | MCP server | [one-click buttons](#mcp-server) |
 | Grok Bot | MCP server over HTTP from your Mac | [see below](#grok-bot-remote-mcp-over-http) |
+| The CLI itself | agent skill for Claude Code, Codex, Cursor, Gemini CLI and 7 more | `telegram skill install` |
 | [skills.sh](https://skills.sh) | agent skill for any shell agent | `npx skills add TheVilfer/better-tg-cli` |
 | [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | MCP server entry `io.github.TheVilfer/better-tg-cli` | through your MCP client |
 
@@ -121,7 +122,18 @@ grok plugin marketplace add TheVilfer/better-tg-cli && grok plugin install bette
 The skill ([`skills/better-tg-cli`](skills/better-tg-cli/SKILL.md)) teaches any agent with a shell
 (Claude Code, Codex, Cursor, Gemini CLI, OpenCode and others) to use the CLI safely. It checks the
 setup, never logs in on its own, keeps writes behind your approval, and avoids ban-prone patterns.
-Install it with the [skills](https://skills.sh) CLI:
+The CLI carries the skill and installs it itself, so it always matches your version:
+
+```bash
+telegram skill install                  # every supported agent found on this machine
+telegram skill install -a claude-code codex
+telegram skill status                   # installed, outdated, linked or missing, per agent
+```
+
+It knows Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, Grok Build, OpenCode, Goose,
+Droid, Windsurf and Pi (`telegram skill status` lists the folders). Run it again after
+`telegram update` to refresh the skill. A skill folder that is a symlink is left alone unless you
+pass `--force`. For other agents, use the [skills](https://skills.sh) CLI:
 
 ```bash
 npx skills add TheVilfer/better-tg-cli          # pick agents interactively
@@ -263,6 +275,7 @@ Cloud agents can't start a program on your computer, so run the MCP server over 
 
 **How do I update?**
 Run `telegram update`. It uses the same channel you installed from: Homebrew, npm or a release binary.
+If you installed the agent skill with `telegram skill install`, run that again to refresh it.
 
 ## Development
 

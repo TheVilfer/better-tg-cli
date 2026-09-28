@@ -72,7 +72,10 @@ The tag runs `.github/workflows/release.yml`:
    `TheVilfer/homebrew-tap` with the `TAP_DEPLOY_KEY` deploy key
 6. MCP Registry entry (`server.json`, GitHub OIDC) once npm serves the version
 
-`scripts/gen-version.mjs` keeps `.claude-plugin/plugin.json`, `server.json` and
+`scripts/gen-version.mjs` also embeds `skills/better-tg-cli/*` into `src/skill-files.ts` for
+`telegram skill install` (a test fails if the two drift). On this machine the agents' skill folders
+are symlinks into this checkout; `skill install` skips symlinks unless `--force`, so never pass
+`--force` here. `scripts/gen-version.mjs` keeps `.claude-plugin/plugin.json`, `server.json` and
 `gemini-extension.json` on the package version; `release.sh` commits them.
 
 Grok Build reads `.claude-plugin/plugin.json` as is, but refuses a marketplace entry that points at

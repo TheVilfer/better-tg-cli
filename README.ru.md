@@ -90,6 +90,7 @@ npm install -g better-tg-cli               # Node >= 20
 | Расширение Gemini CLI | скилл и MCP-сервер | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
 | Cursor, VS Code | MCP-сервер | [кнопки в один клик](#mcp-сервер) |
 | Grok Bot | MCP-сервер по HTTP с вашего Mac | [см. ниже](#grok-bot-удалённый-mcp-по-http) |
+| Сам CLI | скилл для Claude Code, Codex, Cursor, Gemini CLI и ещё 7 агентов | `telegram skill install` |
 | [skills.sh](https://skills.sh) | скилл для любого агента с шеллом | `npx skills add TheVilfer/better-tg-cli` |
 | [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | запись MCP-сервера `io.github.TheVilfer/better-tg-cli` | через ваш MCP-клиент |
 
@@ -120,7 +121,18 @@ grok plugin marketplace add TheVilfer/better-tg-cli && grok plugin install bette
 Скилл ([`skills/better-tg-cli`](skills/better-tg-cli/SKILL.md)) учит любого агента с шеллом
 (Claude Code, Codex, Cursor, Gemini CLI, OpenCode и других) безопасно работать с CLI. Он проверяет
 установку, никогда не входит сам, держит запись под вашим подтверждением и обходит действия, за
-которые банят. Ставится через CLI [skills](https://skills.sh):
+которые банят. Скилл лежит внутри CLI, и CLI ставит его сам, поэтому версии всегда совпадают:
+
+```bash
+telegram skill install                  # во все поддерживаемые агенты на этой машине
+telegram skill install -a claude-code codex
+telegram skill status                   # по каждому агенту: стоит, устарел, симлинк или нет
+```
+
+Поддерживаются Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, Grok Build, OpenCode,
+Goose, Droid, Windsurf и Pi (папки показывает `telegram skill status`). После `telegram update`
+запустите команду ещё раз, чтобы обновить скилл. Папку-симлинк команда не трогает без `--force`.
+Для остальных агентов есть CLI [skills](https://skills.sh):
 
 ```bash
 npx skills add TheVilfer/better-tg-cli          # агенты выбираются интерактивно
@@ -264,6 +276,7 @@ tailscale funnel --bg 8787                  # или: cloudflared tunnel --url h
 
 **Как обновиться?**
 `telegram update`. Команда обновляет тем же способом, каким CLI был установлен: Homebrew, npm или бинарник из релиза.
+Если скилл для агентов ставили через `telegram skill install`, запустите её ещё раз, чтобы обновить скилл.
 
 ## Разработка
 

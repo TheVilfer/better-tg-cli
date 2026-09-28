@@ -25,8 +25,9 @@ export const READ_COMMANDS = new Set([
   'admins', 'groups', 'folders', 'folder', 'write-access',
 ]);
 
-/** Never over MCP: interactive logins, irreversible or self-updating commands, the server itself. */
-export const EXCLUDED_COMMANDS = new Set(['auth', 'logout', 'transfer-owner', 'update', 'mcp', 'help-all']);
+/** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
+ * agents' config (skill), the server itself. */
+export const EXCLUDED_COMMANDS = new Set(['auth', 'logout', 'transfer-owner', 'update', 'skill', 'mcp', 'help-all']);
 
 /** Commands registered on the CLI (set by index.ts); anything else is refused. */
 let knownCommands = new Set<string>();
