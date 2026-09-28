@@ -73,10 +73,11 @@ if (cmd === 'create' && name) {
   // The worker only opens signups when this key is exactly "on" (and Turnstile is configured)
   if (name !== 'status') {
     put('config:signups', name);
-    if (get('config:signups') !== name) throw new Error('Write did not read back from remote KV');
   }
+  // A plain string, not JSON, so it is read raw rather than through get()
   let state = 'off';
   try { state = wrangler('key', 'get', 'config:signups', '--text').trim() || 'off'; } catch {}
+  if (name !== 'status' && state !== name) throw new Error('Write did not read back from remote KV');
   console.log(`Signup page: ${state === 'on' ? 'open' : 'closed'}. Issued invites keep working either way.`);
 } else if (cmd === 'emails') {
   console.log('email,created_at');
