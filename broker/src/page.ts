@@ -1,12 +1,6 @@
 /** The signup page at /: inline HTML, one nonce per response, only Turnstile and Google Fonts outside. */
 
-const AGENT_PROMPT =
-  'Установи Telegram CLI better-tg-cli: `brew install thevilfer/tap/better-tg-cli` ' +
-  '(если нет Homebrew — `npm install -g better-tg-cli`). Потом поставь скилл для агентов: ' +
-  '`npx skills add TheVilfer/better-tg-cli -g -y`. Входить в Telegram не пытайся: ' +
-  'это сделаю я сам командой `telegram auth --invite`.';
-
-const escape = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+import { escape, GUIDE_CSS, GUIDE_JS, guideHtml } from './guide';
 
 export function pageResponse(open: boolean, siteKey: string | undefined): Response {
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
@@ -75,37 +69,28 @@ button:disabled{opacity:.5;cursor:default}
 .closed{padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 a{color:var(--accent)}
 code,.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:.92em}
-.step{margin-top:34px}
-.step h2{font-size:18px;font-weight:600;margin:0 0 6px}
-.step p{margin:0 0 12px;color:var(--dim)}
 .box{position:relative;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px 14px 14px 16px;display:flex;gap:12px;align-items:flex-start}
 .box pre{margin:0;flex:1;min-width:0;white-space:pre-wrap;word-break:break-all;font:14px/1.6 'Geist Mono',ui-monospace,monospace}
 .box button{padding:7px 12px;font-size:13px;background:transparent;color:var(--fg);border:1px solid var(--line);flex:none}
-.token pre{color:var(--accent)}
-.warn{font-size:13px;color:var(--dim);margin-top:8px}
+.box.token pre{color:var(--accent);white-space:pre-wrap;word-break:break-all}
+.done-h{font-size:22px;margin:0 0 6px}
+.done-p{color:var(--dim);margin:0 0 12px}
+${GUIDE_CSS}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
 [hidden]{display:none!important}
 </style></head><body><main>
 <div class="brand"><svg viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="12" fill="currentColor"/><rect x="2" y="2" width="2" height="8" fill="var(--bg)"/><rect x="4" y="5" width="2" height="2" fill="var(--bg)"/><rect x="6" y="8" width="4" height="2" fill="var(--accent)"/></svg><span>BETTER-TG-CLI<i>.</i></span></div>
 <h1>Инвайт для входа в better-tg-cli</h1>
 <p class="lead">Инвайт позволяет войти в свой Telegram через CLI без своих API-ключей с my.telegram.org.
-Одна почта — один инвайт на один вход. Сообщения и сессия остаются только на вашем компьютере.</p>
+Одна почта — один инвайт на один вход. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.</p>
 <section id="start">${form}</section>
 <section id="done" hidden>
-  <div class="step" style="margin-top:0"><h2>Ваш инвайт</h2>
-    <p>Показываем один раз. Не отправляйте его агенту и никому другому.</p>
-    <div class="box token"><pre id="tok"></pre><button data-copy="tok">Копировать</button></div></div>
-  <div class="step"><h2>1. Попросите агента установить CLI</h2>
-    <p>Вставьте в Claude Code, Codex, Cursor или другого агента:</p>
-    <div class="box"><pre id="prompt">${escape(AGENT_PROMPT)}</pre><button data-copy="prompt">Копировать</button></div></div>
-  <div class="step"><h2>2. Войдите сами</h2>
-    <p>Вход интерактивный (код из Telegram или QR), поэтому его делаете вы, а не агент. В терминале:</p>
-    <div class="box"><pre id="cmd">telegram auth --invite</pre><button data-copy="cmd">Копировать</button></div>
-    <p class="warn">Команда попросит инвайт — вставьте его. Потом подтвердите вход кодом из Telegram или добавьте <span class="mono">--qr</span> и отсканируйте QR в Настройки → Устройства.</p></div>
-  <div class="step"><h2>3. Готово</h2>
-    <p>Скажите агенту, например: «Что у меня непрочитанного в Telegram?» По умолчанию агент только читает;
-    писать он сможет, когда вы включите <span class="mono">telegram write-access on --for 1h</span>.</p></div>
+  <h2 class="done-h">Ваш инвайт</h2>
+  <p class="done-p">Показываем один раз. Сохраните его и не отправляйте агенту или кому-то ещё — он понадобится на шаге входа.</p>
+  <div class="box token"><pre id="tok"></pre><button type="button" data-copy>Копировать</button></div>
+  <p class="done-p"><a href="#guide">Дальше — установка ↓</a></p>
 </section>
+${guideHtml()}
 <footer>Открытый код: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a></footer>
 </main>
 ${open ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer nonce="' + nonce + '"></script>' : ''}
@@ -134,6 +119,7 @@ if (f) f.addEventListener('submit', async e => {
     document.getElementById('tok').textContent = data.invite;
     document.getElementById('start').hidden = true;
     document.getElementById('done').hidden = false;
+    document.getElementById('done').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (x) {
     err.textContent = x.message; err.hidden = false;
     if (window.turnstile) window.turnstile.reset();
@@ -142,9 +128,10 @@ if (f) f.addEventListener('submit', async e => {
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-copy]');
   if (!b) return;
-  try { await navigator.clipboard.writeText(document.getElementById(b.dataset.copy).textContent); b.textContent = 'Скопировано'; }
+  try { await navigator.clipboard.writeText(b.parentElement.querySelector('pre').textContent); b.textContent = 'Скопировано'; }
   catch { b.textContent = 'Выделите вручную'; }
   setTimeout(() => { b.textContent = 'Копировать'; }, 1600);
 });
+${GUIDE_JS}
 </script></body></html>`;
 }

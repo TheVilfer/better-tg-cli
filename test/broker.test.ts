@@ -111,6 +111,16 @@ describe('self-serve signup', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
+  it('shows the install guide with one tab per supported agent, open or closed', async () => {
+    for (const { e } of [await open(), await env()]) {
+      const html = await (await handle(new Request('https://broker.test/'), e)).text();
+      const tabs = [...html.matchAll(/role="tab" id="tab-([a-z-]+)"/g)].map(m => m[1]);
+      expect(tabs).toEqual(['claude-code', 'codex', 'cursor', 'claude-desktop']);
+      expect(html).toContain('telegram auth --invite --qr');
+      expect(html).not.toMatch(/ style="/); // blocked by the nonce CSP
+    }
+  });
+
   it('refuses a failed captcha and bad emails without storing anything', async () => {
     const { e, store } = await open();
     expect((await call(signup({ email: 'a@b.co', turnstile: 't' }), e, async () => false)).status).toBe(403);
