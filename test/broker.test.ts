@@ -111,11 +111,12 @@ describe('self-serve signup', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
-  it('shows the install guide with one tab per supported agent, open or closed', async () => {
+  it('shows the install guide (Auto and PRO, one PRO tab per agent), open or closed', async () => {
     for (const { e } of [await open(), await env()]) {
       const html = await (await handle(new Request('https://broker.test/'), e)).text();
       const tabs = [...html.matchAll(/role="tab" id="tab-([a-z-]+)"/g)].map(m => m[1]);
-      expect(tabs).toEqual(['claude-code', 'codex', 'cursor', 'claude-desktop']);
+      expect(tabs).toEqual(['auto', 'pro', 'claude-code', 'codex', 'cursor', 'claude-desktop']);
+      expect(html).toContain('npx skills add TheVilfer/better-tg-cli -g -y'); // the Auto prompt
       expect(html).toContain('telegram auth --invite --qr');
       expect(html).not.toMatch(/ style="/); // blocked by the nonce CSP
     }

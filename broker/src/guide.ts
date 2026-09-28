@@ -9,11 +9,6 @@ export const escape = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', 
 const CURSOR_INSTALL = 'https://cursor.com/en/install-mcp?name=telegram&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJldHRlci10Zy1jbGlAbGF0ZXN0IiwibWNwIl19';
 const MCPB = 'https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb';
 
-export const AGENT_PROMPT =
-  'Установи Telegram CLI better-tg-cli: `brew install thevilfer/tap/better-tg-cli` ' +
-  '(если нет Homebrew — `npm install -g better-tg-cli`). Входить в Telegram не пытайся: ' +
-  'это сделаю я сам командой `telegram auth --invite`.';
-
 /** A copyable command or text block. */
 export const code = (text: string, wrap = false) =>
   `<div class="box"><pre${wrap ? ' class="wrap"' : ''}>${escape(text)}</pre><button type="button" data-copy>Копировать</button></div>`;
@@ -95,25 +90,73 @@ const TABS: Tab[] = [
   },
 ];
 
-export function guideHtml(): string {
-  const tabs = TABS.map((t, i) =>
+/** Auto mode: one prompt that has the agent do the setup; the person only logs in. */
+export const AUTO_PROMPT = [
+  'Подключи мне Telegram через better-tg-cli (https://github.com/TheVilfer/better-tg-cli):',
+  '1. Установи CLI: `brew install thevilfer/tap/better-tg-cli`. Если Homebrew нет — `npm install -g better-tg-cli` (нужен Node 20+).',
+  '2. Установи скилл для себя: `npx skills add TheVilfer/better-tg-cli -g -y`.',
+  '3. Не входи в Telegram сам: вход интерактивный. Попроси меня выполнить в терминале `telegram auth --invite --qr` и подожди, пока я скажу «готово».',
+  '4. Проверь вход командой `telegram whoami` и коротко расскажи, что ты теперь умеешь в Telegram.',
+].join('\n');
+
+const AUTO_SCREEN = terminal('агент', [
+  `${d('&gt;')} Подключи мне Telegram через better-tg-cli…`,
+  '',
+  `${a('⏺')} ${b('Bash')}${d('(brew install thevilfer/tap/better-tg-cli)')}`,
+  `  ${d('⎿')} ${g('✓')} ${d('better-tg-cli installed')}`,
+  `${a('⏺')} ${b('Bash')}${d('(npx skills add TheVilfer/better-tg-cli -g -y)')}`,
+  `  ${d('⎿')} ${g('✓')} ${d('Installed better-tg-cli')}`,
+  `${a('⏺')} Всё готово. Теперь войдите сами — в терминале:`,
+  `  ${a('telegram auth --invite --qr')}`,
+  `  Вставьте инвайт, отсканируйте QR и напишите «готово».`,
+]);
+
+function tablist(label: string, items: { id: string; label: string; body: string }[], cls: string): string {
+  const tabs = items.map((t, i) =>
     `<button type="button" role="tab" id="tab-${t.id}" aria-controls="panel-${t.id}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}">${t.label}</button>`).join('');
-  const panels = TABS.map((t, i) =>
-    `<div role="tabpanel" id="panel-${t.id}" aria-labelledby="tab-${t.id}"${i === 0 ? '' : ' hidden'}><ol class="sub">${t.steps}</ol>${SCREENS[t.id]}</div>`).join('');
-  return `<section class="guide" id="guide">
-<h2>Как установить</h2>
-<ol class="steps">
+  const panels = items.map((t, i) =>
+    `<div role="tabpanel" id="panel-${t.id}" aria-labelledby="tab-${t.id}"${i === 0 ? '' : ' hidden'}>${t.body}</div>`).join('');
+  return `<div class="${cls}" role="tablist" aria-label="${label}">${tabs}</div>${panels}`;
+}
+
+const LOGIN_NOTE = '<p class="note">Вставьте инвайт с этой страницы и отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство. Со своими ключами с my.telegram.org — <span class="mono">telegram auth --qr</span>.</p>';
+
+function autoHtml(): string {
+  return `<ol class="steps">
+<li><h3>Вставьте промпт своему агенту</h3>
+  <p>Claude Code, Codex, Cursor или любой другой агент с терминалом. Он сам поставит CLI и скилл.</p>${code(AUTO_PROMPT, true)}
+  ${AUTO_SCREEN}</li>
+<li><h3>Войдите, когда агент попросит</h3>
+  <p>Вход делаете вы, а не агент. В терминале:</p>${code('telegram auth --invite --qr')}${LOGIN_NOTE}</li>
+<li><h3>Готово</h3>
+  <p>Скажите агенту «готово» и спросите, например: «что у меня непрочитанного в телеге?» Писать от вашего имени он сможет, только когда вы разрешите: <span class="mono">telegram write-access on --for 1h</span>.</p>
+  <p class="note">Claude Desktop без терминала так не умеет — для него режим PRO.</p></li>
+</ol>`;
+}
+
+function proHtml(): string {
+  const agents = tablist('Агент', TABS.map(t => ({ id: t.id, label: t.label, body: `<ol class="sub">${t.steps}</ol>${SCREENS[t.id]}` })), 'tabs');
+  return `<ol class="steps">
 <li><h3>Поставьте CLI</h3>
   <p>macOS или Linux, в терминале:</p>${code('brew install thevilfer/tap/better-tg-cli')}
-  <p class="note">Нет Homebrew — <span class="mono">npm install -g better-tg-cli</span> (Node 20+). Или попросите своего агента:</p>${code(AGENT_PROMPT, true)}</li>
+  <p class="note">Нет Homebrew — <span class="mono">npm install -g better-tg-cli</span> (Node 20+).</p></li>
 <li><h3>Войдите в Telegram сами</h3>
-  <p>Вход интерактивный, поэтому его делаете вы, а не агент:</p>${code('telegram auth --invite --qr')}
-  <p class="note">Вставьте инвайт с этой страницы и отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство. Со своими ключами с my.telegram.org — <span class="mono">telegram auth --qr</span>.</p></li>
-<li><h3>Подключите своего агента</h3>
-  <div class="tabs" role="tablist" aria-label="Агент">${tabs}</div>${panels}</li>
+  <p>Вход интерактивный, поэтому его делаете вы, а не агент:</p>${code('telegram auth --invite --qr')}${LOGIN_NOTE}</li>
+<li><h3>Подключите своего агента</h3>${agents}</li>
 <li><h3>Готово</h3>
   <p>По умолчанию агент только читает. Писать от вашего имени он сможет, когда вы разрешите:</p>${code('telegram write-access on --for 1h')}</li>
-</ol></section>`;
+</ol>`;
+}
+
+export function guideHtml(): string {
+  const modes = tablist('Режим', [
+    { id: 'auto', label: 'Auto <small>промпт для агента</small>', body: autoHtml() },
+    { id: 'pro', label: 'PRO <small>команды вручную</small>', body: proHtml() },
+  ], 'modes');
+  return `<section class="guide" id="guide">
+<h2>Как установить</h2>
+${modes}
+</section>`;
 }
 
 export const GUIDE_CSS = `
@@ -126,6 +169,11 @@ export const GUIDE_CSS = `
 .steps p{margin:0 0 10px;color:var(--dim)}
 .steps .box{margin-bottom:10px}
 .note{font-size:14px}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border:1px solid var(--line);border-radius:12px;background:var(--panel);margin:0 0 28px}
+.modes button{font-size:15px;font-weight:600;padding:10px 8px;border-radius:9px;border:0;background:transparent;color:var(--dim);display:flex;flex-direction:column;align-items:center;gap:1px}
+.modes button small{font-size:12px;font-weight:400;opacity:.8}
+.modes button[aria-selected="true"]{background:var(--bg);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.steps .screen{margin-top:14px}
 .tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:14px 0 18px;padding-bottom:2px}
 .tabs::-webkit-scrollbar{display:none}
 .tabs button{flex:none;font-size:14px;font-weight:500;padding:8px 13px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--dim)}
@@ -159,23 +207,29 @@ export const GUIDE_CSS = `
 /** Tab switching with arrow keys; ?agent=<id> preselects a tab. */
 export const GUIDE_JS = `
 (() => {
-  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  const lists = [...document.querySelectorAll('[role="tablist"]')];
   const select = t => {
-    for (const x of tabs) {
+    for (const x of t.parentElement.querySelectorAll('[role="tab"]')) {
       const on = x === t;
       x.setAttribute('aria-selected', on); x.tabIndex = on ? 0 : -1;
       document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
     }
   };
-  for (const t of tabs) {
-    t.addEventListener('click', () => select(t));
-    t.addEventListener('keydown', e => {
-      const i = tabs.indexOf(t), n = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-      if (n) { const next = tabs[(i + n + tabs.length) % tabs.length]; select(next); next.focus(); }
-    });
+  for (const list of lists) {
+    const tabs = [...list.querySelectorAll('[role="tab"]')];
+    for (const t of tabs) {
+      t.addEventListener('click', () => select(t));
+      t.addEventListener('keydown', e => {
+        const i = tabs.indexOf(t), n = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+        if (n) { const next = tabs[(i + n + tabs.length) % tabs.length]; select(next); next.focus(); }
+      });
+    }
   }
-  const pre = new URLSearchParams(location.search).get('agent');
-  const want = pre && document.getElementById('tab-' + pre);
-  if (want) select(want);
+  // ?mode=pro and/or ?agent=<id> (an agent implies PRO)
+  const q = new URLSearchParams(location.search);
+  const agent = q.get('agent') && document.getElementById('tab-' + q.get('agent'));
+  const mode = document.getElementById('tab-' + (agent ? 'pro' : q.get('mode')));
+  if (mode) select(mode);
+  if (agent) select(agent);
 })();
 `;
