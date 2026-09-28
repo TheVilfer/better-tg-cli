@@ -23,7 +23,7 @@ export const checkCommand = new Command('check')
       const p = profile();
       console.log(chalk.red(p
         ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram auth [--test-dc]`
-        : 'Not configured. Run "telegram auth" first.'));
+        : 'Not configured. Run "telegram onboard" or "telegram auth --qr" first.'));
       process.exit(1);
     }
 

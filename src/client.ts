@@ -18,7 +18,7 @@ export async function getClient(): Promise<TelegramClient> {
   }
 
   if (!isConfigured()) {
-    throw new Error('Not configured. Run "telegram auth" (own API keys) or "telegram auth --invite".');
+    throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
   }
 
   const { apiId, apiHash } = getCredentials();
@@ -35,7 +35,7 @@ export async function getClient(): Promise<TelegramClient> {
     throw new Error(
       invited
         ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --invite'
-        : 'Not authenticated. Run "telegram auth" to log in.'
+        : 'Not authenticated. Run "telegram onboard" or "telegram auth --qr" to log in.'
     );
   }
 
