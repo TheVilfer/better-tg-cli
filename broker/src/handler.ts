@@ -3,11 +3,12 @@
  * Invites live in KV under sha256(token); the raw token is never stored or logged.
  */
 import { pageResponse } from './page';
-import { handleSignup, signupsOpen } from './signup';
+import { handleSignup, handleVerify, signupsOpen } from './signup';
 
 export interface KV {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+  delete(key: string): Promise<void>;
 }
 
 export interface Env {
@@ -21,6 +22,9 @@ export interface Env {
   TURNSTILE_SECRET?: string;
   TURNSTILE_SITE_KEY?: string;
   SIGNUP_DAILY_CAP?: string;
+  /** Cloudflare Email Sending ([[send_email]]) and the verified sender address for signup codes */
+  EMAIL?: { send(message: { to: string; from: { email: string; name?: string }; subject: string; text: string; html: string }): Promise<unknown> };
+  MAIL_FROM?: string;
 }
 
 export interface Invite {
@@ -50,6 +54,7 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
   if (url.pathname === '/health') return json(200, { ok: true });
   if (url.pathname === '/' && request.method === 'GET') return pageResponse(await signupsOpen(env), env.TURNSTILE_SITE_KEY);
   if (url.pathname === '/v1/invites') return handleSignup(request, env, now);
+  if (url.pathname === '/v1/invites/verify') return handleVerify(request, env, now);
   if (url.pathname !== '/v1/credentials') return json(404, { error: 'not_found' });
   if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
 

@@ -1,6 +1,6 @@
 /**
- * Self-serve invites: the page at / trades an email (kept only for notifications) for a one-login
- * invite. This hands the maintainer's app keys to strangers, so every guard fails closed:
+ * Self-serve invites: the page at / trades a verified email (kept only for notifications) for a
+ * one-login invite: a six-digit code goes to the address, and only the code gets the invite. This hands the maintainer's app keys to strangers, so every guard fails closed:
  * signups are off unless KV `config:signups` is "on", Turnstile must pass server-side, and there
  * are per-IP and daily caps. `invite.mjs signups off` closes the page; `/v1/credentials` and
  * invites already issued keep working.
@@ -23,7 +23,9 @@ function json(status: number, body: unknown): Response {
 }
 
 export async function signupsOpen(env: Env): Promise<boolean> {
-  return (await env.INVITES.get(SIGNUPS_KEY)) === 'on' && Boolean(env.TURNSTILE_SECRET && env.TURNSTILE_SITE_KEY);
+  // Verified email is required, so no mail sender means no signups
+  return (await env.INVITES.get(SIGNUPS_KEY)) === 'on'
+    && Boolean(env.TURNSTILE_SECRET && env.TURNSTILE_SITE_KEY && env.EMAIL && env.MAIL_FROM);
 }
 
 /** Lowercased, trimmed, one @, a dot in the domain, no spaces; null when it doesn't look like an email. */
@@ -59,23 +61,65 @@ async function bump(env: Env, key: string, cap: number): Promise<boolean> {
   return true;
 }
 
-export async function handleSignup(request: Request, env: Env, now = new Date(), verify = verifyTurnstile): Promise<Response> {
+const CODE_TTL_SECONDS = 15 * 60;
+const CODE_ATTEMPTS = 5;
+const RESEND_AFTER_MS = 60_000;
+const CODES_PER_EMAIL_PER_DAY = 3;
+
+interface PendingCode { codeHash: string; attempts: number; sentAt: string }
+
+const codeHash = (email: string, code: string) => sha256Hex(`${email}:${code}`);
+
+function newCode(): string {
+  // Rejection sampling keeps the six digits uniform
+  const buf = new Uint32Array(1);
+  let n: number;
+  do n = crypto.getRandomValues(buf)[0]; while (n >= 4_294_000_000);
+  return String(n % 1_000_000).padStart(6, '0');
+}
+
+async function readJson<T>(request: Request): Promise<T | null> {
+  try { return (await request.json()) as T; } catch { return null; }
+}
+
+/** Shared gate for both steps: method, per-IP limiter, and signups open and fully configured. */
+async function gate(request: Request, env: Env): Promise<Response | null> {
   if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
   const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
   if (env.SIGNUP_LIMITER && !(await env.SIGNUP_LIMITER.limit({ key: ip })).success) {
     return json(429, { error: 'rate_limited' });
   }
-  // Closed unless explicitly opened and fully configured (keys, Turnstile)
   if (!(await signupsOpen(env)) || !parseInt(env.API_ID, 10) || !env.API_HASH) {
     return json(503, { error: 'signups_closed' });
   }
+  return null;
+}
 
-  let body: { email?: unknown; turnstile?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return json(400, { error: 'bad_request' });
-  }
+function codeMail(code: string) {
+  return {
+    subject: `Код для инвайта better-tg-cli: ${code}`,
+    text: `Ваш код: ${code}\n\nВведите его на странице инвайта. Код действует 15 минут.\n` +
+      `Если вы не запрашивали инвайт в better-tg-cli, просто удалите это письмо.\n\n` +
+      `https://github.com/TheVilfer/better-tg-cli`,
+    html: `<div style="font:16px/1.5 system-ui,sans-serif;color:#111;max-width:480px">` +
+      `<p>Ваш код для инвайта в <b>better-tg-cli</b>:</p>` +
+      `<p style="font:600 32px/1 ui-monospace,monospace;letter-spacing:6px;margin:20px 0">${code}</p>` +
+      `<p>Введите его на странице инвайта. Код действует 15 минут.</p>` +
+      `<p style="color:#666;font-size:14px">Если вы не запрашивали инвайт, просто удалите это письмо.</p></div>`,
+  };
+}
+
+/**
+ * Step 1: email + Turnstile → a six-digit code by email. Nothing about the invite is created yet,
+ * so a fake or someone else's address gets nowhere.
+ */
+export async function handleSignup(request: Request, env: Env, now = new Date(), verify = verifyTurnstile): Promise<Response> {
+  const closed = await gate(request, env);
+  if (closed) return closed;
+  const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+
+  const body = await readJson<{ email?: unknown; turnstile?: unknown }>(request);
+  if (!body) return json(400, { error: 'bad_request' });
   const email = normalizeEmail(body.email);
   if (!email) return json(400, { error: 'bad_email' });
   if (typeof body.turnstile !== 'string' || !body.turnstile || body.turnstile.length > 4096) {
@@ -83,12 +127,63 @@ export async function handleSignup(request: Request, env: Env, now = new Date(),
   }
   if (!(await verify(env.TURNSTILE_SECRET!, body.turnstile, ip))) return json(403, { error: 'captcha_failed' });
 
-  const emailKey = `email:${await sha256Hex(email)}`;
-  if (await env.INVITES.get(emailKey)) return json(409, { error: 'email_used' });
+  const id = await sha256Hex(email);
+  if (await env.INVITES.get(`email:${id}`)) return json(409, { error: 'email_used' });
+  const pending = await env.INVITES.get(`verify:${id}`);
+  if (pending && now.getTime() - Date.parse((JSON.parse(pending) as PendingCode).sentAt) < RESEND_AFTER_MS) {
+    return json(429, { error: 'resend_wait' });
+  }
 
   const day = now.toISOString().slice(0, 10);
+  // Per-email first, so a refused resend doesn't also eat the IP's allowance
+  if (!(await bump(env, `count:mail:${day}:${id}`, CODES_PER_EMAIL_PER_DAY))) return json(429, { error: 'rate_limited' });
+  if (!(await bump(env, `count:ip:${day}:${await sha256Hex(ip)}`, PER_IP_PER_DAY * CODES_PER_EMAIL_PER_DAY))) {
+    return json(429, { error: 'rate_limited' });
+  }
+
+  const code = newCode();
+  const record: PendingCode = { codeHash: await codeHash(email, code), attempts: 0, sentAt: now.toISOString() };
+  await env.INVITES.put(`verify:${id}`, JSON.stringify(record), { expirationTtl: CODE_TTL_SECONDS });
+  try {
+    await env.EMAIL!.send({ to: email, from: { email: env.MAIL_FROM!, name: 'better-tg-cli' }, ...codeMail(code) });
+  } catch {
+    return json(502, { error: 'mail_failed' });
+  }
+  return json(202, { status: 'code_sent' });
+}
+
+/** Step 2: email + code → the one-login invite. Five wrong codes burn the pending code. */
+export async function handleVerify(request: Request, env: Env, now = new Date()): Promise<Response> {
+  const closed = await gate(request, env);
+  if (closed) return closed;
+
+  const body = await readJson<{ email?: unknown; code?: unknown }>(request);
+  if (!body) return json(400, { error: 'bad_request' });
+  const email = normalizeEmail(body.email);
+  const code = typeof body.code === 'string' ? body.code.replace(/\s/g, '') : '';
+  if (!email || !/^\d{6}$/.test(code)) return json(400, { error: 'bad_code' });
+
+  const id = await sha256Hex(email);
+  const verifyKey = `verify:${id}`;
+  const raw = await env.INVITES.get(verifyKey);
+  if (!raw) return json(410, { error: 'code_expired' });
+  const pending = JSON.parse(raw) as PendingCode;
+  if (pending.attempts >= CODE_ATTEMPTS) {
+    await env.INVITES.delete(verifyKey);
+    return json(429, { error: 'too_many_attempts' });
+  }
+  if ((await codeHash(email, code)) !== pending.codeHash) {
+    pending.attempts += 1;
+    const left = CODE_TTL_SECONDS - Math.floor((now.getTime() - Date.parse(pending.sentAt)) / 1000);
+    await env.INVITES.put(verifyKey, JSON.stringify(pending), { expirationTtl: Math.max(60, left) });
+    return json(403, { error: 'bad_code' });
+  }
+  await env.INVITES.delete(verifyKey);
+
+  const emailKey = `email:${id}`;
+  if (await env.INVITES.get(emailKey)) return json(409, { error: 'email_used' });
+  const day = now.toISOString().slice(0, 10);
   const cap = parseInt(env.SIGNUP_DAILY_CAP ?? '', 10) || DAILY_CAP_DEFAULT;
-  if (!(await bump(env, `count:ip:${day}:${await sha256Hex(ip)}`, PER_IP_PER_DAY))) return json(429, { error: 'rate_limited' });
   if (!(await bump(env, `count:day:${day}`, cap))) return json(429, { error: 'daily_limit' });
 
   const token = newToken();

@@ -16,11 +16,17 @@ name = "LIMITER"
 namespace_id = "7001"
 simple = { limit = 5, period = 60 }
 
-# Self-serve signup page (src/signup.ts): 3 attempts per minute per IP, separate from credentials
+# Self-serve signup page (src/signup.ts): 6 requests per minute per IP across both steps (code
+# request and code check), separate from credentials
 [[ratelimits]]
 name = "SIGNUP_LIMITER"
 namespace_id = "7002"
-simple = { limit = 3, period = 60 }
+simple = { limit = 6, period = 60 }
+
+# Signup codes go out through Cloudflare Email Sending. Until MAIL_FROM is set to an address on a
+# domain onboarded to Email Service, signups stay closed (see src/signup.ts).
+[[send_email]]
+name = "EMAIL"
 
 [vars]
 SIGNUP_DAILY_CAP = "30"

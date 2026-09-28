@@ -34,8 +34,16 @@ function page(nonce: string, open: boolean, siteKey: string): string {
   <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required placeholder="you@example.com">
   <p class="hint">Только для оповещений: важные обновления и отзыв ключей. Никому не передаём, рассылок не шлём.</p>
   <div class="cf-turnstile" data-sitekey="${escape(siteKey)}" data-theme="auto" data-language="ru"></div>
-  <button id="go" type="submit">Получить инвайт</button>
+  <button id="go" type="submit">Получить код на почту</button>
   <p id="err" class="err" role="alert" hidden></p>
+</form>
+<form id="v" novalidate hidden>
+  <label for="code">Код из письма</label>
+  <p class="hint vhint">Отправили 6 цифр на <b id="sent-to"></b>. Письмо может попасть в «Спам».</p>
+  <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required placeholder="123456" class="code">
+  <div class="vrow"><button id="vgo" type="submit">Получить инвайт</button>
+  <button id="back" type="button" class="link">Изменить почту или отправить ещё раз</button></div>
+  <p id="verr" class="err" role="alert" hidden></p>
 </form>`
     : `<div class="closed"><b>Регистрация сейчас закрыта.</b> Можно войти со своими ключами:
   создайте приложение на <a href="https://my.telegram.org/apps">my.telegram.org</a> и запустите
@@ -65,6 +73,10 @@ input:focus{border-color:var(--accent)}
 .cf-turnstile{min-height:65px;margin-bottom:16px}
 button{font:inherit;font-weight:500;cursor:pointer;border:0;border-radius:10px;padding:12px 18px;background:var(--fg);color:var(--bg)}
 button:disabled{opacity:.5;cursor:default}
+.code{font:600 24px/1 'Geist Mono',ui-monospace,monospace;letter-spacing:6px;max-width:220px;margin-bottom:16px}
+.vhint{margin:0 0 10px}
+.vrow{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.link{background:none;color:var(--accent);padding:0;font-weight:400;font-size:14px}
 .err{color:var(--err);font-size:14px;margin:12px 0 0}
 .closed{padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 a{color:var(--accent)}
@@ -82,7 +94,7 @@ footer{margin-top:56px;font-size:13px;color:var(--dim)}
 <div class="brand"><svg viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="12" fill="currentColor"/><rect x="2" y="2" width="2" height="8" fill="var(--bg)"/><rect x="4" y="5" width="2" height="2" fill="var(--bg)"/><rect x="6" y="8" width="4" height="2" fill="var(--accent)"/></svg><span>BETTER-TG-CLI<i>.</i></span></div>
 <h1>Инвайт для входа в better-tg-cli</h1>
 <p class="lead">Инвайт позволяет войти в свой Telegram через CLI без своих API-ключей с my.telegram.org.
-Одна почта — один инвайт на один вход. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.</p>
+Подтвердите почту кодом из письма: одна почта — один инвайт на один вход. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.</p>
 <section id="start">${form}</section>
 <section id="done" hidden>
   <h2 class="done-h">Ваш инвайт</h2>
@@ -102,29 +114,54 @@ const ERRORS = {
   rate_limited: 'Слишком много попыток. Попробуйте позже.',
   daily_limit: 'На сегодня инвайты закончились. Загляните завтра.',
   signups_closed: 'Регистрация сейчас закрыта.',
+  resend_wait: 'Код уже отправлен. Новый можно запросить через минуту.',
+  mail_failed: 'Не получилось отправить письмо. Проверьте адрес или попробуйте позже.',
+  bad_code: 'Код не подошёл. Проверьте цифры из письма.',
+  code_expired: 'Код истёк. Запросите новый.',
+  too_many_attempts: 'Слишком много неверных попыток. Запросите новый код.',
 };
-const f = document.getElementById('f');
+const post = async (path, body) => {
+  const res = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(ERRORS[data.error] || 'Что-то пошло не так. Попробуйте ещё раз.');
+  return data;
+};
+const $ = id => document.getElementById(id);
+const f = $('f'), v = $('v');
+let email = '';
 if (f) f.addEventListener('submit', async e => {
   e.preventDefault();
-  const err = document.getElementById('err'), go = document.getElementById('go');
+  const err = $('err'), go = $('go');
   err.hidden = true;
   const turnstile = (f.querySelector('[name="cf-turnstile-response"]') || {}).value || '';
   if (!turnstile) { err.textContent = 'Дождитесь проверки «Я не робот».'; err.hidden = false; return; }
   go.disabled = true;
   try {
-    const res = await fetch('/v1/invites', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: document.getElementById('email').value, turnstile }) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(ERRORS[data.error] || 'Что-то пошло не так. Попробуйте ещё раз.');
-    document.getElementById('tok').textContent = data.invite;
-    document.getElementById('start').hidden = true;
-    document.getElementById('done').hidden = false;
-    document.getElementById('done').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    email = $('email').value.trim();
+    await post('/v1/invites', { email, turnstile });
+    $('sent-to').textContent = email;
+    f.hidden = true; v.hidden = false; $('code').value = ''; $('code').focus();
   } catch (x) {
     err.textContent = x.message; err.hidden = false;
+  } finally {
+    go.disabled = false;
     if (window.turnstile) window.turnstile.reset();
+  }
+});
+if (v) v.addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = $('verr'), go = $('vgo');
+  err.hidden = true; go.disabled = true;
+  try {
+    const data = await post('/v1/invites/verify', { email, code: $('code').value });
+    $('tok').textContent = data.invite;
+    $('start').hidden = true; $('done').hidden = false;
+    $('done').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (x) {
+    err.textContent = x.message; err.hidden = false;
   } finally { go.disabled = false; }
 });
+if (v) $('back').addEventListener('click', () => { v.hidden = true; f.hidden = false; $('verr').hidden = true; });
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-copy]');
   if (!b) return;

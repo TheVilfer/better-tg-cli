@@ -16,13 +16,17 @@ A Cloudflare Worker that gives invited users the maintainer's `api_id`/`api_hash
 
 ## Signup page
 
-`GET /` serves a page where people trade an email for a self-serve invite (`POST /v1/invites`).
+`GET /` serves a page where people trade a verified email for a self-serve invite: `POST /v1/invites`
+(email + Turnstile) mails a six-digit code, and `POST /v1/invites/verify` (email + code) returns
+the invite. Nothing invite-like exists until the code comes back; only a hash of the code is stored.
 It hands the app keys to strangers, so it fails closed:
 
-- Closed unless KV `config:signups` is `on` **and** the `TURNSTILE_SECRET` secret and
-  `TURNSTILE_SITE_KEY` var are set. Closed means a "signups closed" page and `503 signups_closed`.
+- Closed unless KV `config:signups` is `on` **and** the `TURNSTILE_SECRET` secret, the
+  `TURNSTILE_SITE_KEY` var, the `EMAIL` send binding and the `MAIL_FROM` var are set. `MAIL_FROM`
+  must be an address on a domain onboarded to Cloudflare Email Sending (Workers Paid). Closed means a "signups closed" page and `503 signups_closed`.
 - Cloudflare Turnstile is verified server-side (widget "better-tg-cli invites", Managed).
-- Limits: 3 attempts per minute per IP (`SIGNUP_LIMITER`), 2 invites per IP per day and
+- Limits: 6 requests per minute per IP (`SIGNUP_LIMITER`), 6 codes per IP and 3 per email per day,
+  a 60-second resend wait, 5 tries per code (15 minutes), and
   `SIGNUP_DAILY_CAP` (30) invites per day overall, as soft KV counters.
 - One invite per email. Each invite allows one login and is marked `source: "self-serve"`.
 - The email is stored in plaintext under `email:<sha256(email)>` → `{email, inviteKey, createdAt}`,
@@ -40,7 +44,9 @@ The page tells people to have their agent install the CLI and skill, and to run
 Local run: put `TURNSTILE_SECRET=1x0000000000000000000000000000000AA` (Cloudflare's always-pass test
 secret) with fake `API_ID`/`API_HASH` into `broker/.dev.vars` (gitignored), then
 `npx wrangler dev --local --var TURNSTILE_SITE_KEY:1x00000000000000000000AA` and
-`npx wrangler kv key put config:signups on --binding INVITES --local`.
+`npx wrangler kv key put config:signups on --binding INVITES --local`. Add
+`--var MAIL_FROM:invites@example.test`: locally, `wrangler dev` only logs the email (subject with the
+code) instead of sending it.
 
 ## Invites
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { handle, sha256Hex, type Env, type Invite } from '../broker/src/handler.js';
-import { handleSignup, normalizeEmail, SIGNUPS_KEY } from '../broker/src/signup.js';
+import { handleSignup, handleVerify, normalizeEmail, SIGNUPS_KEY } from '../broker/src/signup.js';
 
 const TOKEN = 'tok_' + 'x'.repeat(40);
 
@@ -13,7 +13,7 @@ async function env(invite?: Partial<Invite>, over: Partial<Env> = {}) {
     );
   }
   const e: Env = {
-    INVITES: { get: async k => store.get(k) ?? null, put: async (k, v) => void store.set(k, v) },
+    INVITES: { get: async k => store.get(k) ?? null, put: async (k, v) => void store.set(k, v), delete: async k => void store.delete(k) },
     API_ID: '12345',
     API_HASH: 'hash123',
     ...over,
@@ -77,23 +77,35 @@ describe('credential broker', () => {
 
 describe('self-serve signup', () => {
   const NOW = new Date('2026-09-28T12:00:00Z');
+  const later = (ms: number) => new Date(NOW.getTime() + ms);
+  type Mail = { to: string; subject: string; text: string };
   const open = async (over: Partial<Env> = {}) => {
-    const r = await env(undefined, { TURNSTILE_SECRET: 'ts-secret', TURNSTILE_SITE_KEY: 'site-key', ...over });
+    const mails: Mail[] = [];
+    const r = await env(undefined, {
+      TURNSTILE_SECRET: 'ts-secret', TURNSTILE_SITE_KEY: 'site-key', MAIL_FROM: 'invites@example.test',
+      EMAIL: { send: async m => void mails.push(m) }, ...over,
+    });
     r.store.set(SIGNUPS_KEY, 'on');
-    return r;
+    return { ...r, mails };
   };
-  const signup = (body: unknown, ip = '198.51.100.7') =>
-    new Request('https://broker.test/v1/invites', { method: 'POST', body: JSON.stringify(body), headers: { 'cf-connecting-ip': ip } });
+  const req = (path: string, body: unknown, ip = '198.51.100.7') =>
+    new Request(`https://broker.test${path}`, { method: 'POST', body: JSON.stringify(body), headers: { 'cf-connecting-ip': ip } });
   const pass = async () => true;
-  const call = (req: Request, e: Env, verify = pass) => handleSignup(req, e, NOW, verify);
+  const ask = (e: Env, email: string, ip?: string, at = NOW, verify = pass) =>
+    handleSignup(req('/v1/invites', { email, turnstile: 't' }, ip), e, at, verify);
+  const confirm = (e: Env, email: string, code: string, at = NOW) =>
+    handleVerify(req('/v1/invites/verify', { email, code }), e, at);
+  const codeOf = (mails: Mail[]) => /(\d{6})/.exec(mails.at(-1)!.subject)![1];
+  const keysBesides = (store: Map<string, string>) => [...store.keys()].filter(k => k !== SIGNUPS_KEY && !k.startsWith('count:'));
 
-  it('is closed unless switched on and Turnstile is configured', async () => {
-    const off = await env(undefined, { TURNSTILE_SECRET: 's', TURNSTILE_SITE_KEY: 'k' });
-    expect((await call(signup({ email: 'a@b.co', turnstile: 't' }), off.e)).status).toBe(503);
-    const noSecret = await open({ TURNSTILE_SECRET: undefined });
-    expect((await call(signup({ email: 'a@b.co', turnstile: 't' }), noSecret.e)).status).toBe(503);
-    const noKeys = await open({ API_HASH: '' });
-    expect((await call(signup({ email: 'a@b.co', turnstile: 't' }), noKeys.e)).status).toBe(503);
+  it('is closed unless switched on and Turnstile and mail are configured', async () => {
+    const off = await env(undefined, { TURNSTILE_SECRET: 's', TURNSTILE_SITE_KEY: 'k', MAIL_FROM: 'a@b.co', EMAIL: { send: async () => {} } });
+    expect((await ask(off.e, 'a@b.co')).status).toBe(503);
+    for (const over of [{ TURNSTILE_SECRET: undefined }, { EMAIL: undefined }, { MAIL_FROM: undefined }, { API_HASH: '' }]) {
+      const { e } = await open(over);
+      expect((await ask(e, 'a@b.co')).status).toBe(503);
+      expect((await confirm(e, 'a@b.co', '123456')).status).toBe(503);
+    }
     const page = await handle(new Request('https://broker.test/'), off.e);
     expect(page.status).toBe(200);
     expect(await page.text()).toContain('Регистрация сейчас закрыта');
@@ -104,6 +116,7 @@ describe('self-serve signup', () => {
     const res = await handle(new Request('https://broker.test/'), e);
     const html = await res.text();
     expect(html).toContain('data-sitekey="site-key"');
+    expect(html).toContain('autocomplete="one-time-code"');
     const csp = res.headers.get('content-security-policy')!;
     const nonce = /'nonce-([^']+)'/.exec(csp)![1];
     expect(html).toContain(`<script nonce="${nonce}">`);
@@ -122,51 +135,93 @@ describe('self-serve signup', () => {
     }
   });
 
-  it('refuses a failed captcha and bad emails without storing anything', async () => {
-    const { e, store } = await open();
-    expect((await call(signup({ email: 'a@b.co', turnstile: 't' }), e, async () => false)).status).toBe(403);
-    expect((await call(signup({ email: 'nope', turnstile: 't' }), e)).status).toBe(400);
-    expect((await call(signup({ email: 'a@b.co' }), e)).status).toBe(400);
+  it('refuses a failed captcha and bad emails without storing or sending anything', async () => {
+    const { e, store, mails } = await open();
+    expect((await ask(e, 'a@b.co', undefined, NOW, async () => false)).status).toBe(403);
+    expect((await ask(e, 'nope')).status).toBe(400);
+    expect((await handleSignup(req('/v1/invites', { email: 'a@b.co' }), e, NOW, pass)).status).toBe(400);
     expect([...store.keys()]).toEqual([SIGNUPS_KEY]);
+    expect(mails).toEqual([]);
   });
 
-  it('issues a one-login invite that works at /v1/credentials exactly once', async () => {
-    const { e, store } = await open();
-    const res = await call(signup({ email: '  Alice@Example.COM ', turnstile: 't' }), e);
-    expect(res.status).toBe(201);
-    const { invite } = (await res.json()) as { invite: string };
+  it('mails a code and gives a one-login invite only for the right code', async () => {
+    const { e, store, mails } = await open();
+    const sent = await ask(e, '  Alice@Example.COM ');
+    expect(sent.status).toBe(202);
+    expect(mails).toHaveLength(1);
+    expect(mails[0].to).toBe('alice@example.com');
+    const code = codeOf(mails);
+    expect(mails[0].text).toContain(code);
+    // Nothing invite-like exists until the code comes back, and the code itself is not stored
+    expect(keysBesides(store).every(k => k.startsWith('verify:'))).toBe(true);
+    expect([...store.values()].join()).not.toContain(code);
+
+    const wrong = code === '000000' ? '000001' : '000000';
+    expect((await confirm(e, 'alice@example.com', wrong)).status).toBe(403);
+    const ok = await confirm(e, 'ALICE@example.com', code.slice(0, 3) + ' ' + code.slice(3));
+    expect(ok.status).toBe(201);
+    const { invite } = (await ok.json()) as { invite: string };
     expect(invite).toMatch(/^tgi_[A-Za-z0-9_-]{43}$/);
     expect([...store.keys()].join()).not.toContain(invite);
+    expect(keysBesides(store).some(k => k.startsWith('verify:'))).toBe(false); // the code is spent
 
     const rec = JSON.parse(store.get(`invite:${await sha256Hex(invite)}`)!);
     expect(rec).toMatchObject({ name: 'alice@example.com', maxUses: 1, uses: 0, source: 'self-serve' });
     const email = JSON.parse(store.get(`email:${await sha256Hex('alice@example.com')}`)!);
     expect(email).toMatchObject({ email: 'alice@example.com', inviteKey: `invite:${await sha256Hex(invite)}` });
 
+    expect((await confirm(e, 'alice@example.com', code)).status).toBe(410);
+    expect((await ask(e, 'alice@example.com', '198.51.100.8')).status).toBe(409);
     expect((await handle(post({ invite }), e)).status).toBe(200);
     expect((await handle(post({ invite }), e)).status).toBe(429);
   });
 
-  it('gives one invite per email and caps per IP and per day', async () => {
-    const { e } = await open({ SIGNUP_DAILY_CAP: '3' });
-    expect((await call(signup({ email: 'a@b.co', turnstile: 't' }), e)).status).toBe(201);
-    expect((await call(signup({ email: 'A@B.co', turnstile: 't' }, '198.51.100.8'), e)).status).toBe(409);
-    expect((await call(signup({ email: 'c@b.co', turnstile: 't' }), e)).status).toBe(201);
-    expect((await call(signup({ email: 'd@b.co', turnstile: 't' }), e)).status).toBe(429); // 2 per IP per day
-    expect((await call(signup({ email: 'e@b.co', turnstile: 't' }, '198.51.100.9'), e)).status).toBe(201);
-    const capped = await call(signup({ email: 'f@b.co', turnstile: 't' }, '198.51.100.10'), e);
+  it('burns the code after five wrong tries', async () => {
+    const { e, mails } = await open();
+    await ask(e, 'a@b.co');
+    const code = codeOf(mails);
+    const wrong = code === '111111' ? '222222' : '111111';
+    for (let i = 0; i < 5; i++) expect((await confirm(e, 'a@b.co', wrong)).status).toBe(403);
+    expect((await confirm(e, 'a@b.co', code)).status).toBe(429);
+    expect((await confirm(e, 'a@b.co', code)).status).toBe(410);
+    expect((await confirm(e, 'a@b.co', '12345')).status).toBe(400);
+  });
+
+  it('limits resends per email and codes per IP, and caps invites per day', async () => {
+    const { e, mails } = await open({ SIGNUP_DAILY_CAP: '1' });
+    expect((await ask(e, 'a@b.co')).status).toBe(202);
+    expect((await ask(e, 'a@b.co')).status).toBe(429); // resend_wait
+    expect((await ask(e, 'a@b.co', undefined, later(61_000))).status).toBe(202);
+    expect((await ask(e, 'a@b.co', undefined, later(122_000))).status).toBe(202);
+    expect((await ask(e, 'a@b.co', undefined, later(183_000))).status).toBe(429); // 3 codes per email per day
+    expect((await ask(e, 'c@b.co', undefined)).status).toBe(202);
+    expect((await ask(e, 'd@b.co', undefined)).status).toBe(202);
+    expect((await ask(e, 'x@b.co', undefined)).status).toBe(202);
+    expect((await ask(e, 'y@b.co', undefined)).status).toBe(429); // 6 codes per IP per day
+
+    expect((await confirm(e, 'c@b.co', codeOf(mails.filter(m => m.to === 'c@b.co')))).status).toBe(201);
+    const capped = await confirm(e, 'd@b.co', codeOf(mails.filter(m => m.to === 'd@b.co')));
     expect(capped.status).toBe(429);
     expect(await capped.json()).toEqual({ error: 'daily_limit' });
   });
 
+  it('reports a mail failure', async () => {
+    const { e } = await open({ EMAIL: { send: async () => { throw new Error('E_SENDER_NOT_VERIFIED'); } } });
+    const res = await ask(e, 'a@b.co');
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'mail_failed' });
+  });
+
   it('rate-limits per IP before any other work', async () => {
-    const { e, store } = await open();
+    const { e, store, mails } = await open();
     e.SIGNUP_LIMITER = { limit: async () => ({ success: false }) };
     let verified = false;
-    const res = await call(signup({ email: 'a@b.co', turnstile: 't' }), e, async () => (verified = true));
+    const res = await ask(e, 'a@b.co', undefined, NOW, async () => (verified = true));
     expect(res.status).toBe(429);
+    expect((await confirm(e, 'a@b.co', '123456')).status).toBe(429);
     expect(verified).toBe(false);
     expect([...store.keys()]).toEqual([SIGNUPS_KEY]);
+    expect(mails).toEqual([]);
   });
 
   it('normalizes emails', () => {
