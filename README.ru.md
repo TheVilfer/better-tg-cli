@@ -312,11 +312,37 @@ tailscale funnel --bg 8787                  # или: cloudflared tunnel --url h
 GitHub Releases, в npm (trusted publishing с provenance), в Homebrew-тап и в MCP Registry. Подробнее в
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Удаление
+
+1. `telegram logout` удаляет сохранённую сессию. Чтобы завершить её и на стороне Telegram,
+   закройте её в Telegram → Настройки → Устройства.
+2. `telegram skill uninstall` убирает скилл из агентов, куда он был установлен.
+3. Удалите саму программу: `brew uninstall better-tg-cli`, `npm uninstall -g better-tg-cli` или
+   `scoop uninstall better-tg-cli`. Бинарник из Releases удаляется как обычный файл.
+4. Удалите папку настроек: `~/.config/tg` (`%APPDATA%\tg` на Windows) и `~/.config/tg-<профиль>`
+   для каждого `TG_PROFILE`, который вы использовали. На Windows вместе с ней удалится и файл секретов
+   DPAPI. На других системах api_hash и флаг write-access остаются в хранилище секретов: удалите
+   записи `tg-cli` в «Связке ключей» (или `secret-tool clear service tg-cli`) либо запись в 1Password.
+
 ## Приватность
 
 Аналитики нет. Единственный наш сервис — необязательный брокер инвайтов, и он не видит ни ваших
 сообщений, ни сессии. В [PRIVACY.md](PRIVACY.md) перечислены три хоста, с которыми общается CLI,
 и то, что он хранит локально.
+
+## Code signing policy
+
+Бинарники для Windows собираются из этого репозитория только в GitHub Actions
+(`.github/workflows/release.yml`), никогда не на личной машине. Мы подали заявку на бесплатную
+подпись кода от SignPath Foundation; когда её одобрят, в релизах будет: *Free code signing provided
+by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).*
+Пока `telegram.exe` для Windows не подписан; бинарники для macOS подписаны ad-hoc.
+
+- Коммиттеры и ревьюеры: [@TheVilfer](https://github.com/TheVilfer)
+- Утверждают каждый подписанный релиз: [@TheVilfer](https://github.com/TheVilfer)
+- Политика приватности: [PRIVACY.md](PRIVACY.md). CLI обращается только к Telegram, к брокеру
+  инвайтов при входе по инвайту и раз в день к npm-реестру за номером версии, если запущен в
+  терминале (отключается `TG_NO_UPDATE_CHECK=1`).
 
 ## Лицензия
 

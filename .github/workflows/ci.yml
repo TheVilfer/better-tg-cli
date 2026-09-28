@@ -60,7 +60,16 @@ jobs:
         env:
           TG_NO_UPDATE_CHECK: '1'
         run: |
-          bun scripts/bundle.mjs bun-windows-x64 out/telegram
-          ./out/telegram.exe --version
-          ./out/telegram.exe help-all -g thread | grep -q 'read <chat>'
-          ./out/telegram.exe skill status | grep -q claude-code
+          scripts/build-binary.sh windows-x64 out
+          mkdir smoke && pwsh -NoProfile -Command "Expand-Archive -Path (Get-ChildItem out/*.zip).FullName -DestinationPath smoke"
+          ./smoke/telegram.exe --version
+          ./smoke/telegram.exe help-all -g thread | grep -q 'read <chat>'
+          ./smoke/telegram.exe skill status | grep -q claude-code
+      - name: Check the exe version resource
+        shell: pwsh
+        run: |
+          $info = (Get-Item smoke/telegram.exe).VersionInfo
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($info.ProductName -ne 'better-tg-cli' -or $info.ProductVersion -ne "$version.0") {
+            throw "version resource: '$($info.ProductName)' '$($info.ProductVersion)'"
+          }

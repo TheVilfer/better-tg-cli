@@ -113,7 +113,16 @@ if (mode === 'node') {
   const dir = mkdtempSync(join(tmpdir(), 'tg-bundle-'));
   try {
     writeFileSync(join(dir, 'telegram.mjs'), loader);
-    const bin = await Bun.build({ entrypoints: [join(dir, 'telegram.mjs')], compile: { target: mode, outfile } });
+    const { version } = JSON.parse((await import('node:fs')).readFileSync('package.json', 'utf8'));
+    // Windows version resource: code signing (SignPath) checks product name and version
+    const windows = mode.includes('windows') ? {
+      title: 'better-tg-cli',
+      publisher: 'better-tg-cli',
+      version: `${version}.0`,
+      description: 'Telegram on your own account for the terminal and AI agents',
+      copyright: 'MIT License, (c) 2026 Derek Rein, Sergei Polin',
+    } : undefined;
+    const bin = await Bun.build({ entrypoints: [join(dir, 'telegram.mjs')], compile: { target: mode, outfile, windows } });
     if (!bin.success) {
       for (const log of bin.logs) console.error(log);
       process.exit(1);
