@@ -56,8 +56,8 @@ jobs:
           - { os: macos-latest, target: darwin-x64, smoke: false }
           - { os: ubuntu-latest, target: linux-x64, smoke: true }
           - { os: ubuntu-latest, target: linux-arm64, smoke: false }
-          # Cross-compiled and zipped on Linux; run on a real Windows runner in windows-smoke
-          - { os: ubuntu-latest, target: windows-x64, smoke: false }
+          # Built on Windows so the exe gets its version resource; run again in windows-smoke
+          - { os: windows-latest, target: windows-x64, smoke: false }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,6 +68,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: scripts/build-binary.sh "$TARGET" release
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
       - name: Smoke test (native targets)
@@ -102,6 +103,10 @@ jobs:
           $v = & ./smoke/telegram.exe --version
           if ($v -ne $env:VERSION) { throw "version $v != $env:VERSION" }
           if (-not ((& ./smoke/telegram.exe help-all -g thread) -match 'read <chat>')) { throw 'help-all failed' }
+          $info = (Get-Item smoke/telegram.exe).VersionInfo
+          if ($info.ProductName -ne 'better-tg-cli' -or $info.ProductVersion -ne "$env:VERSION.0") {
+            throw "version resource: '$($info.ProductName)' '$($info.ProductVersion)'"
+          }
 
   github-release:
     needs: [verify, binaries, windows-smoke]
