@@ -55,3 +55,12 @@ jobs:
           node dist/telegram.mjs --version
           node dist/telegram.mjs help-all -g onboard | grep -q onboard
           node dist/telegram.mjs skill status | grep -q claude-code
+      - name: Build and run the standalone telegram.exe
+        shell: bash
+        env:
+          TG_NO_UPDATE_CHECK: '1'
+        run: |
+          bun scripts/bundle.mjs bun-windows-x64 out/telegram
+          ./out/telegram.exe --version
+          ./out/telegram.exe help-all -g thread | grep -q 'read <chat>'
+          ./out/telegram.exe skill status | grep -q claude-code
