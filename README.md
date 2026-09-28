@@ -312,11 +312,37 @@ publishes to GitHub Releases, npm (trusted publishing with provenance), the Home
 MCP Registry. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Uninstall
+
+1. `telegram logout` deletes the saved session. To end it on Telegram's side too, terminate it in
+   Telegram → Settings → Devices.
+2. `telegram skill uninstall` removes the skill from the agents it was installed into.
+3. Remove the program: `brew uninstall better-tg-cli`, `npm uninstall -g better-tg-cli` or
+   `scoop uninstall better-tg-cli`. For a binary from Releases, delete `telegram` / `telegram.exe`.
+4. Delete the config folder: `~/.config/tg` (`%APPDATA%\tg` on Windows), plus `~/.config/tg-<profile>`
+   for any `TG_PROFILE` you used. On Windows this also removes the DPAPI secrets file. Elsewhere the
+   api_hash and write-access flag stay in the secret store: delete the `tg-cli` items in Keychain
+   Access (or `secret-tool clear service tg-cli`), or the item in your 1Password vault.
+
 ## Privacy
 
 No analytics. The only service we run is the optional invite broker, which never sees your
 messages or session. See [PRIVACY.md](PRIVACY.md) for the three hosts the CLI talks to and what it
 stores locally.
+
+## Code signing policy
+
+Windows binaries are built from this repository by GitHub Actions only (`.github/workflows/release.yml`),
+never on a personal machine. We have applied for free code signing from SignPath Foundation; once it
+is in place, release binaries will carry: *Free code signing provided by
+[SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).*
+Until then the Windows `telegram.exe` is unsigned; macOS binaries are ad-hoc signed.
+
+- Committers and reviewers: [@TheVilfer](https://github.com/TheVilfer)
+- Approvers (each signed release): [@TheVilfer](https://github.com/TheVilfer)
+- Privacy policy: [PRIVACY.md](PRIVACY.md). The CLI talks only to Telegram, to the invite broker
+  when you log in with an invite, and to the npm registry for a daily update check in a terminal
+  (off with `TG_NO_UPDATE_CHECK=1`).
 
 ## License
 

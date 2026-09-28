@@ -9,7 +9,7 @@ there are no servers of ours in the path. Nobody but you sees your messages or y
 |---|---|---|
 | Telegram (MTProto data centers) | Every command | Everything a Telegram client sends, directly to Telegram |
 | `registry.npmjs.org` | Once a day, only when run in a terminal (never for agents or pipes) | A request for the latest version number. Turn it off with `TG_NO_UPDATE_CHECK=1` |
-| The invite service (`tg-cli-broker…workers.dev`) | Only for `telegram auth --invite` | Your invite token, once, to receive the app's API keys |
+| The invite service (`tg-cli-broker…workers.dev`, same service as `better-tg-cli.com`) | Only when you log in with an invite (`telegram auth --invite` or `telegram onboard`) | Your invite token, once, to receive the app's API keys |
 
 The invite service stores invites by their SHA-256 hash with a use counter and never stores raw
 tokens. Its request logging is off. It never sees your phone number, login code, session or

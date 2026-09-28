@@ -118,7 +118,7 @@ ${returnTo ? '<p class="cli">Вас прислал <span class="mono">telegram o
   <p class="done-p"><a href="#guide">Дальше — установка ↓</a></p>
 </section>
 ${guideHtml()}
-<footer>Открытый код: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a></footer>
+<footer>Открытый код: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">Приватность</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>
 </main>
 ${open ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer nonce="' + nonce + '"></script>' : ''}
 <script nonce="${nonce}">
