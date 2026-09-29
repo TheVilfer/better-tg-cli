@@ -47,6 +47,20 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
     // The directory wants a square icon of at least 128px
     '.claude-plugin/icon.svg': readFileSync(new URL('../assets/icon.svg', import.meta.url), 'utf8').replace('width="120" height="120"', 'width="512" height="512"'),
     ...Object.fromEntries(Object.entries(skillFiles).map(([f, c]) => [`skills/better-tg-cli/${f}`, c])),
+    // The same folder is the Cursor Marketplace plugin (Cursor reads .cursor-plugin/plugin.json)
+    '.cursor-plugin/plugin.json': JSON.stringify({
+      name: root.name,
+      displayName: root.displayName,
+      description: root.description,
+      version,
+      author: root.author,
+      homepage: root.homepage,
+      repository: root.repository,
+      license: root.license,
+      keywords: root.keywords,
+      logo: 'https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/assets/icon-512.png',
+      mcpServers: root.mcpServers,
+    }, null, 2) + '\n',
   };
   const { mkdirSync } = await import('node:fs');
   for (const [file, content] of Object.entries(files)) {

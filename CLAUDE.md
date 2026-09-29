@@ -86,7 +86,8 @@ are symlinks into this checkout; `skill install` skips symlinks unless `--force`
 `gemini-extension.json` on the package version; `release.sh` commits them.
 
 `plugin/` is the Claude Code plugin (the marketplace points at it) and the folder submitted to
-Anthropic's plugin directory (claude.ai/directory/manage, path `plugin`). `gen-version.mjs`
+Anthropic's plugin directory (claude.ai/directory/manage, path `plugin`) and the Cursor Marketplace
+plugin (`plugin/.cursor-plugin/plugin.json`, root `.cursor-plugin/marketplace.json`). `gen-version.mjs`
 regenerates everything in it except `plugin/README.md`: regular-file copies of the skill and
 LICENSE, and a manifest with the MCP server pinned to `better-tg-cli@<version>` (the directory
 blocks `@latest`). Keep it free of symlinks, binaries and lockfiles.
