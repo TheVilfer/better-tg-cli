@@ -44,6 +44,8 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
   const files = {
     '.claude-plugin/plugin.json': JSON.stringify(root, null, 2) + '\n',
     'LICENSE': readFileSync(new URL('../LICENSE', import.meta.url), 'utf8'),
+    // The directory wants a square icon of at least 128px
+    '.claude-plugin/icon.svg': readFileSync(new URL('../assets/icon.svg', import.meta.url), 'utf8').replace('width="120" height="120"', 'width="512" height="512"'),
     ...Object.fromEntries(Object.entries(skillFiles).map(([f, c]) => [`skills/better-tg-cli/${f}`, c])),
   };
   const { mkdirSync } = await import('node:fs');
