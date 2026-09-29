@@ -32,3 +32,26 @@ try {
   skillCurrent = readFileSync(skillPath, 'utf8');
 } catch {}
 if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
+
+// plugin/ is the folder submitted to Anthropic's plugin directory: regular files only (no links
+// into the repo), the MCP server pinned to this exact version, the skill and LICENSE copied in
+{
+  const root = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+  root.mcpServers.telegram.args = ['-y', `better-tg-cli@${version}`, 'mcp'];
+  // Unofficial client: no brand name in the display name
+  root.displayName = 'better-tg-cli';
+  root.description = 'Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. Writes stay off until you allow them.';
+  const files = {
+    '.claude-plugin/plugin.json': JSON.stringify(root, null, 2) + '\n',
+    'LICENSE': readFileSync(new URL('../LICENSE', import.meta.url), 'utf8'),
+    ...Object.fromEntries(Object.entries(skillFiles).map(([f, c]) => [`skills/better-tg-cli/${f}`, c])),
+  };
+  const { mkdirSync } = await import('node:fs');
+  for (const [file, content] of Object.entries(files)) {
+    const url = new URL(`../plugin/${file}`, import.meta.url);
+    mkdirSync(new URL('.', url), { recursive: true });
+    let cur = '';
+    try { cur = readFileSync(url, 'utf8'); } catch {}
+    if (cur !== content) writeFileSync(url, content);
+  }
+}

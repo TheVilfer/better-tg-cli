@@ -85,6 +85,12 @@ are symlinks into this checkout; `skill install` skips symlinks unless `--force`
 `--force` here. `scripts/gen-version.mjs` keeps `.claude-plugin/plugin.json`, `server.json` and
 `gemini-extension.json` on the package version; `release.sh` commits them.
 
+`plugin/` is the Claude Code plugin (the marketplace points at it) and the folder submitted to
+Anthropic's plugin directory (claude.ai/directory/manage, path `plugin`). `gen-version.mjs`
+regenerates everything in it except `plugin/README.md`: regular-file copies of the skill and
+LICENSE, and a manifest with the MCP server pinned to `better-tg-cli@<version>` (the directory
+blocks `@latest`). Keep it free of symlinks, binaries and lockfiles.
+
 Grok Build reads `.claude-plugin/plugin.json` as is, but refuses a marketplace entry that points at
 the repo root (`"./"`, which Claude Code requires), so `.grok-plugin/marketplace.json` (preferred
 by Grok) points at the git URL instead.

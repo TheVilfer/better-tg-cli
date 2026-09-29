@@ -118,3 +118,17 @@ describe('MCP', () => {
     expect(isWriteCommand('skill')).toBe(false);
   });
 });
+
+describe('plugin/ (Anthropic plugin directory)', () => {
+  it('pins the MCP server to this version and carries the current skill', () => {
+    const root = new URL('../', import.meta.url);
+    const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
+    const manifest = JSON.parse(readFileSync(new URL('plugin/.claude-plugin/plugin.json', root), 'utf8'));
+    expect(manifest.version).toBe(version);
+    expect(manifest.mcpServers.telegram.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
+    for (const [file, content] of Object.entries(SKILL_FILES)) {
+      expect(readFileSync(new URL(`plugin/skills/better-tg-cli/${file}`, root), 'utf8')).toBe(content);
+    }
+    expect(readFileSync(new URL('plugin/LICENSE', root), 'utf8')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
+  });
+});

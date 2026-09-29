@@ -1,12 +1,17 @@
 {
   "name": "better-tg-cli",
-  "owner": { "name": "Sergei Polin", "url": "https://github.com/TheVilfer" },
-  "metadata": { "description": "Telegram for your terminal and your AI agents" },
+  "owner": {
+    "name": "Sergei Polin",
+    "url": "https://github.com/TheVilfer"
+  },
+  "metadata": {
+    "description": "Telegram for your terminal and your AI agents"
+  },
   "plugins": [
     {
       "name": "better-tg-cli",
-      "source": "./",
-      "description": "Telegram on your own account: the better-tg-cli skill plus its MCP server. Log in once with `telegram auth --qr`."
+      "source": "./plugin",
+      "description": "Telegram on your own account: the better-tg-cli skill plus its MCP server. Log in once with `telegram onboard`."
     }
   ]
 }

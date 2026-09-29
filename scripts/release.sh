@@ -14,7 +14,7 @@ node scripts/gen-version.mjs
 npm run build >/dev/null
 npm test
 
-git add package.json package-lock.json src/version.ts src/skill-files.ts .claude-plugin/plugin.json server.json gemini-extension.json
+git add package.json package-lock.json src/version.ts src/skill-files.ts plugin .claude-plugin/plugin.json server.json gemini-extension.json
 git commit -m "Release v${version}"
 git tag "v${version}"
 git push origin main "v${version}"
