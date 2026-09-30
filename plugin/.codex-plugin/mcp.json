@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "better-tg-cli@0.28.0",
+        "mcp"
+      ]
+    }
+  }
+}

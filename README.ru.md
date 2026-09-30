@@ -116,6 +116,15 @@ scoop install better-tg-cli
 MCP-сервер запускается через `npx`, так что хватит Node 20+. Один раз войдите в терминале:
 `telegram auth --qr` (или `npx better-tg-cli auth --qr`).
 
+### Плагин для Codex
+
+Тот же скилл и MCP-сервер в виде плагина Codex (он появится и в десктопном приложении ChatGPT):
+
+```bash
+codex plugin marketplace add TheVilfer/better-tg-cli
+codex plugin add better-tg-cli@better-tg-cli
+```
+
 ### Плагин для Grok Build
 
 [Grok Build](https://x.ai/cli) ставит тот же плагин, скилл и MCP-сервер вместе:

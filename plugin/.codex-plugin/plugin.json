@@ -1,0 +1,23 @@
+{
+  "name": "better-tg-cli",
+  "version": "0.28.0",
+  "description": "Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. Writes stay off until you allow them.",
+  "author": {
+    "name": "Sergei Polin",
+    "url": "https://github.com/TheVilfer"
+  },
+  "homepage": "https://github.com/TheVilfer/better-tg-cli",
+  "repository": "https://github.com/TheVilfer/better-tg-cli",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "mtproto",
+    "cli",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "better-tg-cli"
+  }
+}

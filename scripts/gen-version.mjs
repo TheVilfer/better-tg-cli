@@ -47,6 +47,22 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
     // The directory wants a square icon of at least 128px
     '.claude-plugin/icon.svg': readFileSync(new URL('../assets/icon.svg', import.meta.url), 'utf8').replace('width="120" height="120"', 'width="512" height="512"'),
     ...Object.fromEntries(Object.entries(skillFiles).map(([f, c]) => [`skills/better-tg-cli/${f}`, c])),
+    // ...and the Codex / ChatGPT plugin (repo marketplace in .agents/plugins/marketplace.json).
+    // The MCP config stays out of the plugin root, where Claude Code would load it a second time
+    '.codex-plugin/plugin.json': JSON.stringify({
+      name: root.name,
+      version,
+      description: root.description,
+      author: root.author,
+      homepage: root.homepage,
+      repository: root.repository,
+      license: root.license,
+      keywords: root.keywords,
+      skills: './skills/',
+      mcpServers: './.codex-plugin/mcp.json',
+      interface: { displayName: root.displayName },
+    }, null, 2) + '\n',
+    '.codex-plugin/mcp.json': JSON.stringify({ mcpServers: root.mcpServers }, null, 2) + '\n',
     // The same folder is the Cursor Marketplace plugin (Cursor reads .cursor-plugin/plugin.json)
     '.cursor-plugin/plugin.json': JSON.stringify({
       name: root.name,

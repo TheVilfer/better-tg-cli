@@ -87,7 +87,9 @@ are symlinks into this checkout; `skill install` skips symlinks unless `--force`
 
 `plugin/` is the Claude Code plugin (the marketplace points at it) and the folder submitted to
 Anthropic's plugin directory (claude.ai/directory/manage, path `plugin`) and the Cursor Marketplace
-plugin (`plugin/.cursor-plugin/plugin.json`, root `.cursor-plugin/marketplace.json`). `gen-version.mjs`
+plugin (`plugin/.cursor-plugin/plugin.json`, root `.cursor-plugin/marketplace.json`) and the Codex
+plugin (`plugin/.codex-plugin/`, repo marketplace `.agents/plugins/marketplace.json`; its MCP config
+sits in `.codex-plugin/mcp.json`, since a `.mcp.json` in the plugin root would load twice in Claude Code). `gen-version.mjs`
 regenerates everything in it except `plugin/README.md`: regular-file copies of the skill and
 LICENSE, and a manifest with the MCP server pinned to `better-tg-cli@<version>` (the directory
 blocks `@latest`). Keep it free of symlinks, binaries and lockfiles.

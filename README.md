@@ -117,6 +117,15 @@ The skill and the MCP server together, in one install:
 It runs the MCP server through `npx`, so Node 20+ is enough. Log in once with `telegram auth --qr`
 (or `npx better-tg-cli auth --qr`) in a terminal.
 
+### Codex plugin
+
+The same skill and MCP server as a Codex plugin (also shows up in the ChatGPT desktop app):
+
+```bash
+codex plugin marketplace add TheVilfer/better-tg-cli
+codex plugin add better-tg-cli@better-tg-cli
+```
+
 ### Grok Build plugin
 
 [Grok Build](https://x.ai/cli) installs the same plugin, skill and MCP server together:
