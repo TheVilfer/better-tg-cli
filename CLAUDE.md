@@ -65,7 +65,7 @@ The tag runs `.github/workflows/release.yml`:
 4. npm publish via trusted publishing (OIDC, no token; skipped if the version exists)
 5. `Formula/better-tg-cli.rb` rendered by `scripts/homebrew-formula.mjs` and pushed to
    `TheVilfer/homebrew-tap` with the `TAP_DEPLOY_KEY` deploy key
-6. MCP Registry entry (`server.json`, GitHub OIDC) once npm serves the version
+6. MCP Registry entry (`server.json`, GitHub OIDC) once npm serves the version (waits up to 75 min)
 7. Windows: `windows-x64` is cross-compiled and zipped on Linux, run on `windows-latest` in
    `windows-smoke` (it gates the GitHub Release), and `scripts/scoop-manifest.mjs` pushes
    `bucket/better-tg-cli.json` to `TheVilfer/scoop-bucket` with the `SCOOP_DEPLOY_KEY` deploy key
