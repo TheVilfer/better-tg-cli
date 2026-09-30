@@ -2,7 +2,11 @@
 
 ## Version and Release Workflow
 
-Changes land through a branch and a pull request (green CI), never by pushing to main. Releases
+Changes land through a branch and a pull request (green CI), never by pushing to main.
+The version lives only in `package.json`. `scripts/gen-version.mjs` (run by build, test and
+`release.sh`) copies it into `src/version.ts`, the plugin manifests, `plugin/*` (including the
+pinned `npx better-tg-cli@X.Y.Z`), `server.json` and `gemini-extension.json`; CI fails if any of
+them drifts. Never edit a version by hand anywhere else. Releases
 use `scripts/release.sh` (see Releasing below): a release PR bumps the version, then the tag
 `vX.Y.Z` is pushed from main after the merge. Minor for features, patch for fixes.
 
