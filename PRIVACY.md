@@ -16,7 +16,8 @@ tokens. Its request logging is off. It never sees your phone number, login code,
 messages, because the login itself goes straight to Telegram.
 
 If you get an invite from the signup page on the same service, it also stores the email you enter,
-lowercased, next to that invite. The email is used only to notify you about important updates or
+lowercased, next to that invite, with the page language (English, Spanish or Russian) so notices
+come in that language. The email is used only to notify you about important updates or
 revoked keys. It is never shared or used for marketing. Ask in a GitHub issue to have it deleted.
 The page checks for bots with Cloudflare Turnstile.
 

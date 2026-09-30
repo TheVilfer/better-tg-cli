@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#install">Install</a> · <a href="skills/better-tg-cli/reference.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a>
+    <a href="#install">Install</a> · <a href="skills/better-tg-cli/reference.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
   </p>
 </div>
 

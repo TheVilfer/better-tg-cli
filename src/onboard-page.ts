@@ -1,59 +1,88 @@
 import { randomBytes } from 'node:crypto';
 
-/** The local onboarding page: inline only, one nonce per response, RU or EN from the browser. */
+/** The local onboarding page: inline only, one nonce per response, English, Spanish or Russian from the browser. */
 
-const STRINGS = {
-  ru: {
-    title: 'Вход в Telegram для better-tg-cli',
-    lead: 'Эту страницу открыл ваш агент. Всё, что здесь вводите, остаётся на этом компьютере: агент не видит ни инвайт, ни QR, ни пароль.',
-    inviteH: 'Шаг 1. Инвайт',
-    getInvite: 'Получить инвайт',
-    getInviteNote: 'Откроется better-tg-cli.com: подтвердите почту кодом из письма, и инвайт сам вернётся сюда.',
-    haveInvite: 'У меня уже есть инвайт',
-    paste: 'Вставьте инвайт',
-    use: 'Продолжить',
-    ownKeys: 'Войти со своими ключами с my.telegram.org',
-    apiId: 'api_id', apiHash: 'api_hash',
-    connecting: 'Подключаемся к Telegram…',
-    scanH: 'Шаг 2. Отсканируйте QR',
-    scanNote: 'На телефоне: Telegram → Настройки → Устройства → Подключить устройство. Код обновляется сам.',
-    passwordH: 'Шаг 3. Пароль двухэтапной проверки',
-    passwordNote: 'Он есть, если вы включали «Облачный пароль» в Telegram. Подсказка:',
-    send: 'Войти',
-    wrong: 'Пароль не подошёл, попробуйте ещё раз.',
-    doneH: 'Готово!',
-    doneNote: 'Вы вошли как {user}. Эту вкладку можно закрыть и вернуться к агенту.',
-    errorH: 'Не получилось войти',
-    retry: 'Попробовать ещё раз',
-    gone: 'Страница больше не отвечает. Запустите telegram onboard ещё раз.',
-    failed: 'Что-то пошло не так',
-  },
-  en: {
-    title: 'Log in to Telegram for better-tg-cli',
-    lead: 'Your agent opened this page. What you enter here stays on this computer: the agent never sees the invite, the QR code or your password.',
-    inviteH: 'Step 1. Invite',
-    getInvite: 'Get an invite',
-    getInviteNote: 'better-tg-cli.com opens: confirm your email with the code we send, and the invite comes back here by itself (the page is in Russian).',
-    haveInvite: 'I already have an invite',
-    paste: 'Paste your invite',
-    use: 'Continue',
-    ownKeys: 'Use my own keys from my.telegram.org',
-    apiId: 'api_id', apiHash: 'api_hash',
-    connecting: 'Connecting to Telegram…',
-    scanH: 'Step 2. Scan the QR code',
-    scanNote: 'On your phone: Telegram → Settings → Devices → Link Desktop Device. The code refreshes by itself.',
-    passwordH: 'Step 3. Two-step verification password',
-    passwordNote: 'You have one if you turned on a cloud password in Telegram. Hint:',
-    send: 'Log in',
-    wrong: 'Wrong password, try again.',
-    doneH: 'Done!',
-    doneNote: 'Logged in as {user}. You can close this tab and go back to your agent.',
-    errorH: 'Could not log in',
-    retry: 'Try again',
-    gone: 'This page stopped answering. Run telegram onboard again.',
-    failed: 'Something went wrong',
-  },
+const en = {
+  title: 'Log in to Telegram for better-tg-cli',
+  lead: 'Your agent opened this page. What you enter here stays on this computer: the agent never sees the invite, the QR code or your password.',
+  inviteH: 'Step 1. Invite',
+  getInvite: 'Get an invite',
+  getInviteNote: 'better-tg-cli.com opens: confirm your email with the code we send, and the invite comes back here by itself.',
+  haveInvite: 'I already have an invite',
+  paste: 'Paste your invite',
+  use: 'Continue',
+  ownKeys: 'Use my own keys from my.telegram.org',
+  apiId: 'api_id', apiHash: 'api_hash',
+  connecting: 'Connecting to Telegram…',
+  scanH: 'Step 2. Scan the QR code',
+  scanNote: 'On your phone: Telegram → Settings → Devices → Link Desktop Device. The code refreshes by itself.',
+  passwordH: 'Step 3. Two-step verification password',
+  passwordNote: 'You have one if you turned on a cloud password in Telegram. Hint:',
+  send: 'Log in',
+  wrong: 'Wrong password, try again.',
+  doneH: 'Done!',
+  doneNote: 'Logged in as {user}. You can close this tab and go back to your agent.',
+  errorH: 'Could not log in',
+  retry: 'Try again',
+  gone: 'This page stopped answering. Run telegram onboard again.',
+  failed: 'Something went wrong',
 };
+
+type Strings = typeof en;
+
+const es: Strings = {
+  title: 'Inicia sesión en Telegram para better-tg-cli',
+  lead: 'Tu agente abrió esta página. Lo que introduces aquí se queda en este equipo: el agente nunca ve la invitación, el código QR ni tu contraseña.',
+  inviteH: 'Paso 1. Invitación',
+  getInvite: 'Obtener una invitación',
+  getInviteNote: 'Se abrirá better-tg-cli.com: confirma tu correo con el código que te enviamos y la invitación volverá aquí sola.',
+  haveInvite: 'Ya tengo una invitación',
+  paste: 'Pega tu invitación',
+  use: 'Continuar',
+  ownKeys: 'Usar mis propias claves de my.telegram.org',
+  apiId: 'api_id', apiHash: 'api_hash',
+  connecting: 'Conectando con Telegram…',
+  scanH: 'Paso 2. Escanea el código QR',
+  scanNote: 'En tu teléfono: Telegram → Ajustes → Dispositivos → Vincular dispositivo de escritorio. El código se actualiza solo.',
+  passwordH: 'Paso 3. Contraseña de la verificación en dos pasos',
+  passwordNote: 'La tienes si activaste una contraseña en la nube en Telegram. Pista:',
+  send: 'Iniciar sesión',
+  wrong: 'Contraseña incorrecta, inténtalo de nuevo.',
+  doneH: '¡Listo!',
+  doneNote: 'Has iniciado sesión como {user}. Puedes cerrar esta pestaña y volver a tu agente.',
+  errorH: 'No se pudo iniciar sesión',
+  retry: 'Intentar de nuevo',
+  gone: 'Esta página ya no responde. Vuelve a ejecutar telegram onboard.',
+  failed: 'Algo salió mal',
+};
+
+const ru: Strings = {
+  title: 'Вход в Telegram для better-tg-cli',
+  lead: 'Эту страницу открыл ваш агент. Всё, что здесь вводите, остаётся на этом компьютере: агент не видит ни инвайт, ни QR, ни пароль.',
+  inviteH: 'Шаг 1. Инвайт',
+  getInvite: 'Получить инвайт',
+  getInviteNote: 'Откроется better-tg-cli.com: подтвердите почту кодом из письма, и инвайт сам вернётся сюда.',
+  haveInvite: 'У меня уже есть инвайт',
+  paste: 'Вставьте инвайт',
+  use: 'Продолжить',
+  ownKeys: 'Войти со своими ключами с my.telegram.org',
+  apiId: 'api_id', apiHash: 'api_hash',
+  connecting: 'Подключаемся к Telegram…',
+  scanH: 'Шаг 2. Отсканируйте QR',
+  scanNote: 'На телефоне: Telegram → Настройки → Устройства → Подключить устройство. Код обновляется сам.',
+  passwordH: 'Шаг 3. Пароль двухэтапной проверки',
+  passwordNote: 'Он есть, если вы включали «Облачный пароль» в Telegram. Подсказка:',
+  send: 'Войти',
+  wrong: 'Пароль не подошёл, попробуйте ещё раз.',
+  doneH: 'Готово!',
+  doneNote: 'Вы вошли как {user}. Эту вкладку можно закрыть и вернуться к агенту.',
+  errorH: 'Не получилось войти',
+  retry: 'Попробовать ещё раз',
+  gone: 'Страница больше не отвечает. Запустите telegram onboard ещё раз.',
+  failed: 'Что-то пошло не так',
+};
+
+const STRINGS = { en, es, ru };
 
 export function onboardPage(options: { site: string; returnTo: string }): { html: string; csp: string } {
   const nonce = randomBytes(16).toString('base64');
@@ -133,8 +162,12 @@ details>div{margin-top:12px}
 </main>
 <script nonce="${nonce}">
 const S = ${JSON.stringify(STRINGS)};
-const L = (navigator.language || '').toLowerCase().startsWith('ru') ? S.ru : S.en;
-document.documentElement.lang = L === S.ru ? 'ru' : 'en';
+// First browser language we have, else English; the invite site gets the same one
+const LANG = (navigator.languages || [navigator.language || '']).map(l => l.toLowerCase().split('-')[0]).find(l => l in S) || 'en';
+const L = S[LANG];
+document.documentElement.lang = LANG;
+const getLink = document.getElementById('get');
+getLink.href = getLink.getAttribute('href') + '&lang=' + LANG;
 document.title = L.title;
 for (const el of document.querySelectorAll('[data-t]')) el.textContent = L[el.dataset.t];
 for (const el of document.querySelectorAll('[data-ph]')) el.placeholder = L[el.dataset.ph];

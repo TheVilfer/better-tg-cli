@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { handle, sha256Hex, type Env, type Invite } from '../broker/src/handler.js';
 import { handleSignup, handleVerify, normalizeEmail, SIGNUPS_KEY } from '../broker/src/signup.js';
 import { loopbackReturn } from '../broker/src/page.js';
+import { pickLang } from '../broker/src/i18n.js';
 
 const TOKEN = 'tok_' + 'x'.repeat(40);
 
@@ -109,7 +110,7 @@ describe('self-serve signup', () => {
     }
     const page = await handle(new Request('https://broker.test/'), off.e);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('Регистрация сейчас закрыта');
+    expect(await page.text()).toContain('Signups are closed right now');
   });
 
   it('serves the form with a nonce CSP when open', async () => {
@@ -247,6 +248,68 @@ describe('self-serve signup', () => {
     const html = async (q: string) => (await handle(new Request(`https://broker.test/?return=${encodeURIComponent(q)}`), e)).text();
     expect(await html(good)).toContain(`data-return="${good}"`);
     expect(await html('https://evil.example/cb')).not.toContain('data-return');
+  });
+
+  describe('languages', () => {
+    const CYRILLIC = /[А-Яа-яЁё]/;
+    const get = async (e: Env, q = '', accept?: string) =>
+      handle(new Request(`https://broker.test/${q}`, { headers: accept ? { 'accept-language': accept } : {} }), e);
+
+    it('picks ?lang=, then Accept-Language, then English', () => {
+      expect(pickLang(null, null)).toBe('en');
+      expect(pickLang(null, 'es-419,es;q=0.9,en;q=0.8')).toBe('es');
+      expect(pickLang(null, 'de-DE,de;q=0.9,ru;q=0.8,en;q=0.7')).toBe('ru');
+      expect(pickLang(null, 'fr, en;q=0.1, es;q=0.5')).toBe('es');
+      expect(pickLang(null, 'ja,zh')).toBe('en');
+      expect(pickLang('RU', 'es')).toBe('ru');
+      expect(pickLang('xx', 'es')).toBe('es');
+    });
+
+    it('renders English and Spanish pages without a single Russian string, open, closed and from the CLI', async () => {
+      const onboard = '?return=' + encodeURIComponent('http://127.0.0.1:54321/s/' + 'a'.repeat(43) + '/cb');
+      for (const { e } of [await open(), await env()]) {
+        for (const [accept, lang] of [[undefined, 'en'], ['es-ES,es;q=0.9', 'es']] as const) {
+          for (const q of ['', onboard]) {
+            const res = await get(e, q, accept);
+            const html = await res.text();
+            expect(res.headers.get('vary')).toBe('Accept-Language');
+            expect(html).toContain(`<html lang="${lang}">`);
+            // Only the language switcher names Russian
+            expect(html.replace('>Русский</a>', '')).not.toMatch(CYRILLIC);
+          }
+        }
+      }
+      expect(await (await get((await open()).e, '', 'ru')).text()).toContain('Получить код на почту');
+    });
+
+    it('keeps ?return= and the other parameters in the language links', async () => {
+      const { e } = await open();
+      const back = 'http://127.0.0.1:54321/s/' + 'a'.repeat(43) + '/cb';
+      const html = await (await get(e, `?return=${encodeURIComponent(back)}&agent=codex`)).text();
+      const links = [...html.matchAll(/<a href="\/\?([^"]+)" hreflang="(\w+)"/g)];
+      expect(links.map(m => m[2])).toEqual(['es', 'ru']);
+      for (const [, q, l] of links) {
+        const params = new URLSearchParams(q.replace(/&amp;/g, '&'));
+        expect(params.get('return')).toBe(back);
+        expect(params.get('agent')).toBe('codex');
+        expect(params.get('lang')).toBe(l);
+      }
+    });
+
+    it('mails the code in the page language and remembers it', async () => {
+      const { e, store, mails } = await open();
+      const send = (email: string, lang?: string) =>
+        handleSignup(req('/v1/invites', { email, turnstile: 't', lang }), e, NOW, pass);
+      await send('es@b.co', 'es');
+      expect(mails.at(-1)!.subject).toMatch(/^Tu código de invitación/);
+      await send('ru@b.co', 'ru');
+      expect(mails.at(-1)!.subject).toMatch(/^Код для инвайта/);
+      await send('xx@b.co', 'fr');
+      expect(mails.at(-1)!.subject).toMatch(/^Your better-tg-cli invite code/);
+      expect(mails[2].text).not.toMatch(CYRILLIC);
+      expect((await confirm(e, 'es@b.co', codeOf(mails.filter(m => m.to === 'es@b.co')))).status).toBe(201);
+      expect(JSON.parse(store.get(`email:${await sha256Hex('es@b.co')}`)!).lang).toBe('es');
+    });
   });
 
   it('normalizes emails', () => {

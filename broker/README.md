@@ -17,6 +17,10 @@ A Cloudflare Worker that gives invited users the maintainer's `api_id`/`api_hash
 
 ## Signup page
 
+The page, the install guide and the code email come in English (default), Spanish and Russian
+(`src/i18n.ts`): `?lang=en|es|ru` wins, then `Accept-Language`. The language links keep the rest
+of the query, so `?return=` from `telegram onboard` survives a switch.
+
 `GET /` serves a page where people trade a verified email for a self-serve invite: `POST /v1/invites`
 (email + Turnstile) mails a six-digit code, and `POST /v1/invites/verify` (email + code) returns
 the invite. Nothing invite-like exists until the code comes back; only a hash of the code is stored.

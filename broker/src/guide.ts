@@ -4,14 +4,16 @@
  * not captures: crisp on any display, no personal data, nothing extra to host.
  */
 
+import type { Dict } from './i18n';
+
 export const escape = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 const CURSOR_INSTALL = 'https://cursor.com/en/install-mcp?name=telegram&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJldHRlci10Zy1jbGlAbGF0ZXN0IiwibWNwIl19';
 const MCPB = 'https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb';
 
-/** A copyable command or text block. */
-export const code = (text: string, wrap = false) =>
-  `<div class="box"><pre${wrap ? ' class="wrap"' : ''}>${escape(text)}</pre><button type="button" data-copy>Копировать</button></div>`;
+/** A copyable command or text block; the button label comes from the page language. */
+export const code = (text: string, copy: string, wrap = false) =>
+  `<div class="box"><pre${wrap ? ' class="wrap"' : ''}>${escape(text)}</pre><button type="button" data-copy>${escape(copy)}</button></div>`;
 
 // ---- drawn screens -----------------------------------------------------------------------------
 
@@ -25,136 +27,139 @@ function terminal(title: string, lines: string[]): string {
 <div class="s-body">${lines.join('<br>')}</div></figure>`;
 }
 
-const SCREENS: Record<string, string> = {
-  'claude-code': terminal('claude', [
-    `${d('&gt;')} /plugin install better-tg-cli@better-tg-cli`,
-    `  ${d('⎿')} ${g('✓ Installed better-tg-cli')} ${d('(skill + MCP server)')}`,
-    '',
-    `${d('&gt;')} что у меня непрочитанного в телеге?`,
-    '',
-    `${a('⏺')} ${b('telegram_read')}${d('(inbox -n 5)')}`,
-    `  ${d('⎿')} ${d('12 unread in 4 chats')}`,
-    `${a('⏺')} Больше всего в «Rust Seattle» (41). Алиса`,
-    `  спрашивает, в силе ли встреча в 7.`,
-  ]),
-  codex: terminal('codex', [
-    `${d('&gt;_')} ${b('OpenAI Codex')}`,
-    '',
-    `${d('›')} что пишет Алиса?`,
-    '',
-    `${d('•')} ${b('Ran')} ${a('telegram read @alice -n 5')}`,
-    `  ${d('└')} ${d('5 messages')}`,
-    '',
-    `${d('•')} Алиса спрашивает, в силе ли встреча в 7,`,
-    `  и просит взять ноутбук.`,
-  ]),
-  cursor: `<figure class="screen app" aria-hidden="true"><div class="s-bar"><i></i><i></i><i></i><span>Cursor</span></div>
+function screens(t: Dict): Record<AgentId, string> {
+  const s = t.guide.screens;
+  return {
+    'claude-code': terminal('claude', [
+      `${d('&gt;')} /plugin install better-tg-cli@better-tg-cli`,
+      `  ${d('⎿')} ${g('✓ Installed better-tg-cli')} ${d('(skill + MCP server)')}`,
+      '',
+      `${d('&gt;')} ${escape(s.claudeAsk)}`,
+      '',
+      `${a('⏺')} ${b('telegram_read')}${d('(inbox -n 5)')}`,
+      `  ${d('⎿')} ${d('12 unread in 4 chats')}`,
+      `${a('⏺')} ${escape(s.claudeAnswer[0])}`,
+      `  ${escape(s.claudeAnswer[1])}`,
+    ]),
+    codex: terminal('codex', [
+      `${d('&gt;_')} ${b('OpenAI Codex')}`,
+      '',
+      `${d('›')} ${escape(s.codexAsk)}`,
+      '',
+      `${d('•')} ${b('Ran')} ${a('telegram read @alice -n 5')}`,
+      `  ${d('└')} ${d('5 messages')}`,
+      '',
+      `${d('•')} ${escape(s.codexAnswer[0])}`,
+      `  ${escape(s.codexAnswer[1])}`,
+    ]),
+    cursor: `<figure class="screen app" aria-hidden="true"><div class="s-bar"><i></i><i></i><i></i><span>Cursor</span></div>
 <div class="s-dialog"><div class="s-title">Install MCP Server?</div>
 <div class="s-row"><span class="s-dim">Name</span><span>telegram</span></div>
 <div class="s-row"><span class="s-dim">Command</span><span class="s-mono">npx -y better-tg-cli@latest mcp</span></div>
 <div class="s-actions"><span class="s-btn ghost">Cancel</span><span class="s-btn">Install</span></div></div></figure>`,
-  'claude-desktop': `<figure class="screen app" aria-hidden="true"><div class="s-bar"><i></i><i></i><i></i><span>Claude</span></div>
+    'claude-desktop': `<figure class="screen app" aria-hidden="true"><div class="s-bar"><i></i><i></i><i></i><span>Claude</span></div>
 <div class="s-dialog"><div class="s-ext"><div class="s-logo"><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="2" y="2" width="2" height="8" fill="#fff"/><rect x="4" y="5" width="2" height="2" fill="#fff"/><rect x="6" y="8" width="4" height="2" fill="#0b0b0b"/></svg></div><div><div class="s-title">Telegram (better-tg-cli)</div>
 <div class="s-dim">Sergei Polin · MCP server</div></div></div>
 <div class="s-row"><span class="s-dim">Tools</span><span class="s-mono">telegram_help, telegram_read, telegram_write</span></div>
 <div class="s-row"><span class="s-dim">Profile</span><span class="s-mono">default</span></div>
 <div class="s-actions"><span class="s-btn ghost">Cancel</span><span class="s-btn">Install</span></div></div></figure>`,
-};
+  };
+}
 
 // ---- tabs --------------------------------------------------------------------------------------
 
-interface Tab { id: string; label: string; steps: string }
-
-const step = (title: string, body: string) => `<li><h4>${title}</h4>${body}</li>`;
-
-const TABS: Tab[] = [
-  {
-    id: 'claude-code', label: 'Claude Code',
-    steps: step('Поставьте плагин', `<p>В Claude Code наберите по очереди. Плагин — это скилл и MCP-сервер сразу.</p>${code('/plugin marketplace add TheVilfer/better-tg-cli')}${code('/plugin install better-tg-cli@better-tg-cli')}`)
-      + step('Перезапустите Claude Code', '<p>И попросите, например: «что у меня непрочитанного в телеге?»</p>'),
-  },
-  {
-    id: 'codex', label: 'Codex',
-    steps: step('Поставьте скилл', `<p>В обычном терминале:</p>${code('npx skills add TheVilfer/better-tg-cli -g -a codex -y')}`)
-      + step('Откройте Codex заново', '<p>Скилл подхватится сам. Спросите: «что пишет Алиса?»</p>'),
-  },
-  {
-    id: 'cursor', label: 'Cursor',
-    steps: step('Поставьте MCP-сервер', `<p><a class="btn" href="${CURSOR_INSTALL}">Установить в Cursor</a></p><p>Cursor спросит подтверждение — нажмите Install.</p>`)
-      + step('Добавьте скилл (по желанию)', `<p>Он учит агента аккуратной работе с Telegram:</p>${code('npx skills add TheVilfer/better-tg-cli -g -a cursor -y')}`),
-  },
-  {
-    id: 'claude-desktop', label: 'Claude Desktop',
-    steps: step('Скачайте расширение', `<p><a class="btn" href="${MCPB}">Скачать better-tg-cli.mcpb</a></p><p>Откройте файл двойным кликом — Claude покажет карточку, нажмите Install. Node и brew для расширения не нужны.</p>`)
-      + step('Спросите в чате', '<p>Например: «сделай сводку непрочитанного в Telegram».</p>'),
-  },
+type AgentId = keyof Dict['guide']['tabs'];
+const AGENTS: { id: AgentId; label: string }[] = [
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'claude-desktop', label: 'Claude Desktop' },
 ];
 
-/** Auto mode: one prompt that has the agent do the setup; the person only logs in. */
-export const AUTO_PROMPT = [
-  'Подключи мне Telegram через better-tg-cli (https://github.com/TheVilfer/better-tg-cli):',
-  '1. Установи CLI: `brew install thevilfer/tap/better-tg-cli`. Если Homebrew нет — `npm install -g better-tg-cli` (нужен Node 20+).',
-  '2. Запусти `telegram onboard --json` (в фоне, если твой таймаут короче 15 минут). Откроется страница, где я сам получу инвайт, отсканирую QR и введу пароль. Дождись события `done`. Не проси у меня коды, пароли и инвайт и не заполняй страницу сам.',
-  '3. Установи себе скилл: `telegram skill install`.',
-  '4. Проверь вход командой `telegram whoami` и коротко расскажи, что ты теперь умеешь в Telegram.',
-].join('\n');
+const step = (title: string, body: string) => `<li><h4>${escape(title)}</h4>${body}</li>`;
+const p = (text: string) => `<p>${escape(text)}</p>`;
 
-const AUTO_SCREEN = terminal('агент', [
-  `${d('&gt;')} Подключи мне Telegram через better-tg-cli…`,
-  '',
-  `${a('⏺')} ${b('Bash')}${d('(brew install thevilfer/tap/better-tg-cli)')}`,
-  `  ${d('⎿')} ${g('✓')} ${d('better-tg-cli installed')}`,
-  `${a('⏺')} ${b('Bash')}${d('(telegram onboard --json)')}`,
-  `  ${d('⎿')} ${d('waiting_scan … need_password …')} ${g('done')}`,
-  `${a('⏺')} ${b('Bash')}${d('(telegram skill install)')}`,
-  `  ${d('⎿')} ${g('✓')} ${d('Claude Code installed')}`,
-  `${a('⏺')} Готово: вы вошли как Алиса (@alice).`,
-]);
+/** Commands and buttons per agent; the words around them come from the dictionary. */
+function agentSteps(id: AgentId, t: Dict): string {
+  const [[t1, x1], [t2, x2]] = t.guide.tabs[id];
+  const c = (cmd: string) => code(cmd, t.client.copy);
+  switch (id) {
+    case 'claude-code':
+      return step(t1, p(x1) + c('/plugin marketplace add TheVilfer/better-tg-cli') + c('/plugin install better-tg-cli@better-tg-cli')) + step(t2, p(x2));
+    case 'codex':
+      return step(t1, p(x1) + c('codex plugin marketplace add TheVilfer/better-tg-cli') + c('codex plugin add better-tg-cli@better-tg-cli')) + step(t2, p(x2));
+    case 'cursor':
+      return step(t1, `<p><a class="btn" href="${CURSOR_INSTALL}">${escape(t.guide.cursorButton)}</a></p>` + p(x1))
+        + step(t2, p(x2) + c('npx skills add TheVilfer/better-tg-cli -g -a cursor -y'));
+    case 'claude-desktop':
+      return step(t1, `<p><a class="btn" href="${MCPB}">${escape(t.guide.mcpbButton)}</a></p>` + p(x1)) + step(t2, p(x2));
+  }
+}
+
+/** Auto mode: one prompt that has the agent do the setup; the person only logs in. */
+export const autoPrompt = (t: Dict) => t.guide.prompt.join('\n');
+
+function autoScreen(t: Dict): string {
+  const s = t.guide.screens;
+  return terminal(escape(s.agent), [
+    `${d('&gt;')} ${escape(s.promptEcho)}`,
+    '',
+    `${a('⏺')} ${b('Bash')}${d('(brew install thevilfer/tap/better-tg-cli)')}`,
+    `  ${d('⎿')} ${g('✓')} ${d('better-tg-cli installed')}`,
+    `${a('⏺')} ${b('Bash')}${d('(telegram onboard --json)')}`,
+    `  ${d('⎿')} ${d('waiting_scan … need_password …')} ${g('done')}`,
+    `${a('⏺')} ${b('Bash')}${d('(telegram skill install)')}`,
+    `  ${d('⎿')} ${g('✓')} ${d('Claude Code installed')}`,
+    `${a('⏺')} ${escape(s.autoDone)}`,
+  ]);
+}
 
 function tablist(label: string, items: { id: string; label: string; body: string }[], cls: string): string {
-  const tabs = items.map((t, i) =>
-    `<button type="button" role="tab" id="tab-${t.id}" aria-controls="panel-${t.id}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}">${t.label}</button>`).join('');
-  const panels = items.map((t, i) =>
-    `<div role="tabpanel" id="panel-${t.id}" aria-labelledby="tab-${t.id}"${i === 0 ? '' : ' hidden'}>${t.body}</div>`).join('');
-  return `<div class="${cls}" role="tablist" aria-label="${label}">${tabs}</div>${panels}`;
+  const tabs = items.map((x, i) =>
+    `<button type="button" role="tab" id="tab-${x.id}" aria-controls="panel-${x.id}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}">${x.label}</button>`).join('');
+  const panels = items.map((x, i) =>
+    `<div role="tabpanel" id="panel-${x.id}" aria-labelledby="tab-${x.id}"${i === 0 ? '' : ' hidden'}>${x.body}</div>`).join('');
+  return `<div class="${cls}" role="tablist" aria-label="${escape(label)}">${tabs}</div>${panels}`;
 }
 
-const LOGIN_NOTE = '<p class="note">Вставьте инвайт с этой страницы и отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство. Со своими ключами с my.telegram.org — <span class="mono">telegram auth --qr</span>.</p>';
-
-function autoHtml(): string {
+function autoHtml(t: Dict): string {
+  const x = t.guide;
   return `<ol class="steps">
-<li><h3>Вставьте промпт своему агенту</h3>
-  <p>Claude Code, Codex, Cursor или любой другой агент с терминалом. Он поставит CLI и скилл и откроет страницу входа.</p>${code(AUTO_PROMPT, true)}
-  ${AUTO_SCREEN}</li>
-<li><h3>Пройдите страницу входа</h3>
-  <p>Агент откроет её в браузере на вашем компьютере. Там: «Получить инвайт» (почта подтверждается кодом, инвайт вернётся сам), QR в Telegram — Настройки → Устройства → Подключить устройство, и облачный пароль, если он есть. Агент ничего из этого не видит.</p></li>
-<li><h3>Готово</h3>
-  <p>Спросите агента, например: «что у меня непрочитанного в телеге?» Писать от вашего имени он сможет, только когда вы разрешите: <span class="mono">telegram write-access on --for 1h</span>.</p>
-  <p class="note">Claude Desktop без терминала так не умеет — для него режим PRO.</p></li>
+<li><h3>${escape(x.autoPasteTitle)}</h3>
+  ${p(x.autoPasteText)}${code(autoPrompt(t), t.client.copy, true)}
+  ${autoScreen(t)}</li>
+<li><h3>${escape(x.autoLoginTitle)}</h3>
+  ${p(x.autoLoginText)}</li>
+<li><h3>${escape(x.doneTitle)}</h3>
+  <p>${x.autoDoneHtml}</p>
+  <p class="note">${escape(x.autoDesktopNote)}</p></li>
 </ol>`;
 }
 
-function proHtml(): string {
-  const agents = tablist('Агент', TABS.map(t => ({ id: t.id, label: t.label, body: `<ol class="sub">${t.steps}</ol>${SCREENS[t.id]}` })), 'tabs');
+function proHtml(t: Dict): string {
+  const x = t.guide;
+  const shots = screens(t);
+  const agents = tablist(x.agentLabel, AGENTS.map(ag => ({ id: ag.id, label: ag.label, body: `<ol class="sub">${agentSteps(ag.id, t)}</ol>${shots[ag.id]}` })), 'tabs');
   return `<ol class="steps">
-<li><h3>Поставьте CLI</h3>
-  <p>macOS или Linux, в терминале:</p>${code('brew install thevilfer/tap/better-tg-cli')}
-  <p class="note">Нет Homebrew — <span class="mono">npm install -g better-tg-cli</span> (Node 20+).</p></li>
-<li><h3>Войдите в Telegram сами</h3>
-  <p>Вход интерактивный, поэтому его делаете вы, а не агент:</p>${code('telegram auth --invite --qr')}${LOGIN_NOTE}</li>
-<li><h3>Подключите своего агента</h3>${agents}</li>
-<li><h3>Готово</h3>
-  <p>По умолчанию агент только читает. Писать от вашего имени он сможет, когда вы разрешите:</p>${code('telegram write-access on --for 1h')}</li>
+<li><h3>${escape(x.installTitle)}</h3>
+  ${p(x.installText)}${code('brew install thevilfer/tap/better-tg-cli', t.client.copy)}
+  <p class="note">${x.installNoteHtml}</p></li>
+<li><h3>${escape(x.loginTitle)}</h3>
+  ${p(x.loginText)}${code('telegram auth --invite --qr', t.client.copy)}<p class="note">${x.loginNoteHtml}</p></li>
+<li><h3>${escape(x.connectTitle)}</h3>${agents}</li>
+<li><h3>${escape(x.doneTitle)}</h3>
+  ${p(x.proDoneText)}${code('telegram write-access on --for 1h', t.client.copy)}</li>
 </ol>`;
 }
 
-export function guideHtml(): string {
-  const modes = tablist('Режим', [
-    { id: 'auto', label: 'Auto <small>промпт для агента</small>', body: autoHtml() },
-    { id: 'pro', label: 'PRO <small>команды вручную</small>', body: proHtml() },
+export function guideHtml(t: Dict): string {
+  const x = t.guide;
+  const modes = tablist(x.modeLabel, [
+    { id: 'auto', label: `${escape(x.autoLabel)} <small>${escape(x.autoSmall)}</small>`, body: autoHtml(t) },
+    { id: 'pro', label: `${escape(x.proLabel)} <small>${escape(x.proSmall)}</small>`, body: proHtml(t) },
   ], 'modes');
   return `<section class="guide" id="guide">
-<h2>Как установить</h2>
+<h2>${escape(x.title)}</h2>
 ${modes}
 </section>`;
 }
