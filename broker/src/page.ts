@@ -51,6 +51,35 @@ export function pageResponse({ open, siteKey, returnTo = null, lang = 'en', quer
   });
 }
 
+const SITE = 'https://better-tg-cli.com';
+
+/** Link-preview tags (Open Graph, X card), the favicon and the per-language alternates. */
+function cardMeta(lang: Lang, x: Dict['page']): string {
+  const url = lang === 'en' ? `${SITE}/` : `${SITE}/?lang=${lang}`;
+  const image = `${SITE}/og.png`;
+  return [
+    `<link rel="icon" href="/favicon.svg" type="image/svg+xml">`,
+    `<link rel="canonical" href="${url}">`,
+    ...LANGS.map(l => `<link rel="alternate" hreflang="${l}" href="${l === 'en' ? `${SITE}/` : `${SITE}/?lang=${l}`}">`),
+    `<link rel="alternate" hreflang="x-default" href="${SITE}/">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="better-tg-cli">`,
+    `<meta property="og:title" content="${escape(x.title)}">`,
+    `<meta property="og:description" content="${escape(x.description)}">`,
+    `<meta property="og:url" content="${url}">`,
+    `<meta property="og:locale" content="${x.ogLocale}">`,
+    `<meta property="og:image" content="${image}">`,
+    `<meta property="og:image:width" content="1280">`,
+    `<meta property="og:image:height" content="640">`,
+    `<meta property="og:image:alt" content="better-tg-cli: Telegram for your terminal and your AI agents">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${escape(x.title)}">`,
+    `<meta name="twitter:description" content="${escape(x.description)}">`,
+    `<meta name="twitter:image" content="${image}">`,
+    `<meta name="theme-color" content="#000000">`,
+  ].join('\n');
+}
+
 /** Links to the same page in the other languages, keeping the rest of the query intact. */
 function langLinks(current: Lang, query: URLSearchParams, t: Dict): string {
   const links = LANGS.map(l => {
@@ -93,7 +122,7 @@ function page(nonce: string, open: boolean, siteKey: string, returnTo: string | 
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escape(x.title)}</title>
 <meta name="description" content="${escape(x.description)}">
-<meta name="robots" content="noindex">
+${returnTo ? '<meta name="robots" content="noindex">\n' : ''}${cardMeta(lang, x)}
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
 :root{--bg:#fff;--fg:#0a0a0a;--dim:#6b6f73;--line:#e4e5e7;--panel:#fafafa;--accent:#1c93d1;--err:#c62828;color-scheme:light}

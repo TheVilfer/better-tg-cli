@@ -2,6 +2,7 @@
  * Credential broker: hands the app's api_id/api_hash to invited users at login time.
  * Invites live in KV under sha256(token); the raw token is never stored or logged.
  */
+import { ICON_SVG, OG_PNG_BASE64 } from './assets';
 import { loopbackReturn, pageResponse } from './page';
 import { pickLang } from './i18n';
 import { handleSignup, handleVerify, signupsOpen } from './signup';
@@ -51,6 +52,19 @@ function json(status: number, body: unknown): Response {
   });
 }
 
+function base64Bytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function staticFile(body: BodyInit, type: string): Response {
+  return new Response(body, {
+    headers: { 'content-type': type, 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' },
+  });
+}
+
 export async function handle(request: Request, env: Env, now = new Date()): Promise<Response> {
   const url = new URL(request.url);
 
@@ -58,6 +72,11 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
     return Response.redirect(`https://better-tg-cli.com${url.pathname}${url.search}`, 301);
   }
   if (url.pathname === '/health') return json(200, { ok: true });
+  if (url.pathname === '/og.png') return staticFile(base64Bytes(OG_PNG_BASE64), 'image/png');
+  if (url.pathname === '/favicon.svg') return staticFile(ICON_SVG, 'image/svg+xml');
+  if (url.pathname === '/robots.txt') {
+    return staticFile('User-agent: *\nAllow: /\nDisallow: /v1/\n', 'text/plain; charset=utf-8');
+  }
   if (url.pathname === '/' && request.method === 'GET') {
     return pageResponse({
       open: await signupsOpen(env),

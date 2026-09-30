@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { handle, sha256Hex, type Env, type Invite } from '../broker/src/handler.js';
 import { handleSignup, handleVerify, normalizeEmail, SIGNUPS_KEY } from '../broker/src/signup.js';
@@ -248,6 +249,31 @@ describe('self-serve signup', () => {
     const html = async (q: string) => (await handle(new Request(`https://broker.test/?return=${encodeURIComponent(q)}`), e)).text();
     expect(await html(good)).toContain(`data-return="${good}"`);
     expect(await html('https://evil.example/cb')).not.toContain('data-return');
+  });
+
+  it('serves link-preview tags, the og image and the favicon', async () => {
+    const { e } = await open();
+    const html = await (await handle(new Request('https://broker.test/'), e)).text();
+    expect(html).toContain('<meta property="og:image" content="https://better-tg-cli.com/og.png">');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+    expect(html).toContain('<meta property="og:url" content="https://better-tg-cli.com/">');
+    expect(html).toContain('rel="icon" href="/favicon.svg"');
+    expect(html).not.toContain('noindex');
+    const es = await (await handle(new Request('https://broker.test/?lang=es'), e)).text();
+    expect(es).toContain('<meta property="og:locale" content="es_ES">');
+    expect(es).toContain('<link rel="canonical" href="https://better-tg-cli.com/?lang=es">');
+    const cli = `http://127.0.0.1:54321/s/${'a'.repeat(43)}/cb`;
+    const fromCli = await (await handle(new Request(`https://broker.test/?return=${encodeURIComponent(cli)}`), e)).text();
+    expect(fromCli).toContain('noindex');
+
+    const png = await handle(new Request('https://broker.test/og.png'), e);
+    expect(png.headers.get('content-type')).toBe('image/png');
+    const bytes = new Uint8Array(await png.arrayBuffer());
+    expect(Buffer.from(bytes).equals(readFileSync('assets/social-preview.png'))).toBe(true);
+    const icon = await handle(new Request('https://broker.test/favicon.svg'), e);
+    expect(icon.headers.get('content-type')).toBe('image/svg+xml');
+    expect(await icon.text()).toBe(readFileSync('assets/icon.svg', 'utf8').trim());
+    expect(await (await handle(new Request('https://broker.test/robots.txt'), e)).text()).toContain('Disallow: /v1/');
   });
 
   describe('languages', () => {

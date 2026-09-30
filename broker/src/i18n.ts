@@ -31,8 +31,9 @@ export const asLang = (x: unknown): Lang => (typeof x === 'string' && isLang(x) 
 const en = {
   langName: 'English',
   page: {
-    title: 'better-tg-cli invite',
-    description: 'An invite to log in to better-tg-cli without your own Telegram API keys',
+    title: 'better-tg-cli: Telegram for your terminal and AI agents',
+    description: 'Open-source Telegram client for Claude Code, Codex, Cursor and the command line. Read-only until you allow writes. Get a free invite, no API keys needed.',
+    ogLocale: 'en_US',
     h1: 'Invite to log in to better-tg-cli',
     leadHtml: 'An invite lets you log in to your Telegram account through the CLI without creating your own API keys on my.telegram.org. Confirm your email with a code: one email, one invite. Your messages and session stay on your computer only.\nAlready have your own keys? <a href="#guide">Skip to installation</a>.',
     cliBannerHtml: 'You came from <span class="mono">telegram onboard</span>. Once your email is confirmed, the invite goes back to the CLI by itself, so there is nothing to copy.',
@@ -147,8 +148,9 @@ export type Dict = typeof en;
 const es: Dict = {
   langName: 'Español',
   page: {
-    title: 'Invitación a better-tg-cli',
-    description: 'Una invitación para entrar en better-tg-cli sin tus propias claves de la API de Telegram',
+    title: 'better-tg-cli: Telegram para tu terminal y tus agentes de IA',
+    description: 'Cliente de Telegram de código abierto para Claude Code, Codex, Cursor y la línea de comandos. Solo lectura hasta que permitas escribir. Consigue una invitación gratis, sin claves de API.',
+    ogLocale: 'es_ES',
     h1: 'Invitación para entrar en better-tg-cli',
     leadHtml: 'Con una invitación entras en tu cuenta de Telegram desde la CLI sin crear tus propias claves de API en my.telegram.org. Confirma tu correo con un código: un correo, una invitación. Tus mensajes y tu sesión se quedan solo en tu equipo.\n¿Ya tienes tus propias claves? <a href="#guide">Ir a la instalación</a>.',
     cliBannerHtml: 'Vienes de <span class="mono">telegram onboard</span>. Cuando confirmes tu correo, la invitación volverá sola a la CLI: no tienes que copiar nada.',
@@ -261,8 +263,9 @@ const es: Dict = {
 const ru: Dict = {
   langName: 'Русский',
   page: {
-    title: 'Инвайт better-tg-cli',
-    description: 'Инвайт для входа в better-tg-cli без своих API-ключей Telegram',
+    title: 'better-tg-cli: Telegram для терминала и AI-агентов',
+    description: 'Open-source клиент Telegram для Claude Code, Codex, Cursor и командной строки. Только чтение, пока вы не разрешите запись. Бесплатный инвайт, без своих API-ключей.',
+    ogLocale: 'ru_RU',
     h1: 'Инвайт для входа в better-tg-cli',
     leadHtml: 'Инвайт позволяет войти в свой Telegram через CLI без своих API-ключей с my.telegram.org. Подтвердите почту кодом из письма: одна почта — один инвайт. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.',
     cliBannerHtml: 'Вас прислал <span class="mono">telegram onboard</span>. После подтверждения почты инвайт сам вернётся в CLI — копировать ничего не нужно.',
