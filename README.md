@@ -316,7 +316,7 @@ If you installed the agent skill with `telegram skill install`, run that again t
 - Telegram test servers;
 - editor debugging and tests.
 
-Releases are cut by `scripts/release.sh patch|minor|major`. A tag builds the binaries and
+Releases are cut by `scripts/release.sh patch|minor|major` (a release PR), then `scripts/release.sh tag` after the merge. A tag builds the binaries and
 publishes to GitHub Releases, npm (trusted publishing with provenance), the Homebrew tap and the
 MCP Registry. See
 [CONTRIBUTING.md](CONTRIBUTING.md).

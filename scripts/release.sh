@@ -1,21 +1,41 @@
 #!/usr/bin/env bash
-# Cut a release: bump version, test, commit, tag, push. The tag triggers
-# .github/workflows/release.yml (binaries → GitHub Release → npm → Homebrew).
-# Usage: scripts/release.sh <patch|minor|major|X.Y.Z>
+# Cut a release in two steps, both through GitHub's rules for main:
+#   scripts/release.sh <patch|minor|major|X.Y.Z>   bump on a release branch, test, open a PR
+#   scripts/release.sh tag                           after the PR is merged: tag main, push the tag
+# The tag triggers .github/workflows/release.yml (binaries → GitHub Release → npm → Homebrew → …).
 set -euo pipefail
 
-bump="${1:?usage: scripts/release.sh <patch|minor|major|X.Y.Z>}"
+REPO=TheVilfer/better-tg-cli
+arg="${1:?usage: scripts/release.sh <patch|minor|major|X.Y.Z> | tag}"
 [ -z "$(git status --porcelain)" ] || { echo "Working tree is dirty; commit first." >&2; exit 1; }
-[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "Release from main only." >&2; exit 1; }
 
-npm version "$bump" --no-git-tag-version >/dev/null
+if [ "$arg" = tag ]; then
+  git checkout -q main
+  git pull -q --ff-only origin main
+  version="$(node -p "require('./package.json').version")"
+  git rev-parse -q --verify "refs/tags/v${version}" >/dev/null && { echo "v${version} is already tagged." >&2; exit 1; }
+  case "$(git log -1 --format=%s)" in
+    "Release v${version}"*) ;;
+    *) echo "main's last commit is not the merged 'Release v${version}' PR." >&2; exit 1 ;;
+  esac
+  git tag "v${version}"
+  git push origin "v${version}"
+  echo "Tagged v${version}. Follow the pipeline: gh run watch -R ${REPO}"
+  exit 0
+fi
+
+[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "Start a release from main." >&2; exit 1; }
+git pull -q --ff-only origin main
+npm version "$arg" --no-git-tag-version >/dev/null
 version="$(node -p "require('./package.json').version")"
+git checkout -q -b "release/v${version}"
 node scripts/gen-version.mjs
 npm run build >/dev/null
 npm test
 
 git add package.json package-lock.json src/version.ts src/skill-files.ts plugin .claude-plugin/plugin.json server.json gemini-extension.json
 git commit -m "Release v${version}"
-git tag "v${version}"
-git push origin main "v${version}"
-echo "Tagged v${version}. Follow the pipeline: gh run watch -R TheVilfer/better-tg-cli"
+git push -q -u origin "release/v${version}"
+gh pr create -R "$REPO" --head "release/v${version}" --title "Release v${version}" \
+  --body "Version bump for v${version}. After merge: \`scripts/release.sh tag\`."
+echo "Opened the release PR. When CI is green and it's merged (squash): scripts/release.sh tag"
