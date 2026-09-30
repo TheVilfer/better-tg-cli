@@ -317,7 +317,7 @@ tailscale funnel --bg 8787                  # или: cloudflared tunnel --url h
 - тестовые серверы Telegram;
 - отладка в редакторе и тесты.
 
-Релиз готовит `scripts/release.sh patch|minor|major` (PR с новой версией), после мержа `scripts/release.sh tag` ставит тег. Тег собирает бинарники и публикует их в
+Релиз готовит `scripts/release.sh` (PR с новой версией, она считается по заголовкам PR), после мержа `scripts/release.sh tag` ставит тег. Тег собирает бинарники и публикует их в
 GitHub Releases, в npm (trusted publishing с provenance), в Homebrew-тап и в MCP Registry. Подробнее в
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
