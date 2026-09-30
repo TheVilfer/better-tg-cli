@@ -2,20 +2,9 @@
 
 ## Version and Release Workflow
 
-When using `/commit-and-push` or committing changes:
-
-1. **Always bump the version** in `package.json` before committing:
-   - Patch (0.x.Y): Bug fixes
-   - Minor (0.X.0): New features (like new commands)
-   - Major (X.0.0): Breaking changes
-
-2. **After pushing, always create and push a git tag**:
-   ```bash
-   git tag v<version>
-   git push origin v<version>
-   ```
-
-3. **Tag naming**: Use `v` prefix (e.g., `v0.3.0`, `v1.0.0`)
+Changes land through a branch and a pull request (green CI), never by pushing to main. Releases
+use `scripts/release.sh` (see Releasing below): a release PR bumps the version, then the tag
+`vX.Y.Z` is pushed from main after the merge. Minor for features, patch for fixes.
 
 ## Commit Message Format
 
@@ -61,7 +50,9 @@ See `DEVELOPMENT.md`. The short version:
 
 ## Releasing
 
-`scripts/release.sh patch|minor|major` bumps the version, tests, commits, tags `vX.Y.Z` and pushes.
+Never push to main directly: every change goes through a branch and a PR with green CI.
+`scripts/release.sh patch|minor|major` bumps the version on `release/vX.Y.Z`, tests and opens a PR;
+after it is squash-merged, `scripts/release.sh tag` tags main `vX.Y.Z` and pushes the tag.
 The tag runs `.github/workflows/release.yml`:
 1. verify (tag == package.json, tests) and the Claude Desktop extension `better-tg-cli.mcpb`
    (`scripts/mcpb.mjs`)
