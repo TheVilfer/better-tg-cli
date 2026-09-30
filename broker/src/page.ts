@@ -1,6 +1,7 @@
 /** The signup page at /: inline HTML, one nonce per response, only Turnstile and Google Fonts outside. */
 
 import { escape, GUIDE_CSS, GUIDE_JS, guideHtml } from './guide';
+import { DICT, LANGS, type Dict, type Lang } from './i18n';
 
 /**
  * `telegram onboard` sends people here with ?return=<its loopback callback>. Only that exact shape
@@ -14,7 +15,16 @@ export function loopbackReturn(raw: string | null): string | null {
   return port >= 1024 && port <= 65535 ? raw : null;
 }
 
-export function pageResponse(open: boolean, siteKey: string | undefined, returnTo: string | null = null): Response {
+export interface PageOptions {
+  open: boolean;
+  siteKey?: string;
+  returnTo?: string | null;
+  lang?: Lang;
+  /** The request's query, so the language links keep ?return= (the onboard handoff), ?mode= and ?agent= */
+  query?: URLSearchParams;
+}
+
+export function pageResponse({ open, siteKey, returnTo = null, lang = 'en', query = new URLSearchParams() }: PageOptions): Response {
   const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
   const csp = [
     "default-src 'none'",
@@ -28,8 +38,10 @@ export function pageResponse(open: boolean, siteKey: string | undefined, returnT
     "form-action 'none'",
     "frame-ancestors 'none'",
   ].join('; ');
-  return new Response(page(nonce, open, siteKey ?? '', returnTo), {
+  return new Response(page(nonce, open, siteKey ?? '', returnTo, lang, query), {
     headers: {
+      'content-language': lang,
+      vary: 'Accept-Language',
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'content-security-policy': csp,
@@ -39,32 +51,48 @@ export function pageResponse(open: boolean, siteKey: string | undefined, returnT
   });
 }
 
-function page(nonce: string, open: boolean, siteKey: string, returnTo: string | null): string {
+/** Links to the same page in the other languages, keeping the rest of the query intact. */
+function langLinks(current: Lang, query: URLSearchParams, t: Dict): string {
+  const links = LANGS.map(l => {
+    const q = new URLSearchParams(query);
+    q.set('lang', l);
+    const name = escape(DICT[l].langName);
+    return l === current
+      ? `<b aria-current="true">${name}</b>`
+      : `<a href="/?${escape(q.toString())}" hreflang="${l}" lang="${l}">${name}</a>`;
+  });
+  return `<nav class="langs" aria-label="${escape(t.page.language)}">${links.join('')}</nav>`;
+}
+
+/** Strings the browser script needs; `<` escaped so nothing can close the script tag. */
+const clientJson = (t: Dict) => JSON.stringify(t.client).replace(/</g, '\\u003c');
+
+function page(nonce: string, open: boolean, siteKey: string, returnTo: string | null, lang: Lang, query: URLSearchParams): string {
+  const t = DICT[lang];
+  const x = t.page;
   const form = open
     ? `<form id="f" novalidate>
-  <label for="email">Почта</label>
+  <label for="email">${escape(x.emailLabel)}</label>
   <input id="email" name="email" type="email" autocomplete="email" inputmode="email" required placeholder="you@example.com">
-  <p class="hint">Только для оповещений: важные обновления и отзыв ключей. Никому не передаём, рассылок не шлём.</p>
-  <div class="cf-turnstile" data-sitekey="${escape(siteKey)}" data-theme="auto" data-language="ru"></div>
-  <button id="go" type="submit">Получить код на почту</button>
+  <p class="hint">${escape(x.emailHint)}</p>
+  <div class="cf-turnstile" data-sitekey="${escape(siteKey)}" data-theme="auto" data-language="${lang}"></div>
+  <button id="go" type="submit">${escape(x.getCode)}</button>
   <p id="err" class="err" role="alert" hidden></p>
 </form>
 <form id="v" novalidate hidden>
-  <label for="code">Код из письма</label>
-  <p class="hint vhint">Отправили 6 цифр на <b id="sent-to"></b>. Письмо может попасть в «Спам».</p>
+  <label for="code">${escape(x.codeLabel)}</label>
+  <p class="hint vhint">${escape(x.codeHintBefore)} <b id="sent-to"></b>. ${escape(x.codeHintAfter)}</p>
   <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required placeholder="123456" class="code">
-  <div class="vrow"><button id="vgo" type="submit">Получить инвайт</button>
-  <button id="back" type="button" class="link">Изменить почту или отправить ещё раз</button></div>
+  <div class="vrow"><button id="vgo" type="submit">${escape(x.getInvite)}</button>
+  <button id="back" type="button" class="link">${escape(x.changeEmail)}</button></div>
   <p id="verr" class="err" role="alert" hidden></p>
 </form>`
-    : `<div class="closed"><b>Регистрация сейчас закрыта.</b> Можно войти со своими ключами:
-  создайте приложение на <a href="https://my.telegram.org/apps">my.telegram.org</a> и запустите
-  <code>telegram auth</code>. Инструкция — в <a href="https://github.com/TheVilfer/better-tg-cli#log-in">README</a>.</div>`;
+    : `<div class="closed">${x.closedHtml}</div>`;
 
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Инвайт better-tg-cli</title>
-<meta name="description" content="Инвайт для входа в better-tg-cli без своих API-ключей Telegram">
+<title>${escape(x.title)}</title>
+<meta name="description" content="${escape(x.description)}">
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
@@ -73,9 +101,14 @@ function page(nonce: string, open: boolean, siteKey: string, returnTo: string | 
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 Geist,system-ui,sans-serif}
 main{max-width:620px;margin:0 auto;padding:56px 16px 72px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px;margin-bottom:40px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:40px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px}
 .brand i{font-style:normal;color:var(--accent)}
 .brand svg{width:22px;height:22px}
+.langs{display:flex;gap:12px;font-size:14px}
+.langs b{font-weight:500}
+.langs a{color:var(--dim);text-decoration:none}
+.langs a:hover{color:var(--fg)}
 h1{font-size:34px;line-height:1.1;letter-spacing:-.8px;font-weight:600;margin:0 0 14px;text-wrap:balance}
 .lead{color:var(--dim);margin:0 0 32px;max-width:52ch}
 label{display:block;font-weight:500;font-size:14px;margin-bottom:8px}
@@ -104,41 +137,30 @@ ${GUIDE_CSS}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
 [hidden]{display:none!important}
 </style></head><body><main${returnTo ? ` data-return="${escape(returnTo)}"` : ''}>
-<div class="brand"><svg viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="12" fill="currentColor"/><rect x="2" y="2" width="2" height="8" fill="var(--bg)"/><rect x="4" y="5" width="2" height="2" fill="var(--bg)"/><rect x="6" y="8" width="4" height="2" fill="var(--accent)"/></svg><span>BETTER-TG-CLI<i>.</i></span></div>
-<h1>Инвайт для входа в better-tg-cli</h1>
-<p class="lead">Инвайт позволяет войти в свой Telegram через CLI без своих API-ключей с my.telegram.org.
-Подтвердите почту кодом из письма: одна почта — один инвайт на один вход. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.</p>
-${returnTo ? '<p class="cli">Вас прислал <span class="mono">telegram onboard</span>. После подтверждения почты инвайт сам вернётся в CLI — копировать ничего не нужно.</p>' : ''}
+<div class="top"><div class="brand"><svg viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="12" fill="currentColor"/><rect x="2" y="2" width="2" height="8" fill="var(--bg)"/><rect x="4" y="5" width="2" height="2" fill="var(--bg)"/><rect x="6" y="8" width="4" height="2" fill="var(--accent)"/></svg><span>BETTER-TG-CLI<i>.</i></span></div>
+${langLinks(lang, query, t)}</div>
+<h1>${escape(x.h1)}</h1>
+<p class="lead">${x.leadHtml}</p>
+${returnTo ? `<p class="cli">${x.cliBannerHtml}</p>` : ''}
 <section id="start">${form}</section>
 <section id="done" hidden>
-  <h2 class="done-h">Ваш инвайт</h2>
-  <p class="done-p">Показываем один раз. Сохраните его и не отправляйте агенту или кому-то ещё — он понадобится на шаге входа.</p>
-  <div class="box token"><pre id="tok"></pre><button type="button" data-copy>Копировать</button></div>
-  <p class="done-p" id="back-cli" hidden>Передаём инвайт в CLI… Если страница CLI не открылась, скопируйте инвайт и вставьте его там.</p>
-  <p class="done-p"><a href="#guide">Дальше — установка ↓</a></p>
+  <h2 class="done-h">${escape(x.doneTitle)}</h2>
+  <p class="done-p">${escape(x.doneText)}</p>
+  <div class="box token"><pre id="tok"></pre><button type="button" data-copy>${escape(t.client.copy)}</button></div>
+  <p class="done-p" id="back-cli" hidden>${escape(x.backCli)}</p>
+  <p class="done-p"><a href="#guide">${escape(x.nextInstall)}</a></p>
 </section>
-${guideHtml()}
-<footer>Открытый код: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">Приватность</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>
+${guideHtml(t)}
+<footer>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>
 </main>
 ${open ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer nonce="' + nonce + '"></script>' : ''}
 <script nonce="${nonce}">
-const ERRORS = {
-  bad_email: 'Проверьте адрес почты.',
-  captcha_failed: 'Проверка не прошла. Обновите страницу и попробуйте ещё раз.',
-  email_used: 'На эту почту инвайт уже выдан. Если он потерялся, напишите нам в GitHub.',
-  rate_limited: 'Слишком много попыток. Попробуйте позже.',
-  daily_limit: 'На сегодня инвайты закончились. Загляните завтра.',
-  signups_closed: 'Регистрация сейчас закрыта.',
-  resend_wait: 'Код уже отправлен. Новый можно запросить через минуту.',
-  mail_failed: 'Не получилось отправить письмо. Проверьте адрес или попробуйте позже.',
-  bad_code: 'Код не подошёл. Проверьте цифры из письма.',
-  code_expired: 'Код истёк. Запросите новый.',
-  too_many_attempts: 'Слишком много неверных попыток. Запросите новый код.',
-};
+const T = ${clientJson(t)};
+const LANG = ${JSON.stringify(lang)};
 const post = async (path, body) => {
   const res = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(ERRORS[data.error] || 'Что-то пошло не так. Попробуйте ещё раз.');
+  if (!res.ok) throw new Error(T.errors[data.error] || T.generic);
   return data;
 };
 const $ = id => document.getElementById(id);
@@ -149,11 +171,11 @@ if (f) f.addEventListener('submit', async e => {
   const err = $('err'), go = $('go');
   err.hidden = true;
   const turnstile = (f.querySelector('[name="cf-turnstile-response"]') || {}).value || '';
-  if (!turnstile) { err.textContent = 'Дождитесь проверки «Я не робот».'; err.hidden = false; return; }
+  if (!turnstile) { err.textContent = T.waitCaptcha; err.hidden = false; return; }
   go.disabled = true;
   try {
     email = $('email').value.trim();
-    await post('/v1/invites', { email, turnstile });
+    await post('/v1/invites', { email, turnstile, lang: LANG });
     $('sent-to').textContent = email;
     f.hidden = true; v.hidden = false; $('code').value = ''; $('code').focus();
   } catch (x) {
@@ -183,9 +205,9 @@ if (v) $('back').addEventListener('click', () => { v.hidden = true; f.hidden = f
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-copy]');
   if (!b) return;
-  try { await navigator.clipboard.writeText(b.parentElement.querySelector('pre').textContent); b.textContent = 'Скопировано'; }
-  catch { b.textContent = 'Выделите вручную'; }
-  setTimeout(() => { b.textContent = 'Копировать'; }, 1600);
+  try { await navigator.clipboard.writeText(b.parentElement.querySelector('pre').textContent); b.textContent = T.copied; }
+  catch { b.textContent = T.copyManual; }
+  setTimeout(() => { b.textContent = T.copy; }, 1600);
 });
 ${GUIDE_JS}
 </script></body></html>`;

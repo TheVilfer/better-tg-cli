@@ -102,6 +102,8 @@ describe('telegram onboard server', () => {
     expect(String(res.headers['content-security-policy'])).toContain("frame-ancestors 'none'");
     expect(res.body).toContain(`https://site.test/?return=${encodeURIComponent(session!.url + 'cb')}`);
     expect((await call(session!.url + 'cb')).status).toBe(200);
+    // English, Spanish and Russian strings; the page picks one from navigator.languages
+    for (const s of ['Get an invite', 'Obtener una invitación', 'Получить инвайт']) expect(res.body).toContain(s);
   });
 
   it('goes invite → QR → password → done, and saves only at the end', async () => {

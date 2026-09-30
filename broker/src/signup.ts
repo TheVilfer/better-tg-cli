@@ -6,6 +6,7 @@
  * invites already issued keep working.
  */
 import { sha256Hex, type Env, type Invite } from './handler';
+import { asLang, DICT, type Lang } from './i18n';
 
 export const SIGNUPS_KEY = 'config:signups';
 // Conservative fallbacks; the live limits are Worker secrets (SIGNUP_DAILY_CAP, SIGNUP_CODES_PER_IP,
@@ -19,7 +20,8 @@ function limit(env: Env, name: keyof typeof LIMIT_DEFAULTS): number {
 const DAY_SECONDS = 86_400;
 
 export type SelfServeInvite = Invite & { source: 'self-serve' };
-export interface EmailRecord { email: string; inviteKey: string; createdAt: string }
+/** `lang` is the page language at signup, for notices in the same language later */
+export interface EmailRecord { email: string; inviteKey: string; createdAt: string; lang?: Lang }
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -73,7 +75,7 @@ const CODE_TTL_SECONDS = 15 * 60;
 const CODE_ATTEMPTS = 5;
 const RESEND_AFTER_MS = 60_000;
 
-interface PendingCode { codeHash: string; attempts: number; sentAt: string }
+interface PendingCode { codeHash: string; attempts: number; sentAt: string; lang?: Lang }
 
 const codeHash = (email: string, code: string) => sha256Hex(`${email}:${code}`);
 
@@ -102,17 +104,16 @@ async function gate(request: Request, env: Env): Promise<Response | null> {
   return null;
 }
 
-function codeMail(code: string) {
+export function codeMail(code: string, lang: Lang) {
+  const m = DICT[lang].mail;
   return {
-    subject: `Код для инвайта better-tg-cli: ${code}`,
-    text: `Ваш код: ${code}\n\nВведите его на странице инвайта. Код действует 15 минут.\n` +
-      `Если вы не запрашивали инвайт в better-tg-cli, просто удалите это письмо.\n\n` +
-      `https://github.com/TheVilfer/better-tg-cli`,
-    html: `<div style="font:16px/1.5 system-ui,sans-serif;color:#111;max-width:480px">` +
-      `<p>Ваш код для инвайта в <b>better-tg-cli</b>:</p>` +
+    subject: m.subject(code),
+    text: `${m.textIntro(code)}\n\n${m.enter}\n${m.ignore}\n\nhttps://github.com/TheVilfer/better-tg-cli`,
+    html: `<div lang="${lang}" style="font:16px/1.5 system-ui,sans-serif;color:#111;max-width:480px">` +
+      `<p>${m.intro}</p>` +
       `<p style="font:600 32px/1 ui-monospace,monospace;letter-spacing:6px;margin:20px 0">${code}</p>` +
-      `<p>Введите его на странице инвайта. Код действует 15 минут.</p>` +
-      `<p style="color:#666;font-size:14px">Если вы не запрашивали инвайт, просто удалите это письмо.</p></div>`,
+      `<p>${m.enter}</p>` +
+      `<p style="color:#666;font-size:14px">${m.ignore}</p></div>`,
   };
 }
 
@@ -125,7 +126,7 @@ export async function handleSignup(request: Request, env: Env, now = new Date(),
   if (closed) return closed;
   const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
 
-  const body = await readJson<{ email?: unknown; turnstile?: unknown }>(request);
+  const body = await readJson<{ email?: unknown; turnstile?: unknown; lang?: unknown }>(request);
   if (!body) return json(400, { error: 'bad_request' });
   const email = normalizeEmail(body.email);
   if (!email) return json(400, { error: 'bad_email' });
@@ -149,10 +150,11 @@ export async function handleSignup(request: Request, env: Env, now = new Date(),
   }
 
   const code = newCode();
-  const record: PendingCode = { codeHash: await codeHash(email, code), attempts: 0, sentAt: now.toISOString() };
+  const lang = asLang(body.lang);
+  const record: PendingCode = { codeHash: await codeHash(email, code), attempts: 0, sentAt: now.toISOString(), lang };
   await env.INVITES.put(`verify:${id}`, JSON.stringify(record), { expirationTtl: CODE_TTL_SECONDS });
   try {
-    await env.EMAIL!.send({ to: email, from: { email: env.MAIL_FROM!, name: 'better-tg-cli' }, ...codeMail(code) });
+    await env.EMAIL!.send({ to: email, from: { email: env.MAIL_FROM!, name: 'better-tg-cli' }, ...codeMail(code, lang) });
   } catch {
     return json(502, { error: 'mail_failed' });
   }
@@ -197,7 +199,7 @@ export async function handleVerify(request: Request, env: Env, now = new Date())
   const createdAt = now.toISOString();
   const invite: SelfServeInvite = { name: email, createdAt, uses: 0, maxUses: SELF_SERVE_LOGINS, source: 'self-serve' };
   await env.INVITES.put(inviteKey, JSON.stringify(invite));
-  const record: EmailRecord = { email, inviteKey, createdAt };
+  const record: EmailRecord = { email, inviteKey, createdAt, lang: pending.lang ?? 'en' };
   await env.INVITES.put(emailKey, JSON.stringify(record));
   return json(201, { invite: token });
 }
