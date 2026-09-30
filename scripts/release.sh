@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Cut a release in two steps, both through GitHub's rules for main:
-#   scripts/release.sh <patch|minor|major|X.Y.Z>   bump on a release branch, test, open a PR
+#   scripts/release.sh [patch|minor|major|X.Y.Z]   bump on a release branch, test, open a PR;
+#                                                    without an argument the level comes from the
+#                                                    PR titles since the last tag (scripts/next-version.mjs)
 #   scripts/release.sh tag                           after the PR is merged: tag main, push the tag
 # The tag triggers .github/workflows/release.yml (binaries → GitHub Release → npm → Homebrew → …).
 set -euo pipefail
 
 REPO=TheVilfer/better-tg-cli
-arg="${1:?usage: scripts/release.sh <patch|minor|major|X.Y.Z> | tag}"
+arg="${1:-auto}"
 [ -z "$(git status --porcelain)" ] || { echo "Working tree is dirty; commit first." >&2; exit 1; }
 
 if [ "$arg" = tag ]; then
@@ -26,6 +28,12 @@ fi
 
 [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "Start a release from main." >&2; exit 1; }
 git pull -q --ff-only origin main
+if [ "$arg" = auto ]; then
+  git fetch -q --tags origin
+  arg="$(node scripts/next-version.mjs)"
+  [ -n "$arg" ] || { echo "Nothing to release since $(git describe --tags --abbrev=0)." >&2; exit 1; }
+  echo "Release level from the PR titles: $arg"
+fi
 npm version "$arg" --no-git-tag-version >/dev/null
 version="$(node -p "require('./package.json').version")"
 git checkout -q -b "release/v${version}"

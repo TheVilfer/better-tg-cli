@@ -327,7 +327,7 @@ Si instalaste la skill de agente con `telegram skill install`, vuelve a ejecutar
 - los servidores de prueba de Telegram;
 - la depuración en el editor y los tests.
 
-Las releases se preparan con `scripts/release.sh patch|minor|major` (un PR de release) y, después del merge, con `scripts/release.sh tag`. Un tag compila los binarios y
+Las releases se preparan con `scripts/release.sh` (un PR de release; la versión sale de los títulos de los PR) y, después del merge, con `scripts/release.sh tag`. Un tag compila los binarios y
 los publica en GitHub Releases, npm (trusted publishing con provenance), el tap de Homebrew y el
 MCP Registry. Consulta
 [CONTRIBUTING.md](CONTRIBUTING.md).

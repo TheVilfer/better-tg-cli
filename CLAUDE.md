@@ -7,15 +7,16 @@ The version lives only in `package.json`. `scripts/gen-version.mjs` (run by buil
 `release.sh`) copies it into `src/version.ts`, the plugin manifests, `plugin/*` (including the
 pinned `npx better-tg-cli@X.Y.Z`), `server.json` and `gemini-extension.json`; CI fails if any of
 them drifts. Never edit a version by hand anywhere else. Releases
-use `scripts/release.sh` (see Releasing below): a release PR bumps the version, then the tag
-`vX.Y.Z` is pushed from main after the merge. Minor for features, patch for fixes.
+use `scripts/release.sh` (see Releasing below): a release PR bumps the version, computed from the
+PR titles, then the tag `vX.Y.Z` is pushed from main after the merge.
 
 ## Commit Message Format
 
-Follow conventional commits style:
-- `Add <feature>` for new features
-- `Fix <bug>` for bug fixes
-- `Update <component>` for changes
+PR titles become the squash commits on main, and they decide the next version
+(`scripts/next-version.mjs`):
+- `Add <feature>` for new features → minor
+- `Fix <bug>` for bug fixes, `Update <component>` or anything else → patch
+- a breaking change: put `BREAKING` in the title → minor while the version is 0.x
 - Include `Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>` at the end
 
 ## MTProto library
@@ -55,7 +56,8 @@ See `DEVELOPMENT.md`. The short version:
 ## Releasing
 
 Never push to main directly: every change goes through a branch and a PR with green CI.
-`scripts/release.sh patch|minor|major` bumps the version on `release/vX.Y.Z`, tests and opens a PR;
+`scripts/release.sh` (no argument) takes the level from the PR titles since the last tag, bumps the
+version on `release/vX.Y.Z`, tests and opens a PR (an explicit `patch|minor|major|X.Y.Z` overrides);
 after it is squash-merged, `scripts/release.sh tag` tags main `vX.Y.Z` and pushes the tag.
 The tag runs `.github/workflows/release.yml`:
 1. verify (tag == package.json, tests) and the Claude Desktop extension `better-tg-cli.mcpb`

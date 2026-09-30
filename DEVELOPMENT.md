@@ -86,4 +86,4 @@ Source mode skips the bundle's shrink plugin (TL re-encoding, stubs). Run `npm r
 `npm run build && npm test` before a release. `test/bundle-shrink.test.ts` and
 `test/sync-and-cli.test.ts` cover the bundle.
 
-Releasing is described in `CLAUDE.md` (`scripts/release.sh patch|minor|major`, then `scripts/release.sh tag`).
+Releasing is described in `CLAUDE.md` (`scripts/release.sh`, which picks the version from the PR titles, then `scripts/release.sh tag`).
