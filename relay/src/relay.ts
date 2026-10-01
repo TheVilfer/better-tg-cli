@@ -5,7 +5,7 @@ import {
   type ConsentDescription,
   type OAuthHelpers,
 } from '@cloudflare/workers-oauth-provider';
-import type { DeviceRelay } from './device';
+import type { DeviceRelay, PairingCodes } from './device';
 import { consentPage, homePage, messagePage, type ConsentInfo } from './page';
 
 
@@ -24,6 +24,7 @@ export interface Env {
   OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthHelpers;
   DEVICES: DurableObjectNamespace<DeviceRelay>;
+  PAIRING: DurableObjectNamespace<PairingCodes>;
   PAIR_LIMITER: RateLimit;
   DEVICE_LIMITER: RateLimit;
   MCP_LIMITER: RateLimit;
@@ -64,7 +65,8 @@ export function newPairingCode(): string {
 }
 export const normalizeCode = (code: string) => code.toUpperCase().replace(/[^0-9A-Z]/g, '');
 
-const pairKey = async (code: string) => `relay:pair:${await sha256Hex(normalizeCode(code))}`;
+const pairKey = async (code: string) => sha256Hex(normalizeCode(code));
+const pairing = (env: Env) => env.PAIRING.get(env.PAIRING.idFromName('codes'));
 const consentKey = async (handle: string) => `relay:consent:${await sha256Hex(handle)}`;
 
 const json = (body: unknown, status = 200) =>
@@ -129,7 +131,7 @@ async function answerConsent(request: Request, env: Env): Promise<Response> {
 
   if (await limited(env.PAIR_LIMITER, clientIp(request))) return again('Too many attempts. Wait a minute and try again.', 429);
   const code = String(form.get('code') ?? '');
-  const deviceId = normalizeCode(code).length === 8 ? await env.OAUTH_KV.get(await pairKey(code)) : null;
+  const deviceId = normalizeCode(code).length === 8 ? await pairing(env).peek(await pairKey(code)) : null;
   if (!deviceId) return again('That code is wrong or expired. Run `telegram remote pair` for a new one.');
 
   const stub = device(env, deviceId);
@@ -137,7 +139,7 @@ async function answerConsent(request: Request, env: Env): Promise<Response> {
     return again('Your computer is not connected. Start `telegram mcp --remote` on it, then press Allow again.', 409);
   }
   // One use per code, whatever the person at the computer answers.
-  await env.OAUTH_KV.delete(await pairKey(code));
+  if ((await pairing(env).take(await pairKey(code))) !== deviceId) return again('That code was just used. Run `telegram remote pair` for a new one.');
   const { requestedScope, ...question } = info;
   const allowed = await stub.consent(question);
   if (allowed !== true) {
@@ -187,7 +189,7 @@ async function deviceApi(request: Request, env: Env, path: string): Promise<Resp
   }
   if (path === '/device/pair' && request.method === 'POST') {
     const code = newPairingCode();
-    await env.OAUTH_KV.put(await pairKey(code), deviceId, { expirationTtl: PAIR_TTL });
+    await pairing(env).put(await pairKey(code), deviceId, PAIR_TTL);
     return json({ code, expiresIn: PAIR_TTL, url: RESOURCE });
   }
   if (path === '/device/clients' && request.method === 'GET') {

@@ -42,9 +42,11 @@ One WebSocket per device: a new connection replaces the old one. While no device
   encryption to a cloud model isn't possible. The relay doesn't log or store them
   (`observability` is off), and this code is the code that runs.
 - KV (`OAUTH_KV`): OAuth clients and grants (tokens only as hashes, props encrypted by
-  `@cloudflare/workers-oauth-provider`), grant metadata (app name and domain, approval time),
-  pairing codes and pending consent records (hashed keys, 10 minutes).
-- The Durable Object keeps only the live WebSocket.
+  `@cloudflare/workers-oauth-provider`), grant metadata (app name and domain, approval time) and
+  pending consent records (hashed keys, 10 minutes).
+- `PairingCodes`, one Durable Object: pairing codes by hash, so a code works seconds after it is
+  minted from any location and taking it is atomic. Expired codes are swept by an alarm.
+- `DeviceRelay`, one Durable Object per device: only the live WebSocket.
 
 ## Develop
 

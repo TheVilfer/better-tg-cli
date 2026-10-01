@@ -11,7 +11,7 @@ routes = [{ pattern = "mcp.better-tg-cli.com", custom_domain = true }]
 observability = { enabled = false }
 
 # OAuth grants and tokens (hashed, props encrypted by the library) plus the relay's short-lived
-# pairing codes and consent records (`relay:` keys). Filled in by `wrangler kv namespace create`.
+# consent records (`relay:consent:` keys). Filled in by `wrangler kv namespace create`.
 [[kv_namespaces]]
 binding = "OAUTH_KV"
 id = "00000000000000000000000000000000"
@@ -20,9 +20,14 @@ id = "00000000000000000000000000000000"
 name = "DEVICES"
 class_name = "DeviceRelay"
 
+# Pairing codes: one object for the relay, so taking a code is atomic and seen everywhere at once
+[[durable_objects.bindings]]
+name = "PAIRING"
+class_name = "PairingCodes"
+
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["DeviceRelay"]
+new_sqlite_classes = ["DeviceRelay", "PairingCodes"]
 
 # Pairing-code checks on the consent page, per IP: slows guessing an 8-character code to nothing
 [[ratelimits]]

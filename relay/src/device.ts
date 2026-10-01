@@ -39,6 +39,8 @@ export class DeviceRelay extends DurableObject<Record<string, unknown>> {
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status: 426 });
     const { 0: client, 1: server } = new WebSocketPair();
     // One live connection per device: a new one (a restart, another terminal) replaces the old.
+    // Calls waiting on the old socket can't be answered by the new one, so they end now.
+    this.settleAll();
     for (const old of this.ctx.getWebSockets()) old.close(4000, 'Replaced by a newer connection');
     this.ctx.acceptWebSocket(server);
     return new Response(null, { status: 101, webSocket: client });
@@ -123,5 +125,41 @@ export class DeviceRelay extends DurableObject<Record<string, unknown>> {
       waiting.resolve(OFFLINE);
       this.pending.delete(id);
     }
+  }
+}
+
+/**
+ * Pairing codes, in one Durable Object for the whole relay: a code typed on a phone must work
+ * seconds after the computer minted it (KV can take a minute to show a write elsewhere), and
+ * taking a code must be atomic so it works once. Keys are hashes of the codes.
+ */
+export class PairingCodes extends DurableObject<Record<string, unknown>> {
+  async put(key: string, deviceId: string, ttlSeconds: number): Promise<void> {
+    const expires = Date.now() + ttlSeconds * 1000;
+    await this.ctx.storage.put(key, { deviceId, expires });
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > expires) await this.ctx.storage.setAlarm(expires);
+  }
+
+  async peek(key: string): Promise<string | null> {
+    const entry = await this.ctx.storage.get<{ deviceId: string; expires: number }>(key);
+    return entry && entry.expires > Date.now() ? entry.deviceId : null;
+  }
+
+  /** Get and delete in one step: a second use, even a concurrent one, gets null. */
+  async take(key: string): Promise<string | null> {
+    const deviceId = await this.peek(key);
+    await this.ctx.storage.delete(key);
+    return deviceId;
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    let next: number | null = null;
+    for (const [key, entry] of await this.ctx.storage.list<{ expires: number }>()) {
+      if (entry.expires <= now) await this.ctx.storage.delete(key);
+      else next = next === null ? entry.expires : Math.min(next, entry.expires);
+    }
+    if (next !== null) await this.ctx.storage.setAlarm(next);
   }
 }

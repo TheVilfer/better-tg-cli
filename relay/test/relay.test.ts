@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestHarness } from 'wrangler';
 
 // The relay runs in workerd with its Durable Object, KV and rate limiters; a fake device connects
@@ -14,24 +14,30 @@ beforeAll(async () => {
 });
 afterAll(() => harness.close());
 
-const relay = (path: string, init?: RequestInit) => harness.fetch(`${ORIGIN}${path}`, { redirect: 'manual', ...init });
+// Each test comes from its own address, so the per-IP limiters don't carry over between tests.
+let ip = '';
+beforeEach(() => {
+  ip = `203.0.113.${Math.floor(Math.random() * 250) + 1}`;
+});
+const relay = (path: string, init: RequestInit = {}) =>
+  harness.fetch(`${ORIGIN}${path}`, { redirect: 'manual', ...init, headers: { 'CF-Connecting-IP': ip, ...(init.headers as Record<string, string>) } });
 const newSecret = () => 'tgrd_' + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 const auth = (secret: string) => ({ Authorization: `Bearer ${secret}` });
 
 type Consent = { clientName: string; redirectHost: string };
 
 /** A stand-in for `telegram mcp --remote`: answers consent with `allow`, echoes MCP calls. */
-async function connectDevice(secret: string, allow = true) {
+async function connectDevice(secret: string, allow = true, answerCalls = true) {
   const asked: Consent[] = [];
   const url = new URL('/device/connect', base);
   url.protocol = 'ws:';
-  const ws = new WebSocket(url, { headers: auth(secret) } as unknown as string[]);
+  const ws = new WebSocket(url, { headers: { ...auth(secret), 'CF-Connecting-IP': ip } } as unknown as string[]);
   ws.addEventListener('message', event => {
     const msg = JSON.parse(String(event.data));
     if (msg.type === 'consent') {
       asked.push(msg);
       ws.send(JSON.stringify({ type: 'reply', id: msg.id, allow }));
-    } else if (msg.type === 'rpc') {
+    } else if (msg.type === 'rpc' && answerCalls) {
       const call = JSON.parse(msg.body);
       const body = JSON.stringify({ jsonrpc: '2.0', id: call.id, result: { echo: call.method } });
       ws.send(JSON.stringify({ type: 'reply', id: msg.id, status: 200, body }));
@@ -51,7 +57,7 @@ async function pkce() {
 }
 
 /** Register a client and open the consent page, as claude.ai or ChatGPT would. */
-async function startAuthorization() {
+async function startAuthorization(scope = 'telegram offline_access') {
   const reg = await relay('/oauth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -65,14 +71,14 @@ async function startAuthorization() {
     response_type: 'code',
     client_id,
     redirect_uri: REDIRECT_URI,
-    scope: 'telegram offline_access',
+    scope,
     state: 'st8',
     code_challenge: challenge,
     code_challenge_method: 'S256',
     resource: RESOURCE,
   }))
     url.searchParams.set(k, v);
-  const page = await harness.fetch(url, { redirect: 'manual' });
+  const page = await relay(url.pathname + url.search);
   expect(page.status).toBe(200);
   const text = await page.text();
   const handle = /name="handle" value="([^"]+)"/.exec(text)![1];
@@ -110,6 +116,13 @@ async function exchange(flow: { client_id: string; verifier: string }, location:
   expect(res.status).toBe(200);
   return ((await res.json()) as { access_token: string }).access_token;
 }
+
+const tokenRequest = (fields: Record<string, string>) =>
+  relay('/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields),
+  });
 
 const mcp = (token: string, body: unknown) =>
   relay('/mcp', {
@@ -211,6 +224,45 @@ describe('relay', () => {
     const offline = await submit(flow2, { decision: 'approve', code: await pairingCode(secret) });
     expect(offline.status).toBe(409);
     expect(await offline.text()).toContain('not connected');
+  });
+
+  it('gives a refresh token when the client asks only for the advertised scope', async () => {
+    // claude.ai and ChatGPT request what the 401 names: `telegram`, without offline_access
+    const secret = newSecret();
+    const dev = await connectDevice(secret);
+    const flow = await startAuthorization('telegram');
+    const location = (await submit(flow, { decision: 'approve', code: await pairingCode(secret) })).headers.get('Location')!;
+    const first = await tokenRequest({
+      grant_type: 'authorization_code',
+      code: new URL(location).searchParams.get('code')!,
+      redirect_uri: REDIRECT_URI,
+      client_id: flow.client_id,
+      code_verifier: flow.verifier,
+      resource: RESOURCE,
+    });
+    const tokens = (await first.json()) as { access_token: string; refresh_token?: string; scope: string };
+    expect(tokens.refresh_token).toBeTruthy();
+    const refreshed = await tokenRequest({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token!, client_id: flow.client_id });
+    expect(refreshed.status).toBe(200);
+    const { access_token } = (await refreshed.json()) as { access_token: string };
+    expect(await (await mcp(access_token, { jsonrpc: '2.0', id: 3, method: 'ping' })).json()).toEqual({ jsonrpc: '2.0', id: 3, result: { echo: 'ping' } });
+    dev.ws.close();
+  });
+
+  it('ends calls waiting on a replaced connection right away', async () => {
+    const secret = newSecret();
+    const silent = await connectDevice(secret, true, false); // approves, then never answers calls
+    const flow = await startAuthorization();
+    const token = await exchange(flow, (await submit(flow, { decision: 'approve', code: await pairingCode(secret) })).headers.get('Location')!);
+    const started = Date.now();
+    const waiting = mcp(token, { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'telegram_read' } });
+    await new Promise(r => setTimeout(r, 300));
+    const fresh = await connectDevice(secret); // a restart: replaces the silent connection
+    const body = (await (await waiting).json()) as { result: { isError: boolean } };
+    expect(body.result.isError).toBe(true);
+    expect(Date.now() - started).toBeLessThan(5000);
+    silent.ws.close();
+    fresh.ws.close();
   });
 
   it('needs the device secret for every device call', async () => {
