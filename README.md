@@ -284,15 +284,16 @@ them to `telegram mcp --remote` on your computer, which keeps the session, the w
 audit log. No tunnel, no token to paste.
 
 ```bash
-telegram mcp --remote --read-only   # keep it running (tmux, or a login item); drop --read-only to allow writes
-telegram remote pair                # a one-time code for the next app (10 minutes)
+telegram mcp --remote --read-only        # keep it running (tmux, or a login item); drop --read-only to allow writes
+telegram remote email you@example.com    # once: link your email (a code is mailed to confirm it)
 ```
 
 On macOS, start `--remote` in a terminal on the Mac itself (or a tmux session started there), not
 over SSH: the confirmation dialog can't appear in an SSH session, so every app would be refused.
 
 In the app, add a custom connector with the URL `https://mcp.better-tg-cli.com/mcp`. Its sign-in
-page asks for the pairing code; after Allow, confirm in the dialog on your computer. An agent can't
+page asks for your email and mails you a code; enter it, then confirm in the dialog on your computer.
+Without a linked email, `telegram remote pair` gives a one-time code for the same page. An agent can't
 answer that dialog, so nothing connects without you. `telegram remote clients` lists connected apps,
 `telegram remote revoke <id>` (or `--all`) disconnects them, and `telegram remote reset` also
 replaces this computer's device key. When the computer is off, the app gets "your computer is

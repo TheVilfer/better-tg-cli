@@ -188,7 +188,8 @@ export async function runRemote(commands: Iterable<string>, options: { readOnly?
       first = false;
       console.error(`Connected to the relay${options.readOnly ? ' (read-only: no telegram_write)' : ''}.`);
       console.error(`Connector URL for claude.ai, ChatGPT and other apps: ${relayUrl()}/mcp`);
-      console.error('To connect an app, run `telegram remote pair` and enter the code on its sign-in page.');
+      console.error('To connect an app, sign in with the email you linked (`telegram remote email you@example.com`, once),');
+      console.error('or enter a code from `telegram remote pair`. Then confirm the app in the dialog here.');
     },
   });
   process.exit(1);

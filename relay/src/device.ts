@@ -129,21 +129,36 @@ export class DeviceRelay extends DurableObject<Record<string, unknown>> {
 }
 
 /**
- * Pairing codes, in one Durable Object for the whole relay: a code typed on a phone must work
- * seconds after the computer minted it (KV can take a minute to show a write elsewhere), and
- * taking a code must be atomic so it works once. Keys are hashes of the codes.
+ * The relay's small directory, in one Durable Object: pairing codes, emails bound to devices and
+ * one-time email codes. A code typed on a phone must work seconds after it was made (KV can take a
+ * minute to show a write elsewhere), and using a code must be atomic so it works once.
+ * Keys are hashes; only a bound email is kept in plain text, to show it back to its device.
  */
+type Expiring = { expires: number };
+type CodeEntry = Expiring & { deviceId: string };
+type MailCode = Expiring & { codeHash: string; deviceId: string; tries: number };
+
+/** Wrong guesses allowed per email code before it is thrown away. */
+export const MAX_TRIES = 5;
+
 export class PairingCodes extends DurableObject<Record<string, unknown>> {
-  async put(key: string, deviceId: string, ttlSeconds: number): Promise<void> {
-    const expires = Date.now() + ttlSeconds * 1000;
-    await this.ctx.storage.put(key, { deviceId, expires });
+  private async putExpiring<T extends Expiring>(key: string, value: T): Promise<void> {
+    await this.ctx.storage.put(key, value);
     const alarm = await this.ctx.storage.getAlarm();
-    if (alarm === null || alarm > expires) await this.ctx.storage.setAlarm(expires);
+    if (alarm === null || alarm > value.expires) await this.ctx.storage.setAlarm(value.expires);
+  }
+
+  private async live<T extends Expiring>(key: string): Promise<T | null> {
+    const entry = await this.ctx.storage.get<T>(key);
+    return entry && entry.expires > Date.now() ? entry : null;
+  }
+
+  async put(key: string, deviceId: string, ttlSeconds: number): Promise<void> {
+    await this.putExpiring(key, { deviceId, expires: Date.now() + ttlSeconds * 1000 } satisfies CodeEntry);
   }
 
   async peek(key: string): Promise<string | null> {
-    const entry = await this.ctx.storage.get<{ deviceId: string; expires: number }>(key);
-    return entry && entry.expires > Date.now() ? entry.deviceId : null;
+    return (await this.live<CodeEntry>(key))?.deviceId ?? null;
   }
 
   /** Get and delete in one step: a second use, even a concurrent one, gets null. */
@@ -153,10 +168,64 @@ export class PairingCodes extends DurableObject<Record<string, unknown>> {
     return deviceId;
   }
 
+  /** Bind a verified email to a device; the email moves if another device had it. */
+  async bindEmail(emailKey: string, email: string, deviceId: string): Promise<void> {
+    const previous = await this.ctx.storage.get<string>(`device:${deviceId}`);
+    if (previous && previous !== emailKey) await this.ctx.storage.delete(`email:${previous}`);
+    const owner = await this.ctx.storage.get<{ deviceId: string }>(`email:${emailKey}`);
+    if (owner && owner.deviceId !== deviceId) await this.ctx.storage.delete(`device:${owner.deviceId}`);
+    await this.ctx.storage.put(`email:${emailKey}`, { deviceId, email });
+    await this.ctx.storage.put(`device:${deviceId}`, emailKey);
+  }
+
+  async unbindDevice(deviceId: string): Promise<void> {
+    const emailKey = await this.ctx.storage.get<string>(`device:${deviceId}`);
+    if (emailKey) await this.ctx.storage.delete(`email:${emailKey}`);
+    await this.ctx.storage.delete(`device:${deviceId}`);
+  }
+
+  async deviceForEmail(emailKey: string): Promise<string | null> {
+    return (await this.ctx.storage.get<{ deviceId: string }>(`email:${emailKey}`))?.deviceId ?? null;
+  }
+
+  async emailOfDevice(deviceId: string): Promise<string | null> {
+    const emailKey = await this.ctx.storage.get<string>(`device:${deviceId}`);
+    return emailKey ? ((await this.ctx.storage.get<{ email: string }>(`email:${emailKey}`))?.email ?? null) : null;
+  }
+
+  /**
+   * Count a send against a window; false when over `max`. Used for "one email a minute" and
+   * "N emails a day" per address, so a bound address can't be flooded through the relay.
+   */
+  async allowSend(key: string, max: number, windowSeconds: number): Promise<boolean> {
+    const entry = await this.live<Expiring & { count: number }>(key);
+    if (entry && entry.count >= max) return false;
+    await this.putExpiring(key, { count: (entry?.count ?? 0) + 1, expires: entry?.expires ?? Date.now() + windowSeconds * 1000 });
+    return true;
+  }
+
+  async putMailCode(key: string, codeHash: string, deviceId: string, ttlSeconds: number): Promise<void> {
+    await this.putExpiring(key, { codeHash, deviceId, tries: 0, expires: Date.now() + ttlSeconds * 1000 } satisfies MailCode);
+  }
+
+  /** The device id when the code matches (and the code is gone); null otherwise, counting a try. */
+  async checkMailCode(key: string, codeHash: string): Promise<string | null> {
+    const entry = await this.live<MailCode>(key);
+    if (!entry) return null;
+    if (entry.codeHash === codeHash) {
+      await this.ctx.storage.delete(key);
+      return entry.deviceId;
+    }
+    if (entry.tries + 1 >= MAX_TRIES) await this.ctx.storage.delete(key);
+    else await this.ctx.storage.put(key, { ...entry, tries: entry.tries + 1 });
+    return null;
+  }
+
   async alarm(): Promise<void> {
     const now = Date.now();
     let next: number | null = null;
-    for (const [key, entry] of await this.ctx.storage.list<{ expires: number }>()) {
+    for (const [key, entry] of await this.ctx.storage.list<Partial<Expiring>>()) {
+      if (typeof entry?.expires !== 'number') continue; // bindings don't expire
       if (entry.expires <= now) await this.ctx.storage.delete(key);
       else next = next === null ? entry.expires : Math.min(next, entry.expires);
     }
