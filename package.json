@@ -49,8 +49,7 @@
     "skills/better-tg-cli/SKILL.md",
     "skills/better-tg-cli/reference.md",
     "LICENSE",
-    "README.md",
-    "npm-shrinkwrap.json"
+    "README.md"
   ],
   "engines": {
     "node": ">=20"
@@ -62,8 +61,6 @@
   "scripts": {
     "build": "node scripts/gen-version.mjs && tsc --noEmit && node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && bun scripts/bundle.mjs node",
     "prepublishOnly": "npm run build",
-    "prepack": "node scripts/shrinkwrap.mjs",
-    "postpack": "node scripts/shrinkwrap.mjs clean",
     "dev": "scripts/tg-dev",
     "dev:node": "TG_PROFILE=${TG_PROFILE-dev} TG_NO_UPDATE_CHECK=1 tsx src/index.ts",
     "dev:debug": "TG_PROFILE=${TG_PROFILE-dev} TG_NO_UPDATE_CHECK=1 tsx --inspect-brk src/index.ts",
