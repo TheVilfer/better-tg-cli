@@ -77,7 +77,8 @@ locally, with the same write guard and audit log as any other MCP call.
   on your computer, which names the app, says whether its name is verified, and where access goes.
   On macOS and Windows the dialog is used even when a terminal is attached, because an agent can
   type into a terminal (for example with `tmux send-keys`). On Linux the question is a terminal
-  prompt, so run `--remote` where only you can type.
+  prompt, so run `--remote` where only you can type. Each question and its answer is logged to
+  stderr.
 - **What the relay sees:** requests and replies, including message text, pass through the relay
   in plaintext. TLS ends at the Worker, and end-to-end encryption to a cloud model isn't possible.
   It doesn't log or store them (logging is off). It stores OAuth grants (tokens only as hashes),

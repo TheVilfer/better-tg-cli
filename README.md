@@ -288,6 +288,9 @@ telegram mcp --remote --read-only   # keep it running (tmux, or a login item); d
 telegram remote pair                # a one-time code for the next app (10 minutes)
 ```
 
+On macOS, start `--remote` in a terminal on the Mac itself (or a tmux session started there), not
+over SSH: the confirmation dialog can't appear in an SSH session, so every app would be refused.
+
 In the app, add a custom connector with the URL `https://mcp.better-tg-cli.com/mcp`. Its sign-in
 page asks for the pairing code; after Allow, confirm in the dialog on your computer. An agent can't
 answer that dialog, so nothing connects without you. `telegram remote clients` lists connected apps,

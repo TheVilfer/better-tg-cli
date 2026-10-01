@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { platform } from 'node:os';
 import { VERSION } from './version.js';
 import { isSecretStoreAvailable, secretDelete, secretGet, secretSet } from './secrets.js';
 import { createRpcProcessor, type RpcReply } from './mcp-http.js';
@@ -167,8 +168,18 @@ export async function runRemote(commands: Iterable<string>, options: { readOnly?
   setKnownCommands(commands);
   const deps: RelayDeps = {
     processRpc: createRpcProcessor({ readOnly: options.readOnly }),
-    confirm: question => confirmByHuman(consentText(question), { preferDialog: true }),
+    confirm: async question => {
+      const name = `«${question.clientName}»${question.clientDomain ? ` (${question.clientDomain})` : ' (name not verified)'}`;
+      console.error(`${new Date().toISOString()} ${name} asks to connect; answer the dialog on this computer`);
+      const allowed = await confirmByHuman(consentText(question), { preferDialog: true });
+      console.error(`${new Date().toISOString()} ${name} ${allowed ? 'allowed' : 'not allowed (declined, timed out, or no dialog could be shown)'}`);
+      return allowed;
+    },
   };
+  if (platform() === 'darwin' && process.env.SSH_CONNECTION) {
+    console.error('Started over SSH: macOS can\'t show the confirmation dialog here, so every new app will be refused.');
+    console.error('Start `telegram mcp --remote` in a terminal on this Mac (or tmux started there) instead.');
+  }
   let first = true;
   await connectRelay(secret, deps, {
     onOpen: () => {
