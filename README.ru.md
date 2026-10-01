@@ -19,6 +19,8 @@
   </p>
 </div>
 
+https://github.com/user-attachments/assets/d143f7c7-7d50-439c-b373-cbcbff5a6675
+
 Неофициальный консольный клиент Telegram, который работает **от вашего собственного аккаунта**
 (MTProto через [`teleproto`](https://www.npmjs.com/package/teleproto), TL layer 229). Команда
 называется `telegram`. В ней около 60 команд: чтение, поиск, отправка, боты, группы, выгрузка. Всё
