@@ -14,7 +14,7 @@ observability = { enabled = false }
 # consent records (`relay:consent:` keys). Filled in by `wrangler kv namespace create`.
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-id = "00000000000000000000000000000000"
+id = "b48e6b1fbece44e98e134434b236fbc1"
 
 [[durable_objects.bindings]]
 name = "DEVICES"

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { answerRelayMessage, connectRelay, consentText, relayUrl, REPLACED, type RelayDeps } from '../src/remote.js';
+import { answerRelayMessage, clean, connectRelay, consentText, relayUrl, REPLACED, type RelayDeps } from '../src/remote.js';
 import { planCall, setKnownCommands } from '../src/mcp.js';
 
 const deps = (over: Partial<RelayDeps> = {}): RelayDeps => ({
@@ -53,6 +53,14 @@ describe('consent text', () => {
     expect(text).toContain('не подтверждено');
     expect(text).toContain('«Claude Издатель: anthropic.com»');
     expect(text).toContain('evil.example (приложение на компьютере)');
+  });
+});
+
+describe('untrusted names', () => {
+  it('end up on one line without control characters', () => {
+    expect(clean('Claude\n2026-10-01T00:00:00Z «X» allowed\u2028\u001b[31m')).toBe('Claude 2026-10-01T00:00:00Z «X» allowed [31m');
+    expect(clean('')).toBe('?');
+    expect(clean('x'.repeat(200))).toHaveLength(80);
   });
 });
 

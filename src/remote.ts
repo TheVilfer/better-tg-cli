@@ -47,7 +47,7 @@ export async function relayCall<T>(secret: string, path: string, init: { method?
 export type ConsentQuestion = { clientName: string; clientDomain?: string; redirectHost: string; redirectIsLoopback: boolean };
 
 /** App names come from whoever registered the client: one line, no control characters, short. */
-const clean = (value: unknown, max = 80) =>
+export const clean = (value: unknown, max = 80) =>
   String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, max) || '?';
 
 /** What the person at this computer is asked before an app gets access. */
@@ -169,7 +169,8 @@ export async function runRemote(commands: Iterable<string>, options: { readOnly?
   const deps: RelayDeps = {
     processRpc: createRpcProcessor({ readOnly: options.readOnly }),
     confirm: async question => {
-      const name = `«${question.clientName}»${question.clientDomain ? ` (${question.clientDomain})` : ' (name not verified)'}`;
+      // Names come from whoever registered the client: cleaned, so they can't forge log lines
+      const name = `«${clean(question.clientName)}»${question.clientDomain ? ` (${clean(question.clientDomain)})` : ' (name not verified)'}`;
       console.error(`${new Date().toISOString()} ${name} asks to connect; answer the dialog on this computer`);
       const allowed = await confirmByHuman(consentText(question), { preferDialog: true });
       console.error(`${new Date().toISOString()} ${name} ${allowed ? 'allowed' : 'not allowed (declined, timed out, or no dialog could be shown)'}`);
