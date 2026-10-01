@@ -4,19 +4,10 @@
 //   bun scripts/bundle.mjs <bun-target> <outfile>   → standalone binary (bun-darwin-arm64, …)
 import { compactModuleSource, loadOriginalDefinitions } from './tl-compact.mjs';
 import { compactErrorsSource } from './errors-compact.mjs';
+import { mimeStubSource } from './mime-stub.mjs';
 
 const stub = contents => () => ({ contents, loader: 'js' });
 
-// Common extensions only: teleproto uses mime to decide photo vs. document vs. audio
-const MIME = {
-  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp',
-  bmp: 'image/bmp', heic: 'image/heic', tif: 'image/tiff', tiff: 'image/tiff', svg: 'image/svg+xml',
-  mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/opus',
-  wav: 'audio/wav', flac: 'audio/flac', aac: 'audio/aac',
-  mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
-  pdf: 'application/pdf', zip: 'application/zip', json: 'application/json', txt: 'text/plain',
-  md: 'text/markdown', csv: 'text/csv', html: 'text/html',
-};
 
 const shrink = {
   name: 'shrink-teleproto',
@@ -47,8 +38,7 @@ exports.StoreSession=StoreSession;`)
     build.onResolve({ filter: /^mime$/ }, () => ({ path: 'mime-stub', namespace: 'stub' }));
     build.onLoad(
       { filter: /^mime-stub$/, namespace: 'stub' },
-      stub(`const M=${JSON.stringify(MIME)};
-exports.default=exports;exports.getType=function(p){var m=/\\.([^./\\\\]+)$/.exec(String(p).toLowerCase());return m&&M[m[1]]||null};`)
+      stub(mimeStubSource)
     );
   },
 };
