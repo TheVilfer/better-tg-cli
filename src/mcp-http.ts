@@ -61,31 +61,26 @@ function logCall(msg: Json, status: string): void {
   console.error(`${new Date().toISOString()} ${what} ${status}`);
 }
 
-export function createMcpHttpHandler(token: string, options: { readOnly?: boolean } = {}, run?: Parameters<typeof handleMessage>[1]) {
+export type RpcReply = { status: number; body?: unknown };
+
+/**
+ * One MCP request body in, one HTTP-style answer out: the part shared by `--http` and `--remote`.
+ * Calls run one at a time, like over stdio: parallel sessions steal updates and invite FLOOD_WAIT.
+ */
+export function createRpcProcessor(options: { readOnly?: boolean } = {}, run?: Parameters<typeof handleMessage>[1]) {
   let queue: Promise<unknown> = Promise.resolve();
-  // Calls run one at a time, like over stdio: parallel sessions steal updates and invite FLOOD_WAIT
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
     const next = queue.then(fn, fn);
     queue = next.catch(() => undefined);
     return next;
   };
 
-  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const path = (req.url ?? '').split('?')[0];
-    if (path !== '/mcp') return send(res, 404, { error: 'Not found; the MCP endpoint is /mcp' });
-    // Browsers send Origin; a server-side MCP client doesn't. Refusing it blocks drive-by pages.
-    if (req.headers.origin) return send(res, 403, { error: 'Browser requests are not allowed' });
-    if (!checkBearer(req.headers.authorization, token)) {
-      return send(res, 401, { error: 'Missing or wrong bearer token' }, { 'WWW-Authenticate': 'Bearer' });
-    }
-    if (req.method !== 'POST') return send(res, 405, { error: 'Use POST' }, { Allow: 'POST' });
-
+  return async (text: string): Promise<RpcReply> => {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await readBody(req));
-    } catch (e) {
-      const tooLarge = e instanceof Error && e.message === 'too large';
-      return send(res, tooLarge ? 413 : 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: tooLarge ? 'Request too large' : 'Parse error' } });
+      parsed = JSON.parse(text);
+    } catch {
+      return { status: 400, body: { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } } };
     }
     const batch = Array.isArray(parsed);
     const messages = (batch ? parsed : [parsed]) as Json[];
@@ -103,8 +98,32 @@ export function createMcpHttpHandler(token: string, options: { readOnly?: boolea
         replies.push({ jsonrpc: '2.0', id: (msg.id as string | number | undefined) ?? null, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } });
       }
     }
-    if (!replies.length) return send(res, 202);
-    send(res, 200, batch ? replies : replies[0]);
+    if (!replies.length) return { status: 202 };
+    return { status: 200, body: batch ? replies : replies[0] };
+  };
+}
+
+export function createMcpHttpHandler(token: string, options: { readOnly?: boolean } = {}, run?: Parameters<typeof handleMessage>[1]) {
+  const processRpc = createRpcProcessor(options, run);
+
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const path = (req.url ?? '').split('?')[0];
+    if (path !== '/mcp') return send(res, 404, { error: 'Not found; the MCP endpoint is /mcp' });
+    // Browsers send Origin; a server-side MCP client doesn't. Refusing it blocks drive-by pages.
+    if (req.headers.origin) return send(res, 403, { error: 'Browser requests are not allowed' });
+    if (!checkBearer(req.headers.authorization, token)) {
+      return send(res, 401, { error: 'Missing or wrong bearer token' }, { 'WWW-Authenticate': 'Bearer' });
+    }
+    if (req.method !== 'POST') return send(res, 405, { error: 'Use POST' }, { Allow: 'POST' });
+
+    let text: string;
+    try {
+      text = await readBody(req);
+    } catch {
+      return send(res, 413, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Request too large' } });
+    }
+    const reply = await processRpc(text);
+    send(res, reply.status, reply.body);
   };
 }
 

@@ -1,63 +1,10 @@
 import { Command } from 'commander';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { join } from 'node:path';
-import { encodedCommand } from '../dpapi.js';
-import { platform } from 'node:os';
 import { secretGet, secretSet, secretDelete, isSecretStoreAvailable } from '../secrets.js';
 import { encodeWriteState, parseForDuration, parseWriteState } from '../write-state.js';
-import { prompt } from '../prompt.js';
+import { confirmByHuman } from '../confirm.js';
 import chalk from '../colors.js';
 
-/**
- * Enabling writes must be a human decision, not something an agent can do on its own:
- * a y/N prompt on a real terminal, otherwise a macOS dialog the user has to click.
- */
-async function confirmByHuman(what: string): Promise<boolean> {
-  if (process.stdin.isTTY && process.stdout.isTTY) {
-    const answer = await prompt(`${what} [y/N] `);
-    return /^(y|yes|д|да)$/i.test(answer);
-  }
-  if (platform() === 'win32') return confirmOnWindows(what);
-  if (platform() !== 'darwin') {
-    console.error(chalk.red('No terminal to confirm on. Run this command yourself in a terminal.'));
-    return false;
-  }
-  const text = `${what}\n\nЕсли об этом просит агент, а вы не ожидали — нажмите «Отмена».`;
-  const script =
-    `display dialog ${JSON.stringify(text)} with title "Telegram CLI" ` +
-    'buttons {"Отмена", "Разрешить"} default button "Отмена" cancel button "Отмена" ' +
-    'with icon caution giving up after 120';
-  try {
-    const out = execFileSync('/usr/bin/osascript', ['-e', script], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    return out.includes('button returned:Разрешить') && !out.includes('gave up:true');
-  } catch {
-    return false; // Cancel, timeout or no GUI session
-  }
-}
-
-/**
- * The Windows counterpart of the macOS dialog: a topmost Yes/No box with "No" as the default.
- * MessageBox has no timeout of its own, so the spawn gives up after ~2 minutes and that counts as No.
- */
-export function windowsConfirmScript(text: string): string {
-  const quoted = "'" + text.replace(/'/g, "''") + "'";
-  return 'Add-Type -AssemblyName System.Windows.Forms;' +
-    // A hidden topmost owner keeps the box above the agent's window instead of behind it
-    '$owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; $owner.ShowInTaskbar = $false;' +
-    `$r = [System.Windows.Forms.MessageBox]::Show($owner, ${quoted}, 'Telegram CLI', 'YesNo', 'Warning', 'Button2');` +
-    "if ($r -eq 'Yes') { [Console]::Out.Write('ALLOW') } else { [Console]::Out.Write('DENY') }";
-}
-
-function confirmOnWindows(what: string): boolean {
-  const text = `${what}\n\nЕсли об этом просит агент, а вы не ожидали — нажмите «Нет».`;
-  const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const res = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-NoLogo', '-STA', '-EncodedCommand', encodedCommand(windowsConfirmScript(text))], {
-    encoding: 'utf8',
-    timeout: 125_000,
-    windowsHide: true,
-  });
-  return res.status === 0 && res.stdout.trim() === 'ALLOW';
-}
+export { windowsConfirmScript } from '../confirm.js';
 
 export const writeAccessCommand = new Command('write-access')
   .description('Manage write access (read-only by default; turning it on needs the user\'s confirmation)')
