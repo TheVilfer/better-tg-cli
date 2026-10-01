@@ -53,7 +53,8 @@ const clientsCommand = new Command('clients')
     const secret = secretOrExit();
     const { clients } = await call(() => relayCall<{ clients: Client[] }>(secret, '/device/clients'));
     if (options.json) return console.log(JSON.stringify(clients));
-    if (!clients.length) return console.log('No apps connected.');
+    // The relay lists grants from KV, which can lag a fresh approval by up to a minute
+    if (!clients.length) return console.log(`No apps connected.${chalk.gray(' An app you just approved can take up to a minute to show up.')}`);
     for (const c of clients) {
       console.log(`${c.id}  ${c.name}${c.domain ? ` (${c.domain})` : chalk.gray(' (name not verified)')}  ${chalk.gray(c.approvedAt)}`);
     }
