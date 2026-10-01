@@ -19,6 +19,8 @@
   </p>
 </div>
 
+https://github.com/user-attachments/assets/d143f7c7-7d50-439c-b373-cbcbff5a6675
+
 An unofficial, agent-friendly command-line client for Telegram that runs **on your own account**
 (MTProto via [`teleproto`](https://www.npmjs.com/package/teleproto), TL layer 229). The command is
 `telegram`: about 60 commands for reading, searching, writing, bots, groups and exports, built so

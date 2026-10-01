@@ -19,6 +19,8 @@
   </p>
 </div>
 
+https://github.com/user-attachments/assets/d143f7c7-7d50-439c-b373-cbcbff5a6675
+
 Un cliente de línea de comandos no oficial para Telegram, pensado para agentes, que funciona **con tu
 propia cuenta** (MTProto mediante [`teleproto`](https://www.npmjs.com/package/teleproto), TL layer 229).
 El comando es `telegram`: unos 60 comandos para leer, buscar, escribir, bots, grupos y exportaciones,
