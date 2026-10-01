@@ -28,6 +28,9 @@ export interface Env {
   PAIR_LIMITER: RateLimit;
   DEVICE_LIMITER: RateLimit;
   MCP_LIMITER: RateLimit;
+  /** Cloudflare Email Sending; without it (or MAIL_FROM) email sign-in is off and pairing codes remain. */
+  EMAIL?: { send(message: { to: string; from: { email: string; name?: string }; subject: string; text: string }): Promise<unknown> };
+  MAIL_FROM?: string;
 }
 
 type Props = { deviceId: string };
@@ -66,6 +69,47 @@ export function newPairingCode(): string {
 export const normalizeCode = (code: string) => code.toUpperCase().replace(/[^0-9A-Z]/g, '');
 
 const pairKey = async (code: string) => sha256Hex(normalizeCode(code));
+
+export function normalizeEmail(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const email = raw.trim().toLowerCase();
+  if (email.length < 6 || email.length > 254) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+/** A uniform 6-digit code: values past the last whole multiple of 10^6 are drawn again. */
+function sixDigits(): string {
+  const limit = 2 ** 32 - (2 ** 32 % 1_000_000);
+  for (;;) {
+    const n = crypto.getRandomValues(new Uint32Array(1))[0];
+    if (n < limit) return String(n % 1_000_000).padStart(6, '0');
+  }
+}
+/** Names come from whoever registered the client: one short line in an email. */
+const oneLine = (value: string) => value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, 60);
+const mailOn = (env: Env) => Boolean(env.EMAIL && env.MAIL_FROM);
+
+async function sendMail(env: Env, to: string, subject: string, lines: string[]): Promise<void> {
+  await env.EMAIL!.send({
+    to,
+    from: { email: env.MAIL_FROM!, name: 'better-tg-cli' },
+    subject,
+    text: [...lines, '', 'https://github.com/TheVilfer/better-tg-cli'].join('\n'),
+  });
+}
+
+/**
+ * Per address and purpose (linking on the computer, signing in an app): one email a minute and ten
+ * a day, so a bound address can't be flooded. Separate purposes, so connecting an app right after
+ * linking the email still gets its code.
+ */
+async function mayMail(env: Env, emailKey: string, purpose: 'link' | 'login'): Promise<boolean> {
+  const dir = pairing(env);
+  return (
+    (await dir.allowSend(`throttle:${purpose}:min:${emailKey}`, 1, 60)) &&
+    (await dir.allowSend(`throttle:${purpose}:day:${emailKey}`, 10, 86400))
+  );
+}
 const pairing = (env: Env) => env.PAIRING.get(env.PAIRING.idFromName('codes'));
 const consentKey = async (handle: string) => `relay:consent:${await sha256Hex(handle)}`;
 
@@ -112,35 +156,85 @@ async function showConsent(request: Request, env: Env): Promise<Response> {
   const consent = await oauth.beginConsent(authRequest);
   // Kept server-side so the POST can ask the device about this client before the handle is used.
   await env.OAUTH_KV.put(await consentKey(consent.handle), JSON.stringify(info), { expirationTtl: PAIR_TTL });
-  return html(consentPage(info, consent.handle), 200, consent.headers);
+  return html(consentPage(info, consent.handle, { mail: mailOn(env) }), 200, consent.headers);
+}
+
+/**
+ * Email sign-in: a code goes only to an address a device has bound and verified, so the page never
+ * reveals whether an address is known and can't be used to mail strangers.
+ */
+async function sendLoginCode(env: Env, handle: string, email: string, info: ConsentInfo): Promise<void> {
+  const emailKey = await sha256Hex(email);
+  const dir = pairing(env);
+  const deviceId = await dir.deviceForEmail(emailKey);
+  if (!deviceId || !(await mayMail(env, emailKey, 'login'))) return;
+  const code = sixDigits();
+  await dir.putMailCode(`login:${await sha256Hex(handle)}`, await sha256Hex(code), deviceId, PAIR_TTL);
+  const app = `${oneLine(info.clientName)}${info.clientDomain ? ` (${oneLine(info.clientDomain)})` : ' (name not verified)'}`;
+  await sendMail(env, email, `${code} is your better-tg-cli code`, [
+    `${app} asks to use your Telegram through the better-tg-cli relay.`,
+    '',
+    `Code: ${code}`,
+    '',
+    'Enter it on the page that sent it. The code works for 10 minutes. Nothing connects until you also confirm on your computer.',
+    "If you didn't start this, ignore this email.",
+  ]);
 }
 
 async function answerConsent(request: Request, env: Env): Promise<Response> {
   const oauth = env.OAUTH_PROVIDER;
   const form = await request.formData();
   const handle = String(form.get('handle') ?? '');
-  if (form.get('decision') !== 'approve') {
+  const decision = form.get('decision');
+  if (decision !== 'approve' && decision !== 'send' && decision !== 'restart') {
     const denied = await oauth.denyConsent(request, handle);
     return redirect(denied.headers);
   }
 
-  const stored = await env.OAUTH_KV.get(await consentKey(handle));
+  const key = await consentKey(handle);
+  const stored = await env.OAUTH_KV.get(key);
   if (!stored) return html(messagePage('This page expired', 'Start connecting again from the app.'), 400);
   const info = JSON.parse(stored) as ConsentInfo;
-  const again = (error: string, status = 400) => html(consentPage(info, handle, error), status);
+  const page = (error?: string, status = 400) => html(consentPage(info, handle, { error, mail: mailOn(env) }), error ? status : 200);
+  const save = () => env.OAUTH_KV.put(key, JSON.stringify(info), { expirationTtl: PAIR_TTL });
 
-  if (await limited(env.PAIR_LIMITER, clientIp(request))) return again('Too many attempts. Wait a minute and try again.', 429);
-  const code = String(form.get('code') ?? '');
-  const deviceId = normalizeCode(code).length === 8 ? await pairing(env).peek(await pairKey(code)) : null;
-  if (!deviceId) return again('That code is wrong or expired. Run `telegram remote pair` for a new one.');
+  if (decision === 'restart') {
+    delete info.email;
+    await save();
+    return page();
+  }
+  if (await limited(env.PAIR_LIMITER, clientIp(request))) return page('Too many attempts. Wait a minute and try again.', 429);
+
+  if (decision === 'send') {
+    const email = normalizeEmail(form.get('email'));
+    if (!email || !mailOn(env)) return page('Enter a valid email.');
+    await sendLoginCode(env, handle, email, info);
+    info.email = email;
+    await save();
+    return page();
+  }
+
+  const code = String(form.get('code') ?? '').trim();
+  let deviceId: string | null;
+  let pairingCode = false;
+  if (info.email && /^\d{6}$/.test(code)) {
+    deviceId = await pairing(env).checkMailCode(`login:${await sha256Hex(handle)}`, await sha256Hex(code));
+    if (!deviceId) return page('That code is wrong or expired. Send a new one.');
+  } else {
+    deviceId = normalizeCode(code).length === 8 ? await pairing(env).peek(await pairKey(code)) : null;
+    if (!deviceId) return page('That code is wrong or expired. Run `telegram remote pair` for a new one.');
+    pairingCode = true;
+  }
 
   const stub = device(env, deviceId);
   if (!(await stub.online())) {
-    return again('Your computer is not connected. Start `telegram mcp --remote` on it, then press Allow again.', 409);
+    return page('Your computer is not connected. Start `telegram mcp --remote` on it, then try again.', 409);
   }
-  // One use per code, whatever the person at the computer answers.
-  if ((await pairing(env).take(await pairKey(code))) !== deviceId) return again('That code was just used. Run `telegram remote pair` for a new one.');
-  const { requestedScope, ...question } = info;
+  // A pairing code works once, whatever the person at the computer answers (an email code already did).
+  if (pairingCode && (await pairing(env).take(await pairKey(code))) !== deviceId) {
+    return page('That code was just used. Run `telegram remote pair` for a new one.');
+  }
+  const { requestedScope, email: _email, ...question } = info;
   const allowed = await stub.consent(question);
   if (allowed !== true) {
     const denied = await oauth.denyConsent(request, handle, {
@@ -158,7 +252,7 @@ async function answerConsent(request: Request, env: Env): Promise<Response> {
     scope,
     props: { deviceId } satisfies Props,
   });
-  await env.OAUTH_KV.delete(await consentKey(handle));
+  await env.OAUTH_KV.delete(key);
   return redirect(approved.headers, redirectTo);
 }
 
@@ -191,6 +285,42 @@ async function deviceApi(request: Request, env: Env, path: string): Promise<Resp
     const code = newPairingCode();
     await pairing(env).put(await pairKey(code), deviceId, PAIR_TTL);
     return json({ code, expiresIn: PAIR_TTL, url: RESOURCE });
+  }
+  if (path === '/device/email' && request.method === 'GET') {
+    return json({ email: await pairing(env).emailOfDevice(deviceId) });
+  }
+  if (path === '/device/email' && request.method === 'POST') {
+    if (!mailOn(env)) return json({ error: 'email_unavailable' }, 503);
+    const body = (await request.json().catch(() => ({}))) as { email?: unknown; code?: unknown; remove?: unknown };
+    const dir = pairing(env);
+    if (body.remove === true) {
+      await dir.unbindDevice(deviceId);
+      return json({ email: null });
+    }
+    const email = normalizeEmail(body.email);
+    if (!email) return json({ error: 'bad_email' }, 400);
+    const emailKey = await sha256Hex(email);
+    const key = `setup:${deviceId}:${emailKey}`;
+    if (typeof body.code === 'string') {
+      const owner = await dir.checkMailCode(key, await sha256Hex(body.code.trim()));
+      if (owner !== deviceId) return json({ error: 'bad_code' }, 400);
+      await dir.bindEmail(emailKey, email, deviceId);
+      return json({ email });
+    }
+    if (!(await dir.allowSend(`throttle:dev:${deviceId}`, 5, 3600)) || !(await mayMail(env, emailKey, 'link'))) {
+      return json({ error: 'rate_limited' }, 429);
+    }
+    const code = sixDigits();
+    await dir.putMailCode(key, await sha256Hex(code), deviceId, PAIR_TTL);
+    await sendMail(env, email, `${code} is your better-tg-cli code`, [
+      'A computer running better-tg-cli asks to use this address for signing in to the relay.',
+      '',
+      `Code: ${code}`,
+      '',
+      'Type it in the terminal that asked for it. The code works for 10 minutes.',
+      "If you didn't start this, ignore this email.",
+    ]);
+    return json({ sent: true, expiresIn: PAIR_TTL });
   }
   if (path === '/device/clients' && request.method === 'GET') {
     const { items } = await env.OAUTH_PROVIDER.listUserGrants(deviceId);

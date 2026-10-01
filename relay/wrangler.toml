@@ -29,6 +29,14 @@ class_name = "PairingCodes"
 tag = "v1"
 new_sqlite_classes = ["DeviceRelay", "PairingCodes"]
 
+# Email sign-in codes go out through Cloudflare Email Sending from better-tg-cli.com (the domain the
+# invite broker already sends from). Without EMAIL or MAIL_FROM, the page offers only pairing codes.
+[[send_email]]
+name = "EMAIL"
+
+[vars]
+MAIL_FROM = "relay@better-tg-cli.com"
+
 # Pairing-code checks on the consent page, per IP: slows guessing an 8-character code to nothing
 [[ratelimits]]
 name = "PAIR_LIMITER"

@@ -16,8 +16,11 @@ claude.ai / ChatGPT ──OAuth 2.1 + PKCE──▶ /mcp (this Worker)
 
 1. The app opens `/authorize`. The page shows the app's name, its verified domain (Client ID
    Metadata Documents) or "not verified" (dynamic registration), and where the access goes.
-2. The person types a pairing code from their terminal (`telegram remote pair`, 8 characters,
-   10 minutes, one use). A wrong code doesn't reach the device; checks are rate-limited per IP.
+2. The person enters their email and the 6-digit code mailed to it, or a pairing code from their
+   terminal (`telegram remote pair`, 8 characters, 10 minutes, one use). An email gets a code only if
+   a device linked and confirmed it (`telegram remote email`), at most one a minute and ten a day, and
+   the page answers the same either way. A code allows five tries. A wrong code doesn't reach the
+   device; checks are rate-limited per IP.
 3. The relay asks the device over its WebSocket. The person at that computer confirms in a terminal
    prompt or an OS dialog, the same mechanism as `write-access`, which an agent can't answer.
    Only then does the relay complete the authorization. The browser alone is never enough.
@@ -44,8 +47,12 @@ One WebSocket per device: a new connection replaces the old one. While no device
 - KV (`OAUTH_KV`): OAuth clients and grants (tokens only as hashes, props encrypted by
   `@cloudflare/workers-oauth-provider`), grant metadata (app name and domain, approval time) and
   pending consent records (hashed keys, 10 minutes).
-- `PairingCodes`, one Durable Object: pairing codes by hash, so a code works seconds after it is
-  minted from any location and taking it is atomic. Expired codes are swept by an alarm.
+- `PairingCodes`, one Durable Object: pairing codes and email codes by hash, email ↔ device links
+  (the address in plain text, to mail codes and show it to its device) and send counters. A code
+  works seconds after it is minted from any location and using it is atomic. Expired entries are
+  swept by an alarm.
+- Email: Cloudflare Email Sending from `relay@better-tg-cli.com` (`EMAIL` binding, `MAIL_FROM`).
+  Tests swap it for a capture Worker (`test/mail-capture.ts`).
 - `DeviceRelay`, one Durable Object per device: only the live WebSocket.
 
 ## Develop

@@ -24,7 +24,9 @@ The page checks for bots with Cloudflare Turnstile.
 
 The relay passes MCP requests and answers between apps you connected (claude.ai, ChatGPT) and your
 computer. It doesn't log or store them. It stores what OAuth needs: grants with tokens only as
-hashes, each app's name, domain and approval time, and pairing codes for 10 minutes.
+hashes, each app's name, domain and approval time, and codes for 10 minutes. If you link an email
+(`telegram remote email`), it keeps that address to mail you sign-in codes, sends them through
+Cloudflare Email Sending, and uses it for nothing else. `telegram remote email --remove` deletes it.
 `telegram remote reset` disconnects every app. Those apps' own providers then hold what they
 received, under their terms.
 

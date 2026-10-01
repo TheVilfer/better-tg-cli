@@ -1,9 +1,32 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createTestHarness } from 'wrangler';
+import { resolve } from 'node:path';
+import { createTestHarness, unstable_readConfig } from 'wrangler';
 
 // The relay runs in workerd with its Durable Object, KV and rate limiters; a fake device connects
 // over a real WebSocket, the way `telegram mcp --remote` does.
-const harness = createTestHarness({ workers: [{ configPath: './wrangler.toml' }] });
+// Email goes to a capture Worker instead of Cloudflare Email Sending, so tests can read the codes.
+const relayConfig = unstable_readConfig({ config: './wrangler.toml' });
+const harness = createTestHarness({
+  workers: [
+    {
+      config: {
+        name: relayConfig.name,
+        main: resolve('src/index.ts'),
+        compatibility_date: relayConfig.compatibility_date,
+        compatibility_flags: relayConfig.compatibility_flags,
+        routes: relayConfig.routes,
+        kv_namespaces: relayConfig.kv_namespaces,
+        durable_objects: relayConfig.durable_objects,
+        migrations: relayConfig.migrations,
+        ratelimits: relayConfig.ratelimits,
+        vars: relayConfig.vars,
+        dev: { upstream_protocol: 'https' },
+        services: [{ binding: 'EMAIL', service: 'mail-capture' }],
+      } as never,
+    },
+    { config: { name: 'mail-capture', main: resolve('test/mail-capture.ts'), compatibility_date: '2026-09-01' } },
+  ],
+});
 const ORIGIN = 'https://mcp.better-tg-cli.com';
 const RESOURCE = `${ORIGIN}/mcp`;
 const REDIRECT_URI = 'https://client.example/callback';
@@ -130,6 +153,32 @@ const mcp = (token: string, body: unknown) =>
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+
+type Mail = { to: string; subject: string; text: string };
+let mailMark = 0;
+const allMails = async () => (await (await harness.getWorker('mail-capture').fetch('http://capture/')).json()) as Mail[];
+/** Remember how many mails exist, so `mailedCode` only looks at newer ones. */
+const markMail = async () => {
+  mailMark = (await allMails()).length;
+};
+async function newMails(): Promise<Mail[]> {
+  return (await allMails()).slice(mailMark);
+}
+async function mailedCode(): Promise<string | null> {
+  const mails = await newMails();
+  return mails.length ? (/Code: (\d{6})/.exec(mails[mails.length - 1].text)?.[1] ?? null) : null;
+}
+const lastMailText = async () => (await newMails()).at(-1)?.text ?? '';
+
+async function linkEmail(secret: string, email: string) {
+  await markMail();
+  const sent = await relay('/device/email', { method: 'POST', headers: auth(secret), body: JSON.stringify({ email }) });
+  expect(sent.status).toBe(200);
+  const code = await mailedCode();
+  expect(code).toMatch(/^\d{6}$/);
+  const res = await relay('/device/email', { method: 'POST', headers: auth(secret), body: JSON.stringify({ email, code }) });
+  expect(await res.json()).toEqual({ email });
+}
 
 describe('relay', () => {
   it('points an unauthenticated client at the authorization server', async () => {
@@ -263,6 +312,82 @@ describe('relay', () => {
     expect(Date.now() - started).toBeLessThan(5000);
     silent.ws.close();
     fresh.ws.close();
+  });
+
+  it('links an email to the device, and the email then signs in apps', async () => {
+    const secret = newSecret();
+    const email = `me+${ip.split('.').pop()}@example.com`;
+    await linkEmail(secret, email);
+    expect(await (await relay('/device/email', { headers: auth(secret) })).json()).toEqual({ email });
+
+    const dev = await connectDevice(secret);
+    const flow = await startAuthorization();
+    expect(flow.text).toContain('Send code');
+    await markMail();
+    const step = await submit(flow, { decision: 'send', email: email.toUpperCase() });
+    expect(step.status).toBe(200);
+    expect(await step.text()).toContain('we sent it a 6-digit code');
+    const code = await mailedCode();
+    expect(code).toMatch(/^\d{6}$/);
+    expect(await lastMailText()).toContain('Test Client (name not verified) asks to use your Telegram');
+
+    const res = await submit(flow, { decision: 'approve', code: code! });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')!.startsWith(REDIRECT_URI)).toBe(true);
+    expect(dev.asked).toEqual([expect.objectContaining({ clientName: 'Test Client' })]);
+    expect(dev.asked[0]).not.toHaveProperty('email');
+    // A code works once
+    const flow2 = await startAuthorization();
+    await submit(flow2, { decision: 'send', email });
+    expect((await submit(flow2, { decision: 'approve', code: code! })).status).toBe(400);
+    dev.ws.close();
+  });
+
+  it('mails nobody for an address no device linked, and looks the same', async () => {
+    const flow = await startAuthorization();
+    await markMail();
+    const step = await submit(flow, { decision: 'send', email: 'stranger@example.com' });
+    expect(step.status).toBe(200);
+    expect(await step.text()).toContain('we sent it a 6-digit code');
+    await new Promise(r => setTimeout(r, 300));
+    expect(await mailedCode()).toBeNull();
+  });
+
+  it('throws an email code away after five wrong tries', async () => {
+    const secret = newSecret();
+    const email = `tries+${ip.split('.').pop()}@example.com`;
+    await linkEmail(secret, email);
+    const dev = await connectDevice(secret);
+    const flow = await startAuthorization();
+    await markMail();
+    await submit(flow, { decision: 'send', email });
+    const code = (await mailedCode())!;
+    expect(code).toMatch(/^\d{6}$/);
+    for (let i = 0; i < 5; i++) {
+      const wrong = String((Number(code) + 1 + i) % 1_000_000).padStart(6, '0');
+      expect((await submit(flow, { decision: 'approve', code: wrong })).status).toBe(400);
+    }
+    expect((await submit(flow, { decision: 'approve', code })).status).toBe(400);
+    expect(dev.asked).toEqual([]);
+    dev.ws.close();
+  });
+
+  it('sends at most one email a minute to an address', async () => {
+    const secret = newSecret();
+    const email = `rate+${ip.split('.').pop()}@example.com`;
+    await markMail();
+    expect((await relay('/device/email', { method: 'POST', headers: auth(secret), body: JSON.stringify({ email }) })).status).toBe(200);
+    expect(await mailedCode()).toMatch(/^\d{6}$/);
+    const again = await relay('/device/email', { method: 'POST', headers: auth(secret), body: JSON.stringify({ email }) });
+    expect(again.status).toBe(429);
+  });
+
+  it('unlinks the email', async () => {
+    const secret = newSecret();
+    const email = `bye+${ip.split('.').pop()}@example.com`;
+    await linkEmail(secret, email);
+    await relay('/device/email', { method: 'POST', headers: auth(secret), body: JSON.stringify({ remove: true }) });
+    expect(await (await relay('/device/email', { headers: auth(secret) })).json()).toEqual({ email: null });
   });
 
   it('needs the device secret for every device call', async () => {
