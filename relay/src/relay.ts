@@ -77,7 +77,14 @@ export function normalizeEmail(raw: unknown): string | null {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 
-const sixDigits = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
+/** A uniform 6-digit code: values past the last whole multiple of 10^6 are drawn again. */
+function sixDigits(): string {
+  const limit = 2 ** 32 - (2 ** 32 % 1_000_000);
+  for (;;) {
+    const n = crypto.getRandomValues(new Uint32Array(1))[0];
+    if (n < limit) return String(n % 1_000_000).padStart(6, '0');
+  }
+}
 /** Names come from whoever registered the client: one short line in an email. */
 const oneLine = (value: string) => value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, 60);
 const mailOn = (env: Env) => Boolean(env.EMAIL && env.MAIL_FROM);
