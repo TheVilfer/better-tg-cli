@@ -1,0 +1,47 @@
+# Hosted OAuth relay for remote MCP (issue #17): claude.ai, ChatGPT and other remote-MCP clients
+# reach `telegram mcp --remote` on the user's own machine. The Telegram session never leaves it.
+name = "tg-mcp-relay"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+# Client ID Metadata Documents fetch client-supplied URLs; this keeps those fetches public-only
+compatibility_flags = ["global_fetch_strictly_public"]
+workers_dev = false
+routes = [{ pattern = "mcp.better-tg-cli.com", custom_domain = true }]
+# MCP bodies carry message text: no request/response logging, no traces
+observability = { enabled = false }
+
+# OAuth grants and tokens (hashed, props encrypted by the library) plus the relay's short-lived
+# pairing codes and consent records (`relay:` keys). Filled in by `wrangler kv namespace create`.
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "00000000000000000000000000000000"
+
+[[durable_objects.bindings]]
+name = "DEVICES"
+class_name = "DeviceRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DeviceRelay"]
+
+# Pairing-code checks on the consent page, per IP: slows guessing an 8-character code to nothing
+[[ratelimits]]
+name = "PAIR_LIMITER"
+namespace_id = "7101"
+simple = { limit = 10, period = 60 }
+
+# Device connects and management calls, per IP
+[[ratelimits]]
+name = "DEVICE_LIMITER"
+namespace_id = "7102"
+simple = { limit = 20, period = 60 }
+
+# MCP calls, per device
+[[ratelimits]]
+name = "MCP_LIMITER"
+namespace_id = "7103"
+simple = { limit = 120, period = 60 }
+
+# Local runs (wrangler dev, tests) see https URLs like production, so issuer and resource checks match
+[dev]
+upstream_protocol = "https"
