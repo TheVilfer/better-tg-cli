@@ -90,9 +90,9 @@ sits in `.codex-plugin/mcp.json`, since a `.mcp.json` in the plugin root would l
 regenerates everything in it except `plugin/README.md`: regular-file copies of the skill and
 LICENSE, and a manifest with the MCP server pinned to `better-tg-cli@<version>` (the directory
 blocks `@latest`). Keep it free of symlinks, binaries and lockfiles.
-The directory also holds a plugin that runs a pinned npx package without a lockfile, so `prepack`
-(`scripts/shrinkwrap.mjs`) ships a zero-dependency `npm-shrinkwrap.json` in the npm package and
-`postpack` deletes it (at the repo root it would override `package-lock.json` for `npm ci`).
+The directory holds plugins that run a pinned npx package ("Runs a pinned npx or uvx package") and
+suggests shipping a lockfile, but npm 12 dropped `npm-shrinkwrap.json` (not packed, not honored), so
+there is no lockfile to ship; the package has zero runtime dependencies instead.
 
 Grok Build reads `.claude-plugin/plugin.json` as is, but refuses a marketplace entry that points at
 the repo root (`"./"`, which Claude Code requires), so `.grok-plugin/marketplace.json` (preferred

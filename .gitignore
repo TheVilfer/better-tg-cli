@@ -13,4 +13,3 @@ __pycache__/
 release/
 *.mcpb
 .dev.vars
-npm-shrinkwrap.json
