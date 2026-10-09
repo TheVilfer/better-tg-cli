@@ -275,6 +275,85 @@ tunnel URL plus `/mcp` (for example `https://<machine>.<tailnet>.ts.net/mcp`) an
 for your tailnet first. A `cloudflared` quick tunnel gets a new URL on every start. Read "Remote
 MCP over HTTP" in [SECURITY.md](SECURITY.md) first.
 
+#### Keeping the server up: launchd and systemd
+
+A terminal or a tmux window dies with the session. Both recipes below run `telegram mcp --http` as
+a user service, so it comes back after a crash and after a reboot. Neither file holds a secret: the
+session and the bearer token live in macOS Keychain / Linux Secret Service (Windows DPAPI, or
+1Password), which the service reads at startup. Drop `--read-only` from either one if you want the
+`telegram_write` tool exposed.
+
+macOS, `~/Library/LaunchAgents/com.better-tg-cli.mcp.plist` — set `ProgramArguments` to the path
+`command -v telegram` prints:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.better-tg-cli.mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/telegram</string>
+    <string>mcp</string>
+    <string>--http</string>
+    <string>--read-only</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.better-tg-cli.mcp.plist  # load + start
+launchctl print gui/$(id -u)/com.better-tg-cli.mcp                                  # status, last exit
+launchctl kickstart -k gui/$(id -u)/com.better-tg-cli.mcp                           # restart now
+launchctl bootout gui/$(id -u)/com.better-tg-cli.mcp                                # stop + unload
+```
+
+`KeepAlive` restarts the server whenever it exits, so a crash or a `--rotate-token` restart is
+invisible to Grok Bot. If macOS asks for Keychain access on the first start, approve it, otherwise
+the service keeps prompting instead of serving.
+
+Linux (systemd user unit), `~/.config/systemd/user/better-tg-cli-mcp.service`:
+
+```ini
+[Unit]
+Description=better-tg-cli MCP server over HTTP
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/telegram mcp --http --read-only
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now better-tg-cli-mcp.service
+systemctl --user status better-tg-cli-mcp.service
+journalctl --user -u better-tg-cli-mcp.service -f
+loginctl enable-linger $USER        # keep it up with no login session (headless box, SSH-only)
+```
+
+`%h` is your home directory, so fix the path when npm, bun or a distro package put `telegram`
+somewhere else. The service needs the Secret Service (`secret-tool` from libsecret-tools) to read
+the session; on a headless box the keyring stays locked until someone logs in, so run
+`telegram check` with the same environment to see which secret store the service found before you
+trust it to stay up. Rotating the token (`telegram mcp --rotate-token`) makes clients holding the
+old one fail until you restart the unit.
+
 ## FAQ
 
 **Will Telegram ban my account?**
