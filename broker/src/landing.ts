@@ -5,6 +5,7 @@ import { DICT, type Dict, type Lang } from './i18n';
 import { BRAND, cardMeta, footer, INVITE_PATH, langLinks, TOKENS_CSS } from './page';
 
 const INSTALL = 'npm install -g better-tg-cli';
+const AGENTS = ['Claude Code', 'Codex', 'Cursor', 'Claude Desktop', 'Gemini CLI'];
 const REPO = 'https://github.com/TheVilfer/better-tg-cli';
 
 export interface LandingOptions {
@@ -50,6 +51,33 @@ function screen(t: Dict): string {
   ]);
 }
 
+const tile = (cls: string, f: { title: string; text: string }, extra = '', lead = '') =>
+  `<div class="tile${cls ? ` ${cls}` : ''}">${lead}<h3>${escape(f.title)}</h3><p>${escape(f.text)}</p>${extra}</div>`;
+
+/** The few things that set the tool apart, as a bento grid. */
+function bento(x: Dict['landing']): string {
+  const f = x.features;
+  const chip = (html: string) => `<div class="chip" aria-hidden="true">${html}</div>`;
+  return `<h2>${escape(x.featuresTitle)}</h2>
+<div class="bento">
+${tile('wide', f.safe, chip('<span>$</span> telegram write-access on <b>--for 1h</b>'))}
+${tile('narrow', f.commands, '', '<div class="num">60+</div>')}
+${tile('narrow', f.deps, '', '<div class="num">0</div>')}
+${tile('wide', f.tokens, chip('<b>1234567890</b> user unread=2 Alice @alice <span>|</span> see you at 7?'))}
+${tile('', f.bots, chip('<span>$</span> telegram click @bot 812 <b>"Confirm"</b>'))}
+${tile('', f.agents, `<div class="agents">${AGENTS.map(n => `<span>${n}</span>`).join('')}</div>`)}
+</div>`;
+}
+
+/** What an invite is and the three steps to one. */
+function invites(x: Dict['landing'], href: string): string {
+  return `<h2 id="invites">${escape(x.invitesTitle)}</h2>
+<p class="how">${escape(x.invitesLead)}</p>
+<ol class="steps">${x.steps.map(s => `<li><h3>${escape(s.title)}</h3><p>${escape(s.text)}</p></li>`).join('')}</ol>
+<p class="own">${escape(x.ownKeys)} <code>telegram auth</code>.</p>
+<div class="cta"><a class="btn" href="${href}">${escape(x.invite)}</a></div>`;
+}
+
 function landing(nonce: string, lang: Lang, query: URLSearchParams): string {
   const t = DICT[lang];
   const x = t.landing;
@@ -65,7 +93,7 @@ ${cardMeta(lang, x, '/')}
 ${TOKENS_CSS}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 Geist,system-ui,sans-serif}
-main{max-width:620px;margin:0 auto;padding:56px 16px 72px}
+main{max-width:720px;margin:0 auto;padding:56px 16px 72px}
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:72px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px}
 .brand i{font-style:normal;color:var(--accent)}
@@ -88,10 +116,33 @@ a{color:var(--accent)}
 .note{font-size:13px;color:var(--dim);margin:0 0 56px}
 ${SCREEN_CSS}
 .s-body{white-space:pre-wrap;overflow-wrap:anywhere}
+h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:88px 0 20px;text-wrap:balance}
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+.tile{grid-column:span 3;border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:20px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.tile.wide{grid-column:span 4}
+.tile.narrow{grid-column:span 2}
+.tile h3{font-size:16px;font-weight:600;margin:0}
+.tile p{font-size:14px;line-height:1.5;color:var(--dim);margin:0}
+.tile .num{font-size:52px;line-height:1;letter-spacing:-2px;font-weight:600}
+.tile .num+h3{font-weight:500;color:var(--dim);font-size:14px;margin-bottom:6px}
+.chip{margin-top:auto;padding-top:14px;font:12.5px/1.6 'Geist Mono',ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip span{color:var(--dim)}
+.chip b{font-weight:400;color:var(--accent)}
+.agents{margin-top:auto;padding-top:14px;display:flex;flex-wrap:wrap;gap:6px}
+.agents span{font-size:12.5px;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--bg)}
+.how{color:var(--dim);margin:0 0 24px;max-width:56ch}
+.steps{list-style:none;counter-reset:s;padding:0;margin:0 0 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.steps li{counter-increment:s;border-top:1px solid var(--line);padding-top:14px}
+.steps li::before{content:counter(s,decimal-leading-zero);display:block;font:13px 'Geist Mono',ui-monospace,monospace;color:var(--accent);margin-bottom:10px}
+.steps h3{font-size:16px;font-weight:600;margin:0 0 6px}
+.steps p{font-size:14px;line-height:1.5;color:var(--dim);margin:0}
+.own{font-size:14px;color:var(--dim);margin:0 0 20px}
+.own code{font:13px 'Geist Mono',ui-monospace,monospace;color:var(--fg)}
 .facts{list-style:none;padding:0;margin:32px 0 0;display:flex;flex-wrap:wrap;gap:6px 24px;font-size:14px;color:var(--dim)}
 .facts li::before{content:'';display:inline-block;width:6px;height:6px;margin-right:9px;background:var(--accent);vertical-align:middle}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
 @media (max-width:480px){main{padding-top:32px}.top{margin-bottom:48px}h1{font-size:34px;letter-spacing:-.9px}.lead{font-size:16px}.box{flex-direction:column;align-items:flex-start}.box pre{font-size:13px;max-width:100%}}
+@media (max-width:620px){h2{margin-top:64px}.bento,.steps{grid-template-columns:1fr}.tile,.tile.wide,.tile.narrow{grid-column:auto}}
 </style></head><body><main>
 <div class="top">${BRAND}
 ${langLinks(lang, query, t, '/')}</div>
@@ -102,6 +153,8 @@ ${code(INSTALL, t.client.copy)}
 <p class="note">${escape(x.inviteNote)}</p>
 ${screen(t)}
 <ul class="facts">${x.facts.map(f => `<li>${escape(f)}</li>`).join('')}</ul>
+${bento(x)}
+${invites(x, invite)}
 ${footer(t.page)}
 </main>
 <script nonce="${nonce}">

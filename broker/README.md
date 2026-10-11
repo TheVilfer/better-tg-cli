@@ -38,7 +38,8 @@ It hands the app keys to strangers, so it fails closed:
   are Worker secrets (`SIGNUP_DAILY_CAP`, `SIGNUP_CODES_PER_IP`, `SIGNUP_CODES_PER_EMAIL`), so the
   exact numbers aren't in the repo; without them the conservative fallbacks in `src/signup.ts`
   apply. Change one with `npx wrangler secret put SIGNUP_DAILY_CAP`.
-- One invite per email. Each invite allows one login and is marked `source: "self-serve"`.
+- One invite per email. Each invite logs in up to 3 computers (6 credential requests: a spare one per
+  computer for a failed QR scan or 2FA password) and is marked `source: "self-serve"`.
 - The email is stored in plaintext under `email:<sha256(email)>` → `{email, inviteKey, createdAt}`,
   only for notifications.
 

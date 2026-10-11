@@ -147,7 +147,7 @@ describe('self-serve signup', () => {
     expect(mails).toEqual([]);
   });
 
-  it('mails a code and gives a one-login invite only for the right code', async () => {
+  it('mails a code and gives a three-computer invite only for the right code', async () => {
     const { e, store, mails } = await open();
     const sent = await ask(e, '  Alice@Example.COM ');
     expect(sent.status).toBe(202);
@@ -169,13 +169,13 @@ describe('self-serve signup', () => {
     expect(keysBesides(store).some(k => k.startsWith('verify:'))).toBe(false); // the code is spent
 
     const rec = JSON.parse(store.get(`invite:${await sha256Hex(invite)}`)!);
-    expect(rec).toMatchObject({ name: 'alice@example.com', maxUses: 3, uses: 0, source: 'self-serve' });
+    expect(rec).toMatchObject({ name: 'alice@example.com', maxUses: 6, uses: 0, source: 'self-serve' });
     const email = JSON.parse(store.get(`email:${await sha256Hex('alice@example.com')}`)!);
     expect(email).toMatchObject({ email: 'alice@example.com', inviteKey: `invite:${await sha256Hex(invite)}` });
 
     expect((await confirm(e, 'alice@example.com', code)).status).toBe(410);
-    // A few logins, so a failed QR scan or a wrong 2FA password doesn't burn the invite
-    for (let i = 0; i < 3; i++) expect((await handle(post({ invite }), e)).status).toBe(200);
+    // Three computers with a spare request each, so a failed QR scan or a wrong 2FA password doesn't cost one
+    for (let i = 0; i < 6; i++) expect((await handle(post({ invite }), e)).status).toBe(200);
     expect((await handle(post({ invite }), e)).status).toBe(429);
   });
 
@@ -326,6 +326,8 @@ describe('self-serve signup', () => {
       expect(html).toContain('Telegram for your terminal and your AI agents');
       expect(html).toContain('npm install -g better-tg-cli');
       expect(html).toContain('<a class="btn" href="/invite">');
+      expect(html.match(/<div class="tile/g)).toHaveLength(6);
+      expect(html).toContain('Log in on up to 3 computers');
       expect(html).toContain('<link rel="canonical" href="https://better-tg-cli.com/">');
       expect(html).not.toContain('<form');
       expect(html).not.toContain('challenges.cloudflare.com');
