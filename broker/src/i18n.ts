@@ -54,6 +54,15 @@ const en = {
     footerPrivacy: 'Privacy',
     language: 'Language',
   },
+  landing: {
+    title: 'Better-TG-CLI: Telegram for your terminal and AI agents',
+    description: 'Open-source Telegram client for Claude Code, Codex, Cursor and the command line. Read-only until you allow writes. Free, no API keys needed.',
+    h1: 'Telegram for your terminal and your AI agents',
+    lead: 'An open-source Telegram client for Claude Code, Codex, Cursor and the command line. Your agent reads your chats; it writes only after you allow it.',
+    invite: 'Get an invite',
+    inviteNote: 'Free. Log in without creating your own API keys.',
+    facts: ['Read-only by default', 'CLI and MCP server', 'MIT, open source'],
+  },
   client: {
     errors: {
       bad_email: 'Check the email address.',
@@ -171,6 +180,15 @@ const es: Dict = {
     footerPrivacy: 'Privacidad',
     language: 'Idioma',
   },
+  landing: {
+    title: 'Better-TG-CLI: Telegram para tu terminal y tus agentes de IA',
+    description: 'Cliente de Telegram de código abierto para Claude Code, Codex, Cursor y la línea de comandos. Solo lectura hasta que permitas escribir. Gratis, sin claves de API.',
+    h1: 'Telegram para tu terminal y tus agentes de IA',
+    lead: 'Un cliente de Telegram de código abierto para Claude Code, Codex, Cursor y la línea de comandos. Tu agente lee tus chats; escribe solo cuando tú lo permites.',
+    invite: 'Conseguir una invitación',
+    inviteNote: 'Gratis. Inicia sesión sin crear tus propias claves de API.',
+    facts: ['Solo lectura por defecto', 'CLI y servidor MCP', 'MIT, código abierto'],
+  },
   client: {
     errors: {
       bad_email: 'Revisa la dirección de correo.',
@@ -285,6 +303,15 @@ const ru: Dict = {
     footerSource: 'Открытый код',
     footerPrivacy: 'Приватность',
     language: 'Язык',
+  },
+  landing: {
+    title: 'Better-TG-CLI: Telegram для терминала и ИИ-агентов',
+    description: 'Открытый клиент Telegram для Claude Code, Codex, Cursor и командной строки. Только чтение, пока вы не разрешите запись. Бесплатно, без API-ключей.',
+    h1: 'Telegram для терминала и ваших ИИ-агентов',
+    lead: 'Открытый клиент Telegram для Claude Code, Codex, Cursor и командной строки. Агент читает ваши чаты, а пишет только после вашего разрешения.',
+    invite: 'Получить инвайт',
+    inviteNote: 'Бесплатно. Вход без создания своих API-ключей.',
+    facts: ['По умолчанию только чтение', 'CLI и MCP-сервер', 'MIT, открытый код'],
   },
   client: {
     errors: {
