@@ -35,9 +35,10 @@ This checkout is a fork of `skillhq/telegram` (remote `upstream`, push disabled)
 public `TheVilfer/better-tg-cli`. The package is `better-tg-cli` and the binary stays `telegram`.
 The agent skill lives in `skills/better-tg-cli/` (name `better-tg-cli`, published through skills.sh
 via `npx skills add TheVilfer/better-tg-cli`); agents on this machine link straight to that folder
-(`~/.claude/skills/better-tg-cli` → `…/telegram/skills/better-tg-cli`, same for Codex and others).
-The checkout directory itself stays `~/.agents/skills/telegram`, so never run `npx skills add … -g`
-here with a skill named `telegram`, and never create `~/.agents/skills/better-tg-cli` as a link into
+(`~/.claude/skills/better-tg-cli` → `<checkout>/skills/better-tg-cli`, same for Codex and others).
+The checkout lives in `~/Projects/Work/better-tg-cli` (moved out of `~/.agents/skills/telegram`, which
+no longer exists; `install.sh` still defaults to that old path for fresh installs, so pass
+`TG_SKILL_DIR` when running it here). Never create `~/.agents/skills/better-tg-cli` as a link into
 this checkout (a global skills install would write through it). The global binary is an
 `npm install -g <this dir>` symlink under homebrew node (`/opt/homebrew/bin/telegram`), so
 `npm run build` is enough to ship a change. Never `npm i -g @skillhq/telegram` (old GramJS build).
