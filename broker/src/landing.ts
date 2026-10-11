@@ -81,6 +81,15 @@ ${tile('', f.agents, `<div class="agents">${AGENTS.map(n => `<span>${n}</span>`)
 </div>`;
 }
 
+/** What the tool can and cannot do with the account, without jargon, and the limits said out loud. */
+function security(x: Dict['landing']): string {
+  return `<h2 id="security">${escape(x.securityTitle)}</h2>
+<p class="how">${escape(x.securityLead)}</p>
+<ul class="safe">${x.security.map(s => `<li><h3>${escape(s.title)}</h3><p>${escape(s.text)}</p></li>`).join('')}</ul>
+<div class="limits"><h3>${escape(x.limitsTitle)}</h3><ul>${x.limits.map(l => `<li>${escape(l)}</li>`).join('')}</ul></div>
+<p class="own">${escape(x.securityMore)}: <a href="${REPO}/blob/main/SECURITY.md">${escape(x.securityDoc)}</a> · <a href="${REPO}/blob/main/PRIVACY.md">${escape(x.privacyDoc)}</a></p>`;
+}
+
 /** What an invite is and the three steps to one. */
 function invites(x: Dict['landing'], href: string): string {
   return `<h2 id="invites">${escape(x.invitesTitle)}</h2>
@@ -146,6 +155,16 @@ h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:8
 .chip b{font-weight:400;color:var(--accent)}
 .agents{margin-top:auto;padding-top:14px;display:flex;flex-wrap:wrap;gap:6px}
 .agents span{font-size:12.5px;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--bg)}
+.safe{list-style:none;padding:0;margin:0 0 20px;display:grid;grid-template-columns:1fr 1fr;gap:28px 32px}
+.safe li{position:relative;padding-left:26px}
+.safe li::before{content:'';position:absolute;left:0;top:5px;width:12px;height:12px;border:2px solid var(--accent);border-radius:50%;box-sizing:border-box}
+.safe li::after{content:'';position:absolute;left:4px;top:9px;width:4px;height:4px;border-radius:50%;background:var(--accent)}
+.safe h3{font-size:16px;font-weight:600;margin:0 0 6px}
+.safe p{font-size:14px;line-height:1.55;color:var(--dim);margin:0}
+.limits{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:20px;margin:32px 0 20px}
+.limits h3{font-size:14px;font-weight:600;margin:0 0 10px}
+.limits ul{margin:0;padding-left:18px;font-size:14px;line-height:1.55;color:var(--dim)}
+.limits li+li{margin-top:6px}
 .how{color:var(--dim);margin:0 0 24px;max-width:56ch}
 .steps{list-style:none;counter-reset:s;padding:0;margin:0 0 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .steps li{counter-increment:s;border-top:1px solid var(--line);padding-top:14px}
@@ -158,7 +177,7 @@ h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:8
 .facts li::before{content:'';display:inline-block;width:6px;height:6px;margin-right:9px;background:var(--accent);vertical-align:middle}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
 @media (max-width:480px){main{padding-top:32px}.top{margin-bottom:48px}h1{font-size:34px;letter-spacing:-.9px}.lead{font-size:16px}.box{flex-direction:column;align-items:flex-start}.box pre{font-size:13px;max-width:100%}}
-@media (max-width:620px){h2{margin-top:64px}.bento,.steps{grid-template-columns:1fr}.tile,.tile.wide,.tile.narrow{grid-column:auto}}
+@media (max-width:620px){h2{margin-top:64px}.bento,.steps,.safe{grid-template-columns:1fr}.tile,.tile.wide,.tile.narrow{grid-column:auto}}
 </style></head><body><main>
 <div class="top">${BRAND}
 ${langLinks(lang, query, t, '/')}</div>
@@ -170,6 +189,7 @@ ${install(t)}
 ${screen(t)}
 <ul class="facts">${x.facts.map(f => `<li>${escape(f)}</li>`).join('')}</ul>
 ${bento(x)}
+${security(x)}
 ${invites(x, invite)}
 ${footer(t.page)}
 </main>

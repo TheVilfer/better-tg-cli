@@ -330,6 +330,7 @@ describe('self-serve signup', () => {
       expect(html).toContain('<a class="btn" href="/invite">');
       expect(html.match(/<div class="tile/g)).toHaveLength(6);
       expect(html).toContain('Log in on up to 3 computers');
+      expect(html).toContain('<h2 id="security">Security, in plain words</h2>');
       expect(html).toContain('<link rel="canonical" href="https://better-tg-cli.com/">');
       expect(html).not.toContain('<form');
       expect(html).not.toContain('challenges.cloudflare.com');
