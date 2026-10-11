@@ -11,9 +11,11 @@ A Cloudflare Worker that gives invited users the maintainer's `api_id`/`api_hash
   Use counts are soft limits, because KV is eventually consistent.
 - Secrets are `API_ID` and `API_HASH` (`wrangler secret put`). Logging is off, since request
   bodies carry invite tokens.
-- `GET /` is the signup page (see below). There is no admin HTTP endpoint. Invites are managed locally through wrangler.
+- `GET /` is the landing page (`src/landing.ts`: what the tool is, the install command, a link to the
+  invite page) and `GET /invite` is the signup page (see below). `/?return=`, `/?mode=` and `/?agent=`
+  redirect to `/invite`, because released versions of `telegram onboard` open the root. There is no admin HTTP endpoint. Invites are managed locally through wrangler.
 - Deployed at `https://tg-cli-broker.login-c2d.workers.dev` (Cloudflare account "Anything* team"); the
-  signup page is also on `https://better-tg-cli.com` (custom domain, `www` redirects there).
+  pages are also on `https://better-tg-cli.com` (custom domain, `www` redirects there).
 
 ## Signup page
 
