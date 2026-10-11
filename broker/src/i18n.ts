@@ -62,6 +62,8 @@ const en = {
     invite: 'Get an invite',
     inviteNote: 'Free. Log in without creating your own API keys.',
     facts: ['Read-only by default', 'CLI and MCP server', 'MIT, open source'],
+    installLabel: 'Install',
+    installTabs: { cli: 'CLI', skill: 'Skill' },
     featuresTitle: 'Built for agents, safe for your account',
     features: {
       safe: { title: 'Read-only until you say so', text: 'An agent cannot switch writing on by itself: you confirm it in a system dialog, for as long as you choose. Every write goes to an audit log.' },
@@ -205,6 +207,8 @@ const es: Dict = {
     invite: 'Conseguir una invitación',
     inviteNote: 'Gratis. Inicia sesión sin crear tus propias claves de API.',
     facts: ['Solo lectura por defecto', 'CLI y servidor MCP', 'MIT, código abierto'],
+    installLabel: 'Instalación',
+    installTabs: { cli: 'CLI', skill: 'Skill' },
     featuresTitle: 'Hecho para agentes, seguro para tu cuenta',
     features: {
       safe: { title: 'Solo lectura hasta que tú digas', text: 'Un agente no puede activar la escritura por sí mismo: la confirmas tú en un diálogo del sistema y por el tiempo que elijas. Cada escritura queda en un registro de auditoría.' },
@@ -346,6 +350,8 @@ const ru: Dict = {
     invite: 'Получить инвайт',
     inviteNote: 'Бесплатно. Вход без создания своих API-ключей.',
     facts: ['По умолчанию только чтение', 'CLI и MCP-сервер', 'MIT, открытый код'],
+    installLabel: 'Установка',
+    installTabs: { cli: 'CLI', skill: 'Скилл' },
     featuresTitle: 'Сделан для агентов, безопасен для аккаунта',
     features: {
       safe: { title: 'Только чтение, пока вы не разрешите', text: 'Агент не может сам включить запись: вы подтверждаете её в системном диалоге и на то время, которое выберете. Каждая запись попадает в журнал аудита.' },

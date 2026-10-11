@@ -4,7 +4,8 @@ import { a, b, code, d, escape, SCREEN_CSS, terminal } from './guide';
 import { DICT, type Dict, type Lang } from './i18n';
 import { BRAND, cardMeta, footer, INVITE_PATH, langLinks, TOKENS_CSS } from './page';
 
-const INSTALL = 'npm install -g better-tg-cli';
+/** The two ways in: the CLI itself, or the agent skill through skills.sh (it tells the agent to install the CLI). */
+const INSTALL = { cli: 'npm install -g better-tg-cli', skill: 'npx skills add TheVilfer/better-tg-cli' } as const;
 const AGENTS = ['Claude Code', 'Codex', 'Cursor', 'Claude Desktop', 'Gemini CLI'];
 const REPO = 'https://github.com/TheVilfer/better-tg-cli';
 
@@ -49,6 +50,17 @@ function screen(t: Dict): string {
     `  ${d('⎿')} ${d('12 unread in 4 chats')}`,
     `${a('⏺')} ${escape(s.claudeAnswer.join(' '))}`,
   ]);
+}
+
+/** The install command under a CLI / Skill switch. */
+function install(t: Dict): string {
+  const ids = ['cli', 'skill'] as const;
+  const tabs = ids.map((id, i) =>
+    `<button type="button" role="tab" id="tab-${id}" aria-controls="how-${id}" aria-selected="${i === 0}"${i ? ' tabindex="-1"' : ''}>${escape(t.landing.installTabs[id])}</button>`).join('');
+  const panels = ids.map((id, i) =>
+    `<div role="tabpanel" id="how-${id}" aria-labelledby="tab-${id}"${i ? ' hidden' : ''}>${code(INSTALL[id], t.client.copy)}</div>`).join('');
+  return `<div class="pick" role="tablist" aria-label="${escape(t.landing.installLabel)}">${tabs}</div>
+${panels}`;
 }
 
 const tile = (cls: string, f: { title: string; text: string }, extra = '', lead = '') =>
@@ -109,6 +121,10 @@ a{color:var(--accent)}
 .box pre{margin:0;flex:1;min-width:0;white-space:nowrap;overflow-x:auto;font:14px/1.6 'Geist Mono',ui-monospace,monospace}
 .box pre::before{content:'$ ';color:var(--dim)}
 .box button{font:inherit;font-weight:500;font-size:13px;cursor:pointer;padding:7px 12px;border-radius:10px;background:transparent;color:var(--fg);border:1px solid var(--line);flex:none}
+.pick{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:10px}
+.pick button{font:inherit;font-size:13px;font-weight:500;cursor:pointer;border:0;border-radius:7px;padding:5px 14px;background:transparent;color:var(--dim)}
+.pick button[aria-selected="true"]{background:var(--bg);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+[hidden]{display:none!important}
 .cta{display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;margin-bottom:8px}
 .btn{display:inline-block;text-decoration:none;font-weight:500;padding:12px 18px;border-radius:10px;background:var(--fg);color:var(--bg)}
 .gh{color:var(--fg);text-decoration:none;font-weight:500}
@@ -148,7 +164,7 @@ footer{margin-top:56px;font-size:13px;color:var(--dim)}
 ${langLinks(lang, query, t, '/')}</div>
 <h1>${escape(x.h1)}</h1>
 <p class="lead">${escape(x.lead)}</p>
-${code(INSTALL, t.client.copy)}
+${install(t)}
 <div class="cta"><a class="btn" href="${invite}">${escape(x.invite)}</a><a class="gh" href="${REPO}">GitHub ↗</a></div>
 <p class="note">${escape(x.inviteNote)}</p>
 ${screen(t)}
@@ -159,6 +175,23 @@ ${footer(t.page)}
 </main>
 <script nonce="${nonce}">
 const T = ${JSON.stringify({ copy: t.client.copy, copied: t.client.copied, copyManual: t.client.copyManual }).replace(/</g, '\\u003c')};
+const tabs = [...document.querySelectorAll('.pick [role="tab"]')];
+const pick = tab => {
+  for (const x of tabs) {
+    const on = x === tab;
+    x.setAttribute('aria-selected', on);
+    x.tabIndex = on ? 0 : -1;
+    document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
+  }
+};
+for (const x of tabs) {
+  x.addEventListener('click', () => pick(x));
+  x.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const next = tabs[(tabs.indexOf(x) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    pick(next); next.focus();
+  });
+}
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-copy]');
   if (!b) return;

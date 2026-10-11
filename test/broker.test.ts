@@ -325,6 +325,8 @@ describe('self-serve signup', () => {
       expect(res.status).toBe(200);
       expect(html).toContain('Telegram for your terminal and your AI agents');
       expect(html).toContain('npm install -g better-tg-cli');
+      expect(html).toContain('npx skills add TheVilfer/better-tg-cli');
+      expect(html.match(/<button type="button" role="tab"/g)).toHaveLength(2);
       expect(html).toContain('<a class="btn" href="/invite">');
       expect(html.match(/<div class="tile/g)).toHaveLength(6);
       expect(html).toContain('Log in on up to 3 computers');
