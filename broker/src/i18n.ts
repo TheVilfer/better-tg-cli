@@ -73,7 +73,7 @@ const en = {
       bots: { title: 'Talks to bots', text: 'The current Telegram layer: real text in bot replies, menus you can walk and buttons you can press.' },
       agents: { title: 'Works with your agent', text: 'A skill and an MCP server for Claude Code, Codex, Cursor, Claude Desktop and Gemini CLI.' },
     },
-    securityTitle: 'Security, in plain words',
+    securityTitle: 'About security',
     securityLead: 'This tool logs in as you, so here is exactly what it can and cannot do.',
     security: [
       { title: 'Your messages go only to Telegram', text: 'The program talks to Telegram directly from your computer. We have no server in between and collect no statistics.' },
@@ -237,7 +237,7 @@ const es: Dict = {
       bots: { title: 'Habla con bots', text: 'La capa actual de Telegram: texto real en las respuestas de los bots, menús que puedes recorrer y botones que puedes pulsar.' },
       agents: { title: 'Funciona con tu agente', text: 'Un skill y un servidor MCP para Claude Code, Codex, Cursor, Claude Desktop y Gemini CLI.' },
     },
-    securityTitle: 'Seguridad, en palabras sencillas',
+    securityTitle: 'Sobre la seguridad',
     securityLead: 'Esta herramienta entra en Telegram como tú, así que aquí tienes exactamente lo que puede y lo que no puede hacer.',
     security: [
       { title: 'Tus mensajes solo van a Telegram', text: 'El programa habla con Telegram directamente desde tu equipo. No tenemos ningún servidor en medio ni recogemos estadísticas.' },
@@ -399,7 +399,7 @@ const ru: Dict = {
       bots: { title: 'Общается с ботами', text: 'Актуальный слой Telegram: настоящий текст в ответах ботов, меню, по которым можно ходить, и кнопки, которые можно нажимать.' },
       agents: { title: 'Работает с вашим агентом', text: 'Скилл и MCP-сервер для Claude Code, Codex, Cursor, Claude Desktop и Gemini CLI.' },
     },
-    securityTitle: 'Безопасность простыми словами',
+    securityTitle: 'Про безопасность',
     securityLead: 'Программа входит в Telegram от вашего имени, поэтому вот что именно она может и чего не может.',
     security: [
       { title: 'Ваши сообщения идут только в Telegram', text: 'Программа общается с Telegram напрямую с вашего компьютера. Между вами нет нашего сервера, статистику мы не собираем.' },
