@@ -141,7 +141,7 @@ const en = {
     installNoteHtml: 'No Homebrew? <span class="mono">npm install -g better-tg-cli</span> (Node 20+). On Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span>, then <span class="mono">scoop install better-tg-cli</span>.',
     loginTitle: 'Log in to Telegram yourself',
     loginText: 'Login is interactive, so you do it, not the agent:',
-    loginNoteHtml: 'Paste the login key from this page and scan the QR code in Telegram: Settings → Devices → Link Desktop Device. With your own keys from my.telegram.org: <span class="mono">telegram auth --qr</span>.',
+    loginNoteHtml: 'Paste the login key from this page and scan the QR code in Telegram: Settings → Devices → Link Desktop Device. With your own keys from my.telegram.org: <span class="mono">telegram auth --qr</span>. On versions before 0.37 the flag is <span class="mono">--invite</span>.',
     connectTitle: 'Connect your agent',
     proDoneText: 'By default the agent only reads. It can write on your behalf once you allow it:',
     tabs: {
@@ -305,7 +305,7 @@ const es: Dict = {
     installNoteHtml: '¿Sin Homebrew? <span class="mono">npm install -g better-tg-cli</span> (Node 20+). En Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span> y después <span class="mono">scoop install better-tg-cli</span>.',
     loginTitle: 'Inicia sesión en Telegram tú mismo',
     loginText: 'El inicio de sesión es interactivo, así que lo haces tú y no el agente:',
-    loginNoteHtml: 'Pega la clave de acceso de esta página y escanea el código QR en Telegram: Ajustes → Dispositivos → Vincular dispositivo de escritorio. Con tus propias claves de my.telegram.org: <span class="mono">telegram auth --qr</span>.',
+    loginNoteHtml: 'Pega la clave de acceso de esta página y escanea el código QR en Telegram: Ajustes → Dispositivos → Vincular dispositivo de escritorio. Con tus propias claves de my.telegram.org: <span class="mono">telegram auth --qr</span>. En versiones anteriores a la 0.37 la opción es <span class="mono">--invite</span>.',
     connectTitle: 'Conecta tu agente',
     proDoneText: 'Por defecto el agente solo lee. Podrá escribir en tu nombre cuando lo permitas:',
     tabs: {
@@ -467,7 +467,7 @@ const ru: Dict = {
     installNoteHtml: 'Нет Homebrew — <span class="mono">npm install -g better-tg-cli</span> (Node 20+). На Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span>, затем <span class="mono">scoop install better-tg-cli</span>.',
     loginTitle: 'Войдите в Telegram сами',
     loginText: 'Вход интерактивный, поэтому его делаете вы, а не агент:',
-    loginNoteHtml: 'Вставьте ключ входа с этой страницы и отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство. Со своими ключами с my.telegram.org — <span class="mono">telegram auth --qr</span>.',
+    loginNoteHtml: 'Вставьте ключ входа с этой страницы и отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство. Со своими ключами с my.telegram.org — <span class="mono">telegram auth --qr</span>. В версиях до 0.37 флаг называется <span class="mono">--invite</span>.',
     connectTitle: 'Подключите своего агента',
     proDoneText: 'По умолчанию агент только читает. Писать от вашего имени он сможет, когда вы разрешите:',
     tabs: {

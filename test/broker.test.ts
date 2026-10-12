@@ -134,6 +134,8 @@ describe('self-serve signup', () => {
       expect(tabs).toEqual(['auto', 'pro', 'claude-code', 'codex', 'cursor', 'claude-desktop']);
       expect(html).toContain('telegram onboard --json'); // the Auto prompt
       expect(html).toContain('telegram auth --login-key --qr');
+      // Installed versions before 0.37 only know the old flag
+      expect(html).toContain('<span class="mono">--invite</span>');
       expect(html).not.toMatch(/ style="/); // blocked by the nonce CSP
     }
   });
