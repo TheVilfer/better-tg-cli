@@ -276,6 +276,111 @@ tunnel URL plus `/mcp` (for example `https://<machine>.<tailnet>.ts.net/mcp`) an
 for your tailnet first. A `cloudflared` quick tunnel gets a new URL on every start. Read "Remote
 MCP over HTTP" in [SECURITY.md](SECURITY.md) first.
 
+#### Running the server as a background service
+
+Keeping the server and the tunnel in a terminal or tmux works for a session. To have the server come
+back after a reboot and stay up across logins, run it as a user service. Neither unit holds a secret:
+the session and the bearer token stay in the Keychain or the Secret Service, and the service reads
+them from there.
+
+**macOS (launchd).** Save this as `~/Library/LaunchAgents/com.better-tg-cli.mcp.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.better-tg-cli.mcp</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/telegram</string>
+		<string>mcp</string>
+		<string>--http</string>
+		<string>--read-only</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>TG_NO_UPDATE_CHECK</key>
+		<string>1</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+</dict>
+</plist>
+```
+
+Set `ProgramArguments[0]` to what `command -v telegram` prints: `/opt/homebrew/bin/telegram` on
+Apple silicon, `/usr/local/bin/telegram` on an Intel Mac or after `npm install -g`. launchd takes an
+absolute path, so this one has to be right, and it does not expand `~` or `$HOME` in the two log
+paths either: put your short username (`id -un`) where `you` is. `KeepAlive` with `SuccessfulExit`
+false restarts the server when it fails, the way `Restart=on-failure` does on Linux. Then:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.better-tg-cli.mcp.plist
+launchctl print gui/$(id -u)/com.better-tg-cli.mcp | head -20   # state = running
+launchctl bootout gui/$(id -u)/com.better-tg-cli.mcp            # stop and unload
+```
+
+**Linux (systemd --user).** Save this as `~/.config/systemd/user/better-tg-cli-mcp.service`:
+
+```ini
+[Unit]
+Description=better-tg-cli MCP server over HTTP
+After=network-online.target
+
+[Service]
+Type=simple
+# systemd resolves the program itself, so it needs an absolute path. `env` looks
+# the CLI up on the unit's PATH, which covers /usr/local/bin and ~/.local/bin.
+ExecStart=/usr/bin/env telegram mcp --http --read-only
+Restart=on-failure
+RestartSec=5
+Environment=TG_NO_UPDATE_CHECK=1
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now better-tg-cli-mcp.service
+systemctl --user status better-tg-cli-mcp.service
+journalctl --user -u better-tg-cli-mcp.service -f
+```
+
+Two things to check before you enable it:
+
+- **The HTTP server needs a secret store.** It refuses to start without one, with
+
+  ```
+  The HTTP server needs a secret store for its token (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).
+  ```
+
+  and then the unit restarts in a loop. A desktop install already has the Secret Service; a headless
+  server needs one first:
+
+  ```bash
+  sudo apt install -y gnome-keyring libsecret-tools
+  printf '%s' "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets --daemonize
+  ```
+
+- **Log in as the service user first** (`telegram auth`, or `telegram onboard --qr`). The server
+  itself starts without a session, but every call it serves fails until one exists.
+
+On a headless box the user manager stops when your last session ends; `sudo loginctl enable-linger "$USER"`
+keeps it running. For a different port, add `--port 8788` to `ExecStart` and to the tunnel command.
+
+
 ## FAQ
 
 **Will Telegram ban my account?**
