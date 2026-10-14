@@ -279,9 +279,9 @@ MCP over HTTP" in [SECURITY.md](SECURITY.md) first.
 #### Running the server as a background service
 
 Keeping the server and the tunnel in a terminal or tmux works for a session. To have the server come
-back after a reboot and stay up across logins, run it as a user service. Neither unit holds a secret:
-the session and the bearer token stay in the Keychain or the Secret Service, and the service reads
-them from there.
+back after a reboot and stay up across logins, run it as a service. Neither unit holds a secret: the
+session and the bearer token stay in the Keychain or the Secret Service, and the service reads them
+from there.
 
 **macOS (launchd).** Save this as `~/Library/LaunchAgents/com.better-tg-cli.mcp.plist`:
 
@@ -331,7 +331,7 @@ launchctl print gui/$(id -u)/com.better-tg-cli.mcp | head -20   # state = runnin
 launchctl bootout gui/$(id -u)/com.better-tg-cli.mcp            # stop and unload
 ```
 
-**Linux (systemd --user).** Save this as `~/.config/systemd/user/better-tg-cli-mcp.service`:
+**Linux, desktop (systemd --user).** Save this as `~/.config/systemd/user/better-tg-cli-mcp.service`:
 
 ```ini
 [Unit]
@@ -358,28 +358,96 @@ systemctl --user status better-tg-cli-mcp.service
 journalctl --user -u better-tg-cli-mcp.service -f
 ```
 
-Two things to check before you enable it:
+Log in as the service user first (`telegram auth`, or `telegram onboard --qr`). The server itself
+starts without a session, but every call it serves fails until one exists. On a desktop the Secret
+Service is already running in your login session, so there is nothing else to do. On a headless box
+the user manager stops when your last session ends; `sudo loginctl enable-linger "$USER"` keeps it
+running. For a different port, add `--port 8788` to `ExecStart` and to the tunnel command.
 
-- **The HTTP server needs a secret store.** It refuses to start without one, with
+**Linux, headless server (system units).** A server has no login session, so there is no Secret
+Service for the token, and the HTTP server exits immediately with
 
-  ```
-  The HTTP server needs a secret store for its token (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).
-  ```
+```
+The HTTP server needs a secret store for its token (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).
+```
 
-  and then the unit restarts in a loop. A desktop install already has the Secret Service; a headless
-  server needs one first:
+`gnome-keyring-daemon --unlock` on its own does not fix this, for two separate reasons:
 
-  ```bash
-  sudo apt install -y gnome-keyring libsecret-tools
-  printf '%s' "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets --daemonize
-  ```
+- the keyring daemon needs a **session bus**, and one started from your shell dies with that shell;
+- if you give the service a **private** bus (`dbus-run-session …`), the daemon and the token inside
+  it are invisible to every other process, so `telegram mcp --token` prints nothing and no client
+  can ever authenticate.
 
-- **Log in as the service user first** (`telegram auth`, or `telegram onboard --qr`). The server
-  itself starts without a session, but every call it serves fails until one exists.
+The fix is one shared session bus at a fixed socket, with the keyring daemon on it, and both units
+pointing at that socket.
 
-On a headless box the user manager stops when your last session ends; `sudo loginctl enable-linger "$USER"`
-keeps it running. For a different port, add `--port 8788` to `ExecStart` and to the tunnel command.
+```bash
+sudo apt install -y gnome-keyring libsecret-tools dbus
+sudo sh -c 'printf %s "$1" > /etc/telegram-mcp.keyring-pass' _ "$KEYRING_PASSWORD"
+sudo chmod 600 /etc/telegram-mcp.keyring-pass
+```
 
+`/etc/systemd/system/telegram-mcp-bus.service` — the bus and the keyring:
+
+```ini
+[Unit]
+Description=Shared session bus + unlocked keyring for the telegram MCP server
+Before=telegram-mcp.service
+
+[Service]
+Type=simple
+# `$(cat file)` strips the trailing newline; a plain `cat file |` appends one and
+# the keyring is then created with one password and unlocked with another.
+ExecStart=/bin/bash -c '/usr/bin/dbus-daemon --session --nofork --nopidfile --address=unix:path=/run/tgmcp-bus & sleep 1; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/tgmcp-bus; eval "$(printf %s "$(cat /etc/telegram-mcp.keyring-pass)" | /usr/bin/gnome-keyring-daemon --unlock --components=secrets 2>/dev/null)"; exec /usr/bin/tail -f /dev/null'
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/systemd/system/telegram-mcp.service` — the server, on that bus:
+
+```ini
+[Unit]
+Description=better-tg-cli MCP server over HTTP
+After=network-online.target telegram-mcp-bus.service
+Wants=network-online.target
+Requires=telegram-mcp-bus.service
+
+[Service]
+Type=simple
+User=you
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/tgmcp-bus
+Environment=TG_NO_UPDATE_CHECK=1
+ExecStart=/usr/bin/env telegram mcp --http --read-only --port 8787
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now telegram-mcp-bus.service telegram-mcp.service
+systemctl status telegram-mcp.service
+
+# the token is readable from any shell now, no dbus-run-session needed
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/tgmcp-bus
+telegram mcp --token
+```
+
+The first start creates the keyring with the password in `/etc/telegram-mcp.keyring-pass`, and every
+later start unlocks that same keyring. The token is created once, on the first `--http` start, and
+survives restarts: clients keep working across `systemctl restart` and across a crash-restart. The
+bus socket is world-writable so the service user and your own shell can both reach it; anyone who can
+reach it can read the token, which is the same trust boundary as the keyring on a desktop.
+
+Verified on Ubuntu 24.04.4 with gnome-keyring 46.1 and better-tg-cli 0.37.0, from a clean host (no
+keyring directory at all): the service comes up `active` with `NRestarts=0`, listens on 8787, answers
+`401` without a token, answers `initialize` and `tools/list` with it, and after `kill -9` on the
+server `NRestarts=1` with the same token still returning `200`.
 
 ## FAQ
 
