@@ -13,16 +13,16 @@ Tracks issue #47. Two measures:
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
-- Dedicated (purpose-built) coverage: **75 (9%)** — 41 called directly in src/, 34 through teleproto client helpers
+- Dedicated (purpose-built) coverage: **81 (10%)** — 47 called directly in src/, 34 through teleproto client helpers
 
 ## 1. Issue #47 measure: dedicated coverage by namespace
 
 | Namespace | Methods | Dedicated | Share | Notes |
 |---|---:|---:|---:|---|
-| `messages` | 259 | 33 | 13% | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
+| `messages` | 259 | 37 | 14% | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
 | `account` | 128 | 4 | 3% | Privacy, sessions, 2FA, notifications, usernames, business/profile. Mostly via `api` (read) + curated. |
 | `payments` | 65 | 0 | 0% | Stars, gifts, invoices. Read parts via `api` (balance/transactions); paying is always refused. |
-| `channels` | 58 | 12 | 21% | Admin log, title/about/photo, slow mode, forum topics, invite links, username, discussion links. |
+| `channels` | 58 | 13 | 22% | Admin log, title/about/photo, slow mode, forum topics, invite links, username, discussion links. |
 | `phone` | 43 | 0 | 0% | Calls and group calls. Out of scope for a CLI (reachable via `api`, undocumented). |
 | `bots` | 38 | 0 | 0% | Mostly bot-only. User-side bits (bot info, menu, commands) via `api`. |
 | `stories` | 33 | 1 | 3% | Peer stories covered; feeds/views/reactions/posting via `api`. |
@@ -39,13 +39,13 @@ Tracks issue #47. Two measures:
 | `users` | 7 | 2 | 29% | Covered for what the CLI needs. |
 | `smsjobs` | 7 | 0 | 0% | SMS relay programme. Out of scope. |
 | `aicompose` | 7 | 0 | 0% | New layer. Via `api`. |
-| `photos` | 5 | 1 | 20% | Profile photos: list/delete/reorder via `api` + curated. |
+| `photos` | 5 | 2 | 40% | Profile photos: list/delete/reorder via `api` + curated. |
 | `langpack` | 5 | 0 | 0% | Client localisation. Out of scope. |
 | `premium` | 5 | 0 | 0% | Boosts. Via `api`. |
 | `updates` | 3 | 3 | 100% | Fully used (by `watch`). |
 | `folders` | 1 | 1 | 100% | Fully used (archive). |
 | `fragment` | 1 | 0 | 0% | Collectible info. Via `api`. |
-| **total** | **823** | **75** | **9%** | Reachability is 100% via `api`. |
+| **total** | **823** | **81** | **10%** | Reachability is 100% via `api`. |
 
 > "Dedicated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.
@@ -55,8 +55,8 @@ Tracks issue #47. Two measures:
 Every public member of Telethon 1.45.0's `TelegramClient` (plus its raw `client(request)`),
 mapped to a CLI command, a covered library helper, or a documented exclusion.
 
-- Covered by a dedicated command: **34**
-- Mapped to a command still being built: **10**
+- Covered by a dedicated command: **40**
+- Mapped to a command still being built: **4**
 - Covered as library/plumbing we drive: **3**
 - Deliberately excluded: **20**
 - **Total members mapped: 67** (0 unaccounted for)
@@ -84,9 +84,9 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `end_takeout` | account | ⛔ excluded | data-export session — via `api` if ever needed |
 | `flood_sleep_threshold` | telegrambaseclient | ⛔ excluded | property, library plumbing |
 | `forward_messages` | messages | ✅ command | `forward` |
-| `get_admin_log` | chats | ⏳ planned | `admin-log` |
+| `get_admin_log` | chats | ✅ command | `admin-log` |
 | `get_dialogs` | dialogs | ✅ command | `chats` / `inbox` |
-| `get_drafts` | dialogs | ⏳ planned | `drafts` |
+| `get_drafts` | dialogs | ✅ command | `drafts` |
 | `get_entity` | users | ✅ command | `info` / `contact` (resolution) |
 | `get_input_entity` | users | ✅ library | resolution plumbing used by every command |
 | `get_me` | users | ✅ command | `whoami` |
@@ -94,19 +94,19 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `get_participants` | chats | ✅ command | `members` |
 | `get_peer_id` | users | ✅ library | IDs are shown everywhere; resolution plumbing |
 | `get_permissions` | chats | ⏳ planned | `permissions <chat> <user>` |
-| `get_profile_photos` | chats | ⏳ planned | `profile-photos` |
+| `get_profile_photos` | chats | ✅ command | `profile-photos` |
 | `get_stats` | chats | ⏳ planned | `stats` |
 | `inline_query` | bots | ✅ command | `inline` |
 | `is_bot` | users | ✅ command | `info` / `contact` report the bot flag |
 | `is_connected` | telegrambaseclient | ⛔ excluded | property, library plumbing |
 | `is_user_authorized` | users | ✅ command | `check` |
-| `iter_admin_log` | chats | ⏳ planned | `admin-log` |
+| `iter_admin_log` | chats | ✅ command | `admin-log` |
 | `iter_dialogs` | dialogs | ✅ command | `chats` |
 | `iter_download` | downloads | ✅ command | `download` |
-| `iter_drafts` | dialogs | ⏳ planned | `drafts` |
+| `iter_drafts` | dialogs | ✅ command | `drafts` |
 | `iter_messages` | messages | ✅ command | `read` |
 | `iter_participants` | chats | ✅ command | `members` |
-| `iter_profile_photos` | chats | ⏳ planned | `profile-photos` |
+| `iter_profile_photos` | chats | ✅ command | `profile-photos` |
 | `kick_participant` | chats | ✅ command | `kick` |
 | `list_event_handlers` | updates | ⛔ excluded | library plumbing |
 | `log_out` | auth | ✅ command | `logout` |

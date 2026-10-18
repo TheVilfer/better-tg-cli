@@ -2795,3 +2795,167 @@ export function serializeApiResult(result: unknown): string {
   const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);
   return json === undefined ? 'null' : json;
 }
+
+// --- Curated coverage: drafts, admin log, profile photos, dialog state -----------------------
+
+export interface DraftInfo {
+  chatId: string;
+  chatTitle: string;
+  text: string;
+  date?: Date;
+  replyToMsgId?: number;
+}
+
+/** All saved-but-unsent drafts across chats (Telethon get_drafts). */
+export async function getDrafts(client: TelegramClient): Promise<DraftInfo[]> {
+  const res = await client.invoke(new Api.messages.GetAllDrafts());
+  const drafts: DraftInfo[] = [];
+  if (res instanceof Api.Updates || res instanceof Api.UpdatesCombined) {
+    for (const update of res.updates) {
+      if (!(update instanceof Api.UpdateDraftMessage) || !(update.draft instanceof Api.DraftMessage)) continue;
+      if (!update.draft.message) continue;
+      drafts.push({
+        chatId: utils.getPeerId(update.peer).toString(),
+        chatTitle: peerTitle(update.peer, res.chats, res.users) ?? utils.getPeerId(update.peer).toString(),
+        text: update.draft.message,
+        date: update.draft.date ? new Date(update.draft.date * 1000) : undefined,
+        replyToMsgId: update.draft.replyTo instanceof Api.InputReplyToMessage ? update.draft.replyTo.replyToMsgId : undefined,
+      });
+    }
+  }
+  return drafts;
+}
+
+export interface AdminLogEntry {
+  id: string;
+  date: Date;
+  user: string;
+  action: string;
+  detail?: string;
+}
+
+function describeAdminAction(action: Api.TypeChannelAdminLogEventAction): string | undefined {
+  if (action instanceof Api.ChannelAdminLogEventActionChangeTitle) return `"${action.prevValue}" → "${action.newValue}"`;
+  if (action instanceof Api.ChannelAdminLogEventActionChangeAbout) return `about: "${action.prevValue}" → "${action.newValue}"`;
+  if (action instanceof Api.ChannelAdminLogEventActionDeleteMessage && action.message instanceof Api.Message) return messageText(action.message);
+  if (action instanceof Api.ChannelAdminLogEventActionEditMessage && action.newMessage instanceof Api.Message) return messageText(action.newMessage);
+  if (action instanceof Api.ChannelAdminLogEventActionChangeUsername) return `@${action.prevValue || '∅'} → @${action.newValue || '∅'}`;
+  return undefined;
+}
+
+/** Recent administrative actions in a supergroup/channel (Telethon get_admin_log). */
+export async function getAdminLog(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { limit?: number; query?: string } = {},
+): Promise<{ chatTitle: string; entries: AdminLogEntry[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('The admin log is only available for supergroups and channels.');
+  }
+  const res = await client.invoke(new Api.channels.GetAdminLog({
+    channel: entity,
+    q: options.query ?? '',
+    maxId: bigInt(0),
+    minId: bigInt(0),
+    limit: options.limit ?? 50,
+  }));
+  const entries: AdminLogEntry[] = res.events.map(event => {
+    const user = res.users.find((u): u is Api.User => u instanceof Api.User && u.id.equals(event.userId));
+    return {
+      id: event.id.toString(),
+      date: new Date(event.date * 1000),
+      user: user ? ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.id.toString()) : event.userId.toString(),
+      action: event.action.className.replace(/^ChannelAdminLogEventAction/, ''),
+      detail: describeAdminAction(event.action),
+    };
+  });
+  return { chatTitle: getChatTitle(entity), entries };
+}
+
+export interface ProfilePhotoInfo {
+  id: string;
+  date: Date;
+  dcId?: number;
+}
+
+/** A user's profile photos, newest first (Telethon get_profile_photos). */
+export async function getProfilePhotos(
+  client: TelegramClient,
+  identifier: string,
+  options: { limit?: number } = {},
+): Promise<{ title: string; count: number; photos: ProfilePhotoInfo[] }> {
+  const entity = await resolveChat(client, identifier);
+  if (!(entity instanceof Api.User)) {
+    throw new Error('profile-photos lists a user\'s photos; for a chat or channel photo use `avatar`.');
+  }
+  const res = await client.invoke(new Api.photos.GetUserPhotos({
+    userId: entity,
+    offset: 0,
+    maxId: bigInt(0),
+    limit: options.limit ?? 50,
+  }));
+  const photos: ProfilePhotoInfo[] = res.photos
+    .filter((p): p is Api.Photo => p instanceof Api.Photo)
+    .map(p => ({ id: p.id.toString(), date: new Date(p.date * 1000), dcId: p.dcId }));
+  const count = res instanceof Api.photos.PhotosSlice ? res.count : photos.length;
+  return { title: getChatTitle(entity), count, photos };
+}
+
+/** Pin or unpin a chat in the dialog list (messages.ToggleDialogPin). */
+export async function toggleDialogPin(
+  client: TelegramClient,
+  chatIdentifier: string,
+  pinned: boolean,
+): Promise<{ title: string }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  await client.invoke(new Api.messages.ToggleDialogPin({
+    pinned: pinned || undefined,
+    // ToggleDialogPin takes an InputDialogPeer; teleproto types the field as EntityLike.
+    peer: new Api.InputDialogPeer({ peer: utils.getInputPeer(entity) }) as unknown as Api.TypeEntityLike,
+  }));
+  return { title: getChatTitle(entity) };
+}
+
+/** Mark a chat unread (or clear that mark) without changing message read state. */
+export async function markDialogUnread(
+  client: TelegramClient,
+  chatIdentifier: string,
+  unread: boolean,
+): Promise<{ title: string }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  await client.invoke(new Api.messages.MarkDialogUnread({
+    unread: unread || undefined,
+    peer: new Api.InputDialogPeer({ peer: utils.getInputPeer(entity) }) as unknown as Api.TypeEntityLike,
+  }));
+  return { title: getChatTitle(entity) };
+}
+
+/**
+ * Delete (remove from the dialog list) a conversation (Telethon delete_dialog). A user or basic
+ * group chat has its history deleted; a supergroup/channel is left. `revoke` also deletes the
+ * copy for the other side of a private chat.
+ */
+export async function deleteDialog(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { revoke?: boolean } = {},
+): Promise<{ title: string; left: boolean }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const title = getChatTitle(entity);
+  if (entity instanceof Api.Channel) {
+    await client.invoke(new Api.channels.LeaveChannel({ channel: entity }));
+    return { title, left: true };
+  }
+  if (entity instanceof Api.Chat) {
+    const me = await getMe(client);
+    await client.invoke(new Api.messages.DeleteChatUser({ chatId: entity.id, userId: me }));
+    return { title, left: true };
+  }
+  await client.invoke(new Api.messages.DeleteHistory({
+    peer: utils.getInputPeer(entity),
+    maxId: 0,
+    revoke: options.revoke || undefined,
+  }));
+  return { title, left: false };
+}

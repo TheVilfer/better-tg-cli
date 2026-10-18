@@ -27,6 +27,8 @@ export interface MockUser {
   mutual?: boolean;
   about?: string;
   blocked?: boolean;
+  /** How many profile photos this user has (for `profile-photos`); synthesized deterministically. */
+  profilePhotos?: number;
   /** Bots only: what the bot answers to a message with exactly this text (e.g. "/start"). */
   commands?: Record<string, MockReply>;
 }
@@ -69,6 +71,14 @@ export interface MockChat {
   /** Unix time the chat is muted until. */
   mutedUntil?: number;
   archived?: boolean;
+  /** Pinned in the dialog list (for `pin-chat` / `unpin-chat`). */
+  pinnedDialog?: boolean;
+  /** Marked unread with no unread messages (for `mark-unread`). */
+  markedUnread?: boolean;
+  /** A saved but unsent draft message (for `drafts`). */
+  draft?: string;
+  /** Recent admin-log entries (for `admin-log`), newest last. */
+  adminLog?: { id: number; userId: number; action: 'join' | 'leave' | 'title'; prev?: string; now?: string; ago?: number }[];
   topics?: { id: number; title: string; unread?: number; closed?: boolean; pinned?: boolean }[];
   /** Channel → its discussion group (bare ID), where post comments live. */
   linkedChatId?: number;
@@ -138,7 +148,7 @@ export function seedWorld(): MockWorld {
     me: 1000,
     users: [
       { id: 1000, firstName: 'Mock', lastName: 'Owner', username: 'mock_owner', phone: '15550000000', about: 'The account TG_MOCK logs you in as' },
-      { id: 1001, firstName: 'Alice', lastName: 'Example', username: 'alice_example', phone: '15550000001', contact: true, mutual: true, about: 'Designer. Replies slowly on Fridays.' },
+      { id: 1001, firstName: 'Alice', lastName: 'Example', username: 'alice_example', phone: '15550000001', contact: true, mutual: true, about: 'Designer. Replies slowly on Fridays.', profilePhotos: 2 },
       { id: 1002, firstName: 'Bob', lastName: 'Sample', username: 'bob_sample', contact: true },
       { id: 1003, firstName: 'Carol', phone: '15550000003', contact: true, mutual: true },
       {
@@ -170,6 +180,7 @@ export function seedWorld(): MockWorld {
         kind: 'user',
         unread: 2,
         readInboxMaxId: 3,
+        draft: 'Let us pick the deadline on the call tomorrow',
         messages: [
           { id: 1, ago: 3 * DAY, text: 'Hi! Did you get the mockups?' },
           { id: 2, ago: 3 * DAY - 5 * MIN, out: true, text: 'Yes, looking now', replyTo: 1 },
@@ -225,6 +236,11 @@ export function seedWorld(): MockWorld {
         members: [{ userId: 1000, role: 'creator' }, { userId: 1001, role: 'admin' }, { userId: 1002 }, { userId: 1003 }],
         unread: 1,
         readInboxMaxId: 2,
+        adminLog: [
+          { id: 1, userId: 1000, action: 'title', prev: 'Project', now: 'Team', ago: 9 * DAY },
+          { id: 2, userId: 1002, action: 'join', ago: 5 * DAY },
+          { id: 3, userId: 1003, action: 'leave', ago: 2 * HOUR },
+        ],
         messages: [
           { id: 1, ago: 5 * DAY, from: 1001, text: 'Release checklist is in the doc: https://example.com/checklist' },
           { id: 2, ago: 4 * DAY, out: true, text: 'Shipping on Thursday', pinned: true },

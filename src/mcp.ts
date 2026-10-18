@@ -23,7 +23,7 @@ const MAX_OUTPUT = 100_000;
 export const READ_COMMANDS = new Set([
   'check', 'whoami', 'chats', 'read', 'get', 'info', 'topics', 'link', 'contacts', 'search',
   'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'inline', 'watch', 'contact', 'members',
-  'admins', 'groups', 'folders', 'folder', 'write-access',
+  'admins', 'groups', 'folders', 'folder', 'write-access', 'drafts', 'admin-log', 'profile-photos',
 ]);
 
 /** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other

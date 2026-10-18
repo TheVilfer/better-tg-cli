@@ -560,6 +560,64 @@ export class MockClient {
         this.save();
         return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
       }
+      case 'messages.GetAllDrafts': {
+        const drafts = this.world.chats.filter(c => c.draft);
+        return new Api.Updates(args({
+          updates: drafts.map(c => new Api.UpdateDraftMessage({ peer: this.peerOf(c), draft: new Api.DraftMessage({ message: c.draft!, date: now() }) })),
+          users: this.world.users.map(u => this.user(u)),
+          chats: this.world.chats.filter(c => c.kind !== 'user').map(c => this.entityOf(c)),
+          date: now(), seq: 0,
+        }));
+      }
+      case 'channels.GetAdminLog': {
+        const chat = this.chat(request.channel);
+        const toAction = (e: NonNullable<MockChat['adminLog']>[number]) =>
+          e.action === 'title' ? new Api.ChannelAdminLogEventActionChangeTitle({ prevValue: e.prev ?? '', newValue: e.now ?? '' })
+            : e.action === 'join' ? new Api.ChannelAdminLogEventActionParticipantJoin()
+              : new Api.ChannelAdminLogEventActionParticipantLeave();
+        const events = [...(chat.adminLog ?? [])].reverse().map(e => new Api.ChannelAdminLogEvent(args({
+          id: bigInt(e.id), date: now() - (e.ago ?? 0), userId: bigInt(e.userId), action: toAction(e),
+        })));
+        return new Api.channels.AdminLogResults(args({
+          events, chats: [this.entityOf(chat)], users: this.world.users.map(u => this.user(u)),
+        }));
+      }
+      case 'photos.GetUserPhotos': {
+        const user = this.locate(request.userId).user;
+        if (!user) throw new Error('USER_ID_INVALID');
+        const count = user.profilePhotos ?? 0;
+        const photos = Array.from({ length: count }, (_unused, i) => new Api.Photo(args({
+          id: bigInt(user.id * 100 + i), accessHash: HASH, fileReference: Buffer.alloc(0),
+          date: now() - i * 86400, sizes: [], dcId: 1,
+        })));
+        return new Api.photos.PhotosSlice(args({ count, photos, users: [this.user(user)] }));
+      }
+      case 'messages.ToggleDialogPin': {
+        const chat = this.chat(request.peer);
+        if (request.pinned) chat.pinnedDialog = true; else delete chat.pinnedDialog;
+        this.save();
+        return true;
+      }
+      case 'messages.MarkDialogUnread': {
+        const chat = this.chat(request.peer);
+        if (request.unread) chat.markedUnread = true; else delete chat.markedUnread;
+        this.save();
+        return true;
+      }
+      case 'messages.DeleteHistory': {
+        const chat = this.chat(request.peer);
+        if (request.justClear) chat.messages = [];
+        else { const i = this.world.chats.indexOf(chat); if (i >= 0) this.world.chats.splice(i, 1); }
+        this.save();
+        return new Api.messages.AffectedHistory(args({ pts: 0, ptsCount: 0, offset: 0 }));
+      }
+      case 'channels.LeaveChannel': {
+        const chat = this.chat(request.channel);
+        const i = this.world.chats.indexOf(chat);
+        if (i >= 0) this.world.chats.splice(i, 1);
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
+      }
       case 'folders.EditPeerFolders': {
         for (const item of request.folderPeers ?? []) {
           const chat = this.chat(item.peer);

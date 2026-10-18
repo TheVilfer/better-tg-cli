@@ -78,6 +78,13 @@ import {
   skillCommand,
   onboardCommand,
   apiCommand,
+  draftsCommand,
+  adminLogCommand,
+  profilePhotosCommand,
+  pinChatCommand,
+  unpinChatCommand,
+  markUnreadCommand,
+  deleteDialogCommand,
 } from './commands/index.js';
 
 
@@ -112,6 +119,9 @@ program.addCommand(storiesCommand);
 program.addCommand(avatarCommand);
 program.addCommand(inlineCommand);
 program.addCommand(watchCommand);
+program.addCommand(draftsCommand);
+program.addCommand(adminLogCommand);
+program.addCommand(profilePhotosCommand);
 
 // Contact/group commands
 program.addCommand(contactCommand);
@@ -155,6 +165,10 @@ program.addCommand(archiveCommand);
 program.addCommand(unarchiveCommand);
 program.addCommand(createGroupCommand);
 program.addCommand(createChannelCommand);
+program.addCommand(pinChatCommand);
+program.addCommand(unpinChatCommand);
+program.addCommand(markUnreadCommand);
+program.addCommand(deleteDialogCommand);
 program.addCommand(typingCommand);
 program.addCommand(setNameCommand);
 program.addCommand(setBioCommand);
