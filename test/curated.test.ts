@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TelegramClient } from 'teleproto';
 import {
-  getDrafts, getAdminLog, getProfilePhotos, getPermissions, toggleDialogPin, markDialogUnread, deleteDialog, disconnectClient,
+  getDrafts, getAdminLog, getProfilePhotos, getPermissions, getScheduledMessages, toggleDialogPin, markDialogUnread, deleteDialog, disconnectClient,
 } from '../src/client.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
@@ -47,6 +47,19 @@ describe('profile-photos', () => {
 
   it('is empty for a user with none', async () => {
     expect((await getProfilePhotos(mock(), 'me')).photos).toHaveLength(0);
+  });
+});
+
+describe('scheduled messages', () => {
+  it('lists messages queued to send later (not in normal history)', async () => {
+    const { chatTitle, messages } = await getScheduledMessages(mock(), 'alice');
+    expect(chatTitle).toBe('Alice');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ id: 1001, text: 'Happy New Year! 🎉', isOutgoing: true });
+  });
+
+  it('is empty for a chat with none', async () => {
+    expect((await getScheduledMessages(mock(), 'Family')).messages).toHaveLength(0);
   });
 });
 

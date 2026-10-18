@@ -63,6 +63,7 @@ telegram mark-read <chat> ; telegram mute <chat> -d 8h
 telegram drafts ; telegram admin-log <group> ; telegram profile-photos <user>
 telegram permissions <group> [user]           # a member's rights, or the chat default
 telegram stats <chat> [--message <id>]         # full channel/group stats, or one post's stats
+telegram scheduled <chat>                       # messages queued to send later
 telegram read <chat> --full                    # every message stat (views, reactions, flags, media); also on get/search/inbox/watch
 telegram pin-chat <chat> ; telegram mark-unread <chat> ; telegram delete-dialog <chat>
 telegram api <namespace.Method> --params '<json>'   # any raw TL method; full API reachability

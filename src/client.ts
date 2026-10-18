@@ -3462,3 +3462,22 @@ export async function getMessageStats(client: TelegramClient, chatIdentifier: st
   }
   return out;
 }
+
+// --- Scheduled messages (messages.GetScheduledHistory) ---------------------------------------
+
+/** Messages queued to send later (the issue's top messages gap). Create them with `send --schedule`. */
+export async function getScheduledMessages(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { full?: boolean } = {},
+): Promise<{ chatTitle: string; messages: MessageInfo[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const res = await client.invoke(new Api.messages.GetScheduledHistory({ peer: entity, hash: bigInt(0) }));
+  const messages: MessageInfo[] = [];
+  if ('messages' in res) {
+    for (const msg of res.messages) {
+      if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg, { full: options.full }));
+    }
+  }
+  return { chatTitle: getChatTitle(entity), messages };
+}

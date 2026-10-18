@@ -92,6 +92,8 @@ export interface MockChat {
   /** Channel → its discussion group (bare ID), where post comments live. */
   linkedChatId?: number;
   messages: MockMessage[];
+  /** Messages queued to send later (listed by `scheduled`). */
+  scheduled?: MockMessage[];
 }
 
 export interface MockMessage {
@@ -129,6 +131,8 @@ export interface MockMessage {
   noforwards?: boolean;
   /** A poll attached to this message (for `--full` media detail). */
   poll?: { question: string; options: { text: string; voters?: number; chosen?: boolean; correct?: boolean }[]; quiz?: boolean; multiple?: boolean; closed?: boolean; totalVoters?: number };
+  /** Unix time this message is scheduled to send (listed by `scheduled`, not in normal history). */
+  scheduledFor?: number;
 }
 
 export interface MockFolder {
@@ -215,6 +219,9 @@ export function seedWorld(): MockWorld {
             { userId: 1001, customEmojiId: '5201' },
             { userId: 1002, paid: true },
           ] },
+        ],
+        scheduled: [
+          { id: 1001, date: 4102444800, out: true, text: 'Happy New Year! 🎉' },
         ],
       },
       {

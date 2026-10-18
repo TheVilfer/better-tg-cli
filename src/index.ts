@@ -87,6 +87,7 @@ import {
   deleteDialogCommand,
   permissionsCommand,
   statsCommand,
+  scheduledCommand,
 } from './commands/index.js';
 
 
@@ -126,6 +127,7 @@ program.addCommand(adminLogCommand);
 program.addCommand(profilePhotosCommand);
 program.addCommand(permissionsCommand);
 program.addCommand(statsCommand);
+program.addCommand(scheduledCommand);
 
 // Contact/group commands
 program.addCommand(contactCommand);

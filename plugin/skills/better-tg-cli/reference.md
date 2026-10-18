@@ -36,6 +36,8 @@ code. This file only covers behaviour that the flag list can't tell you.
   collection — it needs no extra API calls. Over MCP, pass `--full` in `telegram_read` args.
 - `drafts` lists saved-but-unsent drafts (chat title + text). `profile-photos <user>` lists a
   user's profile photos; `avatar <user>` downloads the current one.
+- `scheduled <chat>` lists messages queued to send later (create them with `send --schedule`); it
+  takes `--full` like `read`.
 - `admin-log <chat>` shows a supergroup/channel's recent admin actions (Telegram's "Recent
   actions"), newest first, with `-n` and `-q <text>`. It needs admin rights in that chat.
 - `permissions <chat> [user]` shows a member's status (creator/admin/member/restricted/banned/left)

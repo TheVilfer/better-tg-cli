@@ -676,6 +676,11 @@ export class MockClient {
         const u = this.findUser(member.userId);
         return new Api.channels.ChannelParticipant(args({ participant, chats: [this.entityOf(chat)], users: u ? [this.user(u)] : [] }));
       }
+      case 'messages.GetScheduledHistory': {
+        const chat = this.chat(request.peer);
+        const list = chat.scheduled ?? [];
+        return new Api.messages.Messages(args({ messages: list.map(m => this.message(chat, m)), chats: [], users: [] }));
+      }
       case 'messages.GetAllDrafts': {
         const drafts = this.world.chats.filter(c => c.draft);
         return new Api.Updates(args({
