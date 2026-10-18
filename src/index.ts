@@ -77,6 +77,7 @@ import {
   updateCommand,
   skillCommand,
   onboardCommand,
+  apiCommand,
 } from './commands/index.js';
 
 
@@ -164,6 +165,7 @@ program.addCommand(setAvatarCommand);
 program.addCommand(writeAccessCommand);
 
 // Utilities
+program.addCommand(apiCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);

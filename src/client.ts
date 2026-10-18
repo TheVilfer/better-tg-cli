@@ -10,6 +10,7 @@ import bigInt from 'big-integer';
 import { existsSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
 import { basename, join } from 'path';
+import { isTTY } from './spinner.js';
 
 let clientInstance: TelegramClient | null = null;
 
@@ -2742,4 +2743,55 @@ export async function listContacts(client: TelegramClient, query?: string): Prom
     rows.push({ id: u.id.toString(), name, username: u.username ?? undefined, phone: u.phone ?? undefined, mutual: u.mutualContact || undefined });
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// --- Generic `api` command -------------------------------------------------------------------
+
+/**
+ * Build any TL request from the schema and invoke it (issue #47 "reachability"). Peer/file fields
+ * are passed through `materializeApiParams`: `{"_chat": "<identifier>"}` resolves a chat the same
+ * way every other command does (title, @username, ID or "me"; strict under a write), and
+ * `{"_base64": "…"}` / `{"_hex": "…"}` become raw bytes. Everything else is passed verbatim;
+ * teleproto resolves any remaining entity-like fields (a bare @username/ID) on invoke.
+ */
+export async function invokeApi(
+  client: TelegramClient,
+  methodName: string,
+  rawParams: Record<string, unknown> = {},
+): Promise<unknown> {
+  const { resolveApiMethod } = await import('./api-methods.js');
+  const { ctor } = resolveApiMethod(methodName);
+  const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
+  const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
+  return client.invoke(request);
+}
+
+async function materializeApiParams(client: TelegramClient, value: unknown): Promise<unknown> {
+  if (Array.isArray(value)) {
+    return Promise.all(value.map(v => materializeApiParams(client, v)));
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj._chat === 'string') return resolveChat(client, obj._chat);
+    if (typeof obj._base64 === 'string') return Buffer.from(obj._base64, 'base64');
+    if (typeof obj._hex === 'string') return Buffer.from(obj._hex, 'hex');
+    if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return bigInt(String(obj._bigint));
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
+    return out;
+  }
+  return value;
+}
+
+/** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
+export function serializeApiResult(result: unknown): string {
+  const pretty = isTTY || process.env.TG_JSON_PRETTY === '1';
+  const replacer = (_key: string, val: unknown): unknown => {
+    if (typeof val === 'bigint') return val.toString();
+    if (bigInt.isInstance(val)) return val.toString();
+    if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+    return val;
+  };
+  const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);
+  return json === undefined ? 'null' : json;
 }

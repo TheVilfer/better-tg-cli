@@ -12,7 +12,7 @@ Tracks issue #47. Two measures:
 ## Headline
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
-- Reachable today: **75 (9%)** — no generic command yet; only dedicated commands reach the API
+- Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
 - Dedicated (purpose-built) coverage: **75 (9%)** — 41 called directly in src/, 34 through teleproto client helpers
 
 ## 1. Issue #47 measure: dedicated coverage by namespace
@@ -45,7 +45,7 @@ Tracks issue #47. Two measures:
 | `updates` | 3 | 3 | 100% | Fully used (by `watch`). |
 | `folders` | 1 | 1 | 100% | Fully used (archive). |
 | `fragment` | 1 | 0 | 0% | Collectible info. Via `api`. |
-| **total** | **823** | **75** | **9%** | No generic `api` command yet. |
+| **total** | **823** | **75** | **9%** | Reachability is 100% via `api`. |
 
 > "Dedicated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.
@@ -55,8 +55,8 @@ Tracks issue #47. Two measures:
 Every public member of Telethon 1.45.0's `TelegramClient` (plus its raw `client(request)`),
 mapped to a CLI command, a covered library helper, or a documented exclusion.
 
-- Covered by a dedicated command: **33**
-- Mapped to a command still being built: **11**
+- Covered by a dedicated command: **34**
+- Mapped to a command still being built: **10**
 - Covered as library/plumbing we drive: **3**
 - Deliberately excluded: **20**
 - **Total members mapped: 67** (0 unaccounted for)
@@ -129,7 +129,7 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `takeout` | account | ⛔ excluded | data-export session — via `api` if ever needed |
 | `unpin_message` | messages | ✅ command | `unpin` |
 | `upload_file` | uploads | ✅ library | upload plumbing driven by `send-file` |
-| `__call__ (raw request)` | core | ⏳ planned | `api <namespace.Method> --params` (generic) |
+| `__call__ (raw request)` | core | ✅ command | `api <namespace.Method> --params` (generic) |
 
 ## 3. Deliberate exclusions (and why)
 

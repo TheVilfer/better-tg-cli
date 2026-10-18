@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
+import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -104,6 +105,21 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   if (cmd === 'watch' && !args.some(a => /^(-t|-n|--timeout|--limit)(=|$)/.test(a))) {
     return 'watch needs -t <seconds> or -n <count> (calls time out after 120s)';
   }
+  // `api` is classified per method: a read method (Get*/Check*/Search*/Resolve*) goes through
+  // telegram_read, everything else through telegram_write; refused methods never run.
+  if (cmd === 'api') {
+    const method = apiMethodToken(args as string[]);
+    if (!method) return 'api needs a method, e.g. ["api","messages.GetHistory"]';
+    const refusal = apiRefusalReason(method);
+    if (refusal) return refusal;
+    const read = isApiReadMethod(method);
+    if (tool === 'telegram_read') {
+      return read ? { argv: args as string[], readOnly: true } : `"api ${method}" changes something; use telegram_write`;
+    }
+    if (read) return `"api ${method}" is read-only; use telegram_read`;
+    const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
+    return { argv: args as string[], readOnly: false, stdin };
+  }
   const known = READ_COMMANDS.has(cmd) || isWriteCommand(cmd);
   if (tool === 'telegram_read') {
     if (!READ_COMMANDS.has(cmd)) {
@@ -114,6 +130,17 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   if (READ_COMMANDS.has(cmd)) return `"${cmd}" is read-only; use telegram_read`;
   const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
   return { argv: args as string[], readOnly: false, stdin };
+}
+
+/** The method name in an `api` argv (`["api","messages.GetHistory","--params","{…}"]`). */
+export function apiMethodToken(args: string[]): string | undefined {
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-p' || a === '--params') { i++; continue; } // skips the value too
+    if (a.startsWith('-')) continue; // other flags (--write, --params=…, -p=…)
+    return a;
+  }
+  return undefined;
 }
 
 function cliBase(): string[] {
