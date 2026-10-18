@@ -66,6 +66,15 @@ export interface MockChat {
   role?: 'creator' | 'admin';
   members?: { userId: number; role?: 'creator' | 'admin' }[];
   membersCount?: number;
+  onlineCount?: number;
+  kickedCount?: number;
+  bannedCount?: number;
+  slowModeSeconds?: number;
+  verified?: boolean;
+  scam?: boolean;
+  fake?: boolean;
+  /** This account may view aggregate statistics for this chat (otherwise CHAT_ADMIN_REQUIRED). */
+  stats?: boolean;
   unread?: number;
   readInboxMaxId?: number;
   /** Unix time the chat is muted until. */
@@ -103,10 +112,23 @@ export interface MockMessage {
   keyboard?: boolean;
   pinned?: boolean;
   edited?: boolean;
-  reactions?: { userId: number; emoji: string }[];
+  /** A reaction: a standard `emoji`, a `customEmojiId`, or a `paid` (star) reaction. */
+  reactions?: { userId: number; emoji?: string; customEmojiId?: string; paid?: boolean }[];
   /** Comment count shown on a channel post or thread root. */
   replies?: number;
   forwardedFrom?: number;
+  /** --full stats. */
+  views?: number;
+  forwards?: number;
+  viaBotId?: number;
+  /** Album group id (shared by messages in the same album). */
+  groupedId?: number;
+  postAuthor?: string;
+  ttlPeriod?: number;
+  silent?: boolean;
+  noforwards?: boolean;
+  /** A poll attached to this message (for `--full` media detail). */
+  poll?: { question: string; options: { text: string; voters?: number; chosen?: boolean; correct?: boolean }[]; quiz?: boolean; multiple?: boolean; closed?: boolean; totalVoters?: number };
 }
 
 export interface MockFolder {
@@ -186,7 +208,13 @@ export function seedWorld(): MockWorld {
           { id: 2, ago: 3 * DAY - 5 * MIN, out: true, text: 'Yes, looking now', replyTo: 1 },
           { id: 3, ago: 1 * DAY, text: 'Here is the new header', media: { kind: 'photo' } },
           { id: 4, ago: 2 * HOUR, text: 'Can we talk about the deadline tomorrow?' },
-          { id: 5, ago: 25 * MIN, text: 'Ping me when you are free', reactions: [{ userId: 1000, emoji: '👍' }] },
+          { id: 5, ago: 25 * MIN, text: 'Ping me when you are free', edited: true, reactions: [
+            { userId: 1000, emoji: '👍' },
+            { userId: 1002, emoji: '👍' },
+            { userId: 1003, emoji: '❤️' },
+            { userId: 1001, customEmojiId: '5201' },
+            { userId: 1002, paid: true },
+          ] },
         ],
       },
       {
@@ -233,6 +261,9 @@ export function seedWorld(): MockWorld {
         role: 'creator',
         about: 'Work chat',
         membersCount: 4,
+        onlineCount: 2,
+        slowModeSeconds: 10,
+        stats: true,
         members: [{ userId: 1000, role: 'creator' }, { userId: 1001, role: 'admin' }, { userId: 1002 }, { userId: 1003 }],
         unread: 1,
         readInboxMaxId: 2,
@@ -242,8 +273,8 @@ export function seedWorld(): MockWorld {
           { id: 3, userId: 1003, action: 'leave', ago: 2 * HOUR },
         ],
         messages: [
-          { id: 1, ago: 5 * DAY, from: 1001, text: 'Release checklist is in the doc: https://example.com/checklist' },
-          { id: 2, ago: 4 * DAY, out: true, text: 'Shipping on Thursday', pinned: true },
+          { id: 1, ago: 5 * DAY, from: 1001, text: 'Release checklist is in the doc: https://example.com/checklist', viaBotId: 2001, groupedId: 7001, reactions: [{ userId: 1000, emoji: '🚀' }, { userId: 1002, emoji: '🚀' }] },
+          { id: 2, ago: 4 * DAY, out: true, text: 'Shipping on Thursday', pinned: true, silent: true },
           { id: 3, ago: 40 * MIN, from: 1002, text: 'CI is green again' },
         ],
       },
@@ -286,13 +317,18 @@ export function seedWorld(): MockWorld {
         username: 'mock_news',
         about: 'Announcements',
         membersCount: 15230,
+        onlineCount: 320,
+        kickedCount: 4,
+        bannedCount: 1,
+        verified: true,
+        stats: true,
         linkedChatId: 5002,
         unread: 2,
         readInboxMaxId: 1,
         messages: [
-          { id: 1, ago: 6 * DAY, text: 'Version 1.0 is out', replies: 2, pinned: true },
-          { id: 2, ago: 1 * DAY, text: 'Maintenance window on Sunday', media: { kind: 'photo' }, replies: 0 },
-          { id: 3, ago: 3 * HOUR, text: 'Weekly digest: three things shipped', media: { kind: 'video', fileName: 'digest.mp4', mimeType: 'video/mp4', size: 5242880, duration: 34 } },
+          { id: 1, ago: 6 * DAY, text: 'Version 1.0 is out', replies: 2, pinned: true, views: 15230, forwards: 42, postAuthor: 'Editor', reactions: [{ userId: 1001, emoji: '🎉' }, { userId: 1002, emoji: '🎉' }, { userId: 1003, emoji: '👍' }] },
+          { id: 2, ago: 1 * DAY, text: 'Maintenance window on Sunday', media: { kind: 'photo' }, replies: 0, views: 9800, forwards: 5 },
+          { id: 3, ago: 3 * HOUR, text: 'Weekly digest: three things shipped', views: 12044, forwards: 18, media: { kind: 'video', fileName: 'digest.mp4', mimeType: 'video/mp4', size: 5242880, duration: 34 } },
         ],
       },
       {

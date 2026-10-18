@@ -207,6 +207,8 @@ telegram sync --chat "Chat" --output ./export --resume   # incremental markdown 
 telegram drafts                               # saved but unsent drafts
 telegram admin-log "Team"                     # a group's recent admin actions
 telegram profile-photos @alice                # a user's profile photos
+telegram read @channel -n 20 --full           # every message stat (views, reactions, flags, media)
+telegram stats "Mock News"                    # full channel/group stats; --message <id> for one post
 
 telegram write-access on --for 1h             # a human confirms this
 telegram send @alice "on my way"
@@ -219,8 +221,10 @@ telegram api messages.GetAllDrafts            # call any raw TL method (full API
 telegram api channels.GetAdminLog --params '{"channel":{"_chat":"Team"},"limit":20,"q":""}'
 ```
 
-Read commands take `--json`, and some also take `--markdown`. See all commands with
-`telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
+Read commands take `--json`, and some also take `--markdown`. `read`/`get`/`search`/`inbox`/`watch`
+take `--full` (alias `--stats`) to include every per-message statistic (views, forwards, full
+reaction breakdown, comments, flags, rich media metadata) — default output is unchanged without it.
+See all commands with `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
 explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
 `telegram api <namespace.Method>` reaches 100% of the Telegram client API;
 [docs/api-coverage.md](docs/api-coverage.md) tracks coverage against the schema and Telethon.

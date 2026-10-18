@@ -24,7 +24,7 @@ export const READ_COMMANDS = new Set([
   'check', 'whoami', 'chats', 'read', 'get', 'info', 'topics', 'link', 'contacts', 'search',
   'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'inline', 'watch', 'contact', 'members',
   'admins', 'groups', 'folders', 'folder', 'write-access', 'drafts', 'admin-log', 'profile-photos',
-  'permissions',
+  'permissions', 'stats',
 ]);
 
 /** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
@@ -56,7 +56,8 @@ export const TOOLS = [
     title: 'Read Telegram',
     description:
       'Run a read-only telegram CLI command on the user\'s account, e.g. ["inbox","-n","10"], ["read","@user","-n","20"], ["search","invoice","--chat","Work"]. ' +
-      'args[0] is the command; chats are an ID, @username, "me" or a title. Output is compact text (add "--json" for JSON). watch needs -t or -n.',
+      'args[0] is the command; chats are an ID, @username, "me" or a title. Output is compact text (add "--json" for JSON). ' +
+      'Add "--full" (read/get/search/inbox/watch) for complete per-message stats: views, forwards, full reactions, comments, flags, media detail. watch needs -t or -n.',
     inputSchema: {
       type: 'object',
       properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1 } },

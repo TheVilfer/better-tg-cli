@@ -56,3 +56,4 @@ export { adminLogCommand } from './admin-log.js';
 export { profilePhotosCommand } from './profile-photos.js';
 export { pinChatCommand, unpinChatCommand, markUnreadCommand, deleteDialogCommand } from './dialog.js';
 export { permissionsCommand } from './permissions.js';
+export { statsCommand } from './stats.js';

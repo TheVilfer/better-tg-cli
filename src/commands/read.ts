@@ -50,6 +50,8 @@ export const readCommand = new Command('read')
   .option('--unread', 'Only messages you have not read yet (up to --limit)')
   .option('--asc', 'Oldest first (chronological order)')
   .option('--max-text <chars>', 'Truncate each message text to N characters')
+  .option('--full', 'Include full per-message stats (views, forwards, reactions, flags, media detail)')
+  .option('--stats', 'Alias for --full')
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
   .action(async (chat, options) => {
@@ -60,6 +62,7 @@ export const readCommand = new Command('read')
 
       const fetchOptions: Parameters<typeof getMessages>[2] = {
         limit: parseInt(options.limit),
+        full: Boolean(options.full || options.stats),
       };
       if (options.since) fetchOptions.minDate = parseTimeOffset(options.since);
       if (options.until) fetchOptions.maxDate = parseTimeOffset(options.until);
@@ -98,6 +101,8 @@ export const getCommand = new Command('get')
   .argument('<chat>', 'Chat name, @username, numeric ID, or "me"')
   .argument('<ids...>', 'Message IDs (space or comma separated)')
   .option('--max-text <chars>', 'Truncate each message text to N characters')
+  .option('--full', 'Include full per-message stats (views, forwards, reactions, flags, media detail)')
+  .option('--stats', 'Alias for --full')
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
   .action(async (chat, ids: string[], options) => {
@@ -106,7 +111,7 @@ export const getCommand = new Command('get')
     try {
       const parsed = ids.flatMap(v => v.split(',')).filter(Boolean).map(v => parseId(v.trim(), 'get'));
       const client = await getClient();
-      const { messages, chatTitle, missing } = await getMessagesByIds(client, chat, parsed);
+      const { messages, chatTitle, missing } = await getMessagesByIds(client, chat, parsed, { full: Boolean(options.full || options.stats) });
 
       spinner.stop();
       printMessages(messages, chatTitle, { ...options, asc: false }, missing.length ? { missing } : {});

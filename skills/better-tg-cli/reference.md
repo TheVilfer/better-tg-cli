@@ -25,6 +25,15 @@ code. This file only covers behaviour that the flag list can't tell you.
   and `duration`.
 - A long post costs as many tokens as its text. Use `--max-text 200` for skimming, then
   `get <chat> <id>` for the posts that matter.
+- **`--full` (alias `--stats`)** on `read`/`get`/`search`/`inbox`/`watch` adds a `full` object to
+  every message (and a short `👁 ↪ ❤️` suffix in compact output). Default output is unchanged
+  without it. `full` carries views, forwards, the complete reaction breakdown (each emoji / custom
+  emoji id / paid reaction with count and whether you reacted), recent reactors, comments/thread
+  info (`replies.comments`, `channelId`, `maxId`, `readMaxId`, recent repliers), edit date, post
+  author, pinned/silent/noforwards/post flags, grouped (album) id, via-bot id, TTL, the forward
+  header, reply-to info (ids, forum topic, quote), and rich media metadata (poll results, geo,
+  venue, contact, webpage, dice, invoice, file name/size/mime/duration/dimensions). Use it for data
+  collection — it needs no extra API calls. Over MCP, pass `--full` in `telegram_read` args.
 - `drafts` lists saved-but-unsent drafts (chat title + text). `profile-photos <user>` lists a
   user's profile photos; `avatar <user>` downloads the current one.
 - `admin-log <chat>` shows a supergroup/channel's recent admin actions (Telegram's "Recent
@@ -32,6 +41,13 @@ code. This file only covers behaviour that the flag list can't tell you.
 - `permissions <chat> [user]` shows a member's status (creator/admin/member/restricted/banned/left)
   and rights, or the chat's default permissions when no user is given. Supergroups and channels
   only. To change rights, use `promote`/`kick` or `api channels.EditBanned`.
+- `stats <chat>` returns full entity statistics: subscribers/members, online, admins, kicked and
+  banned counts, linked discussion chat, slow mode, about, creation date, verified/scam/fake/
+  restricted flags (+ reasons), and — where the account has rights — aggregate activity via
+  `stats.GetBroadcastStats` (followers, views/shares/reactions per post, enabled-notifications %)
+  or `stats.GetMegagroupStats` (members, messages, viewers, posters). `stats <chat> --message <id>`
+  returns a single post's views, forwards, public forwards and reactions. Missing rights or
+  unavailable stats are reported in an `activity.error` / `note` field, never a hard failure.
 
 ## Output
 

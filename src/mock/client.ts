@@ -76,6 +76,9 @@ export class MockClient {
       megagroup: chat.kind === 'supergroup',
       broadcast: chat.kind === 'channel',
       forum: chat.forum,
+      verified: chat.verified,
+      scam: chat.scam,
+      fake: chat.fake,
       creator: chat.role === 'creator',
       adminRights: chat.role ? new Api.ChatAdminRights({ changeInfo: true, deleteMessages: true, banUsers: true, inviteUsers: true, pinMessages: true }) : undefined,
       participantsCount: chat.membersCount ?? chat.members?.length,
@@ -212,6 +215,42 @@ export class MockClient {
     });
   }
 
+  private reactionOf(r: NonNullable<MockMessage['reactions']>[number]): Api.TypeReaction {
+    if (r.paid) return new Api.ReactionPaid();
+    if (r.customEmojiId) return new Api.ReactionCustomEmoji({ documentId: bigInt(r.customEmojiId) });
+    return new Api.ReactionEmoji({ emoticon: r.emoji ?? '👍' });
+  }
+
+  private reactions(m: MockMessage): Api.MessageReactions | undefined {
+    if (!m.reactions?.length) return undefined;
+    const groups = new Map<string, { reaction: Api.TypeReaction; count: number; chosenOrder?: number }>();
+    for (const r of m.reactions) {
+      const key = r.paid ? 'paid' : r.customEmojiId ? `c:${r.customEmojiId}` : `e:${r.emoji}`;
+      const g = groups.get(key) ?? { reaction: this.reactionOf(r), count: 0 };
+      g.count += 1;
+      if (r.userId === this.world.me) g.chosenOrder = 0;
+      groups.set(key, g);
+    }
+    return new Api.MessageReactions(args({
+      results: [...groups.values()].map(g => new Api.ReactionCount(args({ reaction: g.reaction, count: g.count, chosenOrder: g.chosenOrder }))),
+      recentReactions: m.reactions.map(r => new Api.MessagePeerReaction(args({
+        peerId: new Api.PeerUser({ userId: bigInt(r.userId) }), date: now(), reaction: this.reactionOf(r), my: r.userId === this.world.me || undefined,
+      }))),
+      canSeeList: true,
+    }));
+  }
+
+  private pollMedia(poll: NonNullable<MockMessage['poll']>): Api.MessageMediaPoll {
+    const answers = poll.options.map((o, i) => new Api.PollAnswer({ text: new Api.TextWithEntities({ text: o.text, entities: [] }), option: Buffer.from([i]) }));
+    return new Api.MessageMediaPoll({
+      poll: new Api.Poll(args({ id: HASH, question: new Api.TextWithEntities({ text: poll.question, entities: [] }), answers, quiz: poll.quiz, multipleChoice: poll.multiple, closed: poll.closed })),
+      results: new Api.PollResults(args({
+        totalVoters: poll.totalVoters,
+        results: poll.options.map((o, i) => new Api.PollAnswerVoters(args({ option: Buffer.from([i]), voters: o.voters ?? 0, chosen: o.chosen, correct: o.correct }))),
+      })),
+    });
+  }
+
   private message(chat: MockChat, m: MockMessage): Api.Message {
     const from = chat.kind === 'group' || chat.kind === 'supergroup' ? this.senderId(chat, m) : undefined;
     return new Api.Message(args({
@@ -219,14 +258,24 @@ export class MockClient {
       date: this.date(m),
       message: m.text,
       out: m.out,
+      post: chat.kind === 'channel' || undefined,
+      silent: m.silent,
+      noforwards: m.noforwards,
       peerId: this.peerOf(chat),
       fromId: from ? new Api.PeerUser({ userId: bigInt(from) }) : undefined,
       replyTo: m.replyTo || m.thread
         ? new Api.MessageReplyHeader({ replyToMsgId: m.replyTo ?? m.thread, replyToTopId: m.thread, forumTopic: chat.forum && !!m.thread })
         : undefined,
-      media: this.media(m),
+      media: m.poll ? this.pollMedia(m.poll) : this.media(m),
       replyMarkup: this.markup(m),
-      replies: m.replies === undefined ? undefined : new Api.MessageReplies({ replies: m.replies, repliesPts: 0 }),
+      replies: m.replies === undefined ? undefined : new Api.MessageReplies(args({ replies: m.replies, repliesPts: 0, comments: chat.kind === 'channel' || undefined, channelId: chat.linkedChatId ? bigInt(chat.linkedChatId) : undefined })),
+      reactions: this.reactions(m),
+      views: m.views,
+      forwards: m.forwards,
+      viaBotId: m.viaBotId ? bigInt(m.viaBotId) : undefined,
+      groupedId: m.groupedId ? bigInt(m.groupedId) : undefined,
+      postAuthor: m.postAuthor,
+      ttlPeriod: m.ttlPeriod,
       pinned: m.pinned,
       editDate: m.edited ? this.date(m) : undefined,
       fwdFrom: m.forwardedFrom ? new Api.MessageFwdHeader({ date: this.date(m), fromId: this.peerOf(this.chat(bigInt(m.forwardedFrom))) }) : undefined,
@@ -440,16 +489,68 @@ export class MockClient {
       case 'channels.GetFullChannel': {
         const chat = this.chat(request.channel);
         return {
-          fullChat: {
+          fullChat: new Api.ChannelFull(args({
+            id: bigInt(chat.id),
             about: chat.about ?? '',
             participantsCount: chat.membersCount ?? chat.members?.length,
             adminsCount: chat.members?.filter(m => m.role).length,
+            kickedCount: chat.kickedCount,
+            bannedCount: chat.bannedCount,
+            onlineCount: chat.onlineCount,
+            slowmodeSeconds: chat.slowModeSeconds,
             unreadCount: chat.unread ?? 0,
             linkedChatId: chat.linkedChatId ? bigInt(chat.linkedChatId) : undefined,
-          },
+          })),
           chats: [this.entityOf(chat)],
           users: [],
         };
+      }
+      case 'stats.GetBroadcastStats': {
+        const chat = this.chat(request.channel);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        const avp = (current: number, previous = current) => new Api.StatsAbsValueAndPrev({ current, previous });
+        const graph = new Api.StatsGraph(args({ json: new Api.DataJSON({ data: '{}' }) }));
+        return new Api.stats.BroadcastStats(args({
+          period: new Api.StatsDateRangeDays({ minDate: 0, maxDate: 0 }),
+          followers: avp(chat.membersCount ?? 0),
+          viewsPerPost: avp(12044),
+          sharesPerPost: avp(18),
+          reactionsPerPost: avp(9),
+          viewsPerStory: avp(0), sharesPerStory: avp(0), reactionsPerStory: avp(0),
+          enabledNotifications: new Api.StatsPercentValue({ part: 62, total: 100 }),
+          growthGraph: graph, followersGraph: graph, muteGraph: graph, topHoursGraph: graph,
+          interactionsGraph: graph, ivInteractionsGraph: graph, viewsBySourceGraph: graph,
+          newFollowersBySourceGraph: graph, languagesGraph: graph, reactionsByEmotionGraph: graph,
+          storyInteractionsGraph: graph, storyReactionsByEmotionGraph: graph,
+          recentPostsInteractions: [],
+        }));
+      }
+      case 'stats.GetMegagroupStats': {
+        const chat = this.chat(request.channel);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        const avp = (current: number) => new Api.StatsAbsValueAndPrev({ current, previous: current });
+        const graph = new Api.StatsGraph(args({ json: new Api.DataJSON({ data: '{}' }) }));
+        return new Api.stats.MegagroupStats(args({
+          period: new Api.StatsDateRangeDays({ minDate: 0, maxDate: 0 }),
+          members: avp(chat.membersCount ?? chat.members?.length ?? 0),
+          messages: avp(chat.messages.length),
+          viewers: avp(3),
+          posters: avp(2),
+          growthGraph: graph, membersGraph: graph, newMembersBySourceGraph: graph, languagesGraph: graph,
+          messagesGraph: graph, actionsGraph: graph, topHoursGraph: graph, weekdaysGraph: graph,
+          topPosters: [], topAdmins: [], topInviters: [], users: [],
+        }));
+      }
+      case 'stats.GetMessagePublicForwards': {
+        const chat = this.chat(request.channel);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        return new Api.stats.PublicForwards(args({ count: 3, forwards: [], chats: [], users: [] }));
+      }
+      case 'stats.GetMessageStats': {
+        const chat = this.chat(request.channel);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        const graph = new Api.StatsGraph(args({ json: new Api.DataJSON({ data: '{}' }) }));
+        return new Api.stats.MessageStats(args({ viewsGraph: graph, reactionsByEmotionGraph: graph }));
       }
       case 'messages.GetFullChat': return this.fullChat(this.chat(bigInt(`-${request.chatId.toString()}`)));
       case 'channels.GetParticipants': return this.participants(request);
@@ -519,7 +620,7 @@ export class MockClient {
           reactions: reactions.map(r => new Api.MessagePeerReaction({
             peerId: new Api.PeerUser({ userId: bigInt(r.userId) }),
             date: now(),
-            reaction: new Api.ReactionEmoji({ emoticon: r.emoji }),
+            reaction: this.reactionOf(r),
           })),
           users: reactions.flatMap(r => { const u = this.findUser(r.userId); return u ? [this.user(u)] : []; }),
           chats: [],

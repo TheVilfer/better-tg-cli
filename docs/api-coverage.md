@@ -13,7 +13,7 @@ Tracks issue #47. Two measures:
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
-- Dedicated (purpose-built) coverage: **82 (10%)** — 48 called directly in src/, 34 through teleproto client helpers
+- Dedicated (purpose-built) coverage: **85 (10%)** — 51 called directly in src/, 34 through teleproto client helpers
 
 ## 1. Issue #47 measure: dedicated coverage by namespace
 
@@ -34,7 +34,7 @@ Tracks issue #47. Two measures:
 | `chatlists` | 11 | 0 | 0% | Shared folders. Via `api`. |
 | `communities` | 9 | 0 | 0% | New layer. Via `api`. |
 | `upload` | 8 | 3 | 38% | File-transfer plumbing, covered by send-file/download. |
-| `stats` | 8 | 0 | 0% | Channel/group statistics. Via `api` + curated `stats`. |
+| `stats` | 8 | 3 | 38% | Channel/group statistics. Via `api` + curated `stats`. |
 | `ephemeral` | 8 | 0 | 0% | New layer. Via `api`. |
 | `users` | 7 | 2 | 29% | Covered for what the CLI needs. |
 | `smsjobs` | 7 | 0 | 0% | SMS relay programme. Out of scope. |
@@ -45,7 +45,7 @@ Tracks issue #47. Two measures:
 | `updates` | 3 | 3 | 100% | Fully used (by `watch`). |
 | `folders` | 1 | 1 | 100% | Fully used (archive). |
 | `fragment` | 1 | 0 | 0% | Collectible info. Via `api`. |
-| **total** | **823** | **82** | **10%** | Reachability is 100% via `api`. |
+| **total** | **823** | **85** | **10%** | Reachability is 100% via `api`. |
 
 > "Dedicated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.
@@ -55,8 +55,8 @@ Tracks issue #47. Two measures:
 Every public member of Telethon 1.45.0's `TelegramClient` (plus its raw `client(request)`),
 mapped to a CLI command, a covered library helper, or a documented exclusion.
 
-- Covered by a dedicated command: **42**
-- Reachable through the generic `api` command: **2**
+- Covered by a dedicated command: **43**
+- Reachable through the generic `api` command: **1**
 - Covered as library/plumbing we drive: **3**
 - Deliberately excluded: **20**
 - **Total members mapped: 67** (0 unaccounted for)
@@ -95,7 +95,7 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `get_peer_id` | users | ✅ library | IDs are shown everywhere; resolution plumbing |
 | `get_permissions` | chats | ✅ command | `permissions <chat> <user>` |
 | `get_profile_photos` | chats | ✅ command | `profile-photos` |
-| `get_stats` | chats | ✅ via api | `api stats.GetBroadcastStats` / `GetMegagroupStats` |
+| `get_stats` | chats | ✅ command | `stats` (incl. `stats <chat> --message <id>`) |
 | `inline_query` | bots | ✅ command | `inline` |
 | `is_bot` | users | ✅ command | `info` / `contact` report the bot flag |
 | `is_connected` | telegrambaseclient | ⛔ excluded | property, library plumbing |

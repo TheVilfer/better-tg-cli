@@ -166,7 +166,7 @@ const TELETHON = [
   ['get_peer_id', 'users', 'lib', '', 'IDs are shown everywhere; resolution plumbing'],
   ['get_permissions', 'chats', 'cli', 'permissions', '`permissions <chat> <user>`'],
   ['get_profile_photos', 'chats', 'cli', 'profile-photos', '`profile-photos`'],
-  ['get_stats', 'chats', 'api', 'api', '`api stats.GetBroadcastStats` / `GetMegagroupStats`'],
+  ['get_stats', 'chats', 'cli', 'stats', '`stats` (incl. `stats <chat> --message <id>`)'],
   ['inline_query', 'bots', 'cli', 'inline', '`inline`'],
   ['is_bot', 'users', 'cli', 'info', '`info` / `contact` report the bot flag'],
   ['is_connected', 'telegrambaseclient', 'excluded', '', 'property, library plumbing'],

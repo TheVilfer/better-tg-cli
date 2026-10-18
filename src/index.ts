@@ -86,6 +86,7 @@ import {
   markUnreadCommand,
   deleteDialogCommand,
   permissionsCommand,
+  statsCommand,
 } from './commands/index.js';
 
 
@@ -124,6 +125,7 @@ program.addCommand(draftsCommand);
 program.addCommand(adminLogCommand);
 program.addCommand(profilePhotosCommand);
 program.addCommand(permissionsCommand);
+program.addCommand(statsCommand);
 
 // Contact/group commands
 program.addCommand(contactCommand);
