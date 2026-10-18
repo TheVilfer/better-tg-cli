@@ -152,3 +152,46 @@ hard refusal applies.
 See `src/api-methods.ts` for the exact read-classification and refusal lists the `api`
 command enforces.
 
+## 4. `api` command read/write/refusal rules
+
+A TL method carries no read/write flag, so the default is **write unless it is clearly a
+read** (`Get…`/`Check…`/`Search…`/`Resolve…`). That heuristic is then corrected by hand,
+audited against the whole schema:
+
+**Named like a read but reclassified as a write (they change state):**
+
+- `messages.GetMessagesViews` — increments the view counter when `increment` is set.
+- `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.
+
+**Refused outright, even with write access** (issue #47: account/session takeover, phone or
+location sharing, paying):
+
+- **Login / sessions:** the entire `auth.*` namespace (sign-in, codes, login tokens,
+  `AcceptLoginToken`, import/export authorization, temp auth keys, password recovery) —
+  login belongs to `telegram auth` / `onboard`. Plus `account.ResetAuthorization(s)`,
+  `account.ResetWebAuthorization(s)`, `account.SetAuthorizationTTL`,
+  `account.ChangeAuthorizationSettings`.
+- **2FA / password:** `account.UpdatePasswordSettings`, `account.ResetPassword`,
+  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`.
+- **Phone / email changes & verification:** `account.ChangePhone`, `SendChangePhoneCode`,
+  `ConfirmPhone`, `SendConfirmPhoneCode`, `SendVerifyPhoneCode`, `VerifyPhone`,
+  `SendVerifyEmailCode`, `VerifyEmail`.
+- **Phone / location sharing:** `contacts.GetLocated`, `contacts.AcceptContact`,
+  `account.SetPrivacy`, `account.UpdateBusinessLocation`, `channels.EditLocation`;
+  and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,
+  and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an
+  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`.
+- **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,
+  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`.
+- **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,
+  `messages.CheckUrlAuthMatchCode`.
+- **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA
+  password — use `telegram transfer-owner`).
+- **Money:** every non-read `payments.*`, plus the read-named token minters
+  `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,
+  `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.
+
+**Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,
+`account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,
+`payments.CheckGiftCode`, `stories.GetStoryViewsList`, and the rest of the `Get*` surface.
+

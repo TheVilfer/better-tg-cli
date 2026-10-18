@@ -328,6 +328,50 @@ function build() {
   lines.push('command enforces.');
   lines.push('');
 
+  lines.push('## 4. `api` command read/write/refusal rules');
+  lines.push('');
+  lines.push('A TL method carries no read/write flag, so the default is **write unless it is clearly a');
+  lines.push('read** (`Get…`/`Check…`/`Search…`/`Resolve…`). That heuristic is then corrected by hand,');
+  lines.push('audited against the whole schema:');
+  lines.push('');
+  lines.push('**Named like a read but reclassified as a write (they change state):**');
+  lines.push('');
+  lines.push('- `messages.GetMessagesViews` — increments the view counter when `increment` is set.');
+  lines.push('- `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.');
+  lines.push('');
+  lines.push('**Refused outright, even with write access** (issue #47: account/session takeover, phone or');
+  lines.push('location sharing, paying):');
+  lines.push('');
+  lines.push('- **Login / sessions:** the entire `auth.*` namespace (sign-in, codes, login tokens,');
+  lines.push('  `AcceptLoginToken`, import/export authorization, temp auth keys, password recovery) —');
+  lines.push('  login belongs to `telegram auth` / `onboard`. Plus `account.ResetAuthorization(s)`,');
+  lines.push('  `account.ResetWebAuthorization(s)`, `account.SetAuthorizationTTL`,');
+  lines.push('  `account.ChangeAuthorizationSettings`.');
+  lines.push('- **2FA / password:** `account.UpdatePasswordSettings`, `account.ResetPassword`,');
+  lines.push('  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`.');
+  lines.push('- **Phone / email changes & verification:** `account.ChangePhone`, `SendChangePhoneCode`,');
+  lines.push('  `ConfirmPhone`, `SendConfirmPhoneCode`, `SendVerifyPhoneCode`, `VerifyPhone`,');
+  lines.push('  `SendVerifyEmailCode`, `VerifyEmail`.');
+  lines.push('- **Phone / location sharing:** `contacts.GetLocated`, `contacts.AcceptContact`,');
+  lines.push('  `account.SetPrivacy`, `account.UpdateBusinessLocation`, `channels.EditLocation`;');
+  lines.push('  and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,');
+  lines.push('  and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an');
+  lines.push('  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`.');
+  lines.push('- **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,');
+  lines.push('  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`.');
+  lines.push('- **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,');
+  lines.push('  `messages.CheckUrlAuthMatchCode`.');
+  lines.push('- **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA');
+  lines.push('  password — use `telegram transfer-owner`).');
+  lines.push('- **Money:** every non-read `payments.*`, plus the read-named token minters');
+  lines.push('  `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,');
+  lines.push('  `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.');
+  lines.push('');
+  lines.push('**Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,');
+  lines.push('`account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,');
+  lines.push('`payments.CheckGiftCode`, `stories.GetStoryViewsList`, and the rest of the `Get*` surface.');
+  lines.push('');
+
   return lines.join('\n') + '\n';
 }
 

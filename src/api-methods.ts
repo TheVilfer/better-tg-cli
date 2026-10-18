@@ -18,14 +18,17 @@ const NAMESPACE = (name: string): string => {
   return dot < 0 ? '' : name.slice(0, dot);
 };
 
-/** Read-only prefixes: these methods only fetch data. */
+/** Read-only prefixes: these methods, by default, only fetch data. */
 const READ_PREFIX = /^(get|check|search|resolve)/;
 
-/** `Get…`/`Check…` named methods that actually change something, so they are writes. */
+/**
+ * Named like a read (`Get…`/`Check…`) but it actually changes state, so it is a write. Audited
+ * from the schema; the user-facing list lives in docs/api-coverage.md.
+ */
 const FORCE_WRITE = new Set([
   'messages.getbotcallbackanswer', // presses a bot button
   'ephemeral.getcallbackanswer',
-  'messages.checkurlauthmatchcode', // completes a url-auth login
+  'messages.getmessagesviews', // increments the view counter when `increment` is set
 ]);
 
 /** Reads whose name does not start with a read prefix (none needed today; kept for review). */
@@ -40,31 +43,95 @@ export function isApiReadMethod(name: string): boolean {
 }
 
 /**
- * Methods refused outright, even with write access — the same categories `click` refuses:
- * account deletion, session termination, 2FA/password changes, and sharing location. Paying is
- * handled separately (any non-read `payments.*`). Returns a reason, or null if allowed.
+ * Whole namespaces refused through the generic `api` command regardless of read/write:
+ * `auth.*` is login / session management (belongs to `telegram auth` / `onboard`, never automated).
+ */
+const REFUSED_NAMESPACES: Record<string, string> = {
+  auth: 'Refused: login and session management must go through `telegram auth` / `telegram onboard` in a terminal, never the generic api command.',
+};
+
+/**
+ * Methods refused outright, even with write access — the categories issue #47 and `click` refuse:
+ * account/session takeover, 2FA / password / phone changes, data-export (takeout), Telegram
+ * Passport (identity docs), sharing the phone number or location, money-withdrawal tokens, and
+ * chat-ownership transfer. Paying is handled separately (any non-read `payments.*`).
  */
 const ALWAYS_REFUSED = new Map<string, string>([
   ['account.deleteaccount', 'Refused: deleting the account is irreversible.'],
-  ['auth.logout', 'Refused: terminating this session. Use `telegram logout` in a terminal instead.'],
-  ['auth.resetauthorizations', 'Refused: this logs out every other session.'],
+  // Session / authorization takeover
   ['account.resetauthorization', 'Refused: terminating a login session.'],
   ['account.resetwebauthorization', 'Refused: terminating a web-login session.'],
   ['account.resetwebauthorizations', 'Refused: terminating all web-login sessions.'],
-  ['account.updatepasswordsettings', 'Refused: changing the 2FA password is a security-sensitive action; do it in an official client.'],
+  ['account.setauthorizationttl', 'Refused: changing how long other sessions stay logged in is security-sensitive.'],
+  ['account.changeauthorizationsettings', 'Refused: changing a session\'s settings is security-sensitive.'],
+  // 2FA / password
+  ['account.updatepasswordsettings', 'Refused: changing the 2FA password is security-sensitive; do it in an official client.'],
   ['account.resetpassword', 'Refused: resetting the 2FA password is security-sensitive.'],
   ['account.declinepasswordreset', 'Refused: 2FA password-reset management is security-sensitive.'],
+  ['account.getpasswordsettings', 'Refused: this reveals 2FA password settings and needs the password.'],
+  ['account.gettmppassword', 'Refused: this mints a temporary password token.'],
+  // Phone / email number changes and verification
+  ['account.changephone', 'Refused: changing the account phone number is security-sensitive.'],
+  ['account.sendchangephonecode', 'Refused: part of changing the account phone number.'],
+  ['account.confirmphone', 'Refused: phone-number confirmation is security-sensitive.'],
+  ['account.sendconfirmphonecode', 'Refused: phone-number confirmation is security-sensitive.'],
+  ['account.sendverifyphonecode', 'Refused: phone-number verification is security-sensitive.'],
+  ['account.verifyphone', 'Refused: phone-number verification is security-sensitive.'],
+  ['account.sendverifyemailcode', 'Refused: email verification is security-sensitive.'],
+  ['account.verifyemail', 'Refused: email verification is security-sensitive.'],
+  // Data export (takeout) and Telegram Passport (identity documents)
+  ['account.inittakeoutsession', 'Refused: starting a data-export (takeout) session.'],
+  ['account.finishtakeoutsession', 'Refused: takeout-session management.'],
+  ['account.acceptauthorization', 'Refused: Telegram Passport — this shares identity documents.'],
+  ['account.savesecurevalue', 'Refused: Telegram Passport — this stores identity documents.'],
+  ['account.deletesecurevalue', 'Refused: Telegram Passport identity-document management.'],
+  // Privacy that can widen phone-number / added-by-phone visibility
+  ['account.setprivacy', 'Refused: changing privacy rules can expose your phone number or let strangers add you; do it in an official client.'],
   ['account.updatebusinesslocation', 'Refused: this shares a geographic location.'],
   ['channels.editlocation', 'Refused: this sets (shares) a geographic location.'],
+  // Location / phone sharing via contacts
+  ['contacts.getlocated', 'Refused: this publishes your geolocation to find people nearby.'],
+  ['contacts.acceptcontact', 'Refused: accepting a contact shares your phone number.'],
+  // Logging into external sites with the account
+  ['messages.accepturlauth', 'Refused: this logs into an external website with your account.'],
+  ['messages.requesturlauth', 'Refused: this is part of logging into an external website.'],
+  ['messages.checkurlauthmatchcode', 'Refused: this completes a url-auth login.'],
+  // Chat-ownership transfer (needs the 2FA password; use `telegram transfer-owner`)
+  ['channels.editcreator', 'Refused: transferring ownership needs the 2FA password. Use `telegram transfer-owner`.'],
+  ['messages.editchatcreator', 'Refused: transferring ownership needs the 2FA password. Use `telegram transfer-owner`.'],
+  // Money: withdrawal / revenue-account tokens, and star-gift offer redemption
+  ['payments.getstarsrevenuewithdrawalurl', 'Refused: this mints a URL that can withdraw Stars revenue.'],
+  ['payments.getstargiftwithdrawalurl', 'Refused: this mints a URL that can withdraw a star gift.'],
+  ['payments.getstarsrevenueadsaccounturl', 'Refused: this mints a URL into the Stars ad account.'],
+  ['payments.resolvestargiftoffer', 'Refused: resolving/redeeming a star-gift offer is a paying action.'],
+  // Group-call stream credentials
+  ['phone.getgroupcallstreamrtmpurl', 'Refused: this mints a stream key (a credential).'],
 ]);
 
-export function apiRefusalReason(name: string): string | null {
+/** Media classes that share your phone number or location — refused in SendMedia/EditMessage. */
+const SHARED_MEDIA = /InputMediaContact|InputMediaGeoPoint|InputMediaGeoLive|InputMediaVenue/;
+
+/**
+ * Should the call be refused? `params` enables param-level checks (sharing a contact/geo media,
+ * or AddContact with a phone-privacy exception). Returns a reason, or null if allowed.
+ */
+export function apiRefusalReason(name: string, params?: Record<string, unknown>): string | null {
   const lower = name.toLowerCase();
+  const nsRefusal = REFUSED_NAMESPACES[NAMESPACE(lower)];
+  if (nsRefusal) return nsRefusal;
   const fixed = ALWAYS_REFUSED.get(lower);
   if (fixed) return fixed;
   // Paying stays refused; read-only payments (balances, transactions) are allowed.
   if (NAMESPACE(lower) === 'payments' && !isApiReadMethod(name)) {
     return 'Refused: payment / Stars-spending methods are never run. Read-only payments methods (balances, transactions) are allowed.';
+  }
+  if (params) {
+    if (lower === 'contacts.addcontact' && params.addPhonePrivacyException) {
+      return 'Refused: addPhonePrivacyException shares your phone number with this contact.';
+    }
+    if ((lower === 'messages.sendmedia' || lower === 'messages.editmessage' || lower === 'messages.sendmultimedia') && SHARED_MEDIA.test(JSON.stringify(params))) {
+      return 'Refused: this sends a contact card or a geographic location.';
+    }
   }
   return null;
 }

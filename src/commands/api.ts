@@ -39,12 +39,6 @@ export const apiCommand = new Command('api')
       process.exit(1);
     }
 
-    const refusal = apiRefusalReason(canonical);
-    if (refusal) {
-      console.error(chalk.red(refusal));
-      process.exit(1);
-    }
-
     const raw = options.params === '-' ? readFileSync(0, 'utf-8') : options.params;
     try {
       parsed = raw.trim() ? JSON.parse(raw) : {};
@@ -53,6 +47,13 @@ export const apiCommand = new Command('api')
       }
     } catch (error) {
       console.error(`Invalid --params JSON: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+
+    // Refuse after parsing so param-level checks (shared contact/geo media, phone-privacy) apply.
+    const refusal = apiRefusalReason(canonical, parsed);
+    if (refusal) {
+      console.error(chalk.red(refusal));
       process.exit(1);
     }
 

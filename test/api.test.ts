@@ -63,6 +63,56 @@ describe('api refusals', () => {
   });
 });
 
+describe('api hardening: side-effecting reads reclassified', () => {
+  it('treats view-increment and callback Get* methods as writes', () => {
+    for (const m of ['messages.GetMessagesViews', 'messages.GetBotCallbackAnswer', 'ephemeral.GetCallbackAnswer']) {
+      expect(isApiReadMethod(m), m).toBe(false);
+    }
+  });
+
+  it('keeps genuinely read-only Get*/listing methods as reads', () => {
+    for (const m of ['account.GetAuthorizations', 'account.GetWebAuthorizations', 'messages.GetExportedChatInvites', 'payments.GetStarsStatus', 'payments.CheckGiftCode', 'stories.GetStoryViewsList']) {
+      expect(isApiReadMethod(m), m).toBe(true);
+      expect(apiRefusalReason(m), m).toBeNull();
+    }
+  });
+});
+
+describe('api hardening: hard refusals', () => {
+  it('refuses the entire auth namespace (login/session)', () => {
+    for (const m of ['auth.CheckPassword', 'auth.AcceptLoginToken', 'auth.ExportAuthorization', 'auth.ImportAuthorization', 'auth.ExportLoginToken', 'auth.SignIn', 'auth.SendCode', 'auth.RecoverPassword', 'auth.BindTempAuthKey']) {
+      expect(apiRefusalReason(m), m).toMatch(/login|session/i);
+    }
+  });
+
+  it('refuses session/2FA/phone/takeout/passport account methods', () => {
+    for (const m of ['account.DeleteAccount', 'account.SetAuthorizationTTL', 'account.ChangeAuthorizationSettings', 'account.GetTmpPassword', 'account.GetPasswordSettings', 'account.UpdatePasswordSettings', 'account.ChangePhone', 'account.SendChangePhoneCode', 'account.VerifyPhone', 'account.VerifyEmail', 'account.InitTakeoutSession', 'account.FinishTakeoutSession', 'account.AcceptAuthorization', 'account.SaveSecureValue', 'account.DeleteSecureValue', 'account.SetPrivacy']) {
+      expect(apiRefusalReason(m), m).toBeTruthy();
+    }
+  });
+
+  it('refuses location/phone sharing, url-auth login, ownership, and money tokens', () => {
+    expect(apiRefusalReason('contacts.GetLocated')).toMatch(/geolocation|location/i);
+    expect(apiRefusalReason('contacts.AcceptContact')).toMatch(/phone/i);
+    expect(apiRefusalReason('messages.AcceptUrlAuth')).toMatch(/website|login/i);
+    expect(apiRefusalReason('messages.RequestUrlAuth')).toBeTruthy();
+    expect(apiRefusalReason('messages.CheckUrlAuthMatchCode')).toBeTruthy();
+    expect(apiRefusalReason('messages.EditChatCreator')).toMatch(/ownership/i);
+    expect(apiRefusalReason('payments.GetStarsRevenueWithdrawalUrl')).toMatch(/withdraw/i);
+    expect(apiRefusalReason('payments.GetStarGiftWithdrawalUrl')).toBeTruthy();
+    expect(apiRefusalReason('phone.GetGroupCallStreamRtmpUrl')).toMatch(/credential|key/i);
+  });
+
+  it('refuses sharing contact/geo media and phone-privacy exceptions by inspecting params', () => {
+    expect(apiRefusalReason('messages.SendMedia', { media: { className: 'InputMediaGeoLive' } })).toMatch(/location|contact/i);
+    expect(apiRefusalReason('messages.EditMessage', { media: { className: 'InputMediaContact' } })).toMatch(/contact|location/i);
+    expect(apiRefusalReason('contacts.AddContact', { addPhonePrivacyException: true })).toMatch(/phone/i);
+    // The same methods are fine without the sensitive payload.
+    expect(apiRefusalReason('messages.SendMedia', { media: { className: 'InputMediaUploadedPhoto' } })).toBeNull();
+    expect(apiRefusalReason('contacts.AddContact', { id: 'x' })).toBeNull();
+  });
+});
+
 describe('MCP routing of the api command', () => {
   it('finds the method token past flags', () => {
     expect(apiMethodToken(['api', 'messages.GetHistory', '--params', '{}'])).toBe('messages.GetHistory');
@@ -79,6 +129,12 @@ describe('MCP routing of the api command', () => {
     expect(planCall('telegram_read', { args: ['api', 'account.DeleteAccount'] })).toMatch(/irreversible/);
     expect(planCall('telegram_write', { args: ['api', 'payments.SendStarsForm'] })).toMatch(/payment|Stars/);
     expect(planCall('telegram_read', { args: ['api'] })).toMatch(/needs a method/);
+    // Hardened refusals are rejected by the read tool even though some are named like reads.
+    expect(planCall('telegram_read', { args: ['api', 'auth.CheckPassword'] })).toMatch(/login|session/i);
+    expect(planCall('telegram_read', { args: ['api', 'contacts.GetLocated'] })).toMatch(/location|geolocation/i);
+    expect(planCall('telegram_write', { args: ['api', 'account.SetPrivacy'] })).toMatch(/privacy/i);
+    // A reclassified side-effecting read is a write, not a read.
+    expect(planCall('telegram_read', { args: ['api', 'messages.GetMessagesViews'] })).toMatch(/use telegram_write/);
   });
 });
 
