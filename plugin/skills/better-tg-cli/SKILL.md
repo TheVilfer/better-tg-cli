@@ -60,7 +60,15 @@ telegram link <chat> <msgId>                   # t.me link (channels and supergr
 telegram watch [chat] -t 60 -n 10 --json       # live stream; always bound it with -t or -n
 telegram sync --chat <c> --output ./dir --resume   # incremental markdown export
 telegram mark-read <chat> ; telegram mute <chat> -d 8h
+telegram drafts ; telegram admin-log <group> ; telegram profile-photos <user>
+telegram pin-chat <chat> ; telegram mark-unread <chat> ; telegram delete-dialog <chat>
+telegram api <namespace.Method> --params '<json>'   # any raw TL method; full API reachability
 ```
+
+`telegram api` reaches 100% of the Telegram client API (one request per call, JSON out). Reads are
+`Get*`/`Check*`/`Search*`/`Resolve*`; everything else is a write behind the guard. Paying, account
+deletion, session termination, 2FA changes and location sharing are always refused. See
+`reference.md` → "Raw API" for the `{"_chat":…}` peer convention.
 
 ## 4. JSON shapes (`--json`)
 

@@ -204,16 +204,26 @@ telegram get "Chat" 812 813                   # exact messages by ID
 telegram download "Chat" 812                  # save the attached file
 telegram sync --chat "Chat" --output ./export --resume   # incremental markdown export
 
+telegram drafts                               # saved but unsent drafts
+telegram admin-log "Team"                     # a group's recent admin actions
+telegram profile-photos @alice                # a user's profile photos
+
 telegram write-access on --for 1h             # a human confirms this
 telegram send @alice "on my way"
 printf '%s' "$text" | telegram send @alice -  # long or multi-line text: from stdin, no quoting problems
 telegram reply "Chat" 812 "on it" --silent
 telegram click @SomeBot 4410 "Settings"       # press an inline button
+telegram pin-chat @alice                      # pin a chat; mark-unread / delete-dialog too
+
+telegram api messages.GetAllDrafts            # call any raw TL method (full API reachability)
+telegram api channels.GetAdminLog --params '{"channel":{"_chat":"Team"},"limit":20,"q":""}'
 ```
 
 Read commands take `--json`, and some also take `--markdown`. See all commands with
 `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
-explain: output shapes, threads, bot buttons, admin commands and troubleshooting.
+explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
+`telegram api <namespace.Method>` reaches 100% of the Telegram client API;
+[docs/api-coverage.md](docs/api-coverage.md) tracks coverage against the schema and Telethon.
 
 ## MCP server
 
