@@ -29,6 +29,9 @@ code. This file only covers behaviour that the flag list can't tell you.
   user's profile photos; `avatar <user>` downloads the current one.
 - `admin-log <chat>` shows a supergroup/channel's recent admin actions (Telegram's "Recent
   actions"), newest first, with `-n` and `-q <text>`. It needs admin rights in that chat.
+- `permissions <chat> [user]` shows a member's status (creator/admin/member/restricted/banned/left)
+  and rights, or the chat's default permissions when no user is given. Supergroups and channels
+  only. To change rights, use `promote`/`kick` or `api channels.EditBanned`.
 
 ## Output
 

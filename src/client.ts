@@ -2959,3 +2959,64 @@ export async function deleteDialog(
   }));
   return { title, left: false };
 }
+
+// --- Permissions (get_permissions) -----------------------------------------------------------
+
+export interface PermissionInfo {
+  chatTitle: string;
+  /** Present when a specific user was asked about. */
+  user?: string;
+  /** 'creator' | 'admin' | 'member' | 'restricted' | 'banned' | 'left' | 'default'. */
+  status: string;
+  /** Admin powers granted (for creator/admin). */
+  adminRights?: string[];
+  /** Actions the user (or everyone, for 'default') is NOT allowed to do. */
+  restrictions?: string[];
+}
+
+/** Boolean flags set to true on a ChatBannedRights/ChatAdminRights object, in schema order. */
+function trueFlags(rights: { [k: string]: unknown } | undefined): string[] {
+  if (!rights) return [];
+  return Object.entries(rights)
+    .filter(([k, v]) => v === true && k !== 'className')
+    .map(([k]) => k);
+}
+
+/**
+ * A member's rights in a supergroup/channel, or the chat's default permissions when no user is
+ * given (Telethon get_permissions). Read-only.
+ */
+export async function getPermissions(
+  client: TelegramClient,
+  chatIdentifier: string,
+  userIdentifier?: string,
+): Promise<PermissionInfo> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('Permissions apply to supergroups and channels; basic groups have no per-user rights model.');
+  }
+  const chatTitle = getChatTitle(entity);
+  if (!userIdentifier) {
+    return { chatTitle, status: 'default', restrictions: trueFlags(entity.defaultBannedRights as never) };
+  }
+  const who = await resolveChat(client, userIdentifier);
+  const res = await client.invoke(new Api.channels.GetParticipant({ channel: entity, participant: who }));
+  const p = res.participant;
+  const user = res.users.find((u): u is Api.User => u instanceof Api.User);
+  const name = user ? ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.id.toString()) : userIdentifier;
+
+  if (p instanceof Api.ChannelParticipantCreator) {
+    return { chatTitle, user: name, status: 'creator', adminRights: trueFlags(p.adminRights as never) };
+  }
+  if (p instanceof Api.ChannelParticipantAdmin) {
+    return { chatTitle, user: name, status: 'admin', adminRights: trueFlags(p.adminRights as never) };
+  }
+  if (p instanceof Api.ChannelParticipantBanned) {
+    const banned = p.bannedRights;
+    return { chatTitle, user: name, status: banned.viewMessages ? 'banned' : 'restricted', restrictions: trueFlags(banned as never) };
+  }
+  if (p instanceof Api.ChannelParticipantLeft) {
+    return { chatTitle, user: name, status: 'left' };
+  }
+  return { chatTitle, user: name, status: 'member' };
+}

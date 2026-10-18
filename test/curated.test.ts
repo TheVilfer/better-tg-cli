@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TelegramClient } from 'teleproto';
 import {
-  getDrafts, getAdminLog, getProfilePhotos, toggleDialogPin, markDialogUnread, deleteDialog, disconnectClient,
+  getDrafts, getAdminLog, getProfilePhotos, getPermissions, toggleDialogPin, markDialogUnread, deleteDialog, disconnectClient,
 } from '../src/client.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
@@ -47,6 +47,24 @@ describe('profile-photos', () => {
 
   it('is empty for a user with none', async () => {
     expect((await getProfilePhotos(mock(), 'me')).photos).toHaveLength(0);
+  });
+});
+
+describe('permissions', () => {
+  it('reports an admin\'s rights and the chat default', async () => {
+    const admin = await getPermissions(mock(), 'Team', '@alice_example');
+    expect(admin).toMatchObject({ user: 'Alice Example', status: 'admin' });
+    expect(admin.adminRights).toContain('banUsers');
+
+    const def = await getPermissions(mock(), 'Team');
+    expect(def).toMatchObject({ chatTitle: 'Team', status: 'default' });
+
+    const member = await getPermissions(mock(), 'Team', '@bob_sample');
+    expect(member.status).toBe('member');
+  });
+
+  it('refuses a basic group / private chat', async () => {
+    await expect(getPermissions(mock(), 'Family')).rejects.toThrow(/supergroups and channels/);
   });
 });
 

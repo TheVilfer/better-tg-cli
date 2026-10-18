@@ -560,6 +560,21 @@ export class MockClient {
         this.save();
         return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
       }
+      case 'channels.GetParticipant': {
+        const chat = this.chat(request.channel);
+        const userId = this.locate(request.participant).user?.id;
+        const member = chat.members?.find(m => m.userId === userId);
+        if (!member) throw new Error('USER_NOT_PARTICIPANT');
+        const uid = bigInt(member.userId);
+        const rights = new Api.ChatAdminRights({ changeInfo: true, deleteMessages: true, banUsers: true, inviteUsers: true, pinMessages: true });
+        const participant = member.role === 'creator'
+          ? new Api.ChannelParticipantCreator({ userId: uid, adminRights: rights })
+          : member.role === 'admin'
+            ? new Api.ChannelParticipantAdmin(args({ userId: uid, promotedBy: uid, date: 0, adminRights: rights }))
+            : new Api.ChannelParticipant({ userId: uid, date: 0 });
+        const u = this.findUser(member.userId);
+        return new Api.channels.ChannelParticipant(args({ participant, chats: [this.entityOf(chat)], users: u ? [this.user(u)] : [] }));
+      }
       case 'messages.GetAllDrafts': {
         const drafts = this.world.chats.filter(c => c.draft);
         return new Api.Updates(args({

@@ -151,7 +151,7 @@ const TELETHON = [
   ['edit_admin', 'chats', 'cli', 'promote', '`promote`'],
   ['edit_folder', 'dialogs', 'cli', 'archive', '`archive` / `unarchive`'],
   ['edit_message', 'messages', 'cli', 'edit', '`edit`'],
-  ['edit_permissions', 'chats', 'cli', 'permissions', '`permissions` (default & per-user rights)'],
+  ['edit_permissions', 'chats', 'api', 'api', '`api channels.EditBanned` / `EditChatDefaultBannedRights`'],
   ['end_takeout', 'account', 'excluded', '', 'data-export session — via `api` if ever needed'],
   ['flood_sleep_threshold', 'telegrambaseclient', 'excluded', '', 'property, library plumbing'],
   ['forward_messages', 'messages', 'cli', 'forward', '`forward`'],
@@ -166,7 +166,7 @@ const TELETHON = [
   ['get_peer_id', 'users', 'lib', '', 'IDs are shown everywhere; resolution plumbing'],
   ['get_permissions', 'chats', 'cli', 'permissions', '`permissions <chat> <user>`'],
   ['get_profile_photos', 'chats', 'cli', 'profile-photos', '`profile-photos`'],
-  ['get_stats', 'chats', 'cli', 'stats', '`stats`'],
+  ['get_stats', 'chats', 'api', 'api', '`api stats.GetBroadcastStats` / `GetMegagroupStats`'],
   ['inline_query', 'bots', 'cli', 'inline', '`inline`'],
   ['is_bot', 'users', 'cli', 'info', '`info` / `contact` report the bot flag'],
   ['is_connected', 'telegrambaseclient', 'excluded', '', 'property, library plumbing'],
@@ -207,12 +207,11 @@ const TELETHON = [
 
 /** New commands this effort adds — reported ✅ once their source file lands, ⏳ planned before. */
 const PLANNED = {
-  'delete-dialog': 'src/commands/delete-dialog.ts',
+  'delete-dialog': 'src/commands/dialog.ts',
   permissions: 'src/commands/permissions.ts',
   'admin-log': 'src/commands/admin-log.ts',
   drafts: 'src/commands/drafts.ts',
   'profile-photos': 'src/commands/profile-photos.ts',
-  stats: 'src/commands/stats.ts',
   api: 'src/commands/api.ts',
 };
 
@@ -283,6 +282,7 @@ function build() {
     name, mod, maps, status: kind === 'cli' ? cliStatus(cmd) : kind,
   }));
   const telCli = telRows.filter((t) => t.status === 'cli').length;
+  const telApi = telRows.filter((t) => t.status === 'api').length;
   const telPlanned = telRows.filter((t) => t.status === 'planned').length;
   const telLib = telRows.filter((t) => t.status === 'lib').length;
   const telExcl = telRows.filter((t) => t.status === 'excluded').length;
@@ -292,6 +292,7 @@ function build() {
   lines.push(`mapped to a CLI command, a covered library helper, or a documented exclusion.`);
   lines.push('');
   lines.push(`- Covered by a dedicated command: **${telCli}**`);
+  if (telApi) lines.push(`- Reachable through the generic \`api\` command: **${telApi}**`);
   if (telPlanned) lines.push(`- Mapped to a command still being built: **${telPlanned}**`);
   lines.push(`- Covered as library/plumbing we drive: **${telLib}**`);
   lines.push(`- Deliberately excluded: **${telExcl}**`);
@@ -299,7 +300,7 @@ function build() {
   lines.push('');
   lines.push('| Telethon member | Module | Status | Maps to |');
   lines.push('|---|---|---|---|');
-  const statusLabel = { cli: '✅ command', planned: '⏳ planned', lib: '✅ library', excluded: '⛔ excluded' };
+  const statusLabel = { cli: '✅ command', api: '✅ via api', planned: '⏳ planned', lib: '✅ library', excluded: '⛔ excluded' };
   for (const { name, mod, maps, status } of telRows) {
     lines.push(`| \`${name}\` | ${mod} | ${statusLabel[status]} | ${maps} |`);
   }

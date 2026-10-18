@@ -13,7 +13,7 @@ Tracks issue #47. Two measures:
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
-- Dedicated (purpose-built) coverage: **81 (10%)** — 47 called directly in src/, 34 through teleproto client helpers
+- Dedicated (purpose-built) coverage: **82 (10%)** — 48 called directly in src/, 34 through teleproto client helpers
 
 ## 1. Issue #47 measure: dedicated coverage by namespace
 
@@ -22,7 +22,7 @@ Tracks issue #47. Two measures:
 | `messages` | 259 | 37 | 14% | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
 | `account` | 128 | 4 | 3% | Privacy, sessions, 2FA, notifications, usernames, business/profile. Mostly via `api` (read) + curated. |
 | `payments` | 65 | 0 | 0% | Stars, gifts, invoices. Read parts via `api` (balance/transactions); paying is always refused. |
-| `channels` | 58 | 13 | 22% | Admin log, title/about/photo, slow mode, forum topics, invite links, username, discussion links. |
+| `channels` | 58 | 14 | 24% | Admin log, title/about/photo, slow mode, forum topics, invite links, username, discussion links. |
 | `phone` | 43 | 0 | 0% | Calls and group calls. Out of scope for a CLI (reachable via `api`, undocumented). |
 | `bots` | 38 | 0 | 0% | Mostly bot-only. User-side bits (bot info, menu, commands) via `api`. |
 | `stories` | 33 | 1 | 3% | Peer stories covered; feeds/views/reactions/posting via `api`. |
@@ -45,7 +45,7 @@ Tracks issue #47. Two measures:
 | `updates` | 3 | 3 | 100% | Fully used (by `watch`). |
 | `folders` | 1 | 1 | 100% | Fully used (archive). |
 | `fragment` | 1 | 0 | 0% | Collectible info. Via `api`. |
-| **total** | **823** | **81** | **10%** | Reachability is 100% via `api`. |
+| **total** | **823** | **82** | **10%** | Reachability is 100% via `api`. |
 
 > "Dedicated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.
@@ -55,8 +55,8 @@ Tracks issue #47. Two measures:
 Every public member of Telethon 1.45.0's `TelegramClient` (plus its raw `client(request)`),
 mapped to a CLI command, a covered library helper, or a documented exclusion.
 
-- Covered by a dedicated command: **40**
-- Mapped to a command still being built: **4**
+- Covered by a dedicated command: **42**
+- Reachable through the generic `api` command: **2**
 - Covered as library/plumbing we drive: **3**
 - Deliberately excluded: **20**
 - **Total members mapped: 67** (0 unaccounted for)
@@ -69,7 +69,7 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `catch_up` | updates | ⛔ excluded | library plumbing (update loop) |
 | `connect` | telegrambaseclient | ⛔ excluded | library plumbing (connection) |
 | `conversation` | dialogs | ⛔ excluded | interactive helper, no CLI meaning |
-| `delete_dialog` | dialogs | ⏳ planned | `delete-dialog` |
+| `delete_dialog` | dialogs | ✅ command | `delete-dialog` |
 | `delete_messages` | messages | ✅ command | `delete` |
 | `disconnect` | telegrambaseclient | ⛔ excluded | library plumbing (connection) |
 | `disconnected` | telegrambaseclient | ⛔ excluded | property, library plumbing |
@@ -80,7 +80,7 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `edit_admin` | chats | ✅ command | `promote` |
 | `edit_folder` | dialogs | ✅ command | `archive` / `unarchive` |
 | `edit_message` | messages | ✅ command | `edit` |
-| `edit_permissions` | chats | ⏳ planned | `permissions` (default & per-user rights) |
+| `edit_permissions` | chats | ✅ via api | `api channels.EditBanned` / `EditChatDefaultBannedRights` |
 | `end_takeout` | account | ⛔ excluded | data-export session — via `api` if ever needed |
 | `flood_sleep_threshold` | telegrambaseclient | ⛔ excluded | property, library plumbing |
 | `forward_messages` | messages | ✅ command | `forward` |
@@ -93,9 +93,9 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `get_messages` | messages | ✅ command | `read` / `get` |
 | `get_participants` | chats | ✅ command | `members` |
 | `get_peer_id` | users | ✅ library | IDs are shown everywhere; resolution plumbing |
-| `get_permissions` | chats | ⏳ planned | `permissions <chat> <user>` |
+| `get_permissions` | chats | ✅ command | `permissions <chat> <user>` |
 | `get_profile_photos` | chats | ✅ command | `profile-photos` |
-| `get_stats` | chats | ⏳ planned | `stats` |
+| `get_stats` | chats | ✅ via api | `api stats.GetBroadcastStats` / `GetMegagroupStats` |
 | `inline_query` | bots | ✅ command | `inline` |
 | `is_bot` | users | ✅ command | `info` / `contact` report the bot flag |
 | `is_connected` | telegrambaseclient | ⛔ excluded | property, library plumbing |

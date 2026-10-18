@@ -61,6 +61,7 @@ telegram watch [chat] -t 60 -n 10 --json       # live stream; always bound it wi
 telegram sync --chat <c> --output ./dir --resume   # incremental markdown export
 telegram mark-read <chat> ; telegram mute <chat> -d 8h
 telegram drafts ; telegram admin-log <group> ; telegram profile-photos <user>
+telegram permissions <group> [user]           # a member's rights, or the chat default
 telegram pin-chat <chat> ; telegram mark-unread <chat> ; telegram delete-dialog <chat>
 telegram api <namespace.Method> --params '<json>'   # any raw TL method; full API reachability
 ```
