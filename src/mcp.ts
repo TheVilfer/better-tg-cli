@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
 import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
+import { resolveTlPath } from './tl-registry.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -122,6 +123,26 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
     const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
     return { argv: args as string[], readOnly: false, stdin };
   }
+  // `tl <namespace> <method>` (and top-level `tl <method>`): classified by the underlying TL method,
+  // exactly like `api`. A bare namespace / `--help` is a harmless listing, allowed as a read.
+  if (cmd === 'tl') {
+    const argList = args as string[];
+    const help = argList.some(a => a === '--help' || a === '-h');
+    const resolved = resolveTlPath(tlPositionals(argList));
+    if ('error' in resolved) {
+      if (help) return { argv: argList, readOnly: true };
+      return resolved.error;
+    }
+    const refusal = apiRefusalReason(resolved.className);
+    if (refusal) return refusal;
+    const read = isApiReadMethod(resolved.className);
+    if (tool === 'telegram_read') {
+      return read || help ? { argv: argList, readOnly: true } : `"tl ${resolved.className}" changes something; use telegram_write`;
+    }
+    if (read) return `"tl ${resolved.className}" is read-only; use telegram_read`;
+    const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
+    return { argv: argList, readOnly: false, stdin };
+  }
   const known = READ_COMMANDS.has(cmd) || isWriteCommand(cmd);
   if (tool === 'telegram_read') {
     if (!READ_COMMANDS.has(cmd)) {
@@ -132,6 +153,14 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   if (READ_COMMANDS.has(cmd)) return `"${cmd}" is read-only; use telegram_read`;
   const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
   return { argv: args as string[], readOnly: false, stdin };
+}
+
+/** The leading non-flag tokens of a `tl` argv — the command path, which precedes any flags
+ * (`["tl","messages","get-history","--peer","@x"]` → `["messages","get-history"]`). */
+export function tlPositionals(args: string[]): string[] {
+  const pos: string[] = [];
+  for (let i = 1; i < args.length && !args[i].startsWith('-'); i++) pos.push(args[i]);
+  return pos;
 }
 
 /** The method name in an `api` argv (`["api","messages.GetHistory","--params","{…}"]`). */
