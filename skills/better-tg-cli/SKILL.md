@@ -73,13 +73,35 @@ telegram api <namespace.Method> --params '<json>'   # any raw TL method; full AP
 telegram tl <namespace> <method> [--typed-flags]    # same method as its own command (823 of them)
 ```
 
-`telegram api` reaches 100% of the Telegram client API (one request per call, JSON out), and every
-TL method also has its own command: `telegram tl <namespace> <method>` with one typed `--flag` per
-parameter (`telegram tl` lists the namespaces; `telegram tl <ns> --help` lists methods; a method's
-`--help` lists its params with TL types). `tl` runs through the exact same classification as `api`.
-Reads are `Get*`/`Check*`/`Search*`/`Resolve*`; everything else is a write behind the guard. Paying,
-account deletion, session termination, 2FA changes and location sharing are always refused. See
-`reference.md` → "Raw API" for the `{"_chat":…}` peer convention.
+**Prefer a curated command above** when one exists: they give friendly/compact output, pagination,
+multi-step logic and safety prompts (`read`, `send`, `search`, `chats`, …). Drop to the raw API only
+for a method with no curated command, or when you need the exact raw TL object.
+
+`telegram api` and `telegram tl` both reach 100% of the Telegram client API (JSON out) and share one
+classification: reads are `Get*`/`Check*`/`Search*`/`Resolve*` (run free, go through `telegram_read`),
+everything else is a write (needs `telegram write-access on`; `telegram_write` over MCP). Paying,
+account deletion, session termination, 2FA/phone changes and location sharing are **always refused**
+(the command still exists and refuses). Use `api` for scripted JSON params; use `tl` for a typed
+command line.
+
+`telegram tl <namespace> <method>`: the TL class name lower-cased and kebab-cased —
+`messages.GetHistory` → `tl messages get-history`, `help.GetConfig` → `tl help get-config`; top-level
+wrappers are `tl <method>` (e.g. `tl ping`). One `--flag` per parameter (camelCase → `--kebab`):
+peer/user/channel flags take an id/@user/title/`me`; `true`-flags are bare switches; vectors take a
+comma list; constructor-typed params and `--json-params '<json|->'` (stdin with `-`; typed flags win)
+take JSON. Discover with `telegram tl`, `telegram tl <ns> --help`, `telegram tl <ns> <method> --help`.
+
+```bash
+telegram tl channels get-full-channel --channel @group      # read, peer resolved like everywhere
+telegram tl messages get-history --peer @durov --limit 20 \
+  --json-params '{"offsetId":0,"offsetDate":0,"addOffset":0,"maxId":0,"minId":0,"hash":0}'
+telegram tl messages send-reaction --peer @me --msg-id 42 \
+  --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write
+telegram tl account delete-account                          # exists, but always refused
+```
+
+See `reference.md` → "Raw API" for the full flag-type table and the `{"_chat":…}`/`{"_base64":…}`
+conventions inside JSON.
 
 ## 4. JSON shapes (`--json`)
 

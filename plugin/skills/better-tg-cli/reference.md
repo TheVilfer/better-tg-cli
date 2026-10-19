@@ -157,40 +157,97 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 
 ## Raw API (`telegram api` and `telegram tl`)
 
-- `telegram api <namespace.Method> --params '<json>'` builds and sends any TL request from the
-  schema, so the whole Telegram client API is reachable even when no dedicated command exists.
-  The method is case-insensitive (`messages.GetHistory`, `help.GetConfig`, top-level
-  `InvokeWithLayer`). Output is always compact JSON (big integers as strings, bytes as base64).
-- `telegram tl <namespace> <method>` is the same thing as a dedicated, typed command — one per TL
-  schema method (all 823, generated into `src/generated/tl-commands.ts`). Names are kebab-case
-  (`telegram tl messages get-history`, `telegram tl help get-config`); top-level wrappers are
-  `telegram tl <method>` (e.g. `telegram tl ping`). Each parameter is one `--flag`: ints/longs/
-  strings/bools, `--flag` switches for `true`-flags, comma-lists or JSON arrays for vectors, and
-  JSON for constructor-typed params. Peer/user/channel flags take an ID/@username/title/`me` and
-  resolve like everywhere else. `--json-params '<json|->'` supplies anything not covered by a flag
-  (typed flags win). Required params are enforced with a clear error. Registration is lazy (only the
-  invoked namespace is built), so startup and `--help` are unaffected; `telegram tl` lists the
-  namespaces and `telegram tl <ns> --help` lists a namespace's methods.
-- Both share one execution path, so read/write classification, the hard refusals and the audit log
-  are identical. A refused method still exists as a `tl` command but always refuses (its `--help`
-  says so).
-- Peer and byte fields use a small convention inside `--params`:
-  `{"_chat": "<id|@user|title|me>"}` resolves a chat the same way other commands do (strict under a
-  write); `{"_base64": "…"}` / `{"_hex": "…"}` pass raw bytes. Other entity-like fields also accept
-  a bare `@username` or ID. `--params -` reads the JSON from stdin.
+Two ways to reach the whole Telegram client API when no curated command fits. They share one
+execution path — identical read/write classification, hard refusals and audit log — and both print
+compact JSON (big integers as strings, bytes as base64). Pick `api` for scripted JSON params, `tl`
+for a typed command line.
+
+### `telegram api <namespace.Method> --params '<json>'`
+
+Builds and sends any request from the schema. The method is case-insensitive (`messages.GetHistory`,
+`help.GetConfig`, top-level `InvokeWithLayer`). Inside `--params`, a small convention handles the
+awkward fields: `{"_chat": "<id|@user|title|me>"}` resolves a chat the way every command does (strict
+under a write), `{"_base64": "…"}` / `{"_hex": "…"}` pass raw bytes, `{"_bigint": "…"}` a `long`.
+Other entity-like fields also accept a bare `@username`/ID. `--params -` reads the JSON from stdin.
+
+### `telegram tl <namespace> <method>` — one typed command per TL method
+
+Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) has its own command.
+
+- **Naming.** The TL class name, split at the dot and kebab-cased:
+  `messages.GetHistory` → `telegram tl messages get-history`, `help.GetConfig` →
+  `telegram tl help get-config`, `channels.GetFullChannel` → `telegram tl channels get-full-channel`.
+  The 21 top-level invoke/transport wrappers have no namespace: `Ping` → `telegram tl ping`,
+  `InvokeWithLayer` → `telegram tl invoke-with-layer`.
+- **Discovery.** `telegram tl` lists the namespaces and their method counts; `telegram tl <ns> --help`
+  lists a namespace's methods; `telegram tl <ns> <method> --help` lists that method's params with
+  their TL types and required/optional.
+- **Flags.** One `--flag` per parameter, the camelCase param name kebab-cased (`offsetId` →
+  `--offset-id`, `scheduleDate` → `--schedule-date`). Pass each by its TL type:
+
+  | TL type | Flag form | How to pass |
+  |---|---|---|
+  | `int`, `double` | `--limit 20` | a number |
+  | `long`, `int128`, `int256` | `--hash 0` | digits (sent as a big integer) |
+  | `string` | `--q "term"` | text |
+  | `Bool` | `--offline true` | `true`/`false` (or `1`/`0`) |
+  | `true` (flag bit, e.g. `silent`, `noWebpage`) | `--silent`, `--no-webpage` | bare switch; present = set |
+  | `bytes` | `--file-hash aGk=` | base64, or `hex:…` |
+  | `InputPeer`/`InputUser`/`InputChannel` | `--peer @durov` | id, `@username`, chat title or `me` |
+  | vector of a primitive | `--id 100,101,102` | comma list (or a JSON array) |
+  | vector of a constructor | `--reaction '[{"className":"ReactionEmoji","emoticon":"👍"}]'` | JSON array |
+  | constructor type (`InputMedia`, `ReplyMarkup`, `DataJSON`, …) | `--reply-to '{"className":"InputReplyToMessage","replyToMsgId":42}'` | JSON (may use `{"_chat":…}`/`{"_base64":…}` markers) |
+
+- **`--json-params '<json|->'`** merges a JSON object for anything not worth a flag (e.g. a deep
+  nested constructor); typed flags override its keys, and `-` reads the JSON from stdin. Example —
+  the required paging fields of `get-history` as JSON, the interesting ones as flags:
+
+  ```bash
+  telegram tl messages get-history --peer @durov --limit 20 \
+    --json-params '{"offsetId":0,"offsetDate":0,"addOffset":0,"maxId":0,"minId":0,"hash":0}'
+  ```
+
+- **Required params** are enforced with a clear error (`Missing required option(s): --peer …`);
+  `randomId` is never required (teleproto generates it). Registration is lazy — only the invoked
+  namespace is built — so startup, top-level `--help` and `help-all` are unaffected.
+
+### Read vs write and refusals (both commands)
+
 - **Read vs write:** methods named `Get*`/`Check*`/`Search*`/`Resolve*` are reads and run without
-  write access (and are available through the MCP read tool). Everything else is a write, goes
-  through the write guard, and is logged to the audit file.
-- **Always refused**, even with write access: the whole `auth.*` namespace (login/session — use
-  `telegram auth`), account/session takeover and 2FA/password/phone changes, data export (takeout)
-  and Passport identity docs, external-site login (url-auth), ownership transfer, money-withdrawal
-  tokens and paying / Stars-spending, and anything that shares your phone number or location
-  (including contact/geo media in `SendMedia`). A few `Get*` methods that actually change state
-  (e.g. `messages.GetMessagesViews`) are treated as writes. Read-only payments (balances,
-  transactions) and session *listing* (`account.GetAuthorizations`) are allowed. The full rule
-  table is in `docs/api-coverage.md` §4.
+  write access (available through the MCP read tool); everything else is a write that needs
+  `telegram write-access on` (the `telegram_write` MCP tool), goes through the write guard, and is
+  logged to the audit file.
+- **Always refused**, even with write access (the command still exists and refuses, exit 1; its
+  `--help` says "always refused"): the whole `auth.*` namespace (login/session — use `telegram auth`),
+  account/session takeover and 2FA/password/phone changes, data export (takeout) and Passport
+  identity docs, external-site login (url-auth), ownership transfer, money-withdrawal tokens and
+  paying / Stars-spending, and anything that shares your phone number or location (including
+  contact/geo media in `SendMedia`). A few `Get*` methods that actually change state (e.g.
+  `messages.GetMessagesViews`) are treated as writes. Read-only payments (balances, transactions) and
+  session *listing* (`account.GetAuthorizations`) are allowed. Full table in `docs/api-coverage.md` §4.
 - Coverage of the full API is tracked in `docs/api-coverage.md` (regenerated by
   `scripts/api-coverage.mjs`).
+
+### When to use which
+
+- **Curated command** (`read`, `send`, `search`, `chats`, `members`, …) — the default. Friendly,
+  compact output, pagination, multi-step logic and safety prompts. Always prefer it when one exists.
+- **`telegram tl <ns> <method>`** — a method with no curated command, or when you need the exact raw
+  TL object, from a typed command line.
+- **`telegram api <ns.Method> --params`** — the same reach, when it is easier to hand it a whole JSON
+  body (scripts, deeply nested requests).
+
+### Examples
+
+```bash
+telegram tl help get-config                                  # read, no args
+telegram tl channels get-full-channel --channel @group       # read, peer resolved like everywhere
+telegram tl messages delete-messages --id 100,101,102 --revoke   # write: vector + true-flag
+telegram tl messages send-reaction --peer @me --msg-id 42 \
+  --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write, nested
+telegram tl account delete-account                           # exists, always refused (exit 1)
+echo '{"id":[100,101]}' | telegram tl messages delete-messages --json-params -   # JSON from stdin
+```
 
 ## MCP server (`telegram mcp`)
 
