@@ -3652,3 +3652,135 @@ export async function getScheduledMessages(
   }
   return { chatTitle: getChatTitle(entity), messages };
 }
+
+// --- Active sessions, Stars, invite links (read-only curated coverage) ------------------------
+
+export interface SessionInfo {
+  hash: string;
+  current?: boolean;
+  official?: boolean;
+  device: string;
+  platform: string;
+  system: string;
+  app: string;
+  appVersion: string;
+  ip?: string;
+  country?: string;
+  created?: string;
+  lastActive?: string;
+}
+
+/** Active login sessions (Telethon has no direct equiv; account.GetAuthorizations). Read-only. */
+export async function getSessions(client: TelegramClient): Promise<{ ttlDays: number; sessions: SessionInfo[] }> {
+  const res = await client.invoke(new Api.account.GetAuthorizations());
+  return {
+    ttlDays: res.authorizationTtlDays,
+    sessions: res.authorizations.map(a => ({
+      hash: a.hash.toString(),
+      current: a.current || undefined,
+      official: a.officialApp || undefined,
+      device: a.deviceModel,
+      platform: a.platform,
+      system: a.systemVersion,
+      app: a.appName,
+      appVersion: a.appVersion,
+      ip: a.ip || undefined,
+      country: a.country || undefined,
+      created: iso(a.dateCreated),
+      lastActive: iso(a.dateActive),
+    })),
+  };
+}
+
+export interface StarsTransaction { id: string; stars: number; date?: string; title?: string; refund?: boolean; pending?: boolean; }
+export interface StarsBalance { balance: number; transactions: StarsTransaction[]; }
+
+const starsAmount = (a: unknown): number =>
+  a instanceof Api.StarsAmount ? a.amount.toJSNumber() + (a.nanos || 0) / 1e9 : 0;
+
+/** Telegram Stars balance and recent transactions (read-only). */
+export async function getStars(client: TelegramClient, options: { limit?: number } = {}): Promise<StarsBalance> {
+  const status = await client.invoke(new Api.payments.GetStarsStatus({ peer: new Api.InputPeerSelf() }));
+  let history = status.history ?? [];
+  if (!history.length) {
+    try {
+      const tx = await client.invoke(new Api.payments.GetStarsTransactions({ peer: new Api.InputPeerSelf(), offset: '', limit: options.limit ?? 20 }));
+      history = tx.history ?? [];
+    } catch { /* transactions may be unavailable */ }
+  }
+  return {
+    balance: starsAmount(status.balance),
+    transactions: history.slice(0, options.limit ?? 20).map(t => ({
+      id: t.id,
+      stars: starsAmount(t.amount),
+      date: iso(t.date),
+      title: t.title ?? undefined,
+      refund: t.refund || undefined,
+      pending: t.pending || undefined,
+    })),
+  };
+}
+
+export interface InviteLink {
+  link: string;
+  permanent?: boolean;
+  revoked?: boolean;
+  requestNeeded?: boolean;
+  usage?: number;
+  usageLimit?: number;
+  requested?: number;
+  expireDate?: string;
+  adminId: string;
+}
+
+/** Exported invite links for a chat (messages.GetExportedChatInvites). Read-only. */
+export async function getInviteLinks(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { revoked?: boolean; limit?: number } = {},
+): Promise<{ chatTitle: string; count: number; invites: InviteLink[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const me = await getMe(client);
+  const res = await client.invoke(new Api.messages.GetExportedChatInvites({
+    peer: entity, adminId: me, revoked: options.revoked || undefined, limit: options.limit ?? 50,
+  }));
+  const invites = res.invites
+    .filter((i): i is Api.ChatInviteExported => i instanceof Api.ChatInviteExported)
+    .map(i => ({
+      link: i.link,
+      permanent: i.permanent || undefined,
+      revoked: i.revoked || undefined,
+      requestNeeded: i.requestNeeded || undefined,
+      usage: i.usage ?? undefined,
+      usageLimit: i.usageLimit ?? undefined,
+      requested: i.requested ?? undefined,
+      expireDate: iso(i.expireDate ?? undefined),
+      adminId: i.adminId.toString(),
+    }));
+  return { chatTitle: getChatTitle(entity), count: res.count, invites };
+}
+
+export interface JoinRequest { userId: string; name: string; date?: string; about?: string; }
+
+/** Pending join requests for a chat (messages.GetChatInviteImporters, requested). Read-only. */
+export async function getJoinRequests(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { limit?: number } = {},
+): Promise<{ chatTitle: string; count: number; requests: JoinRequest[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const res = await client.invoke(new Api.messages.GetChatInviteImporters({
+    peer: entity, requested: true, q: '', offsetDate: 0, offsetUser: new Api.InputUserEmpty(), limit: options.limit ?? 50,
+  }));
+  const users = new Map(res.users.filter((u): u is Api.User => u instanceof Api.User).map(u => [u.id.toString(), u]));
+  const requests = res.importers.map(i => {
+    const u = users.get(i.userId.toString());
+    return {
+      userId: i.userId.toString(),
+      name: u ? ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || i.userId.toString()) : i.userId.toString(),
+      date: iso(i.date),
+      about: i.about ?? undefined,
+    };
+  });
+  return { chatTitle: getChatTitle(entity), count: res.count, requests };
+}

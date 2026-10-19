@@ -88,6 +88,9 @@ import {
   permissionsCommand,
   statsCommand,
   scheduledCommand,
+  sessionsCommand,
+  starsCommand,
+  invitesCommand,
 } from './commands/index.js';
 
 
@@ -128,6 +131,9 @@ program.addCommand(profilePhotosCommand);
 program.addCommand(permissionsCommand);
 program.addCommand(statsCommand);
 program.addCommand(scheduledCommand);
+program.addCommand(sessionsCommand);
+program.addCommand(starsCommand);
+program.addCommand(invitesCommand);
 
 // Contact/group commands
 program.addCommand(contactCommand);

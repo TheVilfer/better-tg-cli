@@ -708,6 +708,44 @@ export class MockClient {
         const u = this.findUser(member.userId);
         return new Api.channels.ChannelParticipant(args({ participant, chats: [this.entityOf(chat)], users: u ? [this.user(u)] : [] }));
       }
+      case 'account.GetAuthorizations': {
+        return new Api.account.Authorizations(args({
+          authorizationTtlDays: 180,
+          authorizations: [
+            new Api.Authorization(args({ current: true, officialApp: true, hash: bigInt(0), deviceModel: 'CLI', platform: 'Linux', systemVersion: '6.12', apiId: 1, appName: 'better-tg-cli', appVersion: '0', dateCreated: now() - 86400, dateActive: now(), ip: '127.0.0.1', country: 'Nowhere', region: '' })),
+            new Api.Authorization(args({ hash: bigInt(2), deviceModel: 'iPhone', platform: 'iOS', systemVersion: '18', apiId: 2, appName: 'Telegram', appVersion: '11', dateCreated: now() - 30 * 86400, dateActive: now() - 3600, ip: '10.0.0.2', country: 'Elsewhere', region: '' })),
+          ],
+        }));
+      }
+      case 'payments.GetStarsStatus': {
+        return new Api.payments.StarsStatus(args({ balance: new Api.StarsAmount({ amount: bigInt(this.world.stars ?? 0), nanos: 0 }), history: [], chats: [], users: [] }));
+      }
+      case 'payments.GetStarsTransactions': {
+        const tx = (id: string, stars: number, title: string, refund = false) => new Api.StarsTransaction(args({
+          id, amount: new Api.StarsAmount({ amount: bigInt(stars), nanos: 0 }), date: now() - 3600, title, refund: refund || undefined, peer: new Api.StarsTransactionPeerAppStore(),
+        }));
+        return new Api.payments.StarsStatus(args({
+          balance: new Api.StarsAmount({ amount: bigInt(this.world.stars ?? 0), nanos: 0 }),
+          history: [tx('t1', 100, 'Top-up'), tx('t2', 25, 'Reaction', true)],
+          chats: [], users: [],
+        }));
+      }
+      case 'messages.GetExportedChatInvites': {
+        const chat = this.chat(request.peer);
+        const invites = chat.role
+          ? [new Api.ChatInviteExported(args({ link: `https://t.me/+mock${chat.id}`, permanent: true, adminId: bigInt(this.world.me), date: now() - 86400, usage: 12 }))]
+          : [];
+        return new Api.messages.ExportedChatInvites(args({ count: invites.length, invites, users: [] }));
+      }
+      case 'messages.GetChatInviteImporters': {
+        const chat = this.chat(request.peer);
+        const reqs = request.requested ? (chat.joinRequests ?? []) : [];
+        return new Api.messages.ChatInviteImporters(args({
+          count: reqs.length,
+          importers: reqs.map(r => new Api.ChatInviteImporter(args({ requested: true, userId: bigInt(r.userId), date: now() - (r.ago ?? 0), about: r.about }))),
+          users: reqs.flatMap(r => { const u = this.findUser(r.userId); return u ? [this.user(u)] : []; }),
+        }));
+      }
       case 'messages.GetScheduledHistory': {
         const chat = this.chat(request.peer);
         const list = chat.scheduled ?? [];

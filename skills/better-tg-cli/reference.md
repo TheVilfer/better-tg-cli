@@ -38,6 +38,10 @@ code. This file only covers behaviour that the flag list can't tell you.
   user's profile photos; `avatar <user>` downloads the current one.
 - `scheduled <chat>` lists messages queued to send later (create them with `send --schedule`); it
   takes `--full` like `read`.
+- `sessions` lists active login sessions (device, app, platform, IP, country, last-active; the
+  current one is flagged). `stars` shows the Telegram Stars balance and recent transactions.
+  `invites <chat>` lists a chat's exported invite links (`--revoked` for revoked ones) or its
+  pending join requests (`--requests`). All read-only.
 - `admin-log <chat>` shows a supergroup/channel's recent admin actions (Telegram's "Recent
   actions"), newest first, with `-n` and `-q <text>`. It needs admin rights in that chat.
 - `permissions <chat> [user]` shows a member's status (creator/admin/member/restricted/banned/left)

@@ -13,15 +13,15 @@ Tracks issue #47. Two measures:
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
-- Dedicated (purpose-built) coverage: **90 (11%)** — 56 called directly in src/, 34 through teleproto client helpers
+- Dedicated (purpose-built) coverage: **95 (12%)** — 61 called directly in src/, 34 through teleproto client helpers
 
 ## 1. Issue #47 measure: dedicated coverage by namespace
 
 | Namespace | Methods | Dedicated | Share | Notes |
 |---|---:|---:|---:|---|
-| `messages` | 259 | 38 | 15% | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
-| `account` | 128 | 4 | 3% | Privacy, sessions, 2FA, notifications, usernames, business/profile. Mostly via `api` (read) + curated. |
-| `payments` | 65 | 0 | 0% | Stars, gifts, invoices. Read parts via `api` (balance/transactions); paying is always refused. |
+| `messages` | 259 | 40 | 15% | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
+| `account` | 128 | 5 | 4% | Privacy, sessions, 2FA, notifications, usernames, business/profile. Mostly via `api` (read) + curated. |
+| `payments` | 65 | 2 | 3% | Stars, gifts, invoices. Read parts via `api` (balance/transactions); paying is always refused. |
 | `channels` | 58 | 14 | 24% | Admin log, title/about/photo, slow mode, forum topics, invite links, username, discussion links. |
 | `phone` | 43 | 0 | 0% | Calls and group calls. Out of scope for a CLI (reachable via `api`, undocumented). |
 | `bots` | 38 | 0 | 0% | Mostly bot-only. User-side bits (bot info, menu, commands) via `api`. |
@@ -45,7 +45,7 @@ Tracks issue #47. Two measures:
 | `updates` | 3 | 3 | 100% | Fully used (by `watch`). |
 | `folders` | 1 | 1 | 100% | Fully used (archive). |
 | `fragment` | 1 | 0 | 0% | Collectible info. Via `api`. |
-| **total** | **823** | **90** | **11%** | Reachability is 100% via `api`. |
+| **total** | **823** | **95** | **12%** | Reachability is 100% via `api`. |
 
 > "Dedicated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.

@@ -14,6 +14,8 @@ export interface MockWorld {
   users: MockUser[];
   chats: MockChat[];
   folders?: MockFolder[];
+  /** Telegram Stars balance (for `stars`). */
+  stars?: number;
 }
 
 export interface MockUser {
@@ -88,6 +90,8 @@ export interface MockChat {
   draft?: string;
   /** Recent admin-log entries (for `admin-log`), newest last. */
   adminLog?: { id: number; userId: number; action: 'join' | 'leave' | 'title'; prev?: string; now?: string; ago?: number }[];
+  /** Pending join requests (for `invites --requests`). */
+  joinRequests?: { userId: number; about?: string; ago?: number }[];
   topics?: { id: number; title: string; unread?: number; closed?: boolean; pinned?: boolean }[];
   /** Channel → its discussion group (bare ID), where post comments live. */
   linkedChatId?: number;
@@ -279,6 +283,7 @@ export function seedWorld(): MockWorld {
           { id: 2, userId: 1002, action: 'join', ago: 5 * DAY },
           { id: 3, userId: 1003, action: 'leave', ago: 2 * HOUR },
         ],
+        joinRequests: [{ userId: 1003, about: 'Please add me', ago: 3 * HOUR }],
         messages: [
           { id: 1, ago: 5 * DAY, from: 1001, text: 'Release checklist is in the doc: https://example.com/checklist', viaBotId: 2001, groupedId: 7001, reactions: [{ userId: 1000, emoji: '🚀' }, { userId: 1002, emoji: '🚀' }] },
           { id: 2, ago: 4 * DAY, out: true, text: 'Shipping on Thursday', pinned: true, silent: true },
@@ -353,6 +358,7 @@ export function seedWorld(): MockWorld {
       },
     ],
     folders: [{ id: 2, title: 'Work', emoticon: '💼', include: [4001, 4002, 1001], exclude: [5002] }],
+    stars: 250,
   };
 }
 

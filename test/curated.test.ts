@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TelegramClient } from 'teleproto';
 import {
-  getDrafts, getAdminLog, getProfilePhotos, getPermissions, getScheduledMessages, toggleDialogPin, markDialogUnread, deleteDialog, disconnectClient,
+  getDrafts, getAdminLog, getProfilePhotos, getPermissions, getScheduledMessages, getSessions, getStars,
+  getInviteLinks, getJoinRequests, toggleDialogPin, markDialogUnread, deleteDialog, disconnectClient,
 } from '../src/client.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
@@ -60,6 +61,32 @@ describe('scheduled messages', () => {
 
   it('is empty for a chat with none', async () => {
     expect((await getScheduledMessages(mock(), 'Family')).messages).toHaveLength(0);
+  });
+});
+
+describe('sessions / stars / invites (read-only)', () => {
+  it('lists active login sessions with the current one flagged', async () => {
+    const { ttlDays, sessions } = await getSessions(mock());
+    expect(ttlDays).toBe(180);
+    expect(sessions.find(s => s.current)).toBeDefined();
+    expect(sessions).toHaveLength(2);
+  });
+
+  it('reports the Stars balance and transactions', async () => {
+    const { balance, transactions } = await getStars(mock());
+    expect(balance).toBe(250);
+    expect(transactions.map(t => t.title)).toContain('Top-up');
+    expect(transactions.find(t => t.title === 'Reaction')).toMatchObject({ refund: true, stars: 25 });
+  });
+
+  it('lists a chat\'s invite links and pending join requests', async () => {
+    const links = await getInviteLinks(mock(), 'Team');
+    expect(links.count).toBe(1);
+    expect(links.invites[0]).toMatchObject({ permanent: true, usage: 12 });
+
+    const reqs = await getJoinRequests(mock(), 'Team');
+    expect(reqs.count).toBe(1);
+    expect(reqs.requests[0]).toMatchObject({ name: 'Carol', about: 'Please add me' });
   });
 });
 

@@ -58,3 +58,4 @@ export { pinChatCommand, unpinChatCommand, markUnreadCommand, deleteDialogComman
 export { permissionsCommand } from './permissions.js';
 export { statsCommand } from './stats.js';
 export { scheduledCommand } from './scheduled.js';
+export { sessionsCommand, starsCommand, invitesCommand } from './account-read.js';
