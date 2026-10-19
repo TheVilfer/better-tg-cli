@@ -70,11 +70,15 @@ telegram pin-chat <chat> ; telegram mark-unread <chat> ; telegram delete-dialog 
 telegram edit-permissions <group> [user] --mute|--ban|--lift|--deny send,media [--until 1d]
 telegram topic create|edit|close|reopen|pin|unpin <forum> <title|id>   # forum topics
 telegram api <namespace.Method> --params '<json>'   # any raw TL method; full API reachability
+telegram tl <namespace> <method> [--typed-flags]    # same method as its own command (823 of them)
 ```
 
-`telegram api` reaches 100% of the Telegram client API (one request per call, JSON out). Reads are
-`Get*`/`Check*`/`Search*`/`Resolve*`; everything else is a write behind the guard. Paying, account
-deletion, session termination, 2FA changes and location sharing are always refused. See
+`telegram api` reaches 100% of the Telegram client API (one request per call, JSON out), and every
+TL method also has its own command: `telegram tl <namespace> <method>` with one typed `--flag` per
+parameter (`telegram tl` lists the namespaces; `telegram tl <ns> --help` lists methods; a method's
+`--help` lists its params with TL types). `tl` runs through the exact same classification as `api`.
+Reads are `Get*`/`Check*`/`Search*`/`Resolve*`; everything else is a write behind the guard. Paying,
+account deletion, session termination, 2FA changes and location sharing are always refused. See
 `reference.md` → "Raw API" for the `{"_chat":…}` peer convention.
 
 ## 4. JSON shapes (`--json`)

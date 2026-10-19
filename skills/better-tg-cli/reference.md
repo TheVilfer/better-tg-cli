@@ -155,12 +155,25 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
   run fetches everything after the checkpoint and ignores the default `--days` window.
 
-## Raw API (`telegram api`)
+## Raw API (`telegram api` and `telegram tl`)
 
 - `telegram api <namespace.Method> --params '<json>'` builds and sends any TL request from the
   schema, so the whole Telegram client API is reachable even when no dedicated command exists.
   The method is case-insensitive (`messages.GetHistory`, `help.GetConfig`, top-level
   `InvokeWithLayer`). Output is always compact JSON (big integers as strings, bytes as base64).
+- `telegram tl <namespace> <method>` is the same thing as a dedicated, typed command — one per TL
+  schema method (all 823, generated into `src/generated/tl-commands.ts`). Names are kebab-case
+  (`telegram tl messages get-history`, `telegram tl help get-config`); top-level wrappers are
+  `telegram tl <method>` (e.g. `telegram tl ping`). Each parameter is one `--flag`: ints/longs/
+  strings/bools, `--flag` switches for `true`-flags, comma-lists or JSON arrays for vectors, and
+  JSON for constructor-typed params. Peer/user/channel flags take an ID/@username/title/`me` and
+  resolve like everywhere else. `--json-params '<json|->'` supplies anything not covered by a flag
+  (typed flags win). Required params are enforced with a clear error. Registration is lazy (only the
+  invoked namespace is built), so startup and `--help` are unaffected; `telegram tl` lists the
+  namespaces and `telegram tl <ns> --help` lists a namespace's methods.
+- Both share one execution path, so read/write classification, the hard refusals and the audit log
+  are identical. A refused method still exists as a `tl` command but always refuses (its `--help`
+  says so).
 - Peer and byte fields use a small convention inside `--params`:
   `{"_chat": "<id|@user|title|me>"}` resolves a chat the same way other commands do (strict under a
   write); `{"_base64": "…"}` / `{"_hex": "…"}` pass raw bytes. Other entity-like fields also accept
@@ -192,8 +205,9 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
   - Read tool: only the read commands.
   - Write tool: everything that changes the account or writes local files (`download`, `sync`,
     `avatar`).
-  - `api` is classified per method: a read method goes through the read tool, a write through the
-    write tool, and a refused method never runs.
+  - `api` and `tl` are classified per underlying method: a read method goes through the read tool, a
+    write through the write tool, and a refused method never runs (`["tl","messages","get-history",…]`
+    like `["api","messages.GetHistory",…]`).
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
     Showing its status is allowed.
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a

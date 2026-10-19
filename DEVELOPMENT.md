@@ -125,9 +125,16 @@ Source mode skips the bundle's shrink plugin (TL re-encoding, stubs). Run `npm r
 
 `npm run coverage:api` (CI runs it after the build) runs `scripts/api-coverage.mjs --check
 --min 90`: TL schema reachability and Telethon 1.45.0 `TelegramClient` accounting (member list in
-`scripts/data/telethon-1.45.0-client-methods.tsv`) must each be at least 90%, and
-`docs/api-coverage.md` must be current (regenerate with `node scripts/api-coverage.mjs`). Override
-the threshold with `--min <n>` or `API_COVERAGE_MIN`; `--json` prints the numbers.
-`test/api-coverage.test.ts` enforces the same gate in `npm test`.
+`scripts/data/telethon-1.45.0-client-methods.tsv`) must each be at least 90%, every TL method must
+have a dedicated `telegram tl` command (100%), and `docs/api-coverage.md` must be current
+(regenerate with `node scripts/api-coverage.mjs`). Override the threshold with `--min <n>` or
+`API_COVERAGE_MIN`; `--json` prints the numbers. `test/api-coverage.test.ts` enforces the same gate
+in `npm test`.
+
+`scripts/gen-tl-commands.mjs` generates `src/generated/tl-commands.ts` — one entry per TL schema
+method, which `src/commands/tl.ts` turns into the `telegram tl <namespace> <method>` commands. It is
+run by `scripts/gen-version.mjs` (so build and `pretest` keep it current), and CI's "Versioned files
+match package.json" step fails if it drifts; regenerate by hand with `node scripts/gen-tl-commands.mjs`.
+Only the name mapping is checked in — parameter types come from the TL schema that is already bundled.
 
 Releasing is described in `CLAUDE.md` (`scripts/release.sh`, which picks the version from the PR titles, then `scripts/release.sh tag`).
