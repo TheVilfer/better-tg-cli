@@ -13,7 +13,7 @@ Tracks issue #47. Two measures:
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
-- Dedicated (purpose-built) coverage: **86 (10%)** — 52 called directly in src/, 34 through teleproto client helpers
+- Dedicated (purpose-built) coverage: **90 (11%)** — 56 called directly in src/, 34 through teleproto client helpers
 
 ## 1. Issue #47 measure: dedicated coverage by namespace
 
@@ -34,7 +34,7 @@ Tracks issue #47. Two measures:
 | `chatlists` | 11 | 0 | 0% | Shared folders. Via `api`. |
 | `communities` | 9 | 0 | 0% | New layer. Via `api`. |
 | `upload` | 8 | 3 | 38% | File-transfer plumbing, covered by send-file/download. |
-| `stats` | 8 | 3 | 38% | Channel/group statistics. Via `api` + curated `stats`. |
+| `stats` | 8 | 7 | 88% | Channel/group statistics. Via `api` + curated `stats`. |
 | `ephemeral` | 8 | 0 | 0% | New layer. Via `api`. |
 | `users` | 7 | 2 | 29% | Covered for what the CLI needs. |
 | `smsjobs` | 7 | 0 | 0% | SMS relay programme. Out of scope. |
@@ -45,7 +45,7 @@ Tracks issue #47. Two measures:
 | `updates` | 3 | 3 | 100% | Fully used (by `watch`). |
 | `folders` | 1 | 1 | 100% | Fully used (archive). |
 | `fragment` | 1 | 0 | 0% | Collectible info. Via `api`. |
-| **total** | **823** | **86** | **10%** | Reachability is 100% via `api`. |
+| **total** | **823** | **90** | **11%** | Reachability is 100% via `api`. |
 
 > "Dedicated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.

@@ -3295,6 +3295,43 @@ export async function getPermissions(
 
 // --- Channel / chat / message statistics (get_stats) -----------------------------------------
 
+/** A stats metric as current + previous value (so growth is visible). */
+export interface StatValue { current: number; previous?: number; }
+export interface TopPoster { userId: string; name: string; username?: string; messages: number; avgChars: number; }
+export interface TopAdmin { userId: string; name: string; deleted: number; kicked: number; banned: number; }
+export interface TopInviter { userId: string; name: string; invitations: number; }
+export interface PostInteraction { msgId?: number; storyId?: number; views: number; forwards: number; reactions: number; }
+/** A parsed graph series (opt-in `--graphs`), or an error for that one graph. */
+export interface GraphSeries { name: string; data?: unknown; error?: string; }
+
+export interface BroadcastActivity {
+  kind: 'broadcast';
+  period?: { minDate: string; maxDate: string };
+  followers?: StatValue;
+  viewsPerPost?: StatValue;
+  sharesPerPost?: StatValue;
+  reactionsPerPost?: StatValue;
+  viewsPerStory?: StatValue;
+  sharesPerStory?: StatValue;
+  reactionsPerStory?: StatValue;
+  enabledNotificationsPct?: number;
+  recentPosts?: PostInteraction[];
+  graphs?: GraphSeries[];
+}
+export interface MegagroupActivity {
+  kind: 'megagroup';
+  period?: { minDate: string; maxDate: string };
+  members?: StatValue;
+  messages?: StatValue;
+  viewers?: StatValue;
+  posters?: StatValue;
+  topPosters?: TopPoster[];
+  topAdmins?: TopAdmin[];
+  topInviters?: TopInviter[];
+  graphs?: GraphSeries[];
+}
+export type ChatActivity = BroadcastActivity | MegagroupActivity | { error: string };
+
 export interface ChatStats {
   id: string;
   title: string;
@@ -3314,14 +3351,17 @@ export interface ChatStats {
   bannedCount?: number;
   linkedChatId?: string;
   slowModeSeconds?: number;
-  /** Aggregate activity stats when the account may see them, otherwise `{ error }`. */
-  activity?: Record<string, number> | { error: string };
+  /** Aggregate activity when the account may see it, otherwise `{ error }`. */
+  activity?: ChatActivity;
 }
 
-const avp = (v: unknown): number | undefined =>
-  v instanceof Api.StatsAbsValueAndPrev ? v.current : undefined;
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+const avp = (v: unknown): StatValue | undefined =>
+  v instanceof Api.StatsAbsValueAndPrev ? { current: round2(v.current), previous: round2(v.previous) } : undefined;
 const pct = (v: unknown): number | undefined =>
-  v instanceof Api.StatsPercentValue && v.total ? Math.round((v.part / v.total) * 1000) / 10 : undefined;
+  v instanceof Api.StatsPercentValue && v.total ? round2((v.part / v.total) * 100) : undefined;
+const period = (v: unknown): { minDate: string; maxDate: string } | undefined =>
+  v instanceof Api.StatsDateRangeDays ? { minDate: new Date(v.minDate * 1000).toISOString(), maxDate: new Date(v.maxDate * 1000).toISOString() } : undefined;
 
 /** Invoke a stats.* request, following a STATS_MIGRATE_<dc> redirect to the stats DC if needed. */
 async function invokeStats<R extends Api.AnyRequest>(client: TelegramClient, req: R): Promise<R['__response']> {
@@ -3340,8 +3380,44 @@ function restrictionReasons(entity: Api.Channel | Api.User): string[] | undefine
   return reasons.map(r => `${r.platform}: ${r.reason}${r.text ? ` (${r.text})` : ''}`);
 }
 
+function userName(users: Map<string, Api.User>, id: bigInt.BigInteger): { name: string; username?: string } {
+  const u = users.get(id.toString());
+  if (!u) return { name: id.toString() };
+  return { name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || id.toString(), username: u.username ?? undefined };
+}
+
+/**
+ * Resolve each graph in `named` to a parsed JSON series. A StatsGraph is parsed inline; a
+ * StatsGraphAsync is loaded via stats.LoadAsyncGraph; a StatsGraphError is reported per-graph.
+ */
+async function collectGraphs(client: TelegramClient, named: Record<string, unknown>): Promise<GraphSeries[]> {
+  const out: GraphSeries[] = [];
+  for (const [name, graph] of Object.entries(named)) {
+    try {
+      let g = graph;
+      if (g instanceof Api.StatsGraphAsync) {
+        g = await invokeStats(client, new Api.stats.LoadAsyncGraph({ token: g.token }));
+      }
+      if (g instanceof Api.StatsGraphError) out.push({ name, error: g.error });
+      else if (g instanceof Api.StatsGraph) {
+        const raw = g.json instanceof Api.DataJSON ? g.json.data : '';
+        out.push({ name, data: raw ? JSON.parse(raw) : undefined });
+      }
+    } catch (e) {
+      out.push({ name, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
+}
+
+function postInteraction(c: Api.TypePostInteractionCounters): PostInteraction {
+  if (c instanceof Api.PostInteractionCountersStory) return { storyId: c.storyId, views: c.views, forwards: c.forwards, reactions: c.reactions };
+  const m = c as Api.PostInteractionCountersMessage;
+  return { msgId: m.msgId, views: m.views, forwards: m.forwards, reactions: m.reactions };
+}
+
 /** Full statistics for a channel / supergroup / group (Telethon get_stats). Read-only. */
-export async function getChatStats(client: TelegramClient, chatIdentifier: string): Promise<ChatStats> {
+export async function getChatStats(client: TelegramClient, chatIdentifier: string, options: { graphs?: boolean } = {}): Promise<ChatStats> {
   const entity = await resolveChat(client, chatIdentifier);
 
   if (entity instanceof Api.Channel) {
@@ -3374,7 +3450,7 @@ export async function getChatStats(client: TelegramClient, chatIdentifier: strin
     } catch {
       // Keep the entity-level fields even if the full channel can't be fetched.
     }
-    stats.activity = await activityStats(client, entity, megagroup);
+    stats.activity = await activityStats(client, entity, megagroup, options.graphs ?? false);
     return stats;
   }
 
@@ -3397,23 +3473,50 @@ export async function getChatStats(client: TelegramClient, chatIdentifier: strin
   return stats;
 }
 
-async function activityStats(client: TelegramClient, entity: Api.Channel, megagroup: boolean): Promise<Record<string, number> | { error: string }> {
+async function activityStats(client: TelegramClient, entity: Api.Channel, megagroup: boolean, graphs: boolean): Promise<ChatActivity> {
   try {
     if (megagroup) {
       const s = await invokeStats(client, new Api.stats.GetMegagroupStats({ channel: entity }));
-      return clean({ members: avp(s.members), messages: avp(s.messages), viewers: avp(s.viewers), posters: avp(s.posters), topPosters: s.topPosters.length, topAdmins: s.topAdmins.length, topInviters: s.topInviters.length });
+      const users = new Map(s.users.filter((u): u is Api.User => u instanceof Api.User).map(u => [u.id.toString(), u]));
+      const act: MegagroupActivity = {
+        kind: 'megagroup',
+        period: period(s.period),
+        members: avp(s.members), messages: avp(s.messages), viewers: avp(s.viewers), posters: avp(s.posters),
+        topPosters: s.topPosters.map(p => ({ userId: p.userId.toString(), ...userName(users, p.userId), messages: p.messages, avgChars: p.avgChars })),
+        topAdmins: s.topAdmins.map(a => ({ userId: a.userId.toString(), name: userName(users, a.userId).name, deleted: a.deleted, kicked: a.kicked, banned: a.banned })),
+        topInviters: s.topInviters.map(i => ({ userId: i.userId.toString(), name: userName(users, i.userId).name, invitations: i.invitations })),
+      };
+      if (graphs) {
+        act.graphs = await collectGraphs(client, {
+          growth: s.growthGraph, members: s.membersGraph, newMembersBySource: s.newMembersBySourceGraph,
+          languages: s.languagesGraph, messages: s.messagesGraph, actions: s.actionsGraph,
+          topHours: s.topHoursGraph, weekdays: s.weekdaysGraph,
+        });
+      }
+      return act;
     }
     const s = await invokeStats(client, new Api.stats.GetBroadcastStats({ channel: entity }));
-    return clean({ followers: avp(s.followers), viewsPerPost: avp(s.viewsPerPost), sharesPerPost: avp(s.sharesPerPost), reactionsPerPost: avp(s.reactionsPerPost), enabledNotificationsPct: pct(s.enabledNotifications), recentPosts: s.recentPostsInteractions.length });
+    const act: BroadcastActivity = {
+      kind: 'broadcast',
+      period: period(s.period),
+      followers: avp(s.followers),
+      viewsPerPost: avp(s.viewsPerPost), sharesPerPost: avp(s.sharesPerPost), reactionsPerPost: avp(s.reactionsPerPost),
+      viewsPerStory: avp(s.viewsPerStory), sharesPerStory: avp(s.sharesPerStory), reactionsPerStory: avp(s.reactionsPerStory),
+      enabledNotificationsPct: pct(s.enabledNotifications),
+      recentPosts: s.recentPostsInteractions.map(postInteraction),
+    };
+    if (graphs) {
+      act.graphs = await collectGraphs(client, {
+        growth: s.growthGraph, followers: s.followersGraph, mute: s.muteGraph, topHours: s.topHoursGraph,
+        interactions: s.interactionsGraph, ivInteractions: s.ivInteractionsGraph, viewsBySource: s.viewsBySourceGraph,
+        newFollowersBySource: s.newFollowersBySourceGraph, languages: s.languagesGraph, reactionsByEmotion: s.reactionsByEmotionGraph,
+        storyInteractions: s.storyInteractionsGraph, storyReactionsByEmotion: s.storyReactionsByEmotionGraph,
+      });
+    }
+    return act;
   } catch (e) {
     return { error: statsError(e) };
   }
-}
-
-function clean(obj: Record<string, number | undefined>): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const [k, v] of Object.entries(obj)) if (typeof v === 'number' && Number.isFinite(v)) out[k] = Math.round(v * 100) / 100;
-  return out;
 }
 
 function statsError(e: unknown): string {
@@ -3425,20 +3528,53 @@ function statsError(e: unknown): string {
   return msg;
 }
 
+export interface PublicForwardRef {
+  kind: 'message' | 'story';
+  chatId?: string;
+  chatTitle?: string;
+  msgId?: number;
+  storyId?: number;
+  views?: number;
+  date?: string;
+}
+
 export interface MessageStats {
   chatTitle: string;
-  messageId: number;
+  messageId?: number;
+  storyId?: number;
   views?: number;
   forwards?: number;
   reactions?: ReactionBreakdown[];
-  /** Number of public channels/groups that forwarded this message, if available. */
-  publicForwards?: number;
+  /** Number of public channels/groups that forwarded this, if available. */
+  publicForwardsCount?: number;
+  /** The public forwards themselves, up to the requested limit. */
+  publicForwards?: PublicForwardRef[];
+  graphs?: GraphSeries[];
   /** Set when detailed stats are unavailable (rights / not a channel). */
   note?: string;
 }
 
+function publicForwardsList(pf: Api.stats.PublicForwards): PublicForwardRef[] {
+  const chats = new Map(pf.chats.filter((c): c is Api.Channel | Api.Chat => 'title' in c).map(c => [c.id.toString(), c.title]));
+  const refs: PublicForwardRef[] = [];
+  for (const f of pf.forwards) {
+    if (f instanceof Api.PublicForwardMessage && f.message instanceof Api.Message) {
+      const chatId = utils.getPeerId(f.message.peerId).toString();
+      refs.push({ kind: 'message', chatId, chatTitle: chats.get(chatId.replace(/^-100/, '')), msgId: f.message.id, views: f.message.views ?? undefined, date: iso(f.message.date) });
+    } else if (f instanceof Api.PublicForwardStory) {
+      refs.push({ kind: 'story', chatId: utils.getPeerId(f.peer).toString(), storyId: f.story instanceof Api.StoryItem ? f.story.id : undefined });
+    }
+  }
+  return refs;
+}
+
 /** Per-message statistics (Telethon get_stats for a message). Read-only. */
-export async function getMessageStats(client: TelegramClient, chatIdentifier: string, messageId: number): Promise<MessageStats> {
+export async function getMessageStats(
+  client: TelegramClient,
+  chatIdentifier: string,
+  messageId: number,
+  options: { graphs?: boolean; limit?: number } = {},
+): Promise<MessageStats> {
   const entity = await resolveChat(client, chatIdentifier);
   if (!(entity instanceof Api.Channel)) {
     throw new Error('Per-message statistics are only available for channels and supergroups.');
@@ -3455,8 +3591,43 @@ export async function getMessageStats(client: TelegramClient, chatIdentifier: st
   }
 
   try {
-    const pf = await invokeStats(client, new Api.stats.GetMessagePublicForwards({ channel: entity, msgId: messageId, offset: '', limit: 100 }));
-    if ('count' in pf) out.publicForwards = pf.count;
+    const pf = await invokeStats(client, new Api.stats.GetMessagePublicForwards({ channel: entity, msgId: messageId, offset: '', limit: options.limit ?? 100 }));
+    if (pf instanceof Api.stats.PublicForwards) {
+      out.publicForwardsCount = pf.count;
+      out.publicForwards = publicForwardsList(pf);
+    }
+    if (options.graphs) {
+      const ms = await invokeStats(client, new Api.stats.GetMessageStats({ channel: entity, msgId: messageId }));
+      out.graphs = await collectGraphs(client, { views: ms.viewsGraph, reactionsByEmotion: ms.reactionsByEmotionGraph });
+    }
+  } catch (e) {
+    out.note = statsError(e);
+  }
+  return out;
+}
+
+/** Per-story statistics (Telethon get_stats for a story). Read-only. */
+export async function getStoryStats(
+  client: TelegramClient,
+  chatIdentifier: string,
+  storyId: number,
+  options: { graphs?: boolean; limit?: number } = {},
+): Promise<MessageStats> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('Per-story statistics are only available for channels and supergroups.');
+  }
+  const out: MessageStats = { chatTitle: getChatTitle(entity), storyId };
+  try {
+    const pf = await invokeStats(client, new Api.stats.GetStoryPublicForwards({ peer: entity, id: storyId, offset: '', limit: options.limit ?? 100 }));
+    if (pf instanceof Api.stats.PublicForwards) {
+      out.publicForwardsCount = pf.count;
+      out.publicForwards = publicForwardsList(pf);
+    }
+    if (options.graphs) {
+      const ss = await invokeStats(client, new Api.stats.GetStoryStats({ peer: entity, id: storyId }));
+      out.graphs = await collectGraphs(client, { views: ss.viewsGraph, reactionsByEmotion: ss.reactionsByEmotionGraph });
+    }
   } catch (e) {
     out.note = statsError(e);
   }

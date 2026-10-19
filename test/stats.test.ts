@@ -7,6 +7,7 @@ import type { TelegramClient } from 'teleproto';
 import {
   getMessages, getMessagesByIds, getChatStats, getMessageStats, buildMessageFull, buildFullMedia, disconnectClient,
 } from '../src/client.js';
+import type { BroadcastActivity, MegagroupActivity } from '../src/client.js';
 import { planCall } from '../src/mcp.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
@@ -100,16 +101,34 @@ describe('MCP forwards --full and classifies stats as a read', () => {
 });
 
 describe('chat statistics', () => {
-  it('broadcast channel: counts, flags and activity', async () => {
+  it('broadcast channel: counts, flags, current/previous values, period and recent posts', async () => {
     const s = await getChatStats(mock(), 'Mock News');
     expect(s).toMatchObject({ type: 'channel', verified: true, participantsCount: 15230, onlineCount: 320, kickedCount: 4, bannedCount: 1, linkedChatId: '5002' });
-    expect(s.activity).toMatchObject({ followers: 15230, viewsPerPost: 12044, enabledNotificationsPct: 62 });
+    const a = s.activity as BroadcastActivity;
+    expect(a.kind).toBe('broadcast');
+    expect(a.followers).toMatchObject({ current: 15230, previous: 15180 });
+    expect(a.enabledNotificationsPct).toBe(62);
+    expect(a.period).toBeDefined();
+    expect(a.recentPosts![0]).toMatchObject({ msgId: 1, views: 15230, forwards: 42 });
+    expect(a.graphs).toBeUndefined(); // not requested
   });
 
-  it('megagroup: members/messages activity and slow mode', async () => {
+  it('broadcast --graphs: loads async graphs and reports error graphs per graph', async () => {
+    const s = await getChatStats(mock(), 'Mock News', { graphs: true });
+    const a = s.activity as BroadcastActivity;
+    const followers = a.graphs!.find(g => g.name === 'followers')!; // StatsGraphAsync → loaded
+    expect(followers.data).toMatchObject({ token: 'async-followers' });
+    expect(a.graphs!.find(g => g.name === 'mute')!.error).toBe('no data'); // StatsGraphError
+  });
+
+  it('megagroup: activity with resolved top posters/admins/inviters', async () => {
     const s = await getChatStats(mock(), 'Team');
     expect(s).toMatchObject({ type: 'supergroup', slowModeSeconds: 10 });
-    expect(s.activity).toMatchObject({ members: 4, messages: 3 });
+    const a = s.activity as MegagroupActivity;
+    expect(a.kind).toBe('megagroup');
+    expect(a.members).toMatchObject({ current: 4 });
+    expect(a.topPosters![0]).toMatchObject({ name: 'Mock Owner', messages: 20, avgChars: 80 });
+    expect(a.topInviters![0]).toMatchObject({ name: 'Mock Owner', invitations: 7 });
   });
 
   it('gracefully reports missing rights instead of failing', async () => {
@@ -117,10 +136,12 @@ describe('chat statistics', () => {
     expect(s.activity).toMatchObject({ error: expect.stringMatching(/Admin rights/) });
   });
 
-  it('per-message stats include views, forwards, public forwards and reactions', async () => {
-    const s = await getMessageStats(mock(), 'Mock News', 1);
-    expect(s).toMatchObject({ messageId: 1, views: 15230, forwards: 42, publicForwards: 3 });
+  it('per-message stats: own views/forwards/reactions plus a public-forwards list', async () => {
+    const s = await getMessageStats(mock(), 'Mock News', 1, { graphs: true });
+    expect(s).toMatchObject({ messageId: 1, views: 15230, forwards: 42, publicForwardsCount: 1 });
     expect(s.reactions!.length).toBeGreaterThan(0);
+    expect(s.publicForwards![0]).toMatchObject({ kind: 'message', chatTitle: 'Team', views: 123 });
+    expect(s.graphs!.find(g => g.name === 'views')!.data).toBeDefined();
   });
 });
 

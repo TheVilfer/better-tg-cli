@@ -45,11 +45,20 @@ code. This file only covers behaviour that the flag list can't tell you.
   only. To change rights, use `promote`/`kick` or `api channels.EditBanned`.
 - `stats <chat>` returns full entity statistics: subscribers/members, online, admins, kicked and
   banned counts, linked discussion chat, slow mode, about, creation date, verified/scam/fake/
-  restricted flags (+ reasons), and — where the account has rights — aggregate activity via
-  `stats.GetBroadcastStats` (followers, views/shares/reactions per post, enabled-notifications %)
-  or `stats.GetMegagroupStats` (members, messages, viewers, posters). `stats <chat> --message <id>`
-  returns a single post's views, forwards, public forwards and reactions. Missing rights or
-  unavailable stats are reported in an `activity.error` / `note` field, never a hard failure.
+  restricted flags (+ reasons), and — where the account has rights — aggregate `activity`:
+  - broadcast (`stats.GetBroadcastStats`): `period`, followers and per-post/per-story
+    views/shares/reactions each as `{current, previous}`, enabled-notifications %, and
+    `recentPosts[]` (`{msgId, views, forwards, reactions}`);
+  - megagroup (`stats.GetMegagroupStats`): members/messages/viewers/posters `{current, previous}`
+    and resolved `topPosters` `{userId, name, username, messages, avgChars}`, `topAdmins`
+    `{userId, name, deleted, kicked, banned}`, `topInviters` `{userId, name, invitations}`.
+  - `--graphs` adds each graph as a parsed JSON series (`graphs[] = {name, data}` or `{name, error}`);
+    async graphs are loaded via `stats.LoadAsyncGraph`, and a failed graph reports its error without
+    failing the rest.
+  - `stats <chat> --message <id>` (or `--story <id>`) returns the post's own views/forwards/reactions,
+    `publicForwardsCount`, a `publicForwards[]` list (`{chatTitle, msgId, views, date}`, capped by
+    `--limit`), and — with `--graphs` — the message's view/reaction graphs.
+  - Missing rights or unavailable stats are reported in `activity.error` / `note`, never a hard failure.
 
 ## Output
 

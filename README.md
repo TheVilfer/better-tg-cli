@@ -208,7 +208,7 @@ telegram drafts                               # saved but unsent drafts
 telegram admin-log "Team"                     # a group's recent admin actions
 telegram profile-photos @alice                # a user's profile photos
 telegram read @channel -n 20 --full           # every message stat (views, reactions, flags, media)
-telegram stats "Mock News"                    # full channel/group stats; --message <id> for one post
+telegram stats "Mock News" --graphs           # full channel stats + growth graphs; --message <id> / --story <id> too
 
 telegram write-access on --for 1h             # a human confirms this
 telegram send @alice "on my way"

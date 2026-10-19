@@ -476,6 +476,18 @@ export class MockClient {
 
   // --- raw requests ---
 
+  private statsGraph(data: string): Api.StatsGraph {
+    return new Api.StatsGraph(args({ json: new Api.DataJSON({ data }) }));
+  }
+
+  private asyncGraph(token: string): Api.StatsGraphAsync {
+    return new Api.StatsGraphAsync({ token });
+  }
+
+  private errorGraph(error: string): Api.StatsGraphError {
+    return new Api.StatsGraphError({ error });
+  }
+
   async invoke(request: { className: string } & Record<string, any>): Promise<any> {
     switch (request.className) {
       case 'messages.GetReplies': return this.getReplies(request);
@@ -509,48 +521,68 @@ export class MockClient {
         const chat = this.chat(request.channel);
         if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
         const avp = (current: number, previous = current) => new Api.StatsAbsValueAndPrev({ current, previous });
-        const graph = new Api.StatsGraph(args({ json: new Api.DataJSON({ data: '{}' }) }));
+        const g = this.statsGraph('{"columns":[["x",1,2],["y",10,20]]}');
         return new Api.stats.BroadcastStats(args({
-          period: new Api.StatsDateRangeDays({ minDate: 0, maxDate: 0 }),
-          followers: avp(chat.membersCount ?? 0),
-          viewsPerPost: avp(12044),
-          sharesPerPost: avp(18),
-          reactionsPerPost: avp(9),
-          viewsPerStory: avp(0), sharesPerStory: avp(0), reactionsPerStory: avp(0),
+          period: new Api.StatsDateRangeDays({ minDate: 1_700_000_000, maxDate: 1_700_600_000 }),
+          followers: avp(chat.membersCount ?? 0, (chat.membersCount ?? 0) - 50),
+          viewsPerPost: avp(12044, 11000),
+          sharesPerPost: avp(18, 12),
+          reactionsPerPost: avp(9, 7),
+          viewsPerStory: avp(400, 380), sharesPerStory: avp(3, 2), reactionsPerStory: avp(5, 4),
           enabledNotifications: new Api.StatsPercentValue({ part: 62, total: 100 }),
-          growthGraph: graph, followersGraph: graph, muteGraph: graph, topHoursGraph: graph,
-          interactionsGraph: graph, ivInteractionsGraph: graph, viewsBySourceGraph: graph,
-          newFollowersBySourceGraph: graph, languagesGraph: graph, reactionsByEmotionGraph: graph,
-          storyInteractionsGraph: graph, storyReactionsByEmotionGraph: graph,
-          recentPostsInteractions: [],
+          // One async graph (loaded via LoadAsyncGraph) and one error graph, to exercise both paths.
+          growthGraph: g, followersGraph: this.asyncGraph('async-followers'), muteGraph: this.errorGraph('no data'),
+          topHoursGraph: g, interactionsGraph: g, ivInteractionsGraph: g, viewsBySourceGraph: g,
+          newFollowersBySourceGraph: g, languagesGraph: g, reactionsByEmotionGraph: g,
+          storyInteractionsGraph: g, storyReactionsByEmotionGraph: g,
+          recentPostsInteractions: chat.messages.slice(0, 3).map(m => new Api.PostInteractionCountersMessage({ msgId: m.id, views: m.views ?? 0, forwards: m.forwards ?? 0, reactions: (m.reactions ?? []).length })),
         }));
       }
       case 'stats.GetMegagroupStats': {
         const chat = this.chat(request.channel);
         if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
-        const avp = (current: number) => new Api.StatsAbsValueAndPrev({ current, previous: current });
-        const graph = new Api.StatsGraph(args({ json: new Api.DataJSON({ data: '{}' }) }));
+        const avp = (current: number, previous = current) => new Api.StatsAbsValueAndPrev({ current, previous });
+        const g = this.statsGraph('{"columns":[["x",1,2],["y",3,4]]}');
+        const members = chat.members ?? [];
         return new Api.stats.MegagroupStats(args({
-          period: new Api.StatsDateRangeDays({ minDate: 0, maxDate: 0 }),
-          members: avp(chat.membersCount ?? chat.members?.length ?? 0),
-          messages: avp(chat.messages.length),
-          viewers: avp(3),
-          posters: avp(2),
-          growthGraph: graph, membersGraph: graph, newMembersBySourceGraph: graph, languagesGraph: graph,
-          messagesGraph: graph, actionsGraph: graph, topHoursGraph: graph, weekdaysGraph: graph,
-          topPosters: [], topAdmins: [], topInviters: [], users: [],
+          period: new Api.StatsDateRangeDays({ minDate: 1_700_000_000, maxDate: 1_700_600_000 }),
+          members: avp(chat.membersCount ?? members.length, (chat.membersCount ?? members.length) - 2),
+          messages: avp(chat.messages.length, chat.messages.length - 1),
+          viewers: avp(3, 2),
+          posters: avp(2, 2),
+          growthGraph: g, membersGraph: this.asyncGraph('async-members'), newMembersBySourceGraph: g,
+          languagesGraph: this.errorGraph('not enough data'), messagesGraph: g, actionsGraph: g,
+          topHoursGraph: g, weekdaysGraph: g,
+          topPosters: members.slice(0, 2).map((m, i) => new Api.StatsGroupTopPoster({ userId: bigInt(m.userId), messages: 20 - i * 5, avgChars: 80 - i * 10 })),
+          topAdmins: members.filter(m => m.role).map(m => new Api.StatsGroupTopAdmin({ userId: bigInt(m.userId), deleted: 2, kicked: 1, banned: 0 })),
+          topInviters: members.slice(0, 1).map(m => new Api.StatsGroupTopInviter({ userId: bigInt(m.userId), invitations: 7 })),
+          users: members.flatMap(m => { const u = this.findUser(m.userId); return u ? [this.user(u)] : []; }),
         }));
       }
-      case 'stats.GetMessagePublicForwards': {
-        const chat = this.chat(request.channel);
-        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
-        return new Api.stats.PublicForwards(args({ count: 3, forwards: [], chats: [], users: [] }));
+      case 'stats.LoadAsyncGraph': {
+        return this.statsGraph(`{"token":"${request.token}","columns":[["x",1,2],["y",5,6]]}`);
       }
-      case 'stats.GetMessageStats': {
-        const chat = this.chat(request.channel);
+      case 'stats.GetMessagePublicForwards':
+      case 'stats.GetStoryPublicForwards': {
+        const chat = this.chat(request.channel ?? request.peer);
         if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
-        const graph = new Api.StatsGraph(args({ json: new Api.DataJSON({ data: '{}' }) }));
-        return new Api.stats.MessageStats(args({ viewsGraph: graph, reactionsByEmotionGraph: graph }));
+        // A public forward of this post into another supergroup we can name.
+        const into = this.world.chats.find(c => c.kind === 'supergroup' && c.id !== chat.id) ?? chat;
+        const fwdMsg = new Api.Message(args({ id: 999, date: now(), message: 'reposted', peerId: this.peerOf(into), views: 123 }));
+        return new Api.stats.PublicForwards(args({
+          count: 1,
+          forwards: [new Api.PublicForwardMessage({ message: fwdMsg })],
+          chats: [this.entityOf(into)],
+          users: [],
+          nextOffset: undefined,
+        }));
+      }
+      case 'stats.GetMessageStats':
+      case 'stats.GetStoryStats': {
+        const chat = this.chat(request.channel ?? request.peer);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        const g = this.statsGraph('{"columns":[["x",1,2],["y",7,8]]}');
+        return new Api.stats.MessageStats(args({ viewsGraph: g, reactionsByEmotionGraph: this.errorGraph('no reactions') }));
       }
       case 'messages.GetFullChat': return this.fullChat(this.chat(bigInt(`-${request.chatId.toString()}`)));
       case 'channels.GetParticipants': return this.participants(request);
