@@ -93,6 +93,8 @@ import {
   invitesCommand,
   editPermissionsCommand,
   topicCommand,
+  tlCommand,
+  registerTlSubcommands,
 } from './commands/index.js';
 
 
@@ -196,6 +198,7 @@ program.addCommand(writeAccessCommand);
 
 // Utilities
 program.addCommand(apiCommand);
+program.addCommand(tlCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);
@@ -285,6 +288,9 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   void runBackgroundCheck();
 } else {
   maybeNotifyUpdate();
+  // Attach only the generated `tl` subcommands the current invocation needs (lazy: the one
+  // namespace/method on the command line), so startup and help stay unaffected otherwise.
+  registerTlSubcommands(process.argv);
   // Always node-style argv: commander would read it Electron-style inside Claude Desktop's
   // built-in Node (an Electron utility process) and take the script path for a command
   if (isMainThread) {
