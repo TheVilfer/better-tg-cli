@@ -136,6 +136,14 @@ describe('MCP routing of the top-level generated form', () => {
       expect(planCall('telegram_read', { args }), args.join(' ')).toMatchObject({ readOnly: true });
     }
     expect(planCall('telegram_write', { args: ['messages', 'get-history', '--help'] })).toMatch(/only prints help|telegram_read/);
+    // A help token that is an operand or an option value does not make the call a read.
+    expect(typeof planCall('telegram_read', { args: ['send', '@x', '--', '--help'] })).toBe('string');
+    expect(typeof planCall('telegram_read', { args: ['send', '@x', 'hi', '--reply-to', '-h'] })).toBe('string');
+    expect(planCall('telegram_read', { args: ['messages', 'send-message', '--peer', '@x', '--message', '-h'] })).toMatch(/telegram_write/);
+    expect(planCall('telegram_read', { args: ['logout', '--', '-h'] })).toMatch(/not available over MCP/);
+    expect(planCall('telegram_read', { args: ['update', '--', '--help'] })).toMatch(/not available over MCP/);
+    expect(planCall('telegram_read', { args: ['account', 'delete-account', '--reason', '-h'] })).toMatch(/Refused/);
+    expect(planCall('telegram_read', { args: ['messages', 'get-history', '--help', '--json'] })).toMatchObject({ readOnly: true });
   });
 });
 

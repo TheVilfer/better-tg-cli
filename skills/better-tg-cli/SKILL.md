@@ -109,7 +109,7 @@ method (e.g. `get-broadcast-stats`) must be passed by its ID or @username.
 
 Every method's `--help` and `telegram schema` are plain reads (they never execute the method), so
 over MCP they go through `telegram_read` even for a write or refused method
-(`["account","delete-account","--help"]` is safe).
+(`["account","delete-account","--help"]` is safe). Pass only the command path plus `--help`.
 
 ```bash
 telegram channels get-full-channel --channel @group      # read, peer resolved like everywhere

@@ -339,9 +339,10 @@ method's `--help` lists its own "Common errors" when the docs provide them.
     and `["ping"]` like `["api","messages.GetHistory",…]`. On a clash namespace the method form is
     classified by its method (`["stats","get-broadcast-stats",…]`) while the curated form keeps its
     own class (`["stats","@chat"]` is a read); `["auth","send-code"]` is refused.
-  - Help is always a read: any argv with `--help`/`-h`, and `telegram schema …`, go through the read
-    tool even for a write or refused method (`["account","delete-account","--help"]`) — help prints,
-    it never executes the method. So an agent can learn any method's flags over MCP.
+  - Help is always a read: a bare help request (a command path plus `--help`/`-h`, optionally
+    `--json`) and `telegram schema …` go through the read tool even for a write or refused method
+    (`["account","delete-account","--help"]`) — help prints, it never executes the method. Add no
+    other args: with extra args (`["send","@x","--","--help"]`) the call is classified normally.
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
     Showing its status is allowed (a generated `auth.*` method is refused, not run).
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a

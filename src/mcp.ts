@@ -101,9 +101,9 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   }
   const [cmd] = args as string[];
   if (cmd.startsWith('-')) return 'args[0] must be a command name, not a flag';
-  // `--help`/`-h` on anything just prints help (commander never runs the action), so it is always a
-  // safe read — including a write or refused method's help (e.g. `["account","delete-account","--help"]`).
-  if ((args as string[]).some(a => a === '--help' || a === '-h')) {
+  // A pure help request just prints help (commander never runs the action), so it is a safe read —
+  // including a write or refused method's help (e.g. `["account","delete-account","--help"]`).
+  if (isPureHelpRequest(args as string[])) {
     return tool === 'telegram_read'
       ? { argv: args as string[], readOnly: true }
       : `"${cmd} --help" only prints help; use telegram_read`;
@@ -166,6 +166,25 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   if (READ_COMMANDS.has(cmd)) return `"${cmd}" is read-only; use telegram_read`;
   const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
   return { argv: args as string[], readOnly: false, stdin };
+}
+
+/**
+ * True only for a bare help request: a command path (at most two words, e.g. `["messages",
+ * "get-history"]`) followed by `--help`/`-h` and optionally `--json`, nothing else. Any other
+ * argument could make the help token an operand or an option value (`["send","@x","--","--help"]`,
+ * `["send","@x","hi","--reply-to","-h"]`), and then the command would really run, so such argv are
+ * classified like any other call.
+ */
+export function isPureHelpRequest(args: string[]): boolean {
+  let help = false;
+  let words = 0;
+  for (const a of args) {
+    if (a === '--help' || a === '-h') help = true;
+    else if (a === '--json') continue;
+    else if (a.startsWith('-')) return false;
+    else if (help || ++words > 2) return false;
+  }
+  return help;
 }
 
 /** The method name in an `api` argv (`["api","messages.GetHistory","--params","{…}"]`). */
