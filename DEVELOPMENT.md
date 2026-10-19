@@ -115,11 +115,19 @@ and any tool that imports the compiler. `.vscode/settings.json` points the edito
 npm test                # vitest, offline (no session, no network)
 npm run test:watch
 npm run typecheck       # or typecheck:watch
+npm run coverage:api    # API coverage gate: fails below 90% (see below)
 npm run dev:dist -- check   # build the real bundle and run it (dev profile)
 ```
 
 Source mode skips the bundle's shrink plugin (TL re-encoding, stubs). Run `npm run dev:dist` or
 `npm run build && npm test` before a release. `test/bundle-shrink.test.ts` and
 `test/sync-and-cli.test.ts` cover the bundle.
+
+`npm run coverage:api` (CI runs it after the build) runs `scripts/api-coverage.mjs --check
+--min 90`: TL schema reachability and Telethon 1.45.0 `TelegramClient` accounting (member list in
+`scripts/data/telethon-1.45.0-client-methods.tsv`) must each be at least 90%, and
+`docs/api-coverage.md` must be current (regenerate with `node scripts/api-coverage.mjs`). Override
+the threshold with `--min <n>` or `API_COVERAGE_MIN`; `--json` prints the numbers.
+`test/api-coverage.test.ts` enforces the same gate in `npm test`.
 
 Releasing is described in `CLAUDE.md` (`scripts/release.sh`, which picks the version from the PR titles, then `scripts/release.sh tag`).

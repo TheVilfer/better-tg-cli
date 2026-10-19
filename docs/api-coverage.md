@@ -15,6 +15,9 @@ Tracks issue #47. Two measures:
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
 - Dedicated (purpose-built) coverage: **99 (12%)** — 65 called directly in src/, 34 through teleproto client helpers
 
+CI gate (`npm run coverage:api`, also enforced by `npm test`): reachability and Telethon
+accounting (section 2) must each stay at or above **90%** (`--min <n>` / `API_COVERAGE_MIN`).
+
 ## 1. Issue #47 measure: dedicated coverage by namespace
 
 | Namespace | Methods | Dedicated | Share | Notes |
@@ -54,6 +57,7 @@ Tracks issue #47. Two measures:
 
 Every public member of Telethon 1.45.0's `TelegramClient` (plus its raw `client(request)`),
 mapped to a CLI command, a covered library helper, or a documented exclusion.
+The member list is `scripts/data/telethon-1.45.0-client-methods.tsv`.
 
 - Covered by a dedicated command: **44**
 - Covered as library/plumbing we drive: **3**

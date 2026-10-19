@@ -69,6 +69,7 @@
     "test:watch": "vitest",
     "pretest": "node scripts/gen-version.mjs",
     "typecheck": "tsc --noEmit",
+    "coverage:api": "node scripts/api-coverage.mjs --check --min 90",
     "typecheck:watch": "tsc --noEmit --watch --preserveWatchOutput"
   },
   "devDependencies": {

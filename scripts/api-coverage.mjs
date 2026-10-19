@@ -1,8 +1,19 @@
 #!/usr/bin/env node
 // API coverage for issue #47: how much of the Telegram client API Better-TG-CLI reaches.
 //
-//   node scripts/api-coverage.mjs           regenerate docs/api-coverage.md
-//   node scripts/api-coverage.mjs --check    fail if docs/api-coverage.md is out of date (CI)
+//   node scripts/api-coverage.mjs                regenerate docs/api-coverage.md
+//   node scripts/api-coverage.mjs --check         fail if docs/api-coverage.md is out of date, or
+//                                                 if either coverage metric is below the minimum
+//   node scripts/api-coverage.mjs --min 90        only the coverage gate (no report written/compared)
+//   node scripts/api-coverage.mjs --json          print the two metrics as JSON
+//
+// Coverage gate (CI, `npm run coverage:api`): both metrics must be >= the minimum percentage
+// (default 90; `--min <n>` or env API_COVERAGE_MIN), otherwise exit 1:
+//  - reachability: TL schema methods reachable (via `api` + dedicated commands) / all TL methods
+//  - Telethon accounting: Telethon 1.45.0 TelegramClient members (scripts/data/…tsv, plus the raw
+//    client(request) call) mapped below to a built command, library plumbing or a documented
+//    exclusion / all members. A member missing from the table, or mapped to a command whose file
+//    does not exist yet, is unaccounted. `--telethon-tsv <path>` swaps the member list (tests).
 //
 // Two measures, both written into the report:
 //  1. Issue #47 (primary): every `extends Request<…>` in teleproto's tl/generated/api.d.ts is a
@@ -13,7 +24,8 @@
 //     the dedicated per-namespace coverage.
 //  2. Telethon 1.45.0 TelegramClient parity (secondary): every public member of Telethon's
 //     TelegramClient mapped to a CLI command, a covered library helper, or a documented exclusion.
-//     The table is embedded here (the source .tsv is an untracked input and is not committed).
+//     The mapping table is embedded here; the member list it must cover is
+//     scripts/data/telethon-1.45.0-client-methods.tsv (name, sync/async, module).
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +34,10 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DTS = join(root, 'node_modules/teleproto/tl/generated/api.d.ts');
 const REPORT = join(root, 'docs/api-coverage.md');
+const TELETHON_TSV = join(root, 'scripts/data/telethon-1.45.0-client-methods.tsv');
+/** Not a named TelegramClient member, but counted: Telethon's raw client(request) call. */
+const RAW_CALL = '__call__ (raw request)';
+const DEFAULT_MIN = 90;
 
 // ---- 1. the schema: every TL method, by namespace ---------------------------------------------
 
@@ -222,6 +238,55 @@ function cliStatus(cmd) {
   return 'cli';
 }
 
+// ---- the two gated metrics ---------------------------------------------------------------------
+
+/** Public TelegramClient member names from the committed Telethon 1.45.0 list, plus the raw call. */
+function telethonMembers(tsvPath = TELETHON_TSV) {
+  const names = readFileSync(tsvPath, 'utf8').split('\n').map((l) => l.split('\t')[0].trim()).filter(Boolean);
+  return [...new Set([...names, RAW_CALL])];
+}
+
+/** Reachability and Telethon accounting, as counts and percentages. */
+function metrics(tsvPath = TELETHON_TSV) {
+  const methods = schemaMethods();
+  const reached = new Set([...directlyUsed(methods), ...HELPER_REACHED.filter((m) => methods.has(m))]);
+  const reachable = hasGenericApi() ? methods.size : reached.size;
+
+  const rows = new Map(TELETHON.map(([name, , kind, cmd]) => [name, kind === 'cli' ? cliStatus(cmd) : kind]));
+  const members = telethonMembers(tsvPath);
+  const unaccounted = members.filter((m) => !rows.has(m) || rows.get(m) === 'planned');
+  const stale = [...rows.keys()].filter((m) => !members.includes(m));
+
+  const pct = (a, b) => (b === 0 ? 0 : (a / b) * 100);
+  return {
+    reachability: { reachable, total: methods.size, pct: pct(reachable, methods.size) },
+    telethon: {
+      accounted: members.length - unaccounted.length, total: members.length,
+      pct: pct(members.length - unaccounted.length, members.length), unaccounted, stale,
+    },
+  };
+}
+
+/** Fails (returns false) when either metric is strictly below `min` percent. */
+function gate(min, tsvPath) {
+  const { reachability: r, telethon: t } = metrics(tsvPath);
+  const fmt = (x) => `${(Math.floor(x * 10) / 10).toFixed(1)}%`;
+  let ok = true;
+  const out = [];
+  const line = (name, a, b, p) => {
+    const pass = p >= min;
+    ok &&= pass;
+    out.push(`${pass ? 'ok  ' : 'FAIL'} ${name}: ${a}/${b} = ${fmt(p)} (minimum ${min}%)`);
+  };
+  line('API reachability (TL schema methods)', r.reachable, r.total, r.pct);
+  line('Telethon 1.45.0 TelegramClient accounting', t.accounted, t.total, t.pct);
+  if (t.unaccounted.length) out.push(`     unaccounted Telethon members: ${t.unaccounted.join(', ')}`);
+  if (t.stale.length) out.push(`     note: mapped but not in the Telethon list: ${t.stale.join(', ')}`);
+  if (!ok) out.push(`API coverage is below the ${min}% minimum. Add commands/mappings (scripts/api-coverage.mjs), or see docs/api-coverage.md.`);
+  (ok ? console.log : console.error)(out.join('\n'));
+  return ok;
+}
+
 // ---- build the report -------------------------------------------------------------------------
 
 function build() {
@@ -263,6 +328,9 @@ function build() {
   lines.push(`- Reachable today: **${generic ? totalMethods : totalReached} (${reachablePct}%)** ${generic ? '— via the generic `api` command plus every dedicated command' : '— no generic command yet; only dedicated commands reach the API'}`);
   lines.push(`- Dedicated (purpose-built) coverage: **${totalReached} (${pct(totalReached, totalMethods)})** — ${[...directlyUsed(methods)].length} called directly in src/, ${HELPER_REACHED.filter((m) => methods.has(m)).length} through teleproto client helpers`);
   lines.push('');
+  lines.push(`CI gate (\`npm run coverage:api\`, also enforced by \`npm test\`): reachability and Telethon`);
+  lines.push(`accounting (section 2) must each stay at or above **${DEFAULT_MIN}%** (\`--min <n>\` / \`API_COVERAGE_MIN\`).`);
+  lines.push('');
   lines.push('## 1. Issue #47 measure: dedicated coverage by namespace');
   lines.push('');
   lines.push('| Namespace | Methods | Dedicated | Share | Notes |');
@@ -290,13 +358,15 @@ function build() {
   lines.push('');
   lines.push(`Every public member of Telethon 1.45.0's \`TelegramClient\` (plus its raw \`client(request)\`),`);
   lines.push(`mapped to a CLI command, a covered library helper, or a documented exclusion.`);
+  lines.push('The member list is `scripts/data/telethon-1.45.0-client-methods.tsv`.');
   lines.push('');
   lines.push(`- Covered by a dedicated command: **${telCli}**`);
   if (telApi) lines.push(`- Reachable through the generic \`api\` command: **${telApi}**`);
   if (telPlanned) lines.push(`- Mapped to a command still being built: **${telPlanned}**`);
   lines.push(`- Covered as library/plumbing we drive: **${telLib}**`);
   lines.push(`- Deliberately excluded: **${telExcl}**`);
-  lines.push(`- **Total members mapped: ${TELETHON.length}** (0 unaccounted for)`);
+  const tel = metrics().telethon;
+  lines.push(`- **Total members mapped: ${tel.accounted}** (${tel.total - tel.accounted} unaccounted for)`);
   lines.push('');
   lines.push('| Telethon member | Module | Status | Maps to |');
   lines.push('|---|---|---|---|');
@@ -375,16 +445,38 @@ function build() {
   return lines.join('\n') + '\n';
 }
 
-const report = build();
-const check = process.argv.includes('--check');
-if (check) {
-  const current = existsSync(REPORT) ? readFileSync(REPORT, 'utf8') : '';
-  if (current !== report) {
-    console.error('docs/api-coverage.md is out of date. Run: node scripts/api-coverage.mjs');
-    process.exit(1);
+// ---- CLI --------------------------------------------------------------------------------------
+
+const argv = process.argv.slice(2);
+/** Value of `--name <v>` or `--name=<v>`, else undefined. */
+function opt(name) {
+  const i = argv.findIndex((a) => a === name || a.startsWith(`${name}=`));
+  if (i < 0) return undefined;
+  return argv[i].includes('=') ? argv[i].slice(name.length + 1) : argv[i + 1];
+}
+const check = argv.includes('--check');
+const minArg = opt('--min') ?? process.env.API_COVERAGE_MIN;
+const tsvPath = opt('--telethon-tsv') ?? TELETHON_TSV;
+const min = minArg === undefined || minArg === '' ? DEFAULT_MIN : Number(minArg);
+if (!Number.isFinite(min) || min < 0 || min > 100) {
+  console.error(`Invalid coverage minimum "${minArg}" (expected a number 0-100).`);
+  process.exit(2);
+}
+
+if (argv.includes('--json')) {
+  console.log(JSON.stringify({ min, ...metrics(tsvPath) }, null, 2));
+} else if (check || opt('--min') !== undefined) {
+  let ok = gate(min, tsvPath);
+  if (check) {
+    const report = build();
+    const current = existsSync(REPORT) ? readFileSync(REPORT, 'utf8') : '';
+    if (current !== report) {
+      console.error('docs/api-coverage.md is out of date. Run: node scripts/api-coverage.mjs');
+      ok = false;
+    } else console.log('docs/api-coverage.md is up to date.');
   }
-  console.log('docs/api-coverage.md is up to date.');
+  process.exit(ok ? 0 : 1);
 } else {
-  writeFileSync(REPORT, report);
+  writeFileSync(REPORT, build());
   console.log(`Wrote ${REPORT}`);
 }
