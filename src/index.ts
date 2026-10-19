@@ -95,6 +95,7 @@ import {
   topicCommand,
   registerGeneratedCommands,
   buildHelpCommand,
+  schemaCommand,
 } from './commands/index.js';
 import { generatedSummaryLines } from './commands/generated.js';
 
@@ -212,6 +213,7 @@ program.addCommand(writeAccessCommand);
 
 // Utilities
 program.addCommand(apiCommand);
+program.addCommand(schemaCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);

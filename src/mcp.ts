@@ -25,7 +25,7 @@ export const READ_COMMANDS = new Set([
   'check', 'whoami', 'chats', 'read', 'get', 'info', 'topics', 'link', 'contacts', 'search',
   'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'inline', 'watch', 'contact', 'members',
   'admins', 'groups', 'folders', 'folder', 'write-access', 'drafts', 'admin-log', 'profile-photos',
-  'permissions', 'stats', 'scheduled', 'sessions', 'stars', 'invites',
+  'permissions', 'stats', 'scheduled', 'sessions', 'stars', 'invites', 'schema',
 ]);
 
 /** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
@@ -101,6 +101,13 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   }
   const [cmd] = args as string[];
   if (cmd.startsWith('-')) return 'args[0] must be a command name, not a flag';
+  // `--help`/`-h` on anything just prints help (commander never runs the action), so it is always a
+  // safe read — including a write or refused method's help (e.g. `["account","delete-account","--help"]`).
+  if ((args as string[]).some(a => a === '--help' || a === '-h')) {
+    return tool === 'telegram_read'
+      ? { argv: args as string[], readOnly: true }
+      : `"${cmd} --help" only prints help; use telegram_read`;
+  }
   // An excluded command name that is actually a generated API method (e.g. `["auth","send-code"]`,
   // where `auth` is both the login command and a TL namespace) is classified below, not excluded.
   if (EXCLUDED_COMMANDS.has(cmd) && !resolveGeneratedCommand(args as string[])) {
