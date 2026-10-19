@@ -2,8 +2,9 @@ import { Command, Option } from 'commander';
 import { readFileSync } from 'node:fs';
 import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { runApiMethod } from '../api-run.js';
-import { apiRefusalReason } from '../api-methods.js';
+import { apiRefusalReason, isApiReadMethod } from '../api-methods.js';
 import chalk from '../colors.js';
+import { methodDoc, paramDoc, docsUrl } from '../tl-docs.js';
 import {
   isGeneratedNamespace,
   namespaceMethodList,
@@ -91,9 +92,27 @@ export function paramsOf(className: string): TlParam[] {
   return out;
 }
 
-function optionFor(p: TlParam): Option {
-  const state = isCursorDefault(p) ? 'default 0' : p.optional ? 'optional' : 'required';
-  const tag = `${p.type}${p.isVector ? '[]' : ''}, ${state}`;
+export type Access = 'read' | 'write' | 'refused';
+
+/** How the write guard treats a method, with the refusal reason when refused. */
+export function access(className: string): { kind: Access; reason?: string } {
+  const reason = apiRefusalReason(className);
+  if (reason) return { kind: 'refused', reason };
+  return { kind: isApiReadMethod(className) ? 'read' : 'write' };
+}
+
+/** The schema's result type for a method (for the help "Returns:" line and `schema`). */
+export function returnType(className: string): string {
+  return defByClassName.get(className)?.result ?? '';
+}
+
+function paramState(p: TlParam): string {
+  return isCursorDefault(p) ? 'default 0' : p.optional ? 'optional' : 'required';
+}
+
+function optionFor(p: TlParam, className: string): Option {
+  const desc = paramDoc(className, p.name);
+  const tag = `${p.type}${p.isVector ? '[]' : ''}, ${paramState(p)}${desc ? ` — ${desc}` : ''}`;
   if (p.trueFlag) {
     const o = new Option(`--${p.kebab}`, tag);
     // Keep `--no-*` true-flags (noWebpage, noMuted…) as plain booleans that set the param true,
@@ -102,6 +121,59 @@ function optionFor(p: TlParam): Option {
     return o;
   }
   return new Option(`--${p.kebab} <value>`, tag);
+}
+
+/** A placeholder value for a required param in an auto-generated example invocation. */
+function examplePlaceholder(p: TlParam): string {
+  if (PEER_TYPES.has(p.type)) return '@username';
+  if (p.isVector) return p.type === 'string' ? 'a,b' : '1,2';
+  switch (p.type) {
+    case 'int': case 'double': return p.name === 'limit' ? '20' : '1';
+    case 'long': case 'int128': case 'int256': return '0';
+    case 'Bool': return 'true';
+    case 'string': return p.name.toLowerCase().includes('url') ? 'https://example.com' : 'text';
+    case 'bytes': return 'aGVsbG8=';
+    default: return "'{…}'";
+  }
+}
+
+/** An example command line: only the required (non-cursor) params, plus `limit` if present. */
+export function exampleInvocation(nsKebab: string, methodKebab: string, className: string): string {
+  const parts = [`telegram ${nsKebab ? `${nsKebab} ` : ''}${methodKebab}`];
+  for (const p of paramsOf(className)) {
+    const include = (!p.optional && !p.trueFlag && p.name !== 'randomId' && !isCursorDefault(p)) || p.name === 'limit';
+    if (include) parts.push(`--${p.kebab} ${examplePlaceholder(p)}`);
+  }
+  return parts.join(' ');
+}
+
+const ACCESS_NOTE: Record<Access, string> = {
+  read: 'read — runs without write access (telegram_read over MCP)',
+  write: 'write — needs `telegram write-access on` (telegram_write over MCP)',
+  refused: 'refused — always refused',
+};
+
+/** The rich `--help` body for a single method (description, access, returns, example, docs, errors). */
+function leafHelpText(nsKebab: string, methodKebab: string, className: string): string {
+  const doc = methodDoc(className);
+  const acc = access(className);
+  const lines: string[] = [''];
+  if (doc?.d) lines.push(doc.d, '');
+  lines.push(`Access: ${acc.kind === 'refused' ? `refused — ${acc.reason}` : ACCESS_NOTE[acc.kind]}`);
+  const rt = returnType(className);
+  if (rt) lines.push(`Returns: ${rt} (raw TL object, JSON)`);
+  lines.push('');
+  lines.push('Example:');
+  lines.push(`  ${exampleInvocation(nsKebab, methodKebab, className)}`);
+  lines.push('');
+  lines.push('Peer/user/channel flags take an ID, @username, "me" or a chat title. Bytes: base64 or "hex:…".');
+  lines.push('Vectors: a comma list or JSON array. Constructor flags and --json-params take JSON ({"_chat":"@x"}).');
+  if (doc?.e?.length) {
+    lines.push('', 'Common errors:');
+    for (const [code, name, msg] of doc.e) lines.push(`  ${name}${code ? ` (${code})` : ''}${msg ? ` — ${msg}` : ''}`);
+  }
+  lines.push('', 'FLOOD_WAIT_X means wait X seconds and retry. Full docs: ' + docsUrl(className));
+  return lines.join('\n');
 }
 
 function coerceScalar(p: TlParam, raw: unknown): unknown {
@@ -193,37 +265,34 @@ export function buildParams(className: string, opts: Record<string, unknown>): R
   return params;
 }
 
-const LEAF_HELP = [
-  '',
-  'Peer/user/channel flags take an ID, @username, "me" or a chat title (resolved as elsewhere).',
-  'Bytes: a base64 string, or "hex:…". Vectors: a comma list or a JSON array.',
-  'Constructor-typed flags and --json-params accept JSON with {"_chat":"@x"} / {"_base64":"…"} markers.',
-  'Output is JSON. Read methods (Get*/Check*/Search*/Resolve*) run without write access; others need',
-  '`telegram write-access on`. Account/session/2FA/phone, paying and location sharing are always refused.',
-].join('\n');
+/** One-line namespace-list description: `[read] Returns the message history in a peer.` */
+function listDescription(className: string): string {
+  const mark = `[${access(className).kind}]`;
+  const d = methodDoc(className)?.d ?? '';
+  const short = d.length > 66 ? d.slice(0, 65).replace(/\s+\S*$/, '') + '…' : d;
+  return `${mark} ${short}`.trim();
+}
 
 /**
  * One leaf command for a single TL method. `nsKebab` is '' for a root method. `withFlags` builds the
  * typed flags + action; without it the leaf is name/description only (for a namespace's help list).
  */
 export function buildLeaf(nsKebab: string, methodKebab: string, className: string, withFlags: boolean): Command {
-  const d = defByClassName.get(className);
   // Param-independent hard refusal (auth.*, account/session/2FA/phone, paying, location sharing…).
   // Param-dependent refusals (sharing contact/geo media) still fire later in runApiMethod.
   const refusal = apiRefusalReason(className);
-  const base = `Call ${className}${d?.result ? ` → ${d.result}` : ''}`;
-  const leaf = new Command(methodKebab).description(refusal ? `${base} [always refused]` : base);
+  const leaf = new Command(methodKebab).description(listDescription(className));
   if (!withFlags) {
     // Name + description only, for a namespace's `--help` listing. The invoked method is always
     // built with flags by registerGeneratedCommands, so this branch only ever renders help.
     leaf.allowUnknownOption(true).allowExcessArguments(true).action(() => leaf.help());
     return leaf;
   }
-  for (const p of paramsOf(className)) leaf.addOption(optionFor(p));
+  for (const p of paramsOf(className)) leaf.addOption(optionFor(p, className));
   leaf.option('--json-params <json>', 'Extra params as a JSON object ("-" reads JSON from stdin); typed flags override it');
   leaf.option('--json', 'Accepted for consistency; API output is always JSON');
   leaf.option('--write', 'Acknowledge this is a write (optional; writes still need write access)');
-  leaf.addHelpText('after', refusal ? `\nAlways refused: ${refusal}\n${LEAF_HELP}` : LEAF_HELP);
+  leaf.addHelpText('after', () => leafHelpText(nsKebab, methodKebab, className));
   const auditCommand = nsKebab ? `${nsKebab} ${methodKebab}` : methodKebab;
   leaf.action(async (opts: Record<string, unknown>) => {
     // Refuse before validating params, so a refused method reports the refusal (not a missing flag).
@@ -274,27 +343,87 @@ export function generatedSummaryLines(): string[] {
   return [
     'Telegram API — a dedicated command for every TL method (telegram <namespace> <method>):',
     ...wrapNamespaceList(),
-    "  Run `telegram <namespace> --help` to list a namespace's methods.",
+    'Drill down: `telegram <namespace> --help` lists a namespace\'s methods (each marked',
+    '  [read]/[write]/[refused] with a one-line description); `telegram <namespace> <method> --help`',
+    '  shows params, an example and the docs link. `telegram schema [<ns>|<ns> <method>]` prints JSON.',
     `  Root-level API methods are top-level commands too (e.g. ${rootMethods().slice(0, 3).map(m => m[1]).join(', ')}, … — ${rootMethods().length}).`,
   ];
 }
 
-/** Short pointer appended to a clash command's `--help`, listing its generated API methods. */
+/** Clash command `--help` pointer: its generated API methods, each with access mark + description. */
 function clashPointer(ns: string): string {
-  const names = namespaceMethodList(ns).map(m => m[1]);
-  const wrapped: string[] = [];
-  let line = ' ';
-  for (const n of names) {
-    if ((line + ' ' + n).length > 92) { wrapped.push(line); line = ' '; }
-    line += ' ' + n;
-  }
-  if (line.trim()) wrapped.push(line);
-  return [
+  const lines = [
     '',
     `Generated API methods (telegram ${ns} <method>, picked only on an exact method name):`,
-    ...wrapped,
-    `Run \`telegram ${ns} <method> --help\` for a method's flags.`,
-  ].join('\n');
+  ];
+  for (const [, methodKebab, className] of namespaceMethodList(ns)) {
+    lines.push(`  ${methodKebab}  ${listDescription(className)}`);
+  }
+  lines.push(`Run \`telegram ${ns} <method> --help\` for a method's flags, access and docs link.`);
+  return lines.join('\n');
+}
+
+// ---- machine-readable schema (the `telegram schema` command) ----------------------------------
+
+export interface SchemaParam {
+  flag: string;
+  name: string;
+  type: string;
+  required: boolean;
+  default?: string;
+  description?: string;
+}
+export interface MethodSchema {
+  command: string;
+  className: string;
+  access: Access;
+  refusedReason?: string;
+  returns: string;
+  description: string;
+  docsUrl: string;
+  params: SchemaParam[];
+  example: string;
+}
+
+/** Full machine-readable schema for one method (the `schema <ns> <method>` / `schema <ns.method>` form). */
+export function methodSchema(nsKebab: string, methodKebab: string, className: string): MethodSchema {
+  const acc = access(className);
+  return {
+    command: `${nsKebab ? `${nsKebab} ` : ''}${methodKebab}`,
+    className,
+    access: acc.kind,
+    ...(acc.reason ? { refusedReason: acc.reason } : {}),
+    returns: returnType(className),
+    description: methodDoc(className)?.d ?? '',
+    docsUrl: docsUrl(className),
+    params: paramsOf(className).map((p) => ({
+      flag: `--${p.kebab}`,
+      name: p.name,
+      type: `${p.type}${p.isVector ? '[]' : ''}`,
+      required: !p.optional && !p.trueFlag && !isCursorDefault(p) && p.name !== 'randomId',
+      ...(isCursorDefault(p) ? { default: '0' } : {}),
+      ...(paramDoc(className, p.name) ? { description: paramDoc(className, p.name) } : {}),
+    })),
+    example: exampleInvocation(nsKebab, methodKebab, className),
+  };
+}
+
+/** One-line entries for every method in a namespace (the `schema <ns>` form). */
+export function namespaceSchema(nsKebab: string): { command: string; className: string; access: Access; description: string }[] {
+  return namespaceMethodList(nsKebab).map(([, methodKebab, className]) => ({
+    command: `${nsKebab} ${methodKebab}`,
+    className,
+    access: access(className).kind,
+    description: methodDoc(className)?.d ?? '',
+  }));
+}
+
+/** The namespace index + root methods (the bare `schema` form). */
+export function allNamespacesSchema(): { namespaces: { namespace: string; methods: number }[]; rootMethods: string[] } {
+  return {
+    namespaces: namespaceCounts().map(({ ns, count }) => ({ namespace: ns, methods: count })),
+    rootMethods: rootMethods().map((m) => m[1]),
+  };
 }
 
 /** The custom `help` command (commander's built-in is disabled): show help for a command/namespace,
@@ -328,10 +457,11 @@ export function buildHelpCommand(program: Command): Command {
  *  - a root method kebab: a top-level leaf.
  */
 export function registerGeneratedCommands(program: Command, argv: string[]): void {
-  program.addHelpText('after', '\n' + generatedSummaryLines().join('\n'));
+  // Callback form so the docs blobs are parsed only when help is actually rendered, never at startup.
+  program.addHelpText('after', () => '\n' + generatedSummaryLines().join('\n'));
   for (const { ns } of namespaceCounts()) {
     const curated = program.commands.find(c => c.name() === ns);
-    if (curated) curated.addHelpText('after', clashPointer(ns));
+    if (curated) curated.addHelpText('after', () => clashPointer(ns));
   }
 
   const cmd = argv[2];
