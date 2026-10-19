@@ -96,7 +96,7 @@ A few namespace names also name a curated command — `stats`, `stories`, `conta
 `folders`, `help`. The curated command is unchanged; the generated methods attach as subcommands and
 are chosen **only when the first word is exactly a method name** (`telegram stats get-broadcast-stats`
 is the API method; `telegram stats "Team"` is the curated stats). A chat literally named like a
-method needs an ID or quoting via a different path.
+method (e.g. `get-broadcast-stats`) must be passed by its ID or @username.
 
 ```bash
 telegram channels get-full-channel --channel @group      # read, peer resolved like everywhere
