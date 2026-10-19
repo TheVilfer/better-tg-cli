@@ -133,10 +133,21 @@ in `npm test`.
 
 `scripts/gen-tl-commands.mjs` generates `src/generated/tl-commands.ts` — one entry per TL schema
 method, which `src/commands/generated.ts` turns into the top-level `telegram <namespace> <method>`
-commands (and `telegram <root-method>` for the namespace-less invoke/transport wrappers). It is run
-by `scripts/gen-version.mjs` (so build and `pretest` keep it current), and CI's "Versioned files
-match package.json" step fails if it drifts; regenerate by hand with `node scripts/gen-tl-commands.mjs`.
-Only the name mapping is checked in — parameter types come from the TL schema that is already bundled.
+commands (and `telegram <root-method>` for the namespace-less invoke/transport wrappers) — and
+`src/generated/tl-docs.ts`, the human descriptions embedded as one JSON string per namespace,
+decoded lazily by `src/tl-docs.ts` only when help/`schema` is rendered (so `--version`/`--help`
+startup stays flat). Both are run by `scripts/gen-version.mjs` (so build and `pretest` keep them
+current), and CI's "Versioned files match package.json" step fails if either drifts; regenerate by
+hand with `node scripts/gen-tl-commands.mjs`. Only the name mapping is checked in — parameter types
+come from the TL schema that is already bundled.
+
+**Refreshing the descriptions.** `src/generated/tl-docs.ts` is built from the committed
+`scripts/data/tl-docs-layer229.json`, which `node scripts/fetch-tl-docs.mjs` fetches once from
+`core.telegram.org/method/<ns.lowerCamel>` (polite: cached raw HTML under the gitignored
+`.tl-docs-cache/`; rerun is cheap, `--no-fetch` rebuilds from the cache). The docs site trails the
+schema by a layer, so new methods get a fallback line. Re-run it when bumping the TL layer, then
+`node scripts/gen-tl-commands.mjs` and commit the data file + generated module. The CLI never fetches
+at runtime.
 
 **Clash policy.** A curated command always wins. Six namespaces are also curated commands (`auth`,
 `stories`, `contacts`, `stats`, `folders`, `help`): the generated methods attach to them as

@@ -190,8 +190,18 @@ command.
   of its generated methods. (`telegram help <method>` runs a `help.*` method, while `telegram help` and
   `telegram help <command>` still show help.)
 - **Discovery.** `telegram --help` ends with a "Telegram API" section listing the namespaces and
-  their method counts; `telegram <ns> --help` lists a namespace's methods; `telegram <ns> <method>
-  --help` lists that method's params with their TL types and required/optional/default.
+  their method counts (purposes in "Namespace index" below). `telegram <ns> --help` lists a
+  namespace's methods, each marked `[read]`/`[write]`/`[refused]` with a one-line description.
+  `telegram <ns> <method> --help` shows the description, access, return type, every param (flag, TL
+  type, required/optional/default, description), an auto-generated example, common errors and the
+  core.telegram.org docs link. Those descriptions are the official ones, fetched once into
+  `scripts/data/tl-docs-layer229.json` (40 methods new in the layer have a fallback line); never
+  fetched at runtime.
+- **Machine-readable: `telegram schema`.** `telegram schema` prints the namespace index as JSON;
+  `telegram schema <ns>` lists a namespace's methods (`{command, className, access, description}`);
+  `telegram schema <ns> <method>` (or `telegram schema <ns>.<Method>`) prints the full method schema
+  `{command, className, access, refusedReason?, returns, params:[{flag,name,type,required,default,description}], example, docsUrl, description}`.
+  It is a pure local read (no account, no network).
 - **Flags.** One `--flag` per parameter, the camelCase param name kebab-cased (`offsetId` →
   `--offset-id`, `scheduleDate` → `--schedule-date`). Pass each by its TL type:
 
@@ -267,6 +277,50 @@ telegram account delete-account                           # exists, always refus
 echo '{"id":[100,101]}' | telegram messages delete-messages --json-params -   # JSON from stdin
 ```
 
+### Namespace index
+
+One line per TL namespace (`telegram <ns> --help` lists the methods). Prefer a curated command when
+one exists; use these for everything else.
+
+| Namespace | What it covers |
+|---|---|
+| `messages` | Chats & dialogs, history, sending, search, reactions, drafts, polls, scheduled, pins |
+| `account` | Profile, privacy, active sessions, 2FA, notifications, usernames, business settings |
+| `payments` | Stars, gifts, invoices, subscriptions (any paying method is refused) |
+| `channels` | Supergroups/channels: members, admin rights, forum topics, invite links, admin log |
+| `phone` | Voice/video calls & group calls (no real CLI use) |
+| `bots` | Bot management and bot-only methods |
+| `stories` | Stories: feeds, views, reactions, posting |
+| `auth` | Login/session management — refused; use `telegram auth`/`onboard` |
+| `contacts` | Contacts, blocked list, top peers, resolve usernames |
+| `help` | Client config, app updates, terms, country list |
+| `chatlists` | Shareable folder (chat-list) invites |
+| `stickers` | Sticker-set creation and editing |
+| `communities` | Community management (new in the layer) |
+| `ephemeral` | Ephemeral/one-time content (new in the layer) |
+| `stats` | Channel/supergroup/message/story statistics |
+| `upload` | File upload/download transport (driven by send-file/download) |
+| `aicompose` | AI message composing (new in the layer) |
+| `smsjobs` | SMS-relay programme |
+| `users` | User info / full user |
+| `langpack` | Client localisation packs |
+| `photos` | Profile photos |
+| `premium` | Telegram Premium boosts |
+| `updates` | Update state/difference (driven by `watch`) |
+| `folders` | Dialog folders (archive) |
+| `fragment` | Fragment collectible usernames/numbers |
+
+Root-level methods (no namespace) are low-level transport/invoke wrappers — `telegram ping`,
+`telegram invoke-with-layer`, `telegram req-pq`, … — rarely needed directly.
+
+### Errors
+
+Methods return raw RPC errors. The common ones: **FLOOD_WAIT_X** — wait X seconds and retry (the
+number is in the name); `PEER_ID_INVALID` — the chat/user couldn't be resolved; `CHAT_ADMIN_REQUIRED`
+— you lack the needed admin right; `CHANNEL_PRIVATE` — you're not a member; `MESSAGE_ID_INVALID` — no
+such message; `AUTH_KEY_UNREGISTERED`/`SESSION_REVOKED` — the session is gone (log in again). A
+method's `--help` lists its own "Common errors" when the docs provide them.
+
 ## MCP server (`telegram mcp`)
 
 - **Tools:**
@@ -285,6 +339,9 @@ echo '{"id":[100,101]}' | telegram messages delete-messages --json-params -   # 
     and `["ping"]` like `["api","messages.GetHistory",…]`. On a clash namespace the method form is
     classified by its method (`["stats","get-broadcast-stats",…]`) while the curated form keeps its
     own class (`["stats","@chat"]` is a read); `["auth","send-code"]` is refused.
+  - Help is always a read: any argv with `--help`/`-h`, and `telegram schema …`, go through the read
+    tool even for a write or refused method (`["account","delete-account","--help"]`) — help prints,
+    it never executes the method. So an agent can learn any method's flags over MCP.
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
     Showing its status is allowed (a generated `auth.*` method is refused, not run).
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a

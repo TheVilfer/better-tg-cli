@@ -239,8 +239,11 @@ like `telegram ping` too), generated from the schema with the same refusals and 
 `api`. Where a namespace name collides with a curated command (`stats`, `stories`, `contacts`,
 `auth`, `folders`, `help`), the curated command is unchanged and the generated methods attach as
 subcommands, picked only when the first word is exactly a method name (quote or use an ID for a
-chat literally named like a method). [docs/api-coverage.md](docs/api-coverage.md) tracks coverage
-against the schema and Telethon.
+chat literally named like a method). Each method carries its official description and per-parameter
+docs (from core.telegram.org): `telegram <namespace> --help` lists a namespace's methods marked
+`[read]`/`[write]`/`[refused]`, `telegram <namespace> <method> --help` shows params, an example and
+the docs link, and `telegram schema [<ns> [<method>]]` prints the same as JSON.
+[docs/api-coverage.md](docs/api-coverage.md) tracks coverage against the schema and Telethon.
 
 ## MCP server
 

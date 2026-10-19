@@ -98,6 +98,19 @@ are chosen **only when the first word is exactly a method name** (`telegram stat
 is the API method; `telegram stats "Team"` is the curated stats). A chat literally named like a
 method (e.g. `get-broadcast-stats`) must be passed by its ID or @username.
 
+**Discovery workflow (for any task not covered by a curated command):**
+1. Pick the namespace (`telegram --help` ends with the list + counts; namespace purposes in
+   `reference.md` → "Namespace index"). 2. `telegram <ns> --help` lists its methods, each marked
+   `[read]`/`[write]`/`[refused]` with a one-line description. 3. `telegram <ns> <method> --help`
+   shows the description, access, return type, every param (flag, TL type, required/default,
+   description), an example invocation, common errors and the docs link. 4. Run it. For a
+   machine-readable form, `telegram schema`, `telegram schema <ns>`, `telegram schema <ns> <method>`
+   print JSON ({command, className, access, returns, params, example, docsUrl, description}).
+
+Every method's `--help` and `telegram schema` are plain reads (they never execute the method), so
+over MCP they go through `telegram_read` even for a write or refused method
+(`["account","delete-account","--help"]` is safe).
+
 ```bash
 telegram channels get-full-channel --channel @group      # read, peer resolved like everywhere
 telegram messages get-history --peer @durov --limit 20   # paging cursors default to 0
@@ -107,8 +120,11 @@ telegram ping --ping-id 1                                 # root-level method
 telegram account delete-account                           # exists, but always refused
 ```
 
-See `reference.md` → "Raw API" for the full flag-type table, clash rules and the
-`{"_chat":…}`/`{"_base64":…}` conventions inside JSON.
+Errors are raw RPC errors: **FLOOD_WAIT_X** = wait X seconds then retry; `PEER_ID_INVALID` = bad
+chat/user; `CHAT_ADMIN_REQUIRED` = you lack admin rights; `CHANNEL_PRIVATE` = not a member;
+`AUTH_KEY_UNREGISTERED` = session gone. See `reference.md` → "Raw API", "Namespace index" for the
+full flag-type table, clash rules, the `{"_chat":…}`/`{"_base64":…}` conventions and a one-line
+purpose for each of the 25 namespaces.
 
 ## 4. JSON shapes (`--json`)
 
