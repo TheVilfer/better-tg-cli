@@ -99,6 +99,15 @@ import {
 import { generatedSummaryLines } from './commands/generated.js';
 
 
+// Exit quietly when the output pipe is closed early (e.g. `telegram help stats | head`): Node turns
+// the SIGPIPE into an async EPIPE 'error' on stdout, which would otherwise crash with an unhandled
+// error. Commander's own `--help` sidesteps this by exiting right after writing; this covers the
+// custom `help` command and any other long output piped to `head`.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.exit(0);
+  throw err;
+});
+
 const program = new Command();
 
 program

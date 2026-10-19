@@ -71,10 +71,15 @@ export function resolveGeneratedCommand(args: string[]): string | null {
   return rootMethodClassName(c0) ?? null;
 }
 
-/** PascalCase/camelCase TL identifier → kebab (matches scripts/gen-tl-commands.mjs). */
+/**
+ * PascalCase/camelCase TL identifier → kebab. Splits an acronym run before a real word
+ * (`GetDHParams` → `get-dh-params`) but keeps a plural acronym together (`GetContactIDs` →
+ * `get-contact-ids`): the second rule requires 2+ lowercase letters to count as a new word, so a
+ * lone trailing plural `s` (`IDs`) stays attached. Keep IDENTICAL to scripts/gen-tl-commands.mjs.
+ */
 export function kebabCase(s: string): string {
   return s
     .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
+    .replace(/([A-Z]+)([A-Z][a-z]{2,})/g, '$1-$2')
     .toLowerCase();
 }

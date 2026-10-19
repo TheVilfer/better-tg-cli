@@ -7,7 +7,8 @@ import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { generateSource } from '../scripts/gen-tl-commands.mjs';
 import { TL_METHODS } from '../src/generated/tl-commands.js';
 import { buildParams, paramsOf } from '../src/commands/generated.js';
-import { resolveGeneratedCommand, methodClassName, rootMethodClassName } from '../src/generated-registry.js';
+import { resolveGeneratedCommand, methodClassName, rootMethodClassName, kebabCase } from '../src/generated-registry.js';
+import { spawnSync } from 'node:child_process';
 import { planCall } from '../src/mcp.js';
 import { disconnectClient } from '../src/client.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
@@ -35,6 +36,19 @@ describe('generated API command table', () => {
     expect(rootMethodClassName('ping')).toBe('Ping');
     expect(rootMethodClassName('invoke-with-layer')).toBe('InvokeWithLayer');
     expect(rootMethodClassName('messages')).toBeUndefined();
+  });
+
+  it('keeps plural acronyms whole in kebab names (IDs, not i-ds)', () => {
+    expect(kebabCase('GetContactIDs')).toBe('get-contact-ids');
+    expect(kebabCase('GetPeerMaxIDs')).toBe('get-peer-max-ids');
+    // other acronym handling is unchanged
+    expect(kebabCase('GetDHParams')).toBe('get-dh-params');
+    expect(kebabCase('GetHistory')).toBe('get-history');
+    expect(kebabCase('SetClientDHParams')).toBe('set-client-dh-params');
+    // and the generated table uses the fixed names
+    expect(methodClassName('contacts', 'get-contact-ids')).toBe('contacts.GetContactIDs');
+    expect(methodClassName('stories', 'get-peer-max-ids')).toBe('stories.GetPeerMaxIDs');
+    expect(methodClassName('contacts', 'get-contact-i-ds')).toBeUndefined();
   });
 
   it('resolves an argv tail only when the operand is a real method (clash-safe)', () => {
@@ -193,6 +207,15 @@ describe('CLI, mock mode (top-level form, clashes, help)', () => {
     expect(method).toMatch(/--peer <value>\s+InputPeer, required/);
     expect(method).toMatch(/--offset-id <value>\s+int, default 0/);
     expect(method).toMatch(/--hash <value>\s+long, default 0/);
+  }, 30_000);
+
+  it('help output is clean when the pipe closes early (no EPIPE crash)', () => {
+    const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_MOCK: state, TG_NO_UPDATE_CHECK: '1', TG_PROFILE: '' };
+    // node stdout → head (closes early); node stderr is inherited to the shell and captured here.
+    for (const cmd of ['help', 'help stats', 'help messages', 'messages --help']) {
+      const r = spawnSync('sh', ['-c', `node --import tsx src/index.ts ${cmd} | head -c 20`], { env, encoding: 'utf8' });
+      expect(r.stderr, `${cmd}: ${r.stderr}`).not.toMatch(/EPIPE|Unhandled 'error'/);
+    }
   }, 30_000);
 
   it('a clash command --help shows curated usage plus a generated-methods pointer', () => {

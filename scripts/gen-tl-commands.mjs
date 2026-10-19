@@ -67,11 +67,17 @@ function assertNoClashes(rows) {
   }
 }
 
-/** PascalCase/camelCase TL identifier → kebab-case (GetDHParams → get-dh-params). */
+/**
+ * PascalCase/camelCase TL identifier → kebab-case. Splits an acronym run before a real word
+ * (`GetDHParams` → `get-dh-params`) but keeps a plural acronym together (`GetContactIDs` →
+ * `get-contact-ids`, not `…-i-ds`): the second rule requires 2+ lowercase letters to count as a new
+ * word, so a lone trailing plural `s` (`IDs`) stays attached. Keep IDENTICAL to the copy in
+ * src/generated-registry.ts (used at runtime for both command names and param flags).
+ */
 export function kebabCase(s) {
   return s
     .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
+    .replace(/([A-Z]+)([A-Z][a-z]{2,})/g, '$1-$2')
     .toLowerCase();
 }
 
