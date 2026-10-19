@@ -25,6 +25,44 @@ code. This file only covers behaviour that the flag list can't tell you.
   and `duration`.
 - A long post costs as many tokens as its text. Use `--max-text 200` for skimming, then
   `get <chat> <id>` for the posts that matter.
+- **`--full` (alias `--stats`)** on `read`/`get`/`search`/`inbox`/`watch` adds a `full` object to
+  every message (and a short `👁 ↪ ❤️` suffix in compact output). Default output is unchanged
+  without it. `full` carries views, forwards, the complete reaction breakdown (each emoji / custom
+  emoji id / paid reaction with count and whether you reacted), recent reactors, comments/thread
+  info (`replies.comments`, `channelId`, `maxId`, `readMaxId`, recent repliers), edit date, post
+  author, pinned/silent/noforwards/post flags, grouped (album) id, via-bot id, TTL, the forward
+  header, reply-to info (ids, forum topic, quote), and rich media metadata (poll results, geo,
+  venue, contact, webpage, dice, invoice, file name/size/mime/duration/dimensions). Use it for data
+  collection — it needs no extra API calls. Over MCP, pass `--full` in `telegram_read` args.
+- `drafts` lists saved-but-unsent drafts (chat title + text). `profile-photos <user>` lists a
+  user's profile photos; `avatar <user>` downloads the current one.
+- `scheduled <chat>` lists messages queued to send later (create them with `send --schedule`); it
+  takes `--full` like `read`.
+- `sessions` lists active login sessions (device, app, platform, IP, country, last-active; the
+  current one is flagged). `stars` shows the Telegram Stars balance and recent transactions.
+  `invites <chat>` lists a chat's exported invite links (`--revoked` for revoked ones) or its
+  pending join requests (`--requests`). All read-only.
+- `admin-log <chat>` shows a supergroup/channel's recent admin actions (Telegram's "Recent
+  actions"), newest first, with `-n` and `-q <text>`. It needs admin rights in that chat.
+- `permissions <chat> [user]` shows a member's status (creator/admin/member/restricted/banned/left)
+  and rights, or the chat's default permissions when no user is given. Supergroups and channels
+  only. Change rights with `edit-permissions`.
+- `stats <chat>` returns full entity statistics: subscribers/members, online, admins, kicked and
+  banned counts, linked discussion chat, slow mode, about, creation date, verified/scam/fake/
+  restricted flags (+ reasons), and — where the account has rights — aggregate `activity`:
+  - broadcast (`stats.GetBroadcastStats`): `period`, followers and per-post/per-story
+    views/shares/reactions each as `{current, previous}`, enabled-notifications %, and
+    `recentPosts[]` (`{msgId, views, forwards, reactions}`);
+  - megagroup (`stats.GetMegagroupStats`): members/messages/viewers/posters `{current, previous}`
+    and resolved `topPosters` `{userId, name, username, messages, avgChars}`, `topAdmins`
+    `{userId, name, deleted, kicked, banned}`, `topInviters` `{userId, name, invitations}`.
+  - `--graphs` adds each graph as a parsed JSON series (`graphs[] = {name, data}` or `{name, error}`);
+    async graphs are loaded via `stats.LoadAsyncGraph`, and a failed graph reports its error without
+    failing the rest.
+  - `stats <chat> --message <id>` (or `--story <id>`) returns the post's own views/forwards/reactions,
+    `publicForwardsCount`, a `publicForwards[]` list (`{chatTitle, msgId, views, date}`, capped by
+    `--limit`), and — with `--graphs` — the message's view/reaction graphs.
+  - Missing rights or unavailable stats are reported in `activity.error` / `note`, never a hard failure.
 
 ## Output
 
@@ -64,6 +102,21 @@ code. This file only covers behaviour that the flag list can't tell you.
   everything.
 - `poll <chat> "Q" A B C` takes `--multiple`, `--quiz --correct N` (1-based) and `--public`.
   `vote <chat> <id> 2` also counts options from 1.
+- `pin-chat` / `unpin-chat` pin a chat to the top of the dialog list (this is the list position,
+  not `pin`, which pins a message inside a chat). `mark-unread <chat>` sets the unread mark;
+  `--read` clears it.
+- `delete-dialog <chat>` removes a conversation: it clears a private or basic-group history (with
+  `--revoke` it also deletes the other person's copy) and leaves a supergroup or channel. Like all
+  writes it needs the exact title, an @username or an ID.
+- `edit-permissions <chat> [user]` sets the chat's default permissions (no user) or restricts one
+  member (channels.EditBanned / messages.EditChatDefaultBannedRights). `--mute` makes it read-only,
+  `--ban` removes the member, `--lift` clears restrictions, `--deny send,media,polls,links,…` denies
+  specific rights, and `--until 1h|1d|1w` makes a per-user restriction temporary. Inspect current
+  rights with `permissions`.
+- `topic create|edit|close|reopen|pin|unpin <chat> …` manages forum topics in a group with Topics
+  enabled: `topic create <chat> <title>` (`--icon-color`, `--icon-emoji`), `topic edit <chat> <id>`
+  (`--title`, `--icon-emoji`, `--hide`/`--show`), and `topic close|reopen|pin|unpin <chat> <id>`.
+  List topics with `topics <chat>`.
 
 ### Bot buttons
 
@@ -102,6 +155,172 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
   run fetches everything after the checkpoint and ignores the default `--days` window.
 
+## Raw API (`telegram api` and `telegram <namespace> <method>`)
+
+Two ways to reach the whole Telegram client API when no curated command fits. They share one
+execution path — identical read/write classification, hard refusals and audit log — and both print
+compact JSON (big integers as strings, bytes as base64). Pick `api` for scripted JSON params, the
+typed per-method command for a command line.
+
+### `telegram api <namespace.Method> --params '<json>'`
+
+Builds and sends any request from the schema. The method is case-insensitive (`messages.GetHistory`,
+`help.GetConfig`, top-level `InvokeWithLayer`). Inside `--params`, a small convention handles the
+awkward fields: `{"_chat": "<id|@user|title|me>"}` resolves a chat the way every command does (strict
+under a write), `{"_base64": "…"}` / `{"_hex": "…"}` pass raw bytes, `{"_bigint": "…"}` a `long`.
+Other entity-like fields also accept a bare `@username`/ID. `--params -` reads the JSON from stdin.
+
+### `telegram <namespace> <method>` — one typed command per TL method
+
+Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) has its own top-level
+command.
+
+- **Naming.** The TL class name, split at the dot and kebab-cased:
+  `messages.GetHistory` → `telegram messages get-history`, `help.GetConfig` →
+  `telegram help get-config`, `channels.GetFullChannel` → `telegram channels get-full-channel`.
+  The 21 root-level invoke/transport wrappers have no namespace and are top-level commands:
+  `Ping` → `telegram ping`, `InvokeWithLayer` → `telegram invoke-with-layer`, `ReqPq` → `telegram req-pq`.
+- **Clash with curated commands.** Six namespace names are also curated commands — `stats`,
+  `stories`, `contacts`, `auth`, `folders`, `help`. The curated command keeps its behaviour, args and
+  output; the generated methods attach to it as subcommands and are picked **only when the first
+  operand is exactly a generated method name**. So `telegram stats get-broadcast-stats --channel @c`
+  is the API method, while `telegram stats "Team"` and `telegram stats @c --message 5` are the curated
+  `stats`. A chat/user literally named like a method (e.g. a chat called `get-broadcast-stats`) must be
+  addressed by ID to avoid the method. A clash command's `--help` shows its curated usage plus a list
+  of its generated methods. (`telegram help <method>` runs a `help.*` method, while `telegram help` and
+  `telegram help <command>` still show help.)
+- **Discovery.** `telegram --help` ends with a "Telegram API" section listing the namespaces and
+  their method counts (purposes in "Namespace index" below). `telegram <ns> --help` lists a
+  namespace's methods, each marked `[read]`/`[write]`/`[refused]` with a one-line description.
+  `telegram <ns> <method> --help` shows the description, access, return type, every param (flag, TL
+  type, required/optional/default, description), an auto-generated example, common errors and the
+  core.telegram.org docs link. Those descriptions are the official ones, fetched once into
+  `scripts/data/tl-docs-layer229.json` (40 methods new in the layer have a fallback line); never
+  fetched at runtime.
+- **Machine-readable: `telegram schema`.** `telegram schema` prints the namespace index as JSON;
+  `telegram schema <ns>` lists a namespace's methods (`{command, className, access, description}`);
+  `telegram schema <ns> <method>` (or `telegram schema <ns>.<Method>`) prints the full method schema
+  `{command, className, access, refusedReason?, returns, params:[{flag,name,type,required,default,description}], example, docsUrl, description}`.
+  It is a pure local read (no account, no network).
+- **Flags.** One `--flag` per parameter, the camelCase param name kebab-cased (`offsetId` →
+  `--offset-id`, `scheduleDate` → `--schedule-date`). Pass each by its TL type:
+
+  | TL type | Flag form | How to pass |
+  |---|---|---|
+  | `int`, `double` | `--limit 20` | a number |
+  | `long`, `int128`, `int256` | `--hash 0` | digits (sent as a big integer) |
+  | `string` | `--q "term"` | text |
+  | `Bool` | `--offline true` | `true`/`false` (or `1`/`0`) |
+  | `true` (flag bit, e.g. `silent`, `noWebpage`) | `--silent`, `--no-webpage` | bare switch; present = set |
+  | `bytes` | `--file-hash aGk=` | base64, or `hex:…` |
+  | `InputPeer`/`InputUser`/`InputChannel` | `--peer @durov` | id, `@username`, chat title or `me` |
+  | vector of a primitive | `--id 100,101,102` | comma list (or a JSON array) |
+  | vector of a constructor | `--reaction '[{"className":"ReactionEmoji","emoticon":"👍"}]'` | JSON array |
+  | constructor type (`InputMedia`, `ReplyMarkup`, `DataJSON`, …) | `--reply-to '{"className":"InputReplyToMessage","replyToMsgId":42}'` | JSON (may use `{"_chat":…}`/`{"_base64":…}` markers) |
+
+- **`--json-params '<json|->'`** merges a JSON object for anything not worth a flag (e.g. a deep
+  nested constructor); typed flags override its keys, and `-` reads the JSON from stdin. Example —
+  a nested `replyTo` constructor as JSON, the simple fields as flags:
+
+  ```bash
+  telegram messages send-message --peer @me --message hi \
+    --json-params '{"replyTo":{"className":"InputReplyToMessage","replyToMsgId":42}}'
+  ```
+
+- **Paging/cache cursors default to 0.** A required `int`/`long` named `offsetId`, `offsetDate`,
+  `addOffset`, `offsetRate`, `offsetTopic`, `offset`, `maxId`, `minId`, `maxDate`, `minDate` or
+  `hash` defaults to 0 when omitted (shown as `default 0` in `--help`), so
+  `telegram messages get-history --peer @durov --limit 20` just works. Only these exact numeric
+  names — ids (`msgId`/`id`/`userId`), `limit`, `offsetPeer` and string hashes are never defaulted.
+- **Other required params** are enforced with a clear error (`Missing required option(s): --peer …`);
+  `randomId` is never required (teleproto generates it). Registration is lazy — only the invoked
+  namespace/method is built — so startup, top-level `--help` and `help-all` stay flat.
+
+### Read vs write and refusals (both commands)
+
+- **Read vs write:** methods named `Get*`/`Check*`/`Search*`/`Resolve*` are reads and run without
+  write access (available through the MCP read tool); everything else is a write that needs
+  `telegram write-access on` (the `telegram_write` MCP tool), goes through the write guard, and is
+  logged to the audit file.
+- **Always refused**, even with write access (the command still exists and refuses, exit 1; its
+  `--help` says "always refused"): the whole `auth.*` namespace (login/session — use `telegram auth`),
+  account/session takeover and 2FA/password/phone changes, data export (takeout) and Passport
+  identity docs, external-site login (url-auth), ownership transfer, money-withdrawal tokens and
+  paying / Stars-spending, and anything that shares your phone number or location (including
+  contact/geo media in `SendMedia`). A few `Get*` methods that actually change state (e.g.
+  `messages.GetMessagesViews`) are treated as writes. Read-only payments (balances, transactions) and
+  session *listing* (`account.GetAuthorizations`) are allowed. Full table in `docs/api-coverage.md` §4.
+- Coverage of the full API is tracked in `docs/api-coverage.md` (regenerated by
+  `scripts/api-coverage.mjs`).
+
+### When to use which
+
+- **Curated command** (`read`, `send`, `search`, `chats`, `members`, …) — the default. Friendly,
+  compact output, pagination, multi-step logic and safety prompts. Always prefer it when one exists.
+- **`telegram <ns> <method>`** — a method with no curated command, or when you need the exact raw
+  TL object, from a typed command line.
+- **`telegram api <ns.Method> --params`** — the same reach, when it is easier to hand it a whole JSON
+  body (scripts, deeply nested requests).
+
+### Examples
+
+```bash
+telegram help get-config                                  # read, no args (help.* method)
+telegram channels get-full-channel --channel @group       # read, peer resolved like everywhere
+telegram messages get-history --peer @durov --limit 20    # read: paging cursors default to 0
+telegram stats get-broadcast-stats --channel @c           # a method on a clash namespace
+telegram messages delete-messages --id 100,101,102 --revoke   # write: vector + true-flag
+telegram messages send-reaction --peer @me --msg-id 42 \
+  --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write, nested
+telegram ping --ping-id 1                                 # root-level method
+telegram account delete-account                           # exists, always refused (exit 1)
+echo '{"id":[100,101]}' | telegram messages delete-messages --json-params -   # JSON from stdin
+```
+
+### Namespace index
+
+One line per TL namespace (`telegram <ns> --help` lists the methods). Prefer a curated command when
+one exists; use these for everything else.
+
+| Namespace | What it covers |
+|---|---|
+| `messages` | Chats & dialogs, history, sending, search, reactions, drafts, polls, scheduled, pins |
+| `account` | Profile, privacy, active sessions, 2FA, notifications, usernames, business settings |
+| `payments` | Stars, gifts, invoices, subscriptions (any paying method is refused) |
+| `channels` | Supergroups/channels: members, admin rights, forum topics, invite links, admin log |
+| `phone` | Voice/video calls & group calls (no real CLI use) |
+| `bots` | Bot management and bot-only methods |
+| `stories` | Stories: feeds, views, reactions, posting |
+| `auth` | Login/session management — refused; use `telegram auth`/`onboard` |
+| `contacts` | Contacts, blocked list, top peers, resolve usernames |
+| `help` | Client config, app updates, terms, country list |
+| `chatlists` | Shareable folder (chat-list) invites |
+| `stickers` | Sticker-set creation and editing |
+| `communities` | Community management (new in the layer) |
+| `ephemeral` | Ephemeral/one-time content (new in the layer) |
+| `stats` | Channel/supergroup/message/story statistics |
+| `upload` | File upload/download transport (driven by send-file/download) |
+| `aicompose` | AI message composing (new in the layer) |
+| `smsjobs` | SMS-relay programme |
+| `users` | User info / full user |
+| `langpack` | Client localisation packs |
+| `photos` | Profile photos |
+| `premium` | Telegram Premium boosts |
+| `updates` | Update state/difference (driven by `watch`) |
+| `folders` | Dialog folders (archive) |
+| `fragment` | Fragment collectible usernames/numbers |
+
+Root-level methods (no namespace) are low-level transport/invoke wrappers — `telegram ping`,
+`telegram invoke-with-layer`, `telegram req-pq`, … — rarely needed directly.
+
+### Errors
+
+Methods return raw RPC errors. The common ones: **FLOOD_WAIT_X** — wait X seconds and retry (the
+number is in the name); `PEER_ID_INVALID` — the chat/user couldn't be resolved; `CHAT_ADMIN_REQUIRED`
+— you lack the needed admin right; `CHANNEL_PRIVATE` — you're not a member; `MESSAGE_ID_INVALID` — no
+such message; `AUTH_KEY_UNREGISTERED`/`SESSION_REVOKED` — the session is gone (log in again). A
+method's `--help` lists its own "Common errors" when the docs provide them.
+
 ## MCP server (`telegram mcp`)
 
 - **Tools:**
@@ -115,8 +334,17 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
   - Read tool: only the read commands.
   - Write tool: everything that changes the account or writes local files (`download`, `sync`,
     `avatar`).
+  - `api` and the generated commands are classified per underlying method: a read goes through the
+    read tool, a write through the write tool, a refused method never runs — `["messages","get-history",…]`
+    and `["ping"]` like `["api","messages.GetHistory",…]`. On a clash namespace the method form is
+    classified by its method (`["stats","get-broadcast-stats",…]`) while the curated form keeps its
+    own class (`["stats","@chat"]` is a read); `["auth","send-code"]` is refused.
+  - Help is always a read: a bare help request (a command path plus `--help`/`-h`, optionally
+    `--json`) and `telegram schema …` go through the read tool even for a write or refused method
+    (`["account","delete-account","--help"]`) — help prints, it never executes the method. Add no
+    other args: with extra args (`["send","@x","--","--help"]`) the call is classified normally.
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
-    Showing its status is allowed.
+    Showing its status is allowed (a generated `auth.*` method is refused, not run).
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
 - **Execution:** each call is a separate CLI process with no stdin (a worker thread inside Claude

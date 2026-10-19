@@ -10,6 +10,7 @@ import bigInt from 'big-integer';
 import { existsSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
 import { basename, join } from 'path';
+import { isTTY } from './spinner.js';
 
 let clientInstance: TelegramClient | null = null;
 
@@ -115,12 +116,14 @@ export interface ChatInfo {
   lastMessageDate?: Date;
   muted?: boolean;
   archived?: boolean;
+  /** Opt-in (`--full`): full stats of this chat's last message. Absent in default output. */
+  full?: MessageFull;
 }
 
 export async function getDialogs(
   client: TelegramClient,
   limit = 100,
-  options: { archived?: boolean } = {}
+  options: { archived?: boolean; full?: boolean } = {}
 ): Promise<ChatInfo[]> {
   const dialogs = await client.getDialogs({ limit, archived: options.archived });
   const now = Math.floor(Date.now() / 1000);
@@ -153,6 +156,7 @@ export async function getDialogs(
       lastMessageDate: dialog.message?.date ? new Date(dialog.message.date * 1000) : undefined,
       muted: (dialog.dialog?.notifySettings?.muteUntil ?? 0) > now || undefined,
       archived: dialog.archived || undefined,
+      full: options.full && dialog.message instanceof Api.Message ? buildMessageFull(dialog.message) : undefined,
     });
   }
 
@@ -238,6 +242,109 @@ export interface MessageInfo {
   chatTitle?: string;
   /** Comment/reply count for channel posts and thread roots. */
   replies?: number;
+  /** Opt-in (`--full`): every other useful field of the Message. Absent in default output. */
+  full?: MessageFull;
+}
+
+/** A single reaction on a message, with its count and whether the account chose it. */
+export interface ReactionBreakdown {
+  /** Standard emoji, if a normal reaction. */
+  emoji?: string;
+  /** Custom-emoji document id, if a custom reaction. */
+  customEmojiId?: string;
+  /** Star/paid reaction. */
+  paid?: boolean;
+  count: number;
+  /** The logged-in account reacted with this. */
+  chosen?: boolean;
+  chosenOrder?: number;
+}
+
+/** Rich media detail for `--full`: a superset of MediaInfo covering polls, geo, contacts, etc. */
+export interface FullMediaInfo {
+  type: string;
+  fileName?: string;
+  mimeType?: string;
+  size?: number;
+  width?: number;
+  height?: number;
+  duration?: number;
+  hasSpoiler?: boolean;
+  /** webpage */
+  url?: string;
+  title?: string;
+  siteName?: string;
+  description?: string;
+  /** geo / venue */
+  lat?: number;
+  long?: number;
+  address?: string;
+  /** contact */
+  phone?: string;
+  firstName?: string;
+  lastName?: string;
+  userId?: string;
+  /** dice */
+  emoticon?: string;
+  value?: number;
+  /** invoice */
+  currency?: string;
+  amount?: number;
+  /** poll */
+  poll?: {
+    question: string;
+    closed?: boolean;
+    quiz?: boolean;
+    multiple?: boolean;
+    publicVoters?: boolean;
+    totalVoters?: number;
+    options: { text: string; voters?: number; chosen?: boolean; correct?: boolean }[];
+  };
+}
+
+/** Everything else on a Telegram Message, attached only when `--full` is requested. */
+export interface MessageFull {
+  out?: boolean;
+  post?: boolean;
+  silent?: boolean;
+  pinned?: boolean;
+  noforwards?: boolean;
+  legacy?: boolean;
+  fromScheduled?: boolean;
+  views?: number;
+  forwards?: number;
+  editDate?: string;
+  postAuthor?: string;
+  groupedId?: string;
+  viaBotId?: string;
+  ttlPeriod?: number;
+  reactions?: ReactionBreakdown[];
+  recentReactors?: string[];
+  replies?: {
+    count: number;
+    comments: boolean;
+    channelId?: string;
+    maxId?: number;
+    readMaxId?: number;
+    recentRepliers?: string[];
+  };
+  fwdFrom?: {
+    fromId?: string;
+    fromName?: string;
+    date?: string;
+    channelPost?: number;
+    postAuthor?: string;
+    savedFromPeer?: string;
+    savedFromMsgId?: number;
+  };
+  replyTo?: {
+    replyToMsgId?: number;
+    topMsgId?: number;
+    forumTopic?: boolean;
+    quoteText?: string;
+    replyToPeerId?: string;
+  };
+  media?: FullMediaInfo;
 }
 
 type RawButton = Api.KeyboardButton | Api.KeyboardInlineButton;
@@ -453,10 +560,10 @@ export function parseTimeOffset(offset: string): Date {
   }
 }
 
-/** Convert a raw message into the CLI's MessageInfo shape. */
-export async function toMessageInfo(client: TelegramClient, msg: Api.Message): Promise<MessageInfo> {
+/** Convert a raw message into the CLI's MessageInfo shape. Pass `full` to attach MessageFull. */
+export async function toMessageInfo(client: TelegramClient, msg: Api.Message, opts: { full?: boolean } = {}): Promise<MessageInfo> {
   const { sender, senderId } = await resolveSender(client, msg);
-  return {
+  const info: MessageInfo = {
     id: msg.id,
     date: new Date(msg.date * 1000),
     sender,
@@ -468,6 +575,167 @@ export async function toMessageInfo(client: TelegramClient, msg: Api.Message): P
     buttons: extractButtons(msg),
     replies: msg.replies?.replies || undefined,
   };
+  if (opts.full) info.full = buildMessageFull(msg);
+  return info;
+}
+
+const peerIdStr = (peer: Api.TypePeer): string => utils.getPeerId(peer).toString();
+const iso = (ts?: number): string | undefined => (ts ? new Date(ts * 1000).toISOString() : undefined);
+
+/** Every remaining useful field of a Message, for `--full` / data collection (no extra API calls). */
+export function buildMessageFull(msg: Api.Message): MessageFull {
+  const full: MessageFull = {
+    out: msg.out || undefined,
+    post: msg.post || undefined,
+    silent: msg.silent || undefined,
+    pinned: msg.pinned || undefined,
+    noforwards: msg.noforwards || undefined,
+    legacy: msg.legacy || undefined,
+    fromScheduled: msg.fromScheduled || undefined,
+    views: msg.views ?? undefined,
+    forwards: msg.forwards ?? undefined,
+    editDate: iso(msg.editDate ?? undefined),
+    postAuthor: msg.postAuthor ?? undefined,
+    groupedId: msg.groupedId ? msg.groupedId.toString() : undefined,
+    viaBotId: msg.viaBotId ? msg.viaBotId.toString() : undefined,
+    ttlPeriod: msg.ttlPeriod ?? undefined,
+  };
+
+  if (msg.reactions instanceof Api.MessageReactions) {
+    full.reactions = msg.reactions.results.map(r => {
+      const b: ReactionBreakdown = { count: r.count };
+      if (r.reaction instanceof Api.ReactionEmoji) b.emoji = r.reaction.emoticon;
+      else if (r.reaction instanceof Api.ReactionCustomEmoji) b.customEmojiId = r.reaction.documentId.toString();
+      else if (r.reaction instanceof Api.ReactionPaid) b.paid = true;
+      if (r.chosenOrder !== undefined) { b.chosen = true; b.chosenOrder = r.chosenOrder; }
+      return b;
+    });
+    if (msg.reactions.recentReactions?.length) {
+      full.recentReactors = msg.reactions.recentReactions.map(x => peerIdStr(x.peerId));
+    }
+  }
+
+  if (msg.replies instanceof Api.MessageReplies) {
+    const r = msg.replies;
+    full.replies = {
+      count: r.replies,
+      comments: r.comments ?? false,
+      channelId: r.channelId ? r.channelId.toString() : undefined,
+      maxId: r.maxId ?? undefined,
+      readMaxId: r.readMaxId ?? undefined,
+      recentRepliers: r.recentRepliers?.length ? r.recentRepliers.map(peerIdStr) : undefined,
+    };
+  }
+
+  if (msg.fwdFrom instanceof Api.MessageFwdHeader) {
+    const f = msg.fwdFrom;
+    full.fwdFrom = {
+      fromId: f.fromId ? peerIdStr(f.fromId) : undefined,
+      fromName: f.fromName ?? undefined,
+      date: iso(f.date),
+      channelPost: f.channelPost ?? undefined,
+      postAuthor: f.postAuthor ?? undefined,
+      savedFromPeer: f.savedFromPeer ? peerIdStr(f.savedFromPeer) : undefined,
+      savedFromMsgId: f.savedFromMsgId ?? undefined,
+    };
+  }
+
+  if (msg.replyTo instanceof Api.MessageReplyHeader) {
+    const r = msg.replyTo;
+    full.replyTo = {
+      replyToMsgId: r.replyToMsgId ?? undefined,
+      topMsgId: r.replyToTopId ?? undefined,
+      forumTopic: r.forumTopic || undefined,
+      quoteText: r.quoteText ?? undefined,
+      replyToPeerId: r.replyToPeerId ? peerIdStr(r.replyToPeerId) : undefined,
+    };
+  }
+
+  const media = buildFullMedia(msg);
+  if (media) full.media = media;
+  return full;
+}
+
+function docAttributes(doc: Api.Document): Partial<FullMediaInfo> {
+  const out: Partial<FullMediaInfo> = {};
+  for (const attr of doc.attributes) {
+    if (attr instanceof Api.DocumentAttributeFilename) out.fileName = attr.fileName;
+    else if (attr instanceof Api.DocumentAttributeVideo) { out.width = attr.w; out.height = attr.h; out.duration = Math.round(attr.duration); }
+    else if (attr instanceof Api.DocumentAttributeAudio) out.duration = attr.duration;
+    else if (attr instanceof Api.DocumentAttributeImageSize) { out.width = attr.w; out.height = attr.h; }
+  }
+  return out;
+}
+
+/** A plain, JSON-friendly description of any message media (poll, geo, contact, webpage, …). */
+export function buildFullMedia(msg: Api.Message): FullMediaInfo | undefined {
+  const media = msg.media;
+  if (!media) return undefined;
+
+  if (media instanceof Api.MessageMediaPhoto) {
+    return { type: 'photo', hasSpoiler: media.spoiler || undefined };
+  }
+  if (media instanceof Api.MessageMediaDocument && media.document instanceof Api.Document) {
+    const base = extractMediaInfo(msg);
+    return {
+      type: base?.kind ?? 'document',
+      fileName: base?.fileName,
+      mimeType: base?.mimeType,
+      size: base?.size,
+      width: base?.width,
+      height: base?.height,
+      duration: base?.duration,
+      hasSpoiler: media.spoiler || undefined,
+      ...docAttributes(media.document),
+    };
+  }
+  if (media instanceof Api.MessageMediaPoll) {
+    const poll = media.poll;
+    const results = media.results;
+    const byOption = new Map(results.results?.map(r => [r.option.toString('base64'), r]) ?? []);
+    return {
+      type: 'poll',
+      poll: {
+        question: typeof poll.question === 'string' ? poll.question : poll.question.text,
+        closed: poll.closed || undefined,
+        quiz: poll.quiz || undefined,
+        multiple: poll.multipleChoice || undefined,
+        publicVoters: poll.publicVoters || undefined,
+        totalVoters: results.totalVoters ?? undefined,
+        options: poll.answers.filter((a): a is Api.PollAnswer => a instanceof Api.PollAnswer).map(a => {
+          const r = byOption.get(a.option.toString('base64'));
+          return {
+            text: typeof a.text === 'string' ? a.text : a.text.text,
+            voters: r?.voters ?? undefined,
+            chosen: r?.chosen || undefined,
+            correct: r?.correct || undefined,
+          };
+        }),
+      },
+    };
+  }
+  if (media instanceof Api.MessageMediaGeo || media instanceof Api.MessageMediaGeoLive) {
+    const geo = media.geo;
+    return geo instanceof Api.GeoPoint ? { type: 'geo', lat: geo.lat, long: geo.long } : { type: 'geo' };
+  }
+  if (media instanceof Api.MessageMediaVenue) {
+    const geo = media.geo;
+    return { type: 'venue', title: media.title, address: media.address, lat: geo instanceof Api.GeoPoint ? geo.lat : undefined, long: geo instanceof Api.GeoPoint ? geo.long : undefined };
+  }
+  if (media instanceof Api.MessageMediaContact) {
+    return { type: 'contact', phone: media.phoneNumber, firstName: media.firstName, lastName: media.lastName || undefined, userId: media.userId ? media.userId.toString() : undefined };
+  }
+  if (media instanceof Api.MessageMediaWebPage && media.webpage instanceof Api.WebPage) {
+    const w = media.webpage;
+    return { type: 'webpage', url: w.url, title: w.title ?? undefined, siteName: w.siteName ?? undefined, description: w.description ?? undefined };
+  }
+  if (media instanceof Api.MessageMediaDice) {
+    return { type: 'dice', emoticon: media.emoticon, value: media.value };
+  }
+  if (media instanceof Api.MessageMediaInvoice) {
+    return { type: 'invoice', title: media.title, currency: media.currency, amount: media.totalAmount ? media.totalAmount.toJSNumber() : undefined };
+  }
+  return { type: (media as { className?: string }).className ?? 'unknown' };
 }
 
 export interface GetMessagesOptions {
@@ -482,6 +750,8 @@ export interface GetMessagesOptions {
   from?: string;
   /** Read the replies thread of this message (channel post comments or a forum topic ID). */
   thread?: number;
+  /** Attach MessageFull to each message (the `--full` flag). */
+  full?: boolean;
 }
 
 export async function getMessages(
@@ -489,7 +759,7 @@ export async function getMessages(
   chatIdentifier: string,
   options: GetMessagesOptions = {}
 ): Promise<{ messages: MessageInfo[]; chatTitle: string; threadChatId?: string }> {
-  const { limit = 50, offsetId, minDate, maxDate, minId, from, thread } = options;
+  const { limit = 50, offsetId, minDate, maxDate, minId, from, thread, full } = options;
   let threadChatId: string | undefined;
 
   // Find the chat by name or username
@@ -559,7 +829,7 @@ export async function getMessages(
       }
       if (messages.length >= limit) break;
 
-      messages.push(await toMessageInfo(client, msg));
+      messages.push(await toMessageInfo(client, msg, { full }));
     }
 
     if (reachedMinDate) break;
@@ -591,7 +861,8 @@ export async function getMessages(
 export async function getMessagesByIds(
   client: TelegramClient,
   chatIdentifier: string,
-  ids: number[]
+  ids: number[],
+  options: { full?: boolean } = {}
 ): Promise<{ messages: MessageInfo[]; chatTitle: string; missing: number[] }> {
   const entity = await resolveChat(client, chatIdentifier);
   const raw = await client.getMessages(entity, { ids });
@@ -599,7 +870,7 @@ export async function getMessagesByIds(
   const found = new Set<number>();
   for (const msg of raw) {
     if (msg instanceof Api.Message) {
-      messages.push(await toMessageInfo(client, msg));
+      messages.push(await toMessageInfo(client, msg, { full: options.full }));
       found.add(msg.id);
     }
   }
@@ -738,6 +1009,8 @@ export interface SearchOptions {
   from?: string;
   /** One of SEARCH_TYPES. */
   type?: string;
+  /** Attach MessageFull to each result (the `--full` flag). */
+  full?: boolean;
 }
 
 function peerTitle(peer: Api.TypePeer, chats: Api.TypeChat[], users: Api.TypeUser[]): string | undefined {
@@ -755,7 +1028,7 @@ export async function searchMessages(
   query: string,
   options: SearchOptions = {}
 ): Promise<{ messages: MessageInfo[]; chatTitle?: string }[]> {
-  const { chat, limit = 50, minDate, maxDate, from, type } = options;
+  const { chat, limit = 50, minDate, maxDate, from, type, full } = options;
   if (type && !SEARCH_FILTERS[type]) {
     throw new Error(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
   }
@@ -790,7 +1063,7 @@ export async function searchMessages(
     const messages: MessageInfo[] = [];
     if ('messages' in res) {
       for (const msg of res.messages) {
-        if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg));
+        if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg, { full }));
       }
     }
     return [{ messages, chatTitle: getChatTitle(entity) }];
@@ -814,7 +1087,7 @@ export async function searchMessages(
   if ('messages' in res) {
     for (const msg of res.messages) {
       if (!(msg instanceof Api.Message)) continue;
-      const info = await toMessageInfo(client, msg);
+      const info = await toMessageInfo(client, msg, { full });
       info.chatId = utils.getPeerId(msg.peerId).toString();
       info.chatTitle = peerTitle(msg.peerId, res.chats, res.users);
       messages.push(info);
@@ -2742,4 +3015,880 @@ export async function listContacts(client: TelegramClient, query?: string): Prom
     rows.push({ id: u.id.toString(), name, username: u.username ?? undefined, phone: u.phone ?? undefined, mutual: u.mutualContact || undefined });
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// --- Generic `api` command -------------------------------------------------------------------
+
+/**
+ * Build any TL request from the schema and invoke it (issue #47 "reachability"). Peer/file fields
+ * are passed through `materializeApiParams`: `{"_chat": "<identifier>"}` resolves a chat the same
+ * way every other command does (title, @username, ID or "me"; strict under a write), and
+ * `{"_base64": "…"}` / `{"_hex": "…"}` become raw bytes. Everything else is passed verbatim;
+ * teleproto resolves any remaining entity-like fields (a bare @username/ID) on invoke.
+ */
+export async function invokeApi(
+  client: TelegramClient,
+  methodName: string,
+  rawParams: Record<string, unknown> = {},
+): Promise<unknown> {
+  const { resolveApiMethod } = await import('./api-methods.js');
+  const { ctor } = resolveApiMethod(methodName);
+  const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
+  const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
+  return client.invoke(request);
+}
+
+async function materializeApiParams(client: TelegramClient, value: unknown): Promise<unknown> {
+  if (Array.isArray(value)) {
+    return Promise.all(value.map(v => materializeApiParams(client, v)));
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj._chat === 'string') return resolveChat(client, obj._chat);
+    if (typeof obj._base64 === 'string') return Buffer.from(obj._base64, 'base64');
+    if (typeof obj._hex === 'string') return Buffer.from(obj._hex, 'hex');
+    if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return bigInt(String(obj._bigint));
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
+    return out;
+  }
+  return value;
+}
+
+/** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
+export function serializeApiResult(result: unknown): string {
+  const pretty = isTTY || process.env.TG_JSON_PRETTY === '1';
+  const replacer = (_key: string, val: unknown): unknown => {
+    if (typeof val === 'bigint') return val.toString();
+    if (bigInt.isInstance(val)) return val.toString();
+    if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+    return val;
+  };
+  const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);
+  return json === undefined ? 'null' : json;
+}
+
+// --- Curated coverage: drafts, admin log, profile photos, dialog state -----------------------
+
+export interface DraftInfo {
+  chatId: string;
+  chatTitle: string;
+  text: string;
+  date?: Date;
+  replyToMsgId?: number;
+}
+
+/** All saved-but-unsent drafts across chats (Telethon get_drafts). */
+export async function getDrafts(client: TelegramClient): Promise<DraftInfo[]> {
+  const res = await client.invoke(new Api.messages.GetAllDrafts());
+  const drafts: DraftInfo[] = [];
+  if (res instanceof Api.Updates || res instanceof Api.UpdatesCombined) {
+    for (const update of res.updates) {
+      if (!(update instanceof Api.UpdateDraftMessage) || !(update.draft instanceof Api.DraftMessage)) continue;
+      if (!update.draft.message) continue;
+      drafts.push({
+        chatId: utils.getPeerId(update.peer).toString(),
+        chatTitle: peerTitle(update.peer, res.chats, res.users) ?? utils.getPeerId(update.peer).toString(),
+        text: update.draft.message,
+        date: update.draft.date ? new Date(update.draft.date * 1000) : undefined,
+        replyToMsgId: update.draft.replyTo instanceof Api.InputReplyToMessage ? update.draft.replyTo.replyToMsgId : undefined,
+      });
+    }
+  }
+  return drafts;
+}
+
+export interface AdminLogEntry {
+  id: string;
+  date: Date;
+  user: string;
+  action: string;
+  detail?: string;
+}
+
+function describeAdminAction(action: Api.TypeChannelAdminLogEventAction): string | undefined {
+  if (action instanceof Api.ChannelAdminLogEventActionChangeTitle) return `"${action.prevValue}" → "${action.newValue}"`;
+  if (action instanceof Api.ChannelAdminLogEventActionChangeAbout) return `about: "${action.prevValue}" → "${action.newValue}"`;
+  if (action instanceof Api.ChannelAdminLogEventActionDeleteMessage && action.message instanceof Api.Message) return messageText(action.message);
+  if (action instanceof Api.ChannelAdminLogEventActionEditMessage && action.newMessage instanceof Api.Message) return messageText(action.newMessage);
+  if (action instanceof Api.ChannelAdminLogEventActionChangeUsername) return `@${action.prevValue || '∅'} → @${action.newValue || '∅'}`;
+  return undefined;
+}
+
+/** Recent administrative actions in a supergroup/channel (Telethon get_admin_log). */
+export async function getAdminLog(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { limit?: number; query?: string } = {},
+): Promise<{ chatTitle: string; entries: AdminLogEntry[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('The admin log is only available for supergroups and channels.');
+  }
+  const res = await client.invoke(new Api.channels.GetAdminLog({
+    channel: entity,
+    q: options.query ?? '',
+    maxId: bigInt(0),
+    minId: bigInt(0),
+    limit: options.limit ?? 50,
+  }));
+  const entries: AdminLogEntry[] = res.events.map(event => {
+    const user = res.users.find((u): u is Api.User => u instanceof Api.User && u.id.equals(event.userId));
+    return {
+      id: event.id.toString(),
+      date: new Date(event.date * 1000),
+      user: user ? ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.id.toString()) : event.userId.toString(),
+      action: event.action.className.replace(/^ChannelAdminLogEventAction/, ''),
+      detail: describeAdminAction(event.action),
+    };
+  });
+  return { chatTitle: getChatTitle(entity), entries };
+}
+
+export interface ProfilePhotoInfo {
+  id: string;
+  date: Date;
+  dcId?: number;
+}
+
+/** A user's profile photos, newest first (Telethon get_profile_photos). */
+export async function getProfilePhotos(
+  client: TelegramClient,
+  identifier: string,
+  options: { limit?: number } = {},
+): Promise<{ title: string; count: number; photos: ProfilePhotoInfo[] }> {
+  const entity = await resolveChat(client, identifier);
+  if (!(entity instanceof Api.User)) {
+    throw new Error('profile-photos lists a user\'s photos; for a chat or channel photo use `avatar`.');
+  }
+  const res = await client.invoke(new Api.photos.GetUserPhotos({
+    userId: entity,
+    offset: 0,
+    maxId: bigInt(0),
+    limit: options.limit ?? 50,
+  }));
+  const photos: ProfilePhotoInfo[] = res.photos
+    .filter((p): p is Api.Photo => p instanceof Api.Photo)
+    .map(p => ({ id: p.id.toString(), date: new Date(p.date * 1000), dcId: p.dcId }));
+  const count = res instanceof Api.photos.PhotosSlice ? res.count : photos.length;
+  return { title: getChatTitle(entity), count, photos };
+}
+
+/** Pin or unpin a chat in the dialog list (messages.ToggleDialogPin). */
+export async function toggleDialogPin(
+  client: TelegramClient,
+  chatIdentifier: string,
+  pinned: boolean,
+): Promise<{ title: string }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  await client.invoke(new Api.messages.ToggleDialogPin({
+    pinned: pinned || undefined,
+    // ToggleDialogPin takes an InputDialogPeer; teleproto types the field as EntityLike.
+    peer: new Api.InputDialogPeer({ peer: utils.getInputPeer(entity) }) as unknown as Api.TypeEntityLike,
+  }));
+  return { title: getChatTitle(entity) };
+}
+
+/** Mark a chat unread (or clear that mark) without changing message read state. */
+export async function markDialogUnread(
+  client: TelegramClient,
+  chatIdentifier: string,
+  unread: boolean,
+): Promise<{ title: string }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  await client.invoke(new Api.messages.MarkDialogUnread({
+    unread: unread || undefined,
+    peer: new Api.InputDialogPeer({ peer: utils.getInputPeer(entity) }) as unknown as Api.TypeEntityLike,
+  }));
+  return { title: getChatTitle(entity) };
+}
+
+/**
+ * Delete (remove from the dialog list) a conversation (Telethon delete_dialog). A user or basic
+ * group chat has its history deleted; a supergroup/channel is left. `revoke` also deletes the
+ * copy for the other side of a private chat.
+ */
+export async function deleteDialog(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { revoke?: boolean } = {},
+): Promise<{ title: string; left: boolean }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const title = getChatTitle(entity);
+  if (entity instanceof Api.Channel) {
+    await client.invoke(new Api.channels.LeaveChannel({ channel: entity }));
+    return { title, left: true };
+  }
+  if (entity instanceof Api.Chat) {
+    const me = await getMe(client);
+    await client.invoke(new Api.messages.DeleteChatUser({ chatId: entity.id, userId: me }));
+    return { title, left: true };
+  }
+  await client.invoke(new Api.messages.DeleteHistory({
+    peer: utils.getInputPeer(entity),
+    maxId: 0,
+    revoke: options.revoke || undefined,
+  }));
+  return { title, left: false };
+}
+
+// --- Permissions (get_permissions) -----------------------------------------------------------
+
+export interface PermissionInfo {
+  chatTitle: string;
+  /** Present when a specific user was asked about. */
+  user?: string;
+  /** 'creator' | 'admin' | 'member' | 'restricted' | 'banned' | 'left' | 'default'. */
+  status: string;
+  /** Admin powers granted (for creator/admin). */
+  adminRights?: string[];
+  /** Actions the user (or everyone, for 'default') is NOT allowed to do. */
+  restrictions?: string[];
+}
+
+/** Boolean flags set to true on a ChatBannedRights/ChatAdminRights object, in schema order. */
+function trueFlags(rights: { [k: string]: unknown } | undefined): string[] {
+  if (!rights) return [];
+  return Object.entries(rights)
+    .filter(([k, v]) => v === true && k !== 'className')
+    .map(([k]) => k);
+}
+
+/**
+ * A member's rights in a supergroup/channel, or the chat's default permissions when no user is
+ * given (Telethon get_permissions). Read-only.
+ */
+export async function getPermissions(
+  client: TelegramClient,
+  chatIdentifier: string,
+  userIdentifier?: string,
+): Promise<PermissionInfo> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('Permissions apply to supergroups and channels; basic groups have no per-user rights model.');
+  }
+  const chatTitle = getChatTitle(entity);
+  if (!userIdentifier) {
+    return { chatTitle, status: 'default', restrictions: trueFlags(entity.defaultBannedRights as never) };
+  }
+  const who = await resolveChat(client, userIdentifier);
+  const res = await client.invoke(new Api.channels.GetParticipant({ channel: entity, participant: who }));
+  const p = res.participant;
+  const user = res.users.find((u): u is Api.User => u instanceof Api.User);
+  const name = user ? ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.id.toString()) : userIdentifier;
+
+  if (p instanceof Api.ChannelParticipantCreator) {
+    return { chatTitle, user: name, status: 'creator', adminRights: trueFlags(p.adminRights as never) };
+  }
+  if (p instanceof Api.ChannelParticipantAdmin) {
+    return { chatTitle, user: name, status: 'admin', adminRights: trueFlags(p.adminRights as never) };
+  }
+  if (p instanceof Api.ChannelParticipantBanned) {
+    const banned = p.bannedRights;
+    return { chatTitle, user: name, status: banned.viewMessages ? 'banned' : 'restricted', restrictions: trueFlags(banned as never) };
+  }
+  if (p instanceof Api.ChannelParticipantLeft) {
+    return { chatTitle, user: name, status: 'left' };
+  }
+  return { chatTitle, user: name, status: 'member' };
+}
+
+// --- Channel / chat / message statistics (get_stats) -----------------------------------------
+
+/** A stats metric as current + previous value (so growth is visible). */
+export interface StatValue { current: number; previous?: number; }
+export interface TopPoster { userId: string; name: string; username?: string; messages: number; avgChars: number; }
+export interface TopAdmin { userId: string; name: string; deleted: number; kicked: number; banned: number; }
+export interface TopInviter { userId: string; name: string; invitations: number; }
+export interface PostInteraction { msgId?: number; storyId?: number; views: number; forwards: number; reactions: number; }
+/** A parsed graph series (opt-in `--graphs`), or an error for that one graph. */
+export interface GraphSeries { name: string; data?: unknown; error?: string; }
+
+export interface BroadcastActivity {
+  kind: 'broadcast';
+  period?: { minDate: string; maxDate: string };
+  followers?: StatValue;
+  viewsPerPost?: StatValue;
+  sharesPerPost?: StatValue;
+  reactionsPerPost?: StatValue;
+  viewsPerStory?: StatValue;
+  sharesPerStory?: StatValue;
+  reactionsPerStory?: StatValue;
+  enabledNotificationsPct?: number;
+  recentPosts?: PostInteraction[];
+  graphs?: GraphSeries[];
+}
+export interface MegagroupActivity {
+  kind: 'megagroup';
+  period?: { minDate: string; maxDate: string };
+  members?: StatValue;
+  messages?: StatValue;
+  viewers?: StatValue;
+  posters?: StatValue;
+  topPosters?: TopPoster[];
+  topAdmins?: TopAdmin[];
+  topInviters?: TopInviter[];
+  graphs?: GraphSeries[];
+}
+export type ChatActivity = BroadcastActivity | MegagroupActivity | { error: string };
+
+export interface ChatStats {
+  id: string;
+  title: string;
+  type: 'user' | 'group' | 'supergroup' | 'channel';
+  username?: string;
+  about?: string;
+  created?: string;
+  verified?: boolean;
+  scam?: boolean;
+  fake?: boolean;
+  restricted?: boolean;
+  restrictionReasons?: string[];
+  participantsCount?: number;
+  onlineCount?: number;
+  adminsCount?: number;
+  kickedCount?: number;
+  bannedCount?: number;
+  linkedChatId?: string;
+  slowModeSeconds?: number;
+  /** Aggregate activity when the account may see it, otherwise `{ error }`. */
+  activity?: ChatActivity;
+}
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+const avp = (v: unknown): StatValue | undefined =>
+  v instanceof Api.StatsAbsValueAndPrev ? { current: round2(v.current), previous: round2(v.previous) } : undefined;
+const pct = (v: unknown): number | undefined =>
+  v instanceof Api.StatsPercentValue && v.total ? round2((v.part / v.total) * 100) : undefined;
+const period = (v: unknown): { minDate: string; maxDate: string } | undefined =>
+  v instanceof Api.StatsDateRangeDays ? { minDate: new Date(v.minDate * 1000).toISOString(), maxDate: new Date(v.maxDate * 1000).toISOString() } : undefined;
+
+/** Invoke a stats.* request, following a STATS_MIGRATE_<dc> redirect to the stats DC if needed. */
+async function invokeStats<R extends Api.AnyRequest>(client: TelegramClient, req: R): Promise<R['__response']> {
+  try {
+    return await client.invoke(req);
+  } catch (e) {
+    const m = (e instanceof Error ? e.message : String(e)).match(/STATS_MIGRATE_(\d+)/);
+    if (m) return await client.invoke(req, Number(m[1]));
+    throw e;
+  }
+}
+
+function restrictionReasons(entity: Api.Channel | Api.User): string[] | undefined {
+  const reasons = entity.restrictionReason;
+  if (!reasons?.length) return undefined;
+  return reasons.map(r => `${r.platform}: ${r.reason}${r.text ? ` (${r.text})` : ''}`);
+}
+
+function userName(users: Map<string, Api.User>, id: bigInt.BigInteger): { name: string; username?: string } {
+  const u = users.get(id.toString());
+  if (!u) return { name: id.toString() };
+  return { name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || id.toString(), username: u.username ?? undefined };
+}
+
+/**
+ * Resolve each graph in `named` to a parsed JSON series. A StatsGraph is parsed inline; a
+ * StatsGraphAsync is loaded via stats.LoadAsyncGraph; a StatsGraphError is reported per-graph.
+ */
+async function collectGraphs(client: TelegramClient, named: Record<string, unknown>): Promise<GraphSeries[]> {
+  const out: GraphSeries[] = [];
+  for (const [name, graph] of Object.entries(named)) {
+    try {
+      let g = graph;
+      if (g instanceof Api.StatsGraphAsync) {
+        g = await invokeStats(client, new Api.stats.LoadAsyncGraph({ token: g.token }));
+      }
+      if (g instanceof Api.StatsGraphError) out.push({ name, error: g.error });
+      else if (g instanceof Api.StatsGraph) {
+        const raw = g.json instanceof Api.DataJSON ? g.json.data : '';
+        out.push({ name, data: raw ? JSON.parse(raw) : undefined });
+      }
+    } catch (e) {
+      out.push({ name, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
+}
+
+function postInteraction(c: Api.TypePostInteractionCounters): PostInteraction {
+  if (c instanceof Api.PostInteractionCountersStory) return { storyId: c.storyId, views: c.views, forwards: c.forwards, reactions: c.reactions };
+  const m = c as Api.PostInteractionCountersMessage;
+  return { msgId: m.msgId, views: m.views, forwards: m.forwards, reactions: m.reactions };
+}
+
+/** Full statistics for a channel / supergroup / group (Telethon get_stats). Read-only. */
+export async function getChatStats(client: TelegramClient, chatIdentifier: string, options: { graphs?: boolean } = {}): Promise<ChatStats> {
+  const entity = await resolveChat(client, chatIdentifier);
+
+  if (entity instanceof Api.Channel) {
+    const megagroup = Boolean(entity.megagroup);
+    const stats: ChatStats = {
+      id: entity.id.toString(),
+      title: entity.title,
+      type: megagroup ? 'supergroup' : 'channel',
+      username: entity.username ?? undefined,
+      created: iso(entity.date),
+      verified: entity.verified || undefined,
+      scam: entity.scam || undefined,
+      fake: entity.fake || undefined,
+      restricted: entity.restricted || undefined,
+      restrictionReasons: restrictionReasons(entity),
+    };
+    try {
+      const full = await client.invoke(new Api.channels.GetFullChannel({ channel: entity }));
+      if (full.fullChat instanceof Api.ChannelFull) {
+        const f = full.fullChat;
+        stats.about = f.about || undefined;
+        stats.participantsCount = f.participantsCount ?? undefined;
+        stats.onlineCount = f.onlineCount ?? undefined;
+        stats.adminsCount = f.adminsCount ?? undefined;
+        stats.kickedCount = f.kickedCount ?? undefined;
+        stats.bannedCount = f.bannedCount ?? undefined;
+        stats.linkedChatId = f.linkedChatId ? f.linkedChatId.toString() : undefined;
+        stats.slowModeSeconds = f.slowmodeSeconds ?? undefined;
+      }
+    } catch {
+      // Keep the entity-level fields even if the full channel can't be fetched.
+    }
+    stats.activity = await activityStats(client, entity, megagroup, options.graphs ?? false);
+    return stats;
+  }
+
+  if (entity instanceof Api.Chat) {
+    const stats: ChatStats = { id: entity.id.toString(), title: entity.title, type: 'group', participantsCount: entity.participantsCount ?? undefined, created: iso(entity.date) };
+    try {
+      const full = await client.invoke(new Api.messages.GetFullChat({ chatId: entity.id }));
+      if ('fullChat' in full && full.fullChat instanceof Api.ChatFull) stats.about = full.fullChat.about || undefined;
+    } catch { /* ignore */ }
+    stats.activity = { error: 'Aggregate statistics are only available for channels and supergroups.' };
+    return stats;
+  }
+
+  // A user (incl. bots)
+  const stats: ChatStats = { id: entity.id.toString(), title: getChatTitle(entity), type: 'user', username: entity.username ?? undefined, verified: entity.verified || undefined, scam: entity.scam || undefined, fake: entity.fake || undefined, restricted: entity.restricted || undefined, restrictionReasons: restrictionReasons(entity) };
+  try {
+    const full = await client.invoke(new Api.users.GetFullUser({ id: entity }));
+    stats.about = full.fullUser.about ?? undefined;
+  } catch { /* ignore */ }
+  return stats;
+}
+
+async function activityStats(client: TelegramClient, entity: Api.Channel, megagroup: boolean, graphs: boolean): Promise<ChatActivity> {
+  try {
+    if (megagroup) {
+      const s = await invokeStats(client, new Api.stats.GetMegagroupStats({ channel: entity }));
+      const users = new Map(s.users.filter((u): u is Api.User => u instanceof Api.User).map(u => [u.id.toString(), u]));
+      const act: MegagroupActivity = {
+        kind: 'megagroup',
+        period: period(s.period),
+        members: avp(s.members), messages: avp(s.messages), viewers: avp(s.viewers), posters: avp(s.posters),
+        topPosters: s.topPosters.map(p => ({ userId: p.userId.toString(), ...userName(users, p.userId), messages: p.messages, avgChars: p.avgChars })),
+        topAdmins: s.topAdmins.map(a => ({ userId: a.userId.toString(), name: userName(users, a.userId).name, deleted: a.deleted, kicked: a.kicked, banned: a.banned })),
+        topInviters: s.topInviters.map(i => ({ userId: i.userId.toString(), name: userName(users, i.userId).name, invitations: i.invitations })),
+      };
+      if (graphs) {
+        act.graphs = await collectGraphs(client, {
+          growth: s.growthGraph, members: s.membersGraph, newMembersBySource: s.newMembersBySourceGraph,
+          languages: s.languagesGraph, messages: s.messagesGraph, actions: s.actionsGraph,
+          topHours: s.topHoursGraph, weekdays: s.weekdaysGraph,
+        });
+      }
+      return act;
+    }
+    const s = await invokeStats(client, new Api.stats.GetBroadcastStats({ channel: entity }));
+    const act: BroadcastActivity = {
+      kind: 'broadcast',
+      period: period(s.period),
+      followers: avp(s.followers),
+      viewsPerPost: avp(s.viewsPerPost), sharesPerPost: avp(s.sharesPerPost), reactionsPerPost: avp(s.reactionsPerPost),
+      viewsPerStory: avp(s.viewsPerStory), sharesPerStory: avp(s.sharesPerStory), reactionsPerStory: avp(s.reactionsPerStory),
+      enabledNotificationsPct: pct(s.enabledNotifications),
+      recentPosts: s.recentPostsInteractions.map(postInteraction),
+    };
+    if (graphs) {
+      act.graphs = await collectGraphs(client, {
+        growth: s.growthGraph, followers: s.followersGraph, mute: s.muteGraph, topHours: s.topHoursGraph,
+        interactions: s.interactionsGraph, ivInteractions: s.ivInteractionsGraph, viewsBySource: s.viewsBySourceGraph,
+        newFollowersBySource: s.newFollowersBySourceGraph, languages: s.languagesGraph, reactionsByEmotion: s.reactionsByEmotionGraph,
+        storyInteractions: s.storyInteractionsGraph, storyReactionsByEmotion: s.storyReactionsByEmotionGraph,
+      });
+    }
+    return act;
+  } catch (e) {
+    return { error: statsError(e) };
+  }
+}
+
+function statsError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/CHAT_ADMIN_REQUIRED/.test(msg)) return 'Admin rights are required to view these statistics.';
+  if (/BROADCAST_REQUIRED/.test(msg)) return 'These statistics are only available for channels.';
+  if (/MEGAGROUP_REQUIRED/.test(msg)) return 'These statistics are only available for supergroups.';
+  if (/not.*enough.*participant|STATS/i.test(msg)) return 'Statistics are not available for this chat yet (it may be too small).';
+  return msg;
+}
+
+export interface PublicForwardRef {
+  kind: 'message' | 'story';
+  chatId?: string;
+  chatTitle?: string;
+  msgId?: number;
+  storyId?: number;
+  views?: number;
+  date?: string;
+}
+
+export interface MessageStats {
+  chatTitle: string;
+  messageId?: number;
+  storyId?: number;
+  views?: number;
+  forwards?: number;
+  reactions?: ReactionBreakdown[];
+  /** Number of public channels/groups that forwarded this, if available. */
+  publicForwardsCount?: number;
+  /** The public forwards themselves, up to the requested limit. */
+  publicForwards?: PublicForwardRef[];
+  graphs?: GraphSeries[];
+  /** Set when detailed stats are unavailable (rights / not a channel). */
+  note?: string;
+}
+
+function publicForwardsList(pf: Api.stats.PublicForwards): PublicForwardRef[] {
+  const chats = new Map(pf.chats.filter((c): c is Api.Channel | Api.Chat => 'title' in c).map(c => [c.id.toString(), c.title]));
+  const refs: PublicForwardRef[] = [];
+  for (const f of pf.forwards) {
+    if (f instanceof Api.PublicForwardMessage && f.message instanceof Api.Message) {
+      const chatId = utils.getPeerId(f.message.peerId).toString();
+      refs.push({ kind: 'message', chatId, chatTitle: chats.get(chatId.replace(/^-100/, '')), msgId: f.message.id, views: f.message.views ?? undefined, date: iso(f.message.date) });
+    } else if (f instanceof Api.PublicForwardStory) {
+      refs.push({ kind: 'story', chatId: utils.getPeerId(f.peer).toString(), storyId: f.story instanceof Api.StoryItem ? f.story.id : undefined });
+    }
+  }
+  return refs;
+}
+
+/** Per-message statistics (Telethon get_stats for a message). Read-only. */
+export async function getMessageStats(
+  client: TelegramClient,
+  chatIdentifier: string,
+  messageId: number,
+  options: { graphs?: boolean; limit?: number } = {},
+): Promise<MessageStats> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('Per-message statistics are only available for channels and supergroups.');
+  }
+  const out: MessageStats = { chatTitle: getChatTitle(entity), messageId };
+
+  const raw = await client.getMessages(entity, { ids: [messageId] });
+  const msg = raw[0];
+  if (msg instanceof Api.Message) {
+    const full = buildMessageFull(msg);
+    out.views = full.views;
+    out.forwards = full.forwards;
+    out.reactions = full.reactions;
+  }
+
+  try {
+    const pf = await invokeStats(client, new Api.stats.GetMessagePublicForwards({ channel: entity, msgId: messageId, offset: '', limit: options.limit ?? 100 }));
+    if (pf instanceof Api.stats.PublicForwards) {
+      out.publicForwardsCount = pf.count;
+      out.publicForwards = publicForwardsList(pf);
+    }
+    if (options.graphs) {
+      const ms = await invokeStats(client, new Api.stats.GetMessageStats({ channel: entity, msgId: messageId }));
+      out.graphs = await collectGraphs(client, { views: ms.viewsGraph, reactionsByEmotion: ms.reactionsByEmotionGraph });
+    }
+  } catch (e) {
+    out.note = statsError(e);
+  }
+  return out;
+}
+
+/** Per-story statistics (Telethon get_stats for a story). Read-only. */
+export async function getStoryStats(
+  client: TelegramClient,
+  chatIdentifier: string,
+  storyId: number,
+  options: { graphs?: boolean; limit?: number } = {},
+): Promise<MessageStats> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error('Per-story statistics are only available for channels and supergroups.');
+  }
+  const out: MessageStats = { chatTitle: getChatTitle(entity), storyId };
+  try {
+    const pf = await invokeStats(client, new Api.stats.GetStoryPublicForwards({ peer: entity, id: storyId, offset: '', limit: options.limit ?? 100 }));
+    if (pf instanceof Api.stats.PublicForwards) {
+      out.publicForwardsCount = pf.count;
+      out.publicForwards = publicForwardsList(pf);
+    }
+    if (options.graphs) {
+      const ss = await invokeStats(client, new Api.stats.GetStoryStats({ peer: entity, id: storyId }));
+      out.graphs = await collectGraphs(client, { views: ss.viewsGraph, reactionsByEmotion: ss.reactionsByEmotionGraph });
+    }
+  } catch (e) {
+    out.note = statsError(e);
+  }
+  return out;
+}
+
+// --- Scheduled messages (messages.GetScheduledHistory) ---------------------------------------
+
+/** Messages queued to send later (the issue's top messages gap). Create them with `send --schedule`. */
+export async function getScheduledMessages(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { full?: boolean } = {},
+): Promise<{ chatTitle: string; messages: MessageInfo[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const res = await client.invoke(new Api.messages.GetScheduledHistory({ peer: entity, hash: bigInt(0) }));
+  const messages: MessageInfo[] = [];
+  if ('messages' in res) {
+    for (const msg of res.messages) {
+      if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg, { full: options.full }));
+    }
+  }
+  return { chatTitle: getChatTitle(entity), messages };
+}
+
+// --- Active sessions, Stars, invite links (read-only curated coverage) ------------------------
+
+export interface SessionInfo {
+  hash: string;
+  current?: boolean;
+  official?: boolean;
+  device: string;
+  platform: string;
+  system: string;
+  app: string;
+  appVersion: string;
+  ip?: string;
+  country?: string;
+  created?: string;
+  lastActive?: string;
+}
+
+/** Active login sessions (Telethon has no direct equiv; account.GetAuthorizations). Read-only. */
+export async function getSessions(client: TelegramClient): Promise<{ ttlDays: number; sessions: SessionInfo[] }> {
+  const res = await client.invoke(new Api.account.GetAuthorizations());
+  return {
+    ttlDays: res.authorizationTtlDays,
+    sessions: res.authorizations.map(a => ({
+      hash: a.hash.toString(),
+      current: a.current || undefined,
+      official: a.officialApp || undefined,
+      device: a.deviceModel,
+      platform: a.platform,
+      system: a.systemVersion,
+      app: a.appName,
+      appVersion: a.appVersion,
+      ip: a.ip || undefined,
+      country: a.country || undefined,
+      created: iso(a.dateCreated),
+      lastActive: iso(a.dateActive),
+    })),
+  };
+}
+
+export interface StarsTransaction { id: string; stars: number; date?: string; title?: string; refund?: boolean; pending?: boolean; }
+export interface StarsBalance { balance: number; transactions: StarsTransaction[]; }
+
+const starsAmount = (a: unknown): number =>
+  a instanceof Api.StarsAmount ? a.amount.toJSNumber() + (a.nanos || 0) / 1e9 : 0;
+
+/** Telegram Stars balance and recent transactions (read-only). */
+export async function getStars(client: TelegramClient, options: { limit?: number } = {}): Promise<StarsBalance> {
+  const status = await client.invoke(new Api.payments.GetStarsStatus({ peer: new Api.InputPeerSelf() }));
+  let history = status.history ?? [];
+  if (!history.length) {
+    try {
+      const tx = await client.invoke(new Api.payments.GetStarsTransactions({ peer: new Api.InputPeerSelf(), offset: '', limit: options.limit ?? 20 }));
+      history = tx.history ?? [];
+    } catch { /* transactions may be unavailable */ }
+  }
+  return {
+    balance: starsAmount(status.balance),
+    transactions: history.slice(0, options.limit ?? 20).map(t => ({
+      id: t.id,
+      stars: starsAmount(t.amount),
+      date: iso(t.date),
+      title: t.title ?? undefined,
+      refund: t.refund || undefined,
+      pending: t.pending || undefined,
+    })),
+  };
+}
+
+export interface InviteLink {
+  link: string;
+  permanent?: boolean;
+  revoked?: boolean;
+  requestNeeded?: boolean;
+  usage?: number;
+  usageLimit?: number;
+  requested?: number;
+  expireDate?: string;
+  adminId: string;
+}
+
+/** Exported invite links for a chat (messages.GetExportedChatInvites). Read-only. */
+export async function getInviteLinks(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { revoked?: boolean; limit?: number } = {},
+): Promise<{ chatTitle: string; count: number; invites: InviteLink[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const me = await getMe(client);
+  const res = await client.invoke(new Api.messages.GetExportedChatInvites({
+    peer: entity, adminId: me, revoked: options.revoked || undefined, limit: options.limit ?? 50,
+  }));
+  const invites = res.invites
+    .filter((i): i is Api.ChatInviteExported => i instanceof Api.ChatInviteExported)
+    .map(i => ({
+      link: i.link,
+      permanent: i.permanent || undefined,
+      revoked: i.revoked || undefined,
+      requestNeeded: i.requestNeeded || undefined,
+      usage: i.usage ?? undefined,
+      usageLimit: i.usageLimit ?? undefined,
+      requested: i.requested ?? undefined,
+      expireDate: iso(i.expireDate ?? undefined),
+      adminId: i.adminId.toString(),
+    }));
+  return { chatTitle: getChatTitle(entity), count: res.count, invites };
+}
+
+export interface JoinRequest { userId: string; name: string; date?: string; about?: string; }
+
+/** Pending join requests for a chat (messages.GetChatInviteImporters, requested). Read-only. */
+export async function getJoinRequests(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { limit?: number } = {},
+): Promise<{ chatTitle: string; count: number; requests: JoinRequest[] }> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const res = await client.invoke(new Api.messages.GetChatInviteImporters({
+    peer: entity, requested: true, q: '', offsetDate: 0, offsetUser: new Api.InputUserEmpty(), limit: options.limit ?? 50,
+  }));
+  const users = new Map(res.users.filter((u): u is Api.User => u instanceof Api.User).map(u => [u.id.toString(), u]));
+  const requests = res.importers.map(i => {
+    const u = users.get(i.userId.toString());
+    return {
+      userId: i.userId.toString(),
+      name: u ? ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || i.userId.toString()) : i.userId.toString(),
+      date: iso(i.date),
+      about: i.about ?? undefined,
+    };
+  });
+  return { chatTitle: getChatTitle(entity), count: res.count, requests };
+}
+
+// --- edit_permissions: default & per-user restrictions (write) --------------------------------
+
+/** The ChatBannedRights flags a restriction can set, in a friendly order. */
+export const BANNED_RIGHTS = [
+  'viewMessages', 'sendMessages', 'sendMedia', 'sendStickers', 'sendGifs', 'sendGames', 'sendInline',
+  'embedLinks', 'sendPolls', 'changeInfo', 'inviteUsers', 'pinMessages', 'manageTopics',
+  'sendPhotos', 'sendVideos', 'sendRoundvideos', 'sendAudios', 'sendVoices', 'sendDocs', 'sendPlain',
+  'sendReactions',
+] as const;
+export type BannedRight = typeof BANNED_RIGHTS[number];
+
+/** Everything a muted (read-only) member may not do. */
+const MUTE_RIGHTS: BannedRight[] = [
+  'sendMessages', 'sendMedia', 'sendStickers', 'sendGifs', 'sendGames', 'sendInline', 'embedLinks',
+  'sendPolls', 'sendPhotos', 'sendVideos', 'sendRoundvideos', 'sendAudios', 'sendVoices', 'sendDocs',
+  'sendPlain',
+];
+
+export function buildBannedRights(denied: BannedRight[], untilDate = 0): Api.ChatBannedRights {
+  const args = { untilDate } as ConstructorParameters<typeof Api.ChatBannedRights>[0];
+  for (const key of denied) (args as Record<string, unknown>)[key] = true;
+  return new Api.ChatBannedRights(args);
+}
+
+export interface PermissionChange { chatTitle: string; target: string; denied: BannedRight[]; until?: string; }
+
+/**
+ * Set a chat's default permissions (no `userIdentifier`) or restrict one member
+ * (Telethon edit_permissions). `denied` lists the actions to forbid; empty = lift all. Write.
+ */
+export async function setChatPermissions(
+  client: TelegramClient,
+  chatIdentifier: string,
+  userIdentifier: string | undefined,
+  denied: BannedRight[],
+  untilDate = 0,
+): Promise<PermissionChange> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const rights = buildBannedRights(denied, untilDate);
+
+  if (!userIdentifier) {
+    if (!(entity instanceof Api.Channel || entity instanceof Api.Chat)) throw new Error('Default permissions apply to groups and channels.');
+    await client.invoke(new Api.messages.EditChatDefaultBannedRights({ peer: entity, bannedRights: rights }));
+    return { chatTitle: getChatTitle(entity), target: 'default', denied, until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined };
+  }
+
+  if (!(entity instanceof Api.Channel)) throw new Error('Per-user restrictions need a supergroup or channel (basic groups only support kicking).');
+  const user = await resolveChat(client, userIdentifier);
+  await client.invoke(new Api.channels.EditBanned({ channel: entity, participant: user, bannedRights: rights }));
+  return { chatTitle: getChatTitle(entity), target: getChatTitle(user), denied, until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined };
+}
+
+export const permissionPresets = { MUTE_RIGHTS };
+
+// --- Forum topics: create / edit / close / reopen / pin (write) -------------------------------
+
+async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<Api.Channel> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel) || !entity.forum) throw new Error(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`);
+  return entity;
+}
+
+export async function createForumTopic(
+  client: TelegramClient,
+  chatIdentifier: string,
+  title: string,
+  options: { iconColor?: number; iconEmojiId?: string } = {},
+): Promise<{ chatTitle: string; title: string }> {
+  const entity = await forumChannel(client, chatIdentifier);
+  await client.invoke(new Api.messages.CreateForumTopic({
+    peer: entity,
+    title,
+    iconColor: options.iconColor,
+    iconEmojiId: options.iconEmojiId ? bigInt(options.iconEmojiId) : undefined,
+    randomId: generateRandomLong(),
+  }));
+  return { chatTitle: getChatTitle(entity), title };
+}
+
+export async function editForumTopic(
+  client: TelegramClient,
+  chatIdentifier: string,
+  topicId: number,
+  changes: { title?: string; iconEmojiId?: string; closed?: boolean; hidden?: boolean },
+): Promise<{ chatTitle: string; topicId: number }> {
+  const entity = await forumChannel(client, chatIdentifier);
+  await client.invoke(new Api.messages.EditForumTopic({
+    peer: entity,
+    topicId,
+    title: changes.title,
+    iconEmojiId: changes.iconEmojiId ? bigInt(changes.iconEmojiId) : undefined,
+    closed: changes.closed,
+    hidden: changes.hidden,
+  }));
+  return { chatTitle: getChatTitle(entity), topicId };
+}
+
+export async function pinForumTopic(
+  client: TelegramClient,
+  chatIdentifier: string,
+  topicId: number,
+  pinned: boolean,
+): Promise<{ chatTitle: string; topicId: number }> {
+  const entity = await forumChannel(client, chatIdentifier);
+  await client.invoke(new Api.messages.UpdatePinnedForumTopic({ peer: entity, topicId, pinned }));
+  return { chatTitle: getChatTitle(entity), topicId };
 }

@@ -60,7 +60,71 @@ telegram link <chat> <msgId>                   # t.me link (channels and supergr
 telegram watch [chat] -t 60 -n 10 --json       # live stream; always bound it with -t or -n
 telegram sync --chat <c> --output ./dir --resume   # incremental markdown export
 telegram mark-read <chat> ; telegram mute <chat> -d 8h
+telegram drafts ; telegram admin-log <group> ; telegram profile-photos <user>
+telegram permissions <group> [user]           # a member's rights, or the chat default
+telegram stats <chat> [--message <id>]         # full channel/group stats, or one post's stats
+telegram scheduled <chat>                       # messages queued to send later
+telegram sessions ; telegram stars ; telegram invites <chat> [--requests]   # sessions, Stars, invite links/join requests
+telegram read <chat> --full                    # every message stat (views, reactions, flags, media); also on get/search/inbox/watch
+telegram pin-chat <chat> ; telegram mark-unread <chat> ; telegram delete-dialog <chat>
+telegram edit-permissions <group> [user] --mute|--ban|--lift|--deny send,media [--until 1d]
+telegram topic create|edit|close|reopen|pin|unpin <forum> <title|id>   # forum topics
+telegram api <namespace.Method> --params '<json>'   # any raw TL method; full API reachability
+telegram <namespace> <method> [--typed-flags]       # same method as its own command (823 of them)
 ```
+
+**Prefer a curated command above** when one exists: they give friendly/compact output, pagination,
+multi-step logic and safety prompts (`read`, `send`, `search`, `chats`, …). Drop to the raw API only
+for a method with no curated command, or when you need the exact raw TL object.
+
+`telegram api` and the generated commands both reach 100% of the Telegram client API (JSON out) and
+share one classification: reads are `Get*`/`Check*`/`Search*`/`Resolve*` (run free, go through
+`telegram_read`), everything else is a write (needs `telegram write-access on`; `telegram_write` over
+MCP). Paying, account deletion, session termination, 2FA/phone changes and location sharing are
+**always refused** (the command still exists and refuses). Use `api` for scripted JSON params; use
+the typed command for a command line.
+
+`telegram <namespace> <method>`: the TL class name lower-cased and kebab-cased —
+`messages.GetHistory` → `telegram messages get-history`, `help.GetConfig` → `telegram help get-config`;
+root-level wrappers are top-level commands (`Ping` → `telegram ping`). One `--flag` per parameter
+(camelCase → `--kebab`): peer/user/channel flags take an id/@user/title/`me`; `true`-flags are bare
+switches; vectors take a comma list; constructor-typed params and `--json-params '<json|->'` (stdin
+with `-`; typed flags win) take JSON. Paging/cache cursors (`offsetId`, `hash`, `maxId`, …) default
+to 0. Discover with `telegram <ns> --help` (lists methods) and `telegram <ns> <method> --help`.
+
+A few namespace names also name a curated command — `stats`, `stories`, `contacts`, `auth`,
+`folders`, `help`. The curated command is unchanged; the generated methods attach as subcommands and
+are chosen **only when the first word is exactly a method name** (`telegram stats get-broadcast-stats`
+is the API method; `telegram stats "Team"` is the curated stats). A chat literally named like a
+method (e.g. `get-broadcast-stats`) must be passed by its ID or @username.
+
+**Discovery workflow (for any task not covered by a curated command):**
+1. Pick the namespace (`telegram --help` ends with the list + counts; namespace purposes in
+   `reference.md` → "Namespace index"). 2. `telegram <ns> --help` lists its methods, each marked
+   `[read]`/`[write]`/`[refused]` with a one-line description. 3. `telegram <ns> <method> --help`
+   shows the description, access, return type, every param (flag, TL type, required/default,
+   description), an example invocation, common errors and the docs link. 4. Run it. For a
+   machine-readable form, `telegram schema`, `telegram schema <ns>`, `telegram schema <ns> <method>`
+   print JSON ({command, className, access, returns, params, example, docsUrl, description}).
+
+Every method's `--help` and `telegram schema` are plain reads (they never execute the method), so
+over MCP they go through `telegram_read` even for a write or refused method
+(`["account","delete-account","--help"]` is safe). Pass only the command path plus `--help`.
+
+```bash
+telegram channels get-full-channel --channel @group      # read, peer resolved like everywhere
+telegram messages get-history --peer @durov --limit 20   # paging cursors default to 0
+telegram messages send-reaction --peer @me --msg-id 42 \
+  --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write
+telegram ping --ping-id 1                                 # root-level method
+telegram account delete-account                           # exists, but always refused
+```
+
+Errors are raw RPC errors: **FLOOD_WAIT_X** = wait X seconds then retry; `PEER_ID_INVALID` = bad
+chat/user; `CHAT_ADMIN_REQUIRED` = you lack admin rights; `CHANNEL_PRIVATE` = not a member;
+`AUTH_KEY_UNREGISTERED` = session gone. See `reference.md` → "Raw API", "Namespace index" for the
+full flag-type table, clash rules, the `{"_chat":…}`/`{"_base64":…}` conventions and a one-line
+purpose for each of the 25 namespaces.
 
 ## 4. JSON shapes (`--json`)
 

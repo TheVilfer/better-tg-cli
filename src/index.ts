@@ -77,8 +77,37 @@ import {
   updateCommand,
   skillCommand,
   onboardCommand,
+  apiCommand,
+  draftsCommand,
+  adminLogCommand,
+  profilePhotosCommand,
+  pinChatCommand,
+  unpinChatCommand,
+  markUnreadCommand,
+  deleteDialogCommand,
+  permissionsCommand,
+  statsCommand,
+  scheduledCommand,
+  sessionsCommand,
+  starsCommand,
+  invitesCommand,
+  editPermissionsCommand,
+  topicCommand,
+  registerGeneratedCommands,
+  buildHelpCommand,
+  schemaCommand,
 } from './commands/index.js';
+import { generatedSummaryLines } from './commands/generated.js';
 
+
+// Exit quietly when the output pipe is closed early (e.g. `telegram help stats | head`): Node turns
+// the SIGPIPE into an async EPIPE 'error' on stdout, which would otherwise crash with an unhandled
+// error. Commander's own `--help` sidesteps this by exiting right after writing; this covers the
+// custom `help` command and any other long output piped to `head`.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.exit(0);
+  throw err;
+});
 
 const program = new Command();
 
@@ -86,6 +115,10 @@ program
   .name('tg')
   .description('Fast Telegram CLI for reading, searching, and sending messages')
   .version(VERSION);
+
+// Replace commander's built-in `help` command with our own, so `telegram help get-config` can run a
+// help.* API method while `telegram help` / `telegram help <command>` keep their usual behaviour.
+program.helpCommand(false);
 
 // Auth commands
 program.addCommand(authCommand);
@@ -111,6 +144,15 @@ program.addCommand(storiesCommand);
 program.addCommand(avatarCommand);
 program.addCommand(inlineCommand);
 program.addCommand(watchCommand);
+program.addCommand(draftsCommand);
+program.addCommand(adminLogCommand);
+program.addCommand(profilePhotosCommand);
+program.addCommand(permissionsCommand);
+program.addCommand(statsCommand);
+program.addCommand(scheduledCommand);
+program.addCommand(sessionsCommand);
+program.addCommand(starsCommand);
+program.addCommand(invitesCommand);
 
 // Contact/group commands
 program.addCommand(contactCommand);
@@ -154,6 +196,12 @@ program.addCommand(archiveCommand);
 program.addCommand(unarchiveCommand);
 program.addCommand(createGroupCommand);
 program.addCommand(createChannelCommand);
+program.addCommand(editPermissionsCommand);
+program.addCommand(topicCommand);
+program.addCommand(pinChatCommand);
+program.addCommand(unpinChatCommand);
+program.addCommand(markUnreadCommand);
+program.addCommand(deleteDialogCommand);
 program.addCommand(typingCommand);
 program.addCommand(setNameCommand);
 program.addCommand(setBioCommand);
@@ -164,6 +212,8 @@ program.addCommand(setAvatarCommand);
 program.addCommand(writeAccessCommand);
 
 // Utilities
+program.addCommand(apiCommand);
+program.addCommand(schemaCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);
@@ -230,8 +280,13 @@ program
       if (cmd.name() !== 'help-all') emit(cmd, cmd.name());
     }
     lines.push('', 'Most read commands accept --json; --markdown where noted in `<cmd> --help`.');
+    lines.push('', ...generatedSummaryLines());
     console.log(lines.join('\n'));
   });
+
+// Our `help` command (commander's built-in was disabled above). Also hosts the help.* API methods
+// as subcommands (registerGeneratedCommands attaches `help get-config` etc. on demand).
+program.addCommand(buildHelpCommand(program));
 
 // Mock mode has no session to create, drop or unlock; these would otherwise prompt or touch the secret store
 const NOT_IN_MOCK = new Set(['auth', 'onboard', 'logout', 'write-access', 'update']);
@@ -253,6 +308,9 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   void runBackgroundCheck();
 } else {
   maybeNotifyUpdate();
+  // Attach only the generated API command the current invocation needs (lazy: the one
+  // namespace/method or root method on the command line), so startup and help stay flat otherwise.
+  registerGeneratedCommands(program, process.argv);
   // Always node-style argv: commander would read it Electron-style inside Claude Desktop's
   // built-in Node (an Electron utility process) and take the script path for a command
   if (isMainThread) {
