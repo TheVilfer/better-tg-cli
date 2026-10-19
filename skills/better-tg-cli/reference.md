@@ -155,12 +155,12 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
   run fetches everything after the checkpoint and ignores the default `--days` window.
 
-## Raw API (`telegram api` and `telegram tl`)
+## Raw API (`telegram api` and `telegram <namespace> <method>`)
 
 Two ways to reach the whole Telegram client API when no curated command fits. They share one
 execution path — identical read/write classification, hard refusals and audit log — and both print
-compact JSON (big integers as strings, bytes as base64). Pick `api` for scripted JSON params, `tl`
-for a typed command line.
+compact JSON (big integers as strings, bytes as base64). Pick `api` for scripted JSON params, the
+typed per-method command for a command line.
 
 ### `telegram api <namespace.Method> --params '<json>'`
 
@@ -170,18 +170,28 @@ awkward fields: `{"_chat": "<id|@user|title|me>"}` resolves a chat the way every
 under a write), `{"_base64": "…"}` / `{"_hex": "…"}` pass raw bytes, `{"_bigint": "…"}` a `long`.
 Other entity-like fields also accept a bare `@username`/ID. `--params -` reads the JSON from stdin.
 
-### `telegram tl <namespace> <method>` — one typed command per TL method
+### `telegram <namespace> <method>` — one typed command per TL method
 
-Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) has its own command.
+Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) has its own top-level
+command.
 
 - **Naming.** The TL class name, split at the dot and kebab-cased:
-  `messages.GetHistory` → `telegram tl messages get-history`, `help.GetConfig` →
-  `telegram tl help get-config`, `channels.GetFullChannel` → `telegram tl channels get-full-channel`.
-  The 21 top-level invoke/transport wrappers have no namespace: `Ping` → `telegram tl ping`,
-  `InvokeWithLayer` → `telegram tl invoke-with-layer`.
-- **Discovery.** `telegram tl` lists the namespaces and their method counts; `telegram tl <ns> --help`
-  lists a namespace's methods; `telegram tl <ns> <method> --help` lists that method's params with
-  their TL types and required/optional.
+  `messages.GetHistory` → `telegram messages get-history`, `help.GetConfig` →
+  `telegram help get-config`, `channels.GetFullChannel` → `telegram channels get-full-channel`.
+  The 21 root-level invoke/transport wrappers have no namespace and are top-level commands:
+  `Ping` → `telegram ping`, `InvokeWithLayer` → `telegram invoke-with-layer`, `ReqPq` → `telegram req-pq`.
+- **Clash with curated commands.** Six namespace names are also curated commands — `stats`,
+  `stories`, `contacts`, `auth`, `folders`, `help`. The curated command keeps its behaviour, args and
+  output; the generated methods attach to it as subcommands and are picked **only when the first
+  operand is exactly a generated method name**. So `telegram stats get-broadcast-stats --channel @c`
+  is the API method, while `telegram stats "Team"` and `telegram stats @c --message 5` are the curated
+  `stats`. A chat/user literally named like a method (e.g. a chat called `get-broadcast-stats`) must be
+  addressed by ID to avoid the method. A clash command's `--help` shows its curated usage plus a list
+  of its generated methods. (`telegram help <method>` runs a `help.*` method, while `telegram help` and
+  `telegram help <command>` still show help.)
+- **Discovery.** `telegram --help` ends with a "Telegram API" section listing the namespaces and
+  their method counts; `telegram <ns> --help` lists a namespace's methods; `telegram <ns> <method>
+  --help` lists that method's params with their TL types and required/optional/default.
 - **Flags.** One `--flag` per parameter, the camelCase param name kebab-cased (`offsetId` →
   `--offset-id`, `scheduleDate` → `--schedule-date`). Pass each by its TL type:
 
@@ -203,18 +213,18 @@ Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) 
   a nested `replyTo` constructor as JSON, the simple fields as flags:
 
   ```bash
-  telegram tl messages send-message --peer @me --message hi \
+  telegram messages send-message --peer @me --message hi \
     --json-params '{"replyTo":{"className":"InputReplyToMessage","replyToMsgId":42}}'
   ```
 
 - **Paging/cache cursors default to 0.** A required `int`/`long` named `offsetId`, `offsetDate`,
   `addOffset`, `offsetRate`, `offsetTopic`, `offset`, `maxId`, `minId`, `maxDate`, `minDate` or
   `hash` defaults to 0 when omitted (shown as `default 0` in `--help`), so
-  `telegram tl messages get-history --peer @durov --limit 20` just works. Only these exact numeric
+  `telegram messages get-history --peer @durov --limit 20` just works. Only these exact numeric
   names — ids (`msgId`/`id`/`userId`), `limit`, `offsetPeer` and string hashes are never defaulted.
 - **Other required params** are enforced with a clear error (`Missing required option(s): --peer …`);
   `randomId` is never required (teleproto generates it). Registration is lazy — only the invoked
-  namespace is built — so startup, top-level `--help` and `help-all` are unaffected.
+  namespace/method is built — so startup, top-level `--help` and `help-all` stay flat.
 
 ### Read vs write and refusals (both commands)
 
@@ -237,7 +247,7 @@ Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) 
 
 - **Curated command** (`read`, `send`, `search`, `chats`, `members`, …) — the default. Friendly,
   compact output, pagination, multi-step logic and safety prompts. Always prefer it when one exists.
-- **`telegram tl <ns> <method>`** — a method with no curated command, or when you need the exact raw
+- **`telegram <ns> <method>`** — a method with no curated command, or when you need the exact raw
   TL object, from a typed command line.
 - **`telegram api <ns.Method> --params`** — the same reach, when it is easier to hand it a whole JSON
   body (scripts, deeply nested requests).
@@ -245,14 +255,16 @@ Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) 
 ### Examples
 
 ```bash
-telegram tl help get-config                                  # read, no args
-telegram tl channels get-full-channel --channel @group       # read, peer resolved like everywhere
-telegram tl messages get-history --peer @durov --limit 20    # read: paging cursors default to 0
-telegram tl messages delete-messages --id 100,101,102 --revoke   # write: vector + true-flag
-telegram tl messages send-reaction --peer @me --msg-id 42 \
+telegram help get-config                                  # read, no args (help.* method)
+telegram channels get-full-channel --channel @group       # read, peer resolved like everywhere
+telegram messages get-history --peer @durov --limit 20    # read: paging cursors default to 0
+telegram stats get-broadcast-stats --channel @c           # a method on a clash namespace
+telegram messages delete-messages --id 100,101,102 --revoke   # write: vector + true-flag
+telegram messages send-reaction --peer @me --msg-id 42 \
   --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write, nested
-telegram tl account delete-account                           # exists, always refused (exit 1)
-echo '{"id":[100,101]}' | telegram tl messages delete-messages --json-params -   # JSON from stdin
+telegram ping --ping-id 1                                 # root-level method
+telegram account delete-account                           # exists, always refused (exit 1)
+echo '{"id":[100,101]}' | telegram messages delete-messages --json-params -   # JSON from stdin
 ```
 
 ## MCP server (`telegram mcp`)
@@ -268,11 +280,13 @@ echo '{"id":[100,101]}' | telegram tl messages delete-messages --json-params -  
   - Read tool: only the read commands.
   - Write tool: everything that changes the account or writes local files (`download`, `sync`,
     `avatar`).
-  - `api` and `tl` are classified per underlying method: a read method goes through the read tool, a
-    write through the write tool, and a refused method never runs (`["tl","messages","get-history",…]`
-    like `["api","messages.GetHistory",…]`).
+  - `api` and the generated commands are classified per underlying method: a read goes through the
+    read tool, a write through the write tool, a refused method never runs — `["messages","get-history",…]`
+    and `["ping"]` like `["api","messages.GetHistory",…]`. On a clash namespace the method form is
+    classified by its method (`["stats","get-broadcast-stats",…]`) while the curated form keeps its
+    own class (`["stats","@chat"]` is a read); `["auth","send-code"]` is refused.
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
-    Showing its status is allowed.
+    Showing its status is allowed (a generated `auth.*` method is refused, not run).
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
 - **Execution:** each call is a separate CLI process with no stdin (a worker thread inside Claude

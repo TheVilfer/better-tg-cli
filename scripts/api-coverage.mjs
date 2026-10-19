@@ -9,8 +9,8 @@
 //
 // Coverage gate (CI, `npm run coverage:api`): three metrics, otherwise exit 1:
 //  - reachability (>= min, default 90): TL schema methods reachable (via `api`) / all TL methods
-//  - dedicated commands (= 100%): TL methods with a generated `telegram tl <ns> <method>` command
-//    (src/generated/tl-commands.ts) / all TL methods. Every method must have its own command.
+//  - dedicated commands (= 100%): TL methods with a generated `telegram <namespace> <method>`
+//    command (src/generated/tl-commands.ts) / all TL methods. Every method must have its own command.
 //  - Telethon accounting (>= min): Telethon 1.45.0 TelegramClient members (scripts/data/…tsv, plus
 //    the raw client(request) call) mapped below to a built command, library plumbing or a
 //    documented exclusion / all members. A member missing from the table, or mapped to a command
@@ -111,7 +111,7 @@ const HELPER_REACHED = [
 const hasGenericApi = () => existsSync(join(root, 'src/commands/api.ts'));
 
 /**
- * Schema methods that have their own dedicated `telegram tl <ns> <method>` command. The generated
+ * Schema methods that have their own dedicated `telegram <namespace> <method>` command. The generated
  * src/generated/tl-commands.ts lists every method's className; this counts how many are present, so
  * a method dropped from the generator (or a stale file) shows up as missing dedicated coverage.
  */
@@ -288,7 +288,7 @@ const DEDICATED_MIN = 100;
 
 /**
  * Fails (returns false) when reachability or Telethon accounting is below `min`, or when the
- * dedicated per-method command coverage is below 100% (every TL method must have a `tl` command).
+ * dedicated per-method command coverage is below 100% (every TL method must have a command).
  */
 function gate(min, tsvPath) {
   const { reachability: r, dedicated: d, telethon: t } = metrics(tsvPath);
@@ -346,7 +346,7 @@ function build() {
   lines.push('');
   lines.push('- **Reachability** — can a given TL method be invoked at all? The generic `api` command');
   lines.push('  builds and sends any request from the schema, so every method is reachable in one step.');
-  lines.push('- **Dedicated commands** — does every method have its own `telegram tl <namespace> <method>`');
+  lines.push('- **Dedicated commands** — does every method have its own `telegram <namespace> <method>`');
   lines.push('  command (generated from the schema, src/generated/tl-commands.ts)? Gated at 100%.');
   lines.push('- **Curated/friendly commands** — does a hand-written, stable-output command expose it (the');
   lines.push('  likes of `read`, `send`, `chats`)? This is the long tail, tracked per namespace below.');
@@ -355,16 +355,16 @@ function build() {
   lines.push('');
   lines.push(`- TL schema methods (teleproto \`tl/generated/api.d.ts\`, \`extends Request<…>\`): **${totalMethods}**`);
   lines.push(`- Reachable today: **${generic ? totalMethods : totalReached} (${reachablePct}%)** ${generic ? '— via the generic `api` command plus every dedicated command' : '— no generic command yet; only dedicated commands reach the API'}`);
-  lines.push(`- Dedicated per-method commands (\`telegram tl …\`): **${totalDedicated} (${pct(totalDedicated, totalMethods)})**`);
+  lines.push(`- Dedicated per-method commands (\`telegram <namespace> <method>\`): **${totalDedicated} (${pct(totalDedicated, totalMethods)})**`);
   lines.push(`- Curated/friendly commands: **${totalReached} (${pct(totalReached, totalMethods)})** — ${[...directlyUsed(methods)].length} called directly in src/, ${HELPER_REACHED.filter((m) => methods.has(m)).length} through teleproto client helpers`);
   lines.push('');
   lines.push(`CI gate (\`npm run coverage:api\`, also enforced by \`npm test\`): reachability and Telethon`);
   lines.push(`accounting (section 2) must each stay at or above **${DEFAULT_MIN}%** (\`--min <n>\` / \`API_COVERAGE_MIN\`),`);
-  lines.push(`and every TL method must have a dedicated \`tl\` command (**${DEDICATED_MIN}%**).`);
+  lines.push(`and every TL method must have a dedicated \`telegram <namespace> <method>\` command (**${DEDICATED_MIN}%**).`);
   lines.push('');
   lines.push('## 1. Issue #47 measure: coverage by namespace');
   lines.push('');
-  lines.push('| Namespace | Methods | `tl` command | Curated | Notes |');
+  lines.push('| Namespace | Methods | Command | Curated | Notes |');
   lines.push('|---|---:|---:|---:|---|');
   for (const ns of order) {
     const e = perNs.get(ns);
@@ -372,7 +372,7 @@ function build() {
   }
   lines.push(`| **total** | **${totalMethods}** | **${pct(totalDedicated, totalMethods)}** | **${totalReached}** | ${generic ? 'Reachable + dedicated are 100%.' : 'No generic `api` command yet.'} |`);
   lines.push('');
-  lines.push('> "`tl` command" is the generated dedicated command (src/generated/tl-commands.ts has one per');
+  lines.push('> "Command" is the generated dedicated `telegram <namespace> <method>` (src/generated/tl-commands.ts has one per');
   lines.push('> method). "Curated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto');
   lines.push('> high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.');
   lines.push('');

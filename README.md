@@ -223,8 +223,9 @@ telegram topic create "Dev Forum" "Release 2.0"            # forum topics: creat
 
 telegram api messages.GetAllDrafts            # call any raw TL method (full API reachability)
 telegram api channels.GetAdminLog --params '{"channel":{"_chat":"Team"},"limit":20,"q":""}'
-telegram tl messages get-history --peer @durov --limit 10   # or a dedicated command per TL method
-telegram tl help get-config                   # telegram tl lists namespaces; tl <ns> --help the methods
+telegram messages get-history --peer @durov --limit 10      # or a typed command per TL method
+telegram account get-authorizations           # telegram <namespace> --help lists a namespace
+telegram help get-config                      # telegram ping, telegram req-pq, … for root methods
 ```
 
 Read commands take `--json`, and some also take `--markdown`. `read`/`get`/`search`/`inbox`/`watch`
@@ -233,9 +234,13 @@ reaction breakdown, comments, flags, rich media metadata) — default output is 
 See all commands with `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
 explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
 `telegram api <namespace.Method>` reaches 100% of the Telegram client API, and every one of the 823
-TL methods also has its own typed command under `telegram tl <namespace> <method>` (generated from
-the schema, same refusals and read/write guard as `api`);
-[docs/api-coverage.md](docs/api-coverage.md) tracks coverage against the schema and Telethon.
+TL methods also has its own typed top-level command `telegram <namespace> <method>` (root methods
+like `telegram ping` too), generated from the schema with the same refusals and read/write guard as
+`api`. Where a namespace name collides with a curated command (`stats`, `stories`, `contacts`,
+`auth`, `folders`, `help`), the curated command is unchanged and the generated methods attach as
+subcommands, picked only when the first word is exactly a method name (quote or use an ID for a
+chat literally named like a method). [docs/api-coverage.md](docs/api-coverage.md) tracks coverage
+against the schema and Telethon.
 
 ## MCP server
 

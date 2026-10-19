@@ -6,7 +6,7 @@ Tracks issue #47. Three measures:
 
 - **Reachability** — can a given TL method be invoked at all? The generic `api` command
   builds and sends any request from the schema, so every method is reachable in one step.
-- **Dedicated commands** — does every method have its own `telegram tl <namespace> <method>`
+- **Dedicated commands** — does every method have its own `telegram <namespace> <method>`
   command (generated from the schema, src/generated/tl-commands.ts)? Gated at 100%.
 - **Curated/friendly commands** — does a hand-written, stable-output command expose it (the
   likes of `read`, `send`, `chats`)? This is the long tail, tracked per namespace below.
@@ -15,16 +15,16 @@ Tracks issue #47. Three measures:
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
-- Dedicated per-method commands (`telegram tl …`): **823 (100%)**
+- Dedicated per-method commands (`telegram <namespace> <method>`): **823 (100%)**
 - Curated/friendly commands: **99 (12%)** — 65 called directly in src/, 34 through teleproto client helpers
 
 CI gate (`npm run coverage:api`, also enforced by `npm test`): reachability and Telethon
 accounting (section 2) must each stay at or above **90%** (`--min <n>` / `API_COVERAGE_MIN`),
-and every TL method must have a dedicated `tl` command (**100%**).
+and every TL method must have a dedicated `telegram <namespace> <method>` command (**100%**).
 
 ## 1. Issue #47 measure: coverage by namespace
 
-| Namespace | Methods | `tl` command | Curated | Notes |
+| Namespace | Methods | Command | Curated | Notes |
 |---|---:|---:|---:|---|
 | `messages` | 259 | 100% | 44 | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
 | `account` | 128 | 100% | 5 | Privacy, sessions, 2FA, notifications, usernames, business/profile. Mostly via `api` (read) + curated. |
@@ -54,7 +54,7 @@ and every TL method must have a dedicated `tl` command (**100%**).
 | `fragment` | 1 | 100% | 0 | Collectible info. Via `api`. |
 | **total** | **823** | **100%** | **99** | Reachable + dedicated are 100%. |
 
-> "`tl` command" is the generated dedicated command (src/generated/tl-commands.ts has one per
+> "Command" is the generated dedicated `telegram <namespace> <method>` (src/generated/tl-commands.ts has one per
 > method). "Curated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.
 

@@ -70,38 +70,45 @@ telegram pin-chat <chat> ; telegram mark-unread <chat> ; telegram delete-dialog 
 telegram edit-permissions <group> [user] --mute|--ban|--lift|--deny send,media [--until 1d]
 telegram topic create|edit|close|reopen|pin|unpin <forum> <title|id>   # forum topics
 telegram api <namespace.Method> --params '<json>'   # any raw TL method; full API reachability
-telegram tl <namespace> <method> [--typed-flags]    # same method as its own command (823 of them)
+telegram <namespace> <method> [--typed-flags]       # same method as its own command (823 of them)
 ```
 
 **Prefer a curated command above** when one exists: they give friendly/compact output, pagination,
 multi-step logic and safety prompts (`read`, `send`, `search`, `chats`, …). Drop to the raw API only
 for a method with no curated command, or when you need the exact raw TL object.
 
-`telegram api` and `telegram tl` both reach 100% of the Telegram client API (JSON out) and share one
-classification: reads are `Get*`/`Check*`/`Search*`/`Resolve*` (run free, go through `telegram_read`),
-everything else is a write (needs `telegram write-access on`; `telegram_write` over MCP). Paying,
-account deletion, session termination, 2FA/phone changes and location sharing are **always refused**
-(the command still exists and refuses). Use `api` for scripted JSON params; use `tl` for a typed
-command line.
+`telegram api` and the generated commands both reach 100% of the Telegram client API (JSON out) and
+share one classification: reads are `Get*`/`Check*`/`Search*`/`Resolve*` (run free, go through
+`telegram_read`), everything else is a write (needs `telegram write-access on`; `telegram_write` over
+MCP). Paying, account deletion, session termination, 2FA/phone changes and location sharing are
+**always refused** (the command still exists and refuses). Use `api` for scripted JSON params; use
+the typed command for a command line.
 
-`telegram tl <namespace> <method>`: the TL class name lower-cased and kebab-cased —
-`messages.GetHistory` → `tl messages get-history`, `help.GetConfig` → `tl help get-config`; top-level
-wrappers are `tl <method>` (e.g. `tl ping`). One `--flag` per parameter (camelCase → `--kebab`):
-peer/user/channel flags take an id/@user/title/`me`; `true`-flags are bare switches; vectors take a
-comma list; constructor-typed params and `--json-params '<json|->'` (stdin with `-`; typed flags win)
-take JSON. Pure paging/cache cursors (`offsetId`, `hash`, `maxId`, …) default to 0, so you only pass
-the flags you care about. Discover with `telegram tl`, `telegram tl <ns> --help`, `telegram tl <ns> <method> --help`.
+`telegram <namespace> <method>`: the TL class name lower-cased and kebab-cased —
+`messages.GetHistory` → `telegram messages get-history`, `help.GetConfig` → `telegram help get-config`;
+root-level wrappers are top-level commands (`Ping` → `telegram ping`). One `--flag` per parameter
+(camelCase → `--kebab`): peer/user/channel flags take an id/@user/title/`me`; `true`-flags are bare
+switches; vectors take a comma list; constructor-typed params and `--json-params '<json|->'` (stdin
+with `-`; typed flags win) take JSON. Paging/cache cursors (`offsetId`, `hash`, `maxId`, …) default
+to 0. Discover with `telegram <ns> --help` (lists methods) and `telegram <ns> <method> --help`.
+
+A few namespace names also name a curated command — `stats`, `stories`, `contacts`, `auth`,
+`folders`, `help`. The curated command is unchanged; the generated methods attach as subcommands and
+are chosen **only when the first word is exactly a method name** (`telegram stats get-broadcast-stats`
+is the API method; `telegram stats "Team"` is the curated stats). A chat literally named like a
+method needs an ID or quoting via a different path.
 
 ```bash
-telegram tl channels get-full-channel --channel @group      # read, peer resolved like everywhere
-telegram tl messages get-history --peer @durov --limit 20   # paging cursors default to 0
-telegram tl messages send-reaction --peer @me --msg-id 42 \
+telegram channels get-full-channel --channel @group      # read, peer resolved like everywhere
+telegram messages get-history --peer @durov --limit 20   # paging cursors default to 0
+telegram messages send-reaction --peer @me --msg-id 42 \
   --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write
-telegram tl account delete-account                          # exists, but always refused
+telegram ping --ping-id 1                                 # root-level method
+telegram account delete-account                           # exists, but always refused
 ```
 
-See `reference.md` → "Raw API" for the full flag-type table and the `{"_chat":…}`/`{"_base64":…}`
-conventions inside JSON.
+See `reference.md` → "Raw API" for the full flag-type table, clash rules and the
+`{"_chat":…}`/`{"_base64":…}` conventions inside JSON.
 
 ## 4. JSON shapes (`--json`)
 
