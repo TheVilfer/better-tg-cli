@@ -59,3 +59,5 @@ export { permissionsCommand } from './permissions.js';
 export { statsCommand } from './stats.js';
 export { scheduledCommand } from './scheduled.js';
 export { sessionsCommand, starsCommand, invitesCommand } from './account-read.js';
+export { editPermissionsCommand } from './edit-permissions.js';
+export { topicCommand } from './topic.js';

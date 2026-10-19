@@ -91,6 +91,8 @@ import {
   sessionsCommand,
   starsCommand,
   invitesCommand,
+  editPermissionsCommand,
+  topicCommand,
 } from './commands/index.js';
 
 
@@ -177,6 +179,8 @@ program.addCommand(archiveCommand);
 program.addCommand(unarchiveCommand);
 program.addCommand(createGroupCommand);
 program.addCommand(createChannelCommand);
+program.addCommand(editPermissionsCommand);
+program.addCommand(topicCommand);
 program.addCommand(pinChatCommand);
 program.addCommand(unpinChatCommand);
 program.addCommand(markUnreadCommand);

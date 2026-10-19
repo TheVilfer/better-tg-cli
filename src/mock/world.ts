@@ -92,7 +92,11 @@ export interface MockChat {
   adminLog?: { id: number; userId: number; action: 'join' | 'leave' | 'title'; prev?: string; now?: string; ago?: number }[];
   /** Pending join requests (for `invites --requests`). */
   joinRequests?: { userId: number; about?: string; ago?: number }[];
-  topics?: { id: number; title: string; unread?: number; closed?: boolean; pinned?: boolean }[];
+  topics?: { id: number; title: string; unread?: number; closed?: boolean; pinned?: boolean; hidden?: boolean }[];
+  /** Default restrictions set by `edit-permissions` (denied right names). */
+  defaultBannedFlags?: string[];
+  /** Per-user restrictions set by `edit-permissions` (channels.EditBanned). */
+  bannedUsers?: { userId: number; flags: string[]; until?: number }[];
   /** Channel → its discussion group (bare ID), where post comments live. */
   linkedChatId?: number;
   messages: MockMessage[];

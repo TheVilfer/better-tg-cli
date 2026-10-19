@@ -67,6 +67,8 @@ telegram scheduled <chat>                       # messages queued to send later
 telegram sessions ; telegram stars ; telegram invites <chat> [--requests]   # sessions, Stars, invite links/join requests
 telegram read <chat> --full                    # every message stat (views, reactions, flags, media); also on get/search/inbox/watch
 telegram pin-chat <chat> ; telegram mark-unread <chat> ; telegram delete-dialog <chat>
+telegram edit-permissions <group> [user] --mute|--ban|--lift|--deny send,media [--until 1d]
+telegram topic create|edit|close|reopen|pin|unpin <forum> <title|id>   # forum topics
 telegram api <namespace.Method> --params '<json>'   # any raw TL method; full API reachability
 ```
 

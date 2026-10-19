@@ -3784,3 +3784,111 @@ export async function getJoinRequests(
   });
   return { chatTitle: getChatTitle(entity), count: res.count, requests };
 }
+
+// --- edit_permissions: default & per-user restrictions (write) --------------------------------
+
+/** The ChatBannedRights flags a restriction can set, in a friendly order. */
+export const BANNED_RIGHTS = [
+  'viewMessages', 'sendMessages', 'sendMedia', 'sendStickers', 'sendGifs', 'sendGames', 'sendInline',
+  'embedLinks', 'sendPolls', 'changeInfo', 'inviteUsers', 'pinMessages', 'manageTopics',
+  'sendPhotos', 'sendVideos', 'sendRoundvideos', 'sendAudios', 'sendVoices', 'sendDocs', 'sendPlain',
+  'sendReactions',
+] as const;
+export type BannedRight = typeof BANNED_RIGHTS[number];
+
+/** Everything a muted (read-only) member may not do. */
+const MUTE_RIGHTS: BannedRight[] = [
+  'sendMessages', 'sendMedia', 'sendStickers', 'sendGifs', 'sendGames', 'sendInline', 'embedLinks',
+  'sendPolls', 'sendPhotos', 'sendVideos', 'sendRoundvideos', 'sendAudios', 'sendVoices', 'sendDocs',
+  'sendPlain',
+];
+
+export function buildBannedRights(denied: BannedRight[], untilDate = 0): Api.ChatBannedRights {
+  const args = { untilDate } as ConstructorParameters<typeof Api.ChatBannedRights>[0];
+  for (const key of denied) (args as Record<string, unknown>)[key] = true;
+  return new Api.ChatBannedRights(args);
+}
+
+export interface PermissionChange { chatTitle: string; target: string; denied: BannedRight[]; until?: string; }
+
+/**
+ * Set a chat's default permissions (no `userIdentifier`) or restrict one member
+ * (Telethon edit_permissions). `denied` lists the actions to forbid; empty = lift all. Write.
+ */
+export async function setChatPermissions(
+  client: TelegramClient,
+  chatIdentifier: string,
+  userIdentifier: string | undefined,
+  denied: BannedRight[],
+  untilDate = 0,
+): Promise<PermissionChange> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const rights = buildBannedRights(denied, untilDate);
+
+  if (!userIdentifier) {
+    if (!(entity instanceof Api.Channel || entity instanceof Api.Chat)) throw new Error('Default permissions apply to groups and channels.');
+    await client.invoke(new Api.messages.EditChatDefaultBannedRights({ peer: entity, bannedRights: rights }));
+    return { chatTitle: getChatTitle(entity), target: 'default', denied, until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined };
+  }
+
+  if (!(entity instanceof Api.Channel)) throw new Error('Per-user restrictions need a supergroup or channel (basic groups only support kicking).');
+  const user = await resolveChat(client, userIdentifier);
+  await client.invoke(new Api.channels.EditBanned({ channel: entity, participant: user, bannedRights: rights }));
+  return { chatTitle: getChatTitle(entity), target: getChatTitle(user), denied, until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined };
+}
+
+export const permissionPresets = { MUTE_RIGHTS };
+
+// --- Forum topics: create / edit / close / reopen / pin (write) -------------------------------
+
+async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<Api.Channel> {
+  const entity = await resolveChat(client, chatIdentifier);
+  if (!(entity instanceof Api.Channel) || !entity.forum) throw new Error(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`);
+  return entity;
+}
+
+export async function createForumTopic(
+  client: TelegramClient,
+  chatIdentifier: string,
+  title: string,
+  options: { iconColor?: number; iconEmojiId?: string } = {},
+): Promise<{ chatTitle: string; title: string }> {
+  const entity = await forumChannel(client, chatIdentifier);
+  await client.invoke(new Api.messages.CreateForumTopic({
+    peer: entity,
+    title,
+    iconColor: options.iconColor,
+    iconEmojiId: options.iconEmojiId ? bigInt(options.iconEmojiId) : undefined,
+    randomId: generateRandomLong(),
+  }));
+  return { chatTitle: getChatTitle(entity), title };
+}
+
+export async function editForumTopic(
+  client: TelegramClient,
+  chatIdentifier: string,
+  topicId: number,
+  changes: { title?: string; iconEmojiId?: string; closed?: boolean; hidden?: boolean },
+): Promise<{ chatTitle: string; topicId: number }> {
+  const entity = await forumChannel(client, chatIdentifier);
+  await client.invoke(new Api.messages.EditForumTopic({
+    peer: entity,
+    topicId,
+    title: changes.title,
+    iconEmojiId: changes.iconEmojiId ? bigInt(changes.iconEmojiId) : undefined,
+    closed: changes.closed,
+    hidden: changes.hidden,
+  }));
+  return { chatTitle: getChatTitle(entity), topicId };
+}
+
+export async function pinForumTopic(
+  client: TelegramClient,
+  chatIdentifier: string,
+  topicId: number,
+  pinned: boolean,
+): Promise<{ chatTitle: string; topicId: number }> {
+  const entity = await forumChannel(client, chatIdentifier);
+  await client.invoke(new Api.messages.UpdatePinnedForumTopic({ peer: entity, topicId, pinned }));
+  return { chatTitle: getChatTitle(entity), topicId };
+}

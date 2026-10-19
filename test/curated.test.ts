@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { TelegramClient } from 'teleproto';
 import {
   getDrafts, getAdminLog, getProfilePhotos, getPermissions, getScheduledMessages, getSessions, getStars,
-  getInviteLinks, getJoinRequests, toggleDialogPin, markDialogUnread, deleteDialog, disconnectClient,
+  getInviteLinks, getJoinRequests, toggleDialogPin, markDialogUnread, deleteDialog,
+  setChatPermissions, permissionPresets, createForumTopic, editForumTopic, pinForumTopic, disconnectClient,
 } from '../src/client.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
@@ -87,6 +88,53 @@ describe('sessions / stars / invites (read-only)', () => {
     const reqs = await getJoinRequests(mock(), 'Team');
     expect(reqs.count).toBe(1);
     expect(reqs.requests[0]).toMatchObject({ name: 'Carol', about: 'Please add me' });
+  });
+});
+
+describe('edit-permissions (write)', () => {
+  it('sets default permissions, restricts a member, and lifts restrictions', async () => {
+    const world = seedWorld();
+    const client = mock(world);
+    const team = () => world.chats.find(c => c.id === 4001)!;
+
+    await setChatPermissions(client, 'Team', undefined, permissionPresets.MUTE_RIGHTS);
+    expect(team().defaultBannedFlags).toContain('sendMessages');
+
+    const until = Math.floor(Date.now() / 1000) + 3600;
+    const res = await setChatPermissions(client, 'Team', '@alice_example', ['sendMessages', 'sendMedia'], until);
+    expect(res).toMatchObject({ chatTitle: 'Team', target: 'Alice' });
+    expect(team().bannedUsers).toEqual([{ userId: 1001, flags: ['sendMessages', 'sendMedia'], until }]);
+
+    await setChatPermissions(client, 'Team', '@alice_example', []);
+    expect(team().bannedUsers).toBeUndefined();
+  });
+
+  it('refuses per-user restrictions on a basic group', async () => {
+    await expect(setChatPermissions(mock(), 'Family', '@alice_example', ['sendMessages'])).rejects.toThrow(/supergroup or channel/);
+  });
+});
+
+describe('forum topics (write)', () => {
+  it('creates, edits, closes and pins topics on a forum', async () => {
+    const world = seedWorld();
+    const client = mock(world);
+    const forum = () => world.chats.find(c => c.id === 4003)!;
+
+    await createForumTopic(client, 'Dev Forum', 'Release 2.0');
+    expect(forum().topics!.some(t => t.title === 'Release 2.0')).toBe(true);
+
+    await editForumTopic(client, 'Dev Forum', 10, { title: 'Bugs (triaged)' });
+    expect(forum().topics!.find(t => t.id === 10)!.title).toBe('Bugs (triaged)');
+
+    await editForumTopic(client, 'Dev Forum', 10, { closed: true });
+    expect(forum().topics!.find(t => t.id === 10)!.closed).toBe(true);
+
+    await pinForumTopic(client, 'Dev Forum', 10, true);
+    expect(forum().topics!.find(t => t.id === 10)!.pinned).toBe(true);
+  });
+
+  it('refuses a non-forum chat', async () => {
+    await expect(createForumTopic(mock(), 'Team', 'X')).rejects.toThrow(/not a forum/);
   });
 });
 

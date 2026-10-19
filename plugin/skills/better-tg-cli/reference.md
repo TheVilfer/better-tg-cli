@@ -46,7 +46,7 @@ code. This file only covers behaviour that the flag list can't tell you.
   actions"), newest first, with `-n` and `-q <text>`. It needs admin rights in that chat.
 - `permissions <chat> [user]` shows a member's status (creator/admin/member/restricted/banned/left)
   and rights, or the chat's default permissions when no user is given. Supergroups and channels
-  only. To change rights, use `promote`/`kick` or `api channels.EditBanned`.
+  only. Change rights with `edit-permissions`.
 - `stats <chat>` returns full entity statistics: subscribers/members, online, admins, kicked and
   banned counts, linked discussion chat, slow mode, about, creation date, verified/scam/fake/
   restricted flags (+ reasons), and — where the account has rights — aggregate `activity`:
@@ -108,6 +108,15 @@ code. This file only covers behaviour that the flag list can't tell you.
 - `delete-dialog <chat>` removes a conversation: it clears a private or basic-group history (with
   `--revoke` it also deletes the other person's copy) and leaves a supergroup or channel. Like all
   writes it needs the exact title, an @username or an ID.
+- `edit-permissions <chat> [user]` sets the chat's default permissions (no user) or restricts one
+  member (channels.EditBanned / messages.EditChatDefaultBannedRights). `--mute` makes it read-only,
+  `--ban` removes the member, `--lift` clears restrictions, `--deny send,media,polls,links,…` denies
+  specific rights, and `--until 1h|1d|1w` makes a per-user restriction temporary. Inspect current
+  rights with `permissions`.
+- `topic create|edit|close|reopen|pin|unpin <chat> …` manages forum topics in a group with Topics
+  enabled: `topic create <chat> <title>` (`--icon-color`, `--icon-emoji`), `topic edit <chat> <id>`
+  (`--title`, `--icon-emoji`, `--hide`/`--show`), and `topic close|reopen|pin|unpin <chat> <id>`.
+  List topics with `topics <chat>`.
 
 ### Bot buttons
 

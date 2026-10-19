@@ -218,6 +218,8 @@ printf '%s' "$text" | telegram send @alice -  # long or multi-line text: from st
 telegram reply "Chat" 812 "on it" --silent
 telegram click @SomeBot 4410 "Settings"       # press an inline button
 telegram pin-chat @alice                      # pin a chat; mark-unread / delete-dialog too
+telegram edit-permissions "Team" @alice --mute --until 1d   # restrict a member; --lift to undo
+telegram topic create "Dev Forum" "Release 2.0"            # forum topics: create/edit/close/reopen/pin
 
 telegram api messages.GetAllDrafts            # call any raw TL method (full API reachability)
 telegram api channels.GetAdminLog --params '{"channel":{"_chat":"Team"},"limit":20,"q":""}'

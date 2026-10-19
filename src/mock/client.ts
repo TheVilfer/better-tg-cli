@@ -708,6 +708,51 @@ export class MockClient {
         const u = this.findUser(member.userId);
         return new Api.channels.ChannelParticipant(args({ participant, chats: [this.entityOf(chat)], users: u ? [this.user(u)] : [] }));
       }
+      case 'messages.EditChatDefaultBannedRights': {
+        const chat = this.chat(request.peer);
+        chat.defaultBannedFlags = bannedFlags(request.bannedRights);
+        if (!chat.defaultBannedFlags.length) delete chat.defaultBannedFlags;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'channels.EditBanned': {
+        const chat = this.chat(request.channel);
+        const userId = this.locate(request.participant).user?.id;
+        if (userId === undefined) throw new Error('USER_ID_INVALID');
+        const flags = bannedFlags(request.bannedRights);
+        const list = (chat.bannedUsers ??= []).filter(b => b.userId !== userId);
+        if (flags.length) list.push({ userId, flags, until: request.bannedRights?.untilDate || undefined });
+        chat.bannedUsers = list;
+        if (!chat.bannedUsers.length) delete chat.bannedUsers;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'messages.CreateForumTopic': {
+        const chat = this.chat(request.peer);
+        const topics = (chat.topics ??= []);
+        const id = topics.reduce((max, t) => Math.max(max, t.id), 1) + 1;
+        topics.push({ id, title: request.title });
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'messages.EditForumTopic': {
+        const chat = this.chat(request.peer);
+        const topic = (chat.topics ?? []).find(t => t.id === request.topicId);
+        if (!topic) throw new Error('TOPIC_ID_INVALID');
+        if (request.title !== undefined) topic.title = request.title;
+        if (request.closed !== undefined) topic.closed = request.closed || undefined;
+        if (request.hidden !== undefined) topic.hidden = request.hidden || undefined;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'messages.UpdatePinnedForumTopic': {
+        const chat = this.chat(request.peer);
+        const topic = (chat.topics ?? []).find(t => t.id === request.topicId);
+        if (!topic) throw new Error('TOPIC_ID_INVALID');
+        topic.pinned = request.pinned || undefined;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
       case 'account.GetAuthorizations': {
         return new Api.account.Authorizations(args({
           authorizationTtlDays: 180,
@@ -990,6 +1035,12 @@ export class MockClient {
 
   addEventHandler(): never { return notImplemented('live updates (`watch`)'); }
   uploadFile(): never { return notImplemented('uploadFile (profile photos)'); }
+}
+
+/** The true boolean flags of a ChatBannedRights request object (the denied rights). */
+function bannedFlags(rights: Record<string, unknown> | undefined): string[] {
+  if (!rights) return [];
+  return Object.entries(rights).filter(([k, v]) => v === true && k !== 'className').map(([k]) => k);
 }
 
 function describe(like: unknown): string {

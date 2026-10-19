@@ -13,13 +13,13 @@ Tracks issue #47. Two measures:
 
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
-- Dedicated (purpose-built) coverage: **95 (12%)** — 61 called directly in src/, 34 through teleproto client helpers
+- Dedicated (purpose-built) coverage: **99 (12%)** — 65 called directly in src/, 34 through teleproto client helpers
 
 ## 1. Issue #47 measure: dedicated coverage by namespace
 
 | Namespace | Methods | Dedicated | Share | Notes |
 |---|---:|---:|---:|---|
-| `messages` | 259 | 40 | 15% | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
+| `messages` | 259 | 44 | 17% | Core. Sending, history, search, reactions, drafts, scheduled, pin/mark-unread, invite links. |
 | `account` | 128 | 5 | 4% | Privacy, sessions, 2FA, notifications, usernames, business/profile. Mostly via `api` (read) + curated. |
 | `payments` | 65 | 2 | 3% | Stars, gifts, invoices. Read parts via `api` (balance/transactions); paying is always refused. |
 | `channels` | 58 | 14 | 24% | Admin log, title/about/photo, slow mode, forum topics, invite links, username, discussion links. |
@@ -45,7 +45,7 @@ Tracks issue #47. Two measures:
 | `updates` | 3 | 3 | 100% | Fully used (by `watch`). |
 | `folders` | 1 | 1 | 100% | Fully used (archive). |
 | `fragment` | 1 | 0 | 0% | Collectible info. Via `api`. |
-| **total** | **823** | **95** | **12%** | Reachability is 100% via `api`. |
+| **total** | **823** | **99** | **12%** | Reachability is 100% via `api`. |
 
 > "Dedicated" counts a `new Api.<ns>.<Method>(` in src/ or a method behind a teleproto
 > high-level client helper the CLI calls. Treat the helper group as ±5, as the issue does.
@@ -55,8 +55,7 @@ Tracks issue #47. Two measures:
 Every public member of Telethon 1.45.0's `TelegramClient` (plus its raw `client(request)`),
 mapped to a CLI command, a covered library helper, or a documented exclusion.
 
-- Covered by a dedicated command: **43**
-- Reachable through the generic `api` command: **1**
+- Covered by a dedicated command: **44**
 - Covered as library/plumbing we drive: **3**
 - Deliberately excluded: **20**
 - **Total members mapped: 67** (0 unaccounted for)
@@ -80,7 +79,7 @@ mapped to a CLI command, a covered library helper, or a documented exclusion.
 | `edit_admin` | chats | ✅ command | `promote` |
 | `edit_folder` | dialogs | ✅ command | `archive` / `unarchive` |
 | `edit_message` | messages | ✅ command | `edit` |
-| `edit_permissions` | chats | ✅ via api | `api channels.EditBanned` / `EditChatDefaultBannedRights` |
+| `edit_permissions` | chats | ✅ command | `edit-permissions` (default & per-user rights) |
 | `end_takeout` | account | ⛔ excluded | data-export session — via `api` if ever needed |
 | `flood_sleep_threshold` | telegrambaseclient | ⛔ excluded | property, library plumbing |
 | `forward_messages` | messages | ✅ command | `forward` |

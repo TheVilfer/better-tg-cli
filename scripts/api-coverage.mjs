@@ -151,7 +151,7 @@ const TELETHON = [
   ['edit_admin', 'chats', 'cli', 'promote', '`promote`'],
   ['edit_folder', 'dialogs', 'cli', 'archive', '`archive` / `unarchive`'],
   ['edit_message', 'messages', 'cli', 'edit', '`edit`'],
-  ['edit_permissions', 'chats', 'api', 'api', '`api channels.EditBanned` / `EditChatDefaultBannedRights`'],
+  ['edit_permissions', 'chats', 'cli', 'edit-permissions', '`edit-permissions` (default & per-user rights)'],
   ['end_takeout', 'account', 'excluded', '', 'data-export session — via `api` if ever needed'],
   ['flood_sleep_threshold', 'telegrambaseclient', 'excluded', '', 'property, library plumbing'],
   ['forward_messages', 'messages', 'cli', 'forward', '`forward`'],
