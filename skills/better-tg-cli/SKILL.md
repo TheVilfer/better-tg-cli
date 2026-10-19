@@ -89,12 +89,12 @@ command line.
 wrappers are `tl <method>` (e.g. `tl ping`). One `--flag` per parameter (camelCase → `--kebab`):
 peer/user/channel flags take an id/@user/title/`me`; `true`-flags are bare switches; vectors take a
 comma list; constructor-typed params and `--json-params '<json|->'` (stdin with `-`; typed flags win)
-take JSON. Discover with `telegram tl`, `telegram tl <ns> --help`, `telegram tl <ns> <method> --help`.
+take JSON. Pure paging/cache cursors (`offsetId`, `hash`, `maxId`, …) default to 0, so you only pass
+the flags you care about. Discover with `telegram tl`, `telegram tl <ns> --help`, `telegram tl <ns> <method> --help`.
 
 ```bash
 telegram tl channels get-full-channel --channel @group      # read, peer resolved like everywhere
-telegram tl messages get-history --peer @durov --limit 20 \
-  --json-params '{"offsetId":0,"offsetDate":0,"addOffset":0,"maxId":0,"minId":0,"hash":0}'
+telegram tl messages get-history --peer @durov --limit 20   # paging cursors default to 0
 telegram tl messages send-reaction --peer @me --msg-id 42 \
   --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write
 telegram tl account delete-account                          # exists, but always refused

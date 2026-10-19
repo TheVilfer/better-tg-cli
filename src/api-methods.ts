@@ -47,7 +47,7 @@ export function isApiReadMethod(name: string): boolean {
  * `auth.*` is login / session management (belongs to `telegram auth` / `onboard`, never automated).
  */
 const REFUSED_NAMESPACES: Record<string, string> = {
-  auth: 'Refused: login and session management must go through `telegram auth` / `telegram onboard` in a terminal, never the generic api command.',
+  auth: 'Refused: login and session management must go through `telegram auth` / `telegram onboard` in a terminal, never through api/tl commands or MCP.',
 };
 
 /**

@@ -71,15 +71,35 @@ describe('tl flag parsing (typed params → request body)', () => {
   it('merges --json-params under the typed flags (flags win)', () => {
     const params = buildParams('messages.GetHistory', {
       peer: '@x',
-      // the other required fields come in via --json-params; the flag overrides limit
-      jsonParams: JSON.stringify({ limit: 5, offsetId: 10, offsetDate: 0, addOffset: 0, maxId: 0, minId: 0, hash: 0 }),
+      jsonParams: JSON.stringify({ limit: 5, offsetId: 10 }),
       limit: '20',
     });
     expect(params).toMatchObject({ peer: { _chat: '@x' }, limit: 20, offsetId: 10 });
   });
 
-  it('requires required params (clear error), but not the auto-filled randomId', () => {
+  it('defaults omitted paging/cache cursors to 0 (short get-history works)', () => {
+    const params = buildParams('messages.GetHistory', { peer: '@durov', limit: '20' });
+    expect(params).toMatchObject({
+      peer: { _chat: '@durov' }, limit: 20,
+      offsetId: 0, offsetDate: 0, addOffset: 0, maxId: 0, minId: 0,
+      hash: { _bigint: '0' }, // long cursor defaulted as a bigint
+    });
+    // an explicit cursor flag still wins over the 0 default
+    expect(buildParams('messages.GetHistory', { peer: '@x', limit: '5', offsetId: '900' }).offsetId).toBe(900);
+  });
+
+  it('requires genuinely-required params but not cursors or the auto-filled randomId', () => {
     expect(() => buildParams('channels.GetFullChannel', {})).toThrow(/Missing required option\(s\): --channel/);
+    // get-history with nothing: --peer and --limit are required, the cursors are not listed
+    try {
+      buildParams('messages.GetHistory', {});
+      throw new Error('expected a missing-required error');
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toMatch(/--peer/);
+      expect(msg).toMatch(/--limit/);
+      expect(msg).not.toMatch(/--offset-id|--hash|--max-id|--min-id/);
+    }
     // messages.SendMessage omits randomId without complaint (teleproto fills it)
     const ok = buildParams('messages.SendMessage', { peer: '@x', message: 'hi' });
     expect('randomId' in ok).toBe(false);
@@ -140,11 +160,14 @@ describe('tl help stays usable (CLI, mock mode)', () => {
     expect(help.split('\n').filter(l => /^\s{2}\S/.test(l)).length).toBeGreaterThan(100);
   });
 
-  it('a method --help shows its params with TL types and required/optional', () => {
+  it('a method --help shows its params with TL types, required/optional and defaulted cursors', () => {
     const help = run('tl', 'messages', 'get-history', '--help');
     expect(help).toMatch(/--peer <value>/);
     expect(help).toMatch(/InputPeer, required/);
     expect(help).toMatch(/--limit <value>/);
+    expect(help).toMatch(/int, required/); // limit stays required
+    expect(help).toMatch(/--offset-id <value>\s+int, default 0/); // paging cursor defaulted
+    expect(help).toMatch(/--hash <value>\s+long, default 0/);
     expect(help).toMatch(/--json-params/);
   });
 

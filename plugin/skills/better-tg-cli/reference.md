@@ -200,14 +200,19 @@ Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) 
 
 - **`--json-params '<json|->'`** merges a JSON object for anything not worth a flag (e.g. a deep
   nested constructor); typed flags override its keys, and `-` reads the JSON from stdin. Example —
-  the required paging fields of `get-history` as JSON, the interesting ones as flags:
+  a nested `replyTo` constructor as JSON, the simple fields as flags:
 
   ```bash
-  telegram tl messages get-history --peer @durov --limit 20 \
-    --json-params '{"offsetId":0,"offsetDate":0,"addOffset":0,"maxId":0,"minId":0,"hash":0}'
+  telegram tl messages send-message --peer @me --message hi \
+    --json-params '{"replyTo":{"className":"InputReplyToMessage","replyToMsgId":42}}'
   ```
 
-- **Required params** are enforced with a clear error (`Missing required option(s): --peer …`);
+- **Paging/cache cursors default to 0.** A required `int`/`long` named `offsetId`, `offsetDate`,
+  `addOffset`, `offsetRate`, `offsetTopic`, `offset`, `maxId`, `minId`, `maxDate`, `minDate` or
+  `hash` defaults to 0 when omitted (shown as `default 0` in `--help`), so
+  `telegram tl messages get-history --peer @durov --limit 20` just works. Only these exact numeric
+  names — ids (`msgId`/`id`/`userId`), `limit`, `offsetPeer` and string hashes are never defaulted.
+- **Other required params** are enforced with a clear error (`Missing required option(s): --peer …`);
   `randomId` is never required (teleproto generates it). Registration is lazy — only the invoked
   namespace is built — so startup, top-level `--help` and `help-all` are unaffected.
 
@@ -242,6 +247,7 @@ Every TL schema method (all 823, generated into `src/generated/tl-commands.ts`) 
 ```bash
 telegram tl help get-config                                  # read, no args
 telegram tl channels get-full-channel --channel @group       # read, peer resolved like everywhere
+telegram tl messages get-history --peer @durov --limit 20    # read: paging cursors default to 0
 telegram tl messages delete-messages --id 100,101,102 --revoke   # write: vector + true-flag
 telegram tl messages send-reaction --peer @me --msg-id 42 \
   --json-params '{"reaction":[{"className":"ReactionEmoji","emoticon":"👍"}]}'   # write, nested
