@@ -4,9 +4,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
-import { generateSource } from '../scripts/gen-tl-commands.mjs';
+import { generateSource, generateDocsSource } from '../scripts/gen-tl-commands.mjs';
 import { TL_METHODS } from '../src/generated/tl-commands.js';
-import { buildParams, paramsOf } from '../src/commands/generated.js';
+import { buildParams, paramsOf, access, methodSchema, exampleInvocation } from '../src/commands/generated.js';
+import { methodDoc, paramDoc, docsUrl, TL_DOCS_META } from '../src/tl-docs.js';
 import { resolveGeneratedCommand, methodClassName, rootMethodClassName, kebabCase } from '../src/generated-registry.js';
 import { spawnSync } from 'node:child_process';
 import { planCall } from '../src/mcp.js';
@@ -129,6 +130,64 @@ describe('MCP routing of the top-level generated form', () => {
     // auth login (no method) stays a terminal-only command
     expect(planCall('telegram_read', { args: ['auth'] })).toMatch(/not available over MCP/);
   });
+
+  it('classifies --help as a read for any method, including write and refused ones', () => {
+    for (const args of [['messages', '--help'], ['messages', 'get-history', '--help'], ['messages', 'send-message', '--help'], ['account', 'delete-account', '--help'], ['auth', 'send-code', '--help'], ['schema', 'messages']]) {
+      expect(planCall('telegram_read', { args }), args.join(' ')).toMatchObject({ readOnly: true });
+    }
+    expect(planCall('telegram_write', { args: ['messages', 'get-history', '--help'] })).toMatch(/only prints help|telegram_read/);
+  });
+});
+
+describe('embedded descriptions and schema', () => {
+  it('covers every TL method with a description or a fallback line', () => {
+    expect(TL_DOCS_META.official + TL_DOCS_META.fallback).toBe(823);
+    const missing = TL_METHODS.filter(([, , className]) => {
+      const d = methodDoc(className);
+      return !d || typeof d.d !== 'string' || d.d.length === 0;
+    });
+    expect(missing.map(m => m[2])).toEqual([]);
+  });
+
+  it('has official text for common methods and a clear fallback otherwise', () => {
+    expect(methodDoc('messages.GetHistory')!.d).toMatch(/message history/i);
+    expect(paramDoc('messages.GetHistory', 'offsetId')).toMatch(/message ID/i);
+    // a method new in this layer (no docs page) gets the fallback
+    expect(methodDoc('Ping')!.d).toMatch(/No official description/);
+    expect(docsUrl('messages.GetHistory')).toBe('https://core.telegram.org/method/messages.getHistory');
+  });
+
+  it('classifies access as read/write/refused', () => {
+    expect(access('messages.GetHistory').kind).toBe('read');
+    expect(access('messages.SendMessage').kind).toBe('write');
+    expect(access('account.DeleteAccount')).toMatchObject({ kind: 'refused', reason: expect.stringMatching(/irreversible/) });
+  });
+
+  it('builds a method schema with params, access, example and docs link', () => {
+    const s = methodSchema('messages', 'get-history', 'messages.GetHistory');
+    expect(s).toMatchObject({ command: 'messages get-history', className: 'messages.GetHistory', access: 'read', returns: 'messages.Messages' });
+    expect(s.docsUrl).toMatch(/core\.telegram\.org/);
+    const peer = s.params.find(p => p.flag === '--peer');
+    expect(peer).toMatchObject({ name: 'peer', type: 'InputPeer', required: true, description: expect.any(String) });
+    expect(s.params.find(p => p.flag === '--offset-id')).toMatchObject({ required: false, default: '0' });
+    expect(s.example).toBe('telegram messages get-history --peer @username --limit 20');
+  });
+
+  it('example invocations use only required (non-cursor) params and parse through buildParams', () => {
+    expect(exampleInvocation('messages', 'get-history', 'messages.GetHistory')).toContain('--peer @username --limit 20');
+    // the example's required flags satisfy buildParams (cursors default, no missing-required error)
+    expect(() => buildParams('messages.GetHistory', { peer: '@username', limit: '20' })).not.toThrow();
+  });
+
+  it('generated docs source is stable (drift check)', () => {
+    expect(readFileSync('src/generated/tl-docs.ts', 'utf8')).toBe(generateDocsSource());
+  });
+
+  it('keeps the embedded docs module a reasonable size', () => {
+    // ~366 KB today (one JSON string per namespace, brotli-compressed into the bundle). Guard
+    // against accidental bloat that would balloon the shipped bundle.
+    expect(readFileSync('src/generated/tl-docs.ts', 'utf8').length).toBeLessThan(520_000);
+  });
 });
 
 describe('CLI, mock mode (top-level form, clashes, help)', () => {
@@ -180,7 +239,7 @@ describe('CLI, mock mode (top-level form, clashes, help)', () => {
 
   it('root methods are top-level commands', () => {
     const help = run('ping', '--help');
-    expect(help).toMatch(/Call Ping/);
+    expect(help).toMatch(/Returns: Pong/);
     expect(help).toMatch(/--ping-id <value>\s+long, required/);
   }, 30_000);
 
@@ -199,14 +258,53 @@ describe('CLI, mock mode (top-level form, clashes, help)', () => {
     expect(help).not.toMatch(/TL API methods/); // the group description, shown only if one were listed
   }, 30_000);
 
-  it('a namespace --help lists its methods; a method --help shows flags and defaulted cursors', () => {
+  it('a namespace --help lists its methods with access marks + descriptions', () => {
     const ns = run('messages', '--help');
     expect(ns).toMatch(/get-history/);
     expect(ns.split('\n').filter(l => /^\s{2}\S/.test(l)).length).toBeGreaterThan(100);
+    expect(ns).toMatch(/\[read\]/); // get-history etc.
+    expect(ns).toMatch(/\[write\]/);
+    expect(ns).toMatch(/\[refused\]/);
+  }, 30_000);
+
+  it('a method --help shows description, typed params, access, example and docs link', () => {
     const method = run('messages', 'get-history', '--help');
-    expect(method).toMatch(/--peer <value>\s+InputPeer, required/);
+    expect(method).toMatch(/Returns the message history in a peer\./); // official description
+    expect(method).toMatch(/--peer <value>\s+InputPeer, required — Target peer/); // type + param desc
     expect(method).toMatch(/--offset-id <value>\s+int, default 0/);
     expect(method).toMatch(/--hash <value>\s+long, default 0/);
+    expect(method).toMatch(/Access: read/);
+    expect(method).toMatch(/Returns: messages\.Messages/);
+    expect(method).toMatch(/Example:\s+telegram messages get-history --peer @username --limit 20/);
+    expect(method).toMatch(/core\.telegram\.org\/method\/messages\.getHistory/);
+    expect(method).toMatch(/CHANNEL_INVALID/); // common errors
+  }, 30_000);
+
+  it('a refused method --help states the refusal + reason (and never runs anything)', () => {
+    const help = run('account', 'delete-account', '--help');
+    expect(help).toMatch(/Access: refused — Refused:.*irreversible/i);
+    expect(help).toMatch(/Delete the user's account/); // official description still shown
+  }, 30_000);
+
+  it('schema prints JSON for a method, a namespace, and the index', () => {
+    const method = JSON.parse(run('schema', 'messages', 'get-history'));
+    expect(method).toMatchObject({ command: 'messages get-history', className: 'messages.GetHistory', access: 'read', returns: 'messages.Messages' });
+    expect(method.params.find((p: { flag: string }) => p.flag === '--peer')).toMatchObject({ required: true });
+    expect(method.example).toContain('--peer @username --limit 20');
+    const nsList = JSON.parse(run('schema', 'messages'));
+    expect(Array.isArray(nsList)).toBe(true);
+    expect(nsList[0]).toHaveProperty('access');
+    const index = JSON.parse(run('schema'));
+    expect(index.namespaces.find((n: { namespace: string }) => n.namespace === 'messages')).toMatchObject({ methods: 259 });
+    expect(index.rootMethods).toContain('ping');
+    // className form and a refused method
+    expect(JSON.parse(run('schema', 'account.DeleteAccount'))).toMatchObject({ access: 'refused' });
+  }, 30_000);
+
+  it('an auto-generated example invocation parses and satisfies required flags', () => {
+    // run the get-history example in mock: it fails to resolve @username, but NOT on parsing/required
+    const err = fails('messages', 'get-history', '--peer', '@username', '--limit', '20');
+    expect(err).not.toMatch(/Missing required option|unknown option|error:/i);
   }, 30_000);
 
   it('help output is clean when the pipe closes early (no EPIPE crash)', () => {
