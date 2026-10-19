@@ -1,11 +1,7 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
-import { getClient, invokeApi, serializeApiResult, disconnectClient } from '../client.js';
-import { resolveApiMethod, isApiReadMethod, apiRefusalReason } from '../api-methods.js';
-import { assertWriteEnabled } from '../guard.js';
-import { auditLog } from '../audit.js';
-import chalk from '../colors.js';
-import ora from '../spinner.js';
+import { resolveApiMethod } from '../api-methods.js';
+import { runApiMethod } from '../api-run.js';
 
 export const apiCommand = new Command('api')
   .description('Call any raw Telegram TL method (full API reachability; output is JSON)')
@@ -50,33 +46,5 @@ export const apiCommand = new Command('api')
       process.exit(1);
     }
 
-    // Refuse after parsing so param-level checks (shared contact/geo media, phone-privacy) apply.
-    const refusal = apiRefusalReason(canonical, parsed);
-    if (refusal) {
-      console.error(chalk.red(refusal));
-      process.exit(1);
-    }
-
-    const isWrite = !isApiReadMethod(canonical);
-    if (isWrite) assertWriteEnabled();
-
-    const spinner = ora(`Calling ${canonical}...`).start();
-    try {
-      const client = await getClient();
-      const result = await invokeApi(client, canonical, parsed);
-      spinner.stop();
-
-      if (isWrite) {
-        auditLog({ timestamp: new Date().toISOString(), command: 'api', target: canonical, result: { success: true } });
-      }
-      console.log(serializeApiResult(result));
-      await disconnectClient();
-    } catch (error) {
-      if (isWrite) {
-        auditLog({ timestamp: new Date().toISOString(), command: 'api', target: canonical, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      }
-      spinner.fail(`${canonical} failed`);
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
-    }
+    await runApiMethod(canonical, parsed, { auditCommand: 'api' });
   });
