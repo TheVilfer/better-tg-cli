@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
 import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
-import { resolveTlPath } from './tl-registry.js';
+import { resolveGeneratedCommand } from './generated-registry.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -101,7 +101,11 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   }
   const [cmd] = args as string[];
   if (cmd.startsWith('-')) return 'args[0] must be a command name, not a flag';
-  if (EXCLUDED_COMMANDS.has(cmd)) return `"${cmd}" is not available over MCP; the user runs it in a terminal`;
+  // An excluded command name that is actually a generated API method (e.g. `["auth","send-code"]`,
+  // where `auth` is both the login command and a TL namespace) is classified below, not excluded.
+  if (EXCLUDED_COMMANDS.has(cmd) && !resolveGeneratedCommand(args as string[])) {
+    return `"${cmd}" is not available over MCP; the user runs it in a terminal`;
+  }
   if (cmd === 'write-access' && args.length > 1) {
     return 'Only the user can change write access (`telegram write-access on|off` in a terminal)';
   }
@@ -123,26 +127,28 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
     const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
     return { argv: args as string[], readOnly: false, stdin };
   }
-  // `tl <namespace> <method>` (and top-level `tl <method>`): classified by the underlying TL method,
-  // exactly like `api`. A bare namespace / `--help` is a harmless listing, allowed as a read.
-  if (cmd === 'tl') {
-    const argList = args as string[];
-    const help = argList.some(a => a === '--help' || a === '-h');
-    const resolved = resolveTlPath(tlPositionals(argList));
-    if ('error' in resolved) {
-      if (help) return { argv: argList, readOnly: true };
-      return resolved.error;
+  // Generated top-level API commands — `telegram <namespace> <method>`, `telegram <root-method>`,
+  // and a method on a clash namespace (`stats get-broadcast-stats`) — classified by the underlying
+  // TL method, exactly like `api`. `resolveGeneratedCommand` returns null when the operand is not a
+  // method name (e.g. `["stats","@chat"]`), so those fall through to the curated classification.
+  {
+    const className = resolveGeneratedCommand(args as string[]);
+    if (className) {
+      const second = (args as string[])[1];
+      const label = second && !second.startsWith('-') ? `${cmd} ${second}` : cmd;
+      const refusal = apiRefusalReason(className);
+      if (refusal) return refusal;
+      const read = isApiReadMethod(className);
+      if (tool === 'telegram_read') {
+        return read ? { argv: args as string[], readOnly: true } : `"${label}" changes something; use telegram_write`;
+      }
+      if (read) return `"${label}" is read-only; use telegram_read`;
+      const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
+      return { argv: args as string[], readOnly: false, stdin };
     }
-    const refusal = apiRefusalReason(resolved.className);
-    if (refusal) return refusal;
-    const read = isApiReadMethod(resolved.className);
-    if (tool === 'telegram_read') {
-      return read || help ? { argv: argList, readOnly: true } : `"tl ${resolved.className}" changes something; use telegram_write`;
-    }
-    if (read) return `"tl ${resolved.className}" is read-only; use telegram_read`;
-    const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
-    return { argv: argList, readOnly: false, stdin };
   }
+  // `help` / `help <command>` is a harmless listing (its help.* methods were handled above).
+  if (cmd === 'help') return tool === 'telegram_read' ? { argv: args as string[], readOnly: true } : '"help" is read-only; use telegram_read';
   const known = READ_COMMANDS.has(cmd) || isWriteCommand(cmd);
   if (tool === 'telegram_read') {
     if (!READ_COMMANDS.has(cmd)) {
@@ -153,14 +159,6 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   if (READ_COMMANDS.has(cmd)) return `"${cmd}" is read-only; use telegram_read`;
   const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
   return { argv: args as string[], readOnly: false, stdin };
-}
-
-/** The leading non-flag tokens of a `tl` argv — the command path, which precedes any flags
- * (`["tl","messages","get-history","--peer","@x"]` → `["messages","get-history"]`). */
-export function tlPositionals(args: string[]): string[] {
-  const pos: string[] = [];
-  for (let i = 1; i < args.length && !args[i].startsWith('-'); i++) pos.push(args[i]);
-  return pos;
 }
 
 /** The method name in an `api` argv (`["api","messages.GetHistory","--params","{…}"]`). */
