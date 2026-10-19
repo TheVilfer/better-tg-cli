@@ -278,6 +278,11 @@ describe('CLI, mock mode (top-level form, clashes, help)', () => {
   it('a method --help shows description, typed params, access, example and docs link', () => {
     const method = run('messages', 'get-history', '--help');
     expect(method).toMatch(/Returns the message history in a peer\./); // official description
+    // shown once, at the top, with the access mark (not repeated after the options)
+    expect(method.match(/Returns the message history in a peer\./g)).toHaveLength(1);
+    expect(method.indexOf('[read] Returns the message history')).toBeLessThan(method.indexOf('Options:'));
+    // the full (unshortened) description is used, not the namespace list's one-liner
+    expect(run('account', 'delete-account', '--help')).not.toMatch(/^\[refused\][^\n]*…$/m);
     expect(method).toMatch(/--peer <value>\s+InputPeer, required — Target peer/); // type + param desc
     expect(method).toMatch(/--offset-id <value>\s+int, default 0/);
     expect(method).toMatch(/--hash <value>\s+long, default 0/);

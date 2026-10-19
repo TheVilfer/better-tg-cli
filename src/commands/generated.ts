@@ -158,7 +158,6 @@ function leafHelpText(nsKebab: string, methodKebab: string, className: string): 
   const doc = methodDoc(className);
   const acc = access(className);
   const lines: string[] = [''];
-  if (doc?.d) lines.push(doc.d, '');
   lines.push(`Access: ${acc.kind === 'refused' ? `refused — ${acc.reason}` : ACCESS_NOTE[acc.kind]}`);
   const rt = returnType(className);
   if (rt) lines.push(`Returns: ${rt} (raw TL object, JSON)`);
@@ -288,6 +287,9 @@ export function buildLeaf(nsKebab: string, methodKebab: string, className: strin
     leaf.allowUnknownOption(true).allowExcessArguments(true).action(() => leaf.help());
     return leaf;
   }
+  // The invoked method's help shows the full description once, at the top (the namespace list
+  // keeps the shortened one-liner).
+  leaf.description(`[${access(className).kind}] ${methodDoc(className)?.d ?? ''}`.trim());
   for (const p of paramsOf(className)) leaf.addOption(optionFor(p, className));
   leaf.option('--json-params <json>', 'Extra params as a JSON object ("-" reads JSON from stdin); typed flags override it');
   leaf.option('--json', 'Accepted for consistency; API output is always JSON');
