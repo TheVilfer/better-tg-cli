@@ -71,10 +71,16 @@ async function fetchOne(urlPath) {
 // ---- tiny HTML helpers (no deps) --------------------------------------------------------------
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'", nbsp: ' ', mdash: '—', ndash: '–', hellip: '…', laquo: '«', raquo: '»' };
+// Plain text for terminal help: drop tags until none are left (one pass can leave a tag behind,
+// e.g. `<scr<b>ipt>`), then decode entities exactly once, last, so decoded `<`/`>` stay text.
 function stripHtml(s) {
-  return s
-    .replace(/<\/(p|div|tr|td|th|li|h[1-6])>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
+  let text = s.replace(/<\/(p|div|tr|td|th|li|h[1-6])>/gi, ' ');
+  for (let prev = ''; prev !== text; ) {
+    prev = text;
+    text = text.replace(/<[^>]*>/g, '');
+  }
+  return text
+    .replace(/[<>]/g, '')
     .replace(/&(#?\w+);/g, (m, e) => ENTITIES[e] ?? (/^#\d+$/.test(e) ? String.fromCodePoint(+e.slice(1)) : m))
     .replace(/\s+/g, ' ')
     .trim();
