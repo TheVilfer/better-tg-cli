@@ -61,4 +61,4 @@ export { scheduledCommand } from './scheduled.js';
 export { sessionsCommand, starsCommand, invitesCommand } from './account-read.js';
 export { editPermissionsCommand } from './edit-permissions.js';
 export { topicCommand } from './topic.js';
-export { tlCommand, registerTlSubcommands } from './tl.js';
+export { registerGeneratedCommands, buildHelpCommand } from './generated.js';

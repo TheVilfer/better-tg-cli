@@ -4,25 +4,29 @@ import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { runApiMethod } from '../api-run.js';
 import { apiRefusalReason } from '../api-methods.js';
 import chalk from '../colors.js';
-import { TL_METHODS } from '../generated/tl-commands.js';
 import {
-  isTlNamespace,
-  tlNamespaceMethods,
-  tlTopLevelMethods,
-  tlTopLevelClassName,
+  isGeneratedNamespace,
+  namespaceMethodList,
+  namespaceCounts,
+  methodClassName,
+  rootMethodClassName,
+  rootMethods,
   kebabCase,
-} from '../tl-registry.js';
+} from '../generated-registry.js';
 
 /**
- * `telegram tl <namespace> <method> [--flags]`: a dedicated command for every one of teleproto's
- * TL schema methods (issue #47 — the 823 generated commands complement the generic `api`). The
- * name mapping is the checked-in src/generated/tl-commands.ts; parameter types are read here from
- * the TL schema that is already bundled, so nothing extra is shipped. Execution goes through the
- * exact same path as `api` (runApiMethod → same refusals, read/write guard, audit), so these
- * commands never widen what the account can do.
+ * A dedicated command for every one of teleproto's TL schema methods (issue #47), in the standard
+ * top-level form: `telegram <namespace> <method>` (e.g. `telegram messages get-history`) and
+ * `telegram <method>` for the root-level invoke/transport wrappers (e.g. `telegram ping`). The name
+ * mapping is the checked-in src/generated/tl-commands.ts; parameter types are read here from the TL
+ * schema that is already bundled, so nothing extra is shipped. Execution goes through the exact same
+ * path as `api` (runApiMethod → same refusals, read/write guard, audit).
  *
- * Registration is lazy: only the namespace actually on the command line is built (and only the
- * invoked method gets its flags), so startup and `--help`/`help-all` stay fast and uncluttered.
+ * Registration is lazy (registerGeneratedCommands): only the namespace/method actually on the
+ * command line is built, so startup, top-level `--help` and `help-all` stay fast and uncluttered.
+ * Where a namespace name collides with a curated command (auth, stories, contacts, stats, folders,
+ * help) the curated command keeps its behaviour and the generated methods attach to it as
+ * subcommands — picked only when the first operand exactly equals a generated method name.
  */
 
 interface RawArg {
@@ -60,7 +64,7 @@ const PEER_TYPES = new Set(['InputPeer', 'InputUser', 'InputChannel']);
 /**
  * Pure paging / cache-cursor parameter names. When one of these is a required `int`/`long` and the
  * user omits it, we default it to 0 (the schema's "start from the beginning / no cache" value), so
- * `tl messages get-history --peer @x --limit 20` works without spelling out every zeroed cursor.
+ * `messages get-history --peer @x --limit 20` works without spelling out every zeroed cursor.
  * Only these exact names, and only numeric types — never ids (msgId/id/userId), never `offsetPeer`
  * (an InputPeer), never a string `hash`/`offset`, and `limit` stays required.
  */
@@ -198,7 +202,11 @@ const LEAF_HELP = [
   '`telegram write-access on`. Account/session/2FA/phone, paying and location sharing are always refused.',
 ].join('\n');
 
-function buildLeaf(methodKebab: string, className: string, withFlags: boolean): Command {
+/**
+ * One leaf command for a single TL method. `nsKebab` is '' for a root method. `withFlags` builds the
+ * typed flags + action; without it the leaf is name/description only (for a namespace's help list).
+ */
+export function buildLeaf(nsKebab: string, methodKebab: string, className: string, withFlags: boolean): Command {
   const d = defByClassName.get(className);
   // Param-independent hard refusal (auth.*, account/session/2FA/phone, paying, location sharing…).
   // Param-dependent refusals (sharing contact/geo media) still fire later in runApiMethod.
@@ -207,15 +215,16 @@ function buildLeaf(methodKebab: string, className: string, withFlags: boolean): 
   const leaf = new Command(methodKebab).description(refusal ? `${base} [always refused]` : base);
   if (!withFlags) {
     // Name + description only, for a namespace's `--help` listing. The invoked method is always
-    // built with flags by registerTlSubcommands, so this branch only ever renders help.
+    // built with flags by registerGeneratedCommands, so this branch only ever renders help.
     leaf.allowUnknownOption(true).allowExcessArguments(true).action(() => leaf.help());
     return leaf;
   }
   for (const p of paramsOf(className)) leaf.addOption(optionFor(p));
   leaf.option('--json-params <json>', 'Extra params as a JSON object ("-" reads JSON from stdin); typed flags override it');
-  leaf.option('--json', 'Accepted for consistency; tl output is always JSON');
+  leaf.option('--json', 'Accepted for consistency; API output is always JSON');
   leaf.option('--write', 'Acknowledge this is a write (optional; writes still need write access)');
   leaf.addHelpText('after', refusal ? `\nAlways refused: ${refusal}\n${LEAF_HELP}` : LEAF_HELP);
+  const auditCommand = nsKebab ? `${nsKebab} ${methodKebab}` : methodKebab;
   leaf.action(async (opts: Record<string, unknown>) => {
     // Refuse before validating params, so a refused method reports the refusal (not a missing flag).
     if (refusal) {
@@ -231,78 +240,118 @@ function buildLeaf(methodKebab: string, className: string, withFlags: boolean): 
       process.exit(1);
       return;
     }
-    await runApiMethod(className, params, { auditCommand: 'tl' });
+    await runApiMethod(className, params, { auditCommand });
   });
   return leaf;
 }
 
+/** A namespace group command (`telegram messages …`) with one leaf per method; `focusMethod` gets flags. */
 function buildNamespaceGroup(nsKebab: string, focusMethod?: string): Command {
-  const methods = tlNamespaceMethods(nsKebab);
-  const group = new Command(nsKebab).description(`${nsKebab}.* — ${methods.length} TL methods`);
+  const methods = namespaceMethodList(nsKebab);
+  const group = new Command(nsKebab).description(`${nsKebab}.* — ${methods.length} TL API methods`);
   for (const [, methodKebab, className] of methods) {
-    group.addCommand(buildLeaf(methodKebab, className, methodKebab === focusMethod));
+    group.addCommand(buildLeaf(nsKebab, methodKebab, className, methodKebab === focusMethod));
   }
   group.action(() => group.help());
   return group;
 }
 
-/** Namespace list + counts, shown by `telegram tl` and in its `--help`. */
-function rootSummary(): string {
-  const counts = new Map<string, number>();
-  for (const [ns] of TL_METHODS) counts.set(ns || '(top-level)', (counts.get(ns || '(top-level)') ?? 0) + 1);
-  const named = [...counts.entries()].filter(([ns]) => ns !== '(top-level)').sort((a, b) => b[1] - a[1]);
+/** Wrapped "ns count" tokens for the help summary. */
+function wrapNamespaceList(): string[] {
+  const tokens = namespaceCounts().map(({ ns, count }) => `${ns} ${count}`);
   const lines: string[] = [];
-  lines.push(`Every TL schema method as its own command — ${TL_METHODS.length} in total.`);
-  lines.push('');
-  lines.push('Usage: telegram tl <namespace> <method> [--flags]   (telegram tl <namespace> --help lists methods)');
-  lines.push('       telegram tl <top-level-method> [--flags]     (invoke/transport wrappers)');
-  lines.push('');
-  lines.push('Namespaces:');
-  for (const [ns, n] of named) lines.push(`  ${ns.padEnd(12)} ${n}`);
-  lines.push(`  ${'(top-level)'.padEnd(12)} ${counts.get('(top-level)') ?? 0}`);
-  lines.push('');
-  lines.push('Examples:');
-  lines.push('  telegram tl help get-config');
-  lines.push('  telegram tl messages get-history --peer @durov --limit 10');
-  lines.push('  telegram tl account get-authorizations');
-  return lines.join('\n');
+  let line = ' ';
+  for (const t of tokens) {
+    if ((line + ' ' + t).length > 92) { lines.push(line); line = ' '; }
+    line += ' ' + t;
+  }
+  if (line.trim()) lines.push(line);
+  return lines;
 }
 
-export const tlCommand = new Command('tl')
-  .description('Dedicated command for every raw TL method (telegram tl <namespace> <method>; run `telegram tl` to list)')
-  .argument('[path...]', 'namespace and method')
-  .addHelpText('after', '\n' + rootSummary())
-  .action((path: string[]) => {
-    if (path.length) {
-      console.error(`Unknown tl command "${path.join(' ')}". Run "telegram tl" for namespaces, or "telegram tl <namespace> --help" for its methods.`);
+/** The "Telegram API" section shown under top-level `--help` and `help-all`. */
+export function generatedSummaryLines(): string[] {
+  return [
+    'Telegram API — a dedicated command for every TL method (telegram <namespace> <method>):',
+    ...wrapNamespaceList(),
+    "  Run `telegram <namespace> --help` to list a namespace's methods.",
+    `  Root-level API methods are top-level commands too (e.g. ${rootMethods().slice(0, 3).map(m => m[1]).join(', ')}, … — ${rootMethods().length}).`,
+  ];
+}
+
+/** Short pointer appended to a clash command's `--help`, listing its generated API methods. */
+function clashPointer(ns: string): string {
+  const names = namespaceMethodList(ns).map(m => m[1]);
+  const wrapped: string[] = [];
+  let line = ' ';
+  for (const n of names) {
+    if ((line + ' ' + n).length > 92) { wrapped.push(line); line = ' '; }
+    line += ' ' + n;
+  }
+  if (line.trim()) wrapped.push(line);
+  return [
+    '',
+    `Generated API methods (telegram ${ns} <method>, picked only on an exact method name):`,
+    ...wrapped,
+    `Run \`telegram ${ns} <method> --help\` for a method's flags.`,
+  ].join('\n');
+}
+
+/** The custom `help` command (commander's built-in is disabled): show help for a command/namespace,
+ * while `telegram help <help-method>` runs that help.* method (added as a subcommand on demand). */
+export function buildHelpCommand(program: Command): Command {
+  const help = new Command('help')
+    .description('Show help for a command or namespace, or run a help.* API method (e.g. help get-config)')
+    .argument('[topic]', 'command name, namespace, or help.* method')
+    .allowUnknownOption(true)
+    .action((topic?: string) => {
+      if (!topic) { program.outputHelp(); return; }
+      const curated = program.commands.find(c => c.name() === topic);
+      if (curated) { curated.outputHelp(); return; }
+      if (isGeneratedNamespace(topic)) { buildNamespaceGroup(topic).outputHelp(); return; }
+      const rootClass = rootMethodClassName(topic);
+      if (rootClass) { buildLeaf('', topic, rootClass, true).outputHelp(); return; }
+      console.error(`Unknown help topic "${topic}". Run "telegram --help" or "telegram help-all".`);
       process.exit(1);
-      return;
-    }
-    console.log(rootSummary());
-  });
+    });
+  return help;
+}
 
 /**
- * Build only the subcommands the current argv needs, before `program.parse`. Given the full argv,
- * finds the tokens after `tl` and attaches just the invoked namespace (with the one invoked method
- * carrying its flags) or the one top-level method. A bare `tl`, `tl --help` or an unknown token
- * adds nothing and falls back to the summary.
+ * Attach the generated commands to `program`, lazily, before `program.parse`. Always adds the help
+ * summary and the clash-command pointers (cheap text). Then, for the command actually on `argv`,
+ * builds just that namespace/method or root method:
+ *  - a namespace with a curated command of the same name (clash): the generated method is added as a
+ *    subcommand only when the first operand exactly equals a method name (else the curated command
+ *    keeps the operand);
+ *  - a namespace with no curated command: a fresh group is added (the invoked method gets its flags);
+ *  - a root method kebab: a top-level leaf.
  */
-export function registerTlSubcommands(argv: string[]): void {
-  const i = argv.indexOf('tl');
-  if (i < 0) return;
-  const positionals: string[] = [];
-  for (let j = i + 1; j < argv.length && !argv[j].startsWith('-'); j++) positionals.push(argv[j]);
-  const [first, second] = positionals;
-  if (!first) return;
-  if (isTlNamespace(first)) {
-    const focus = second && !second.startsWith('-') ? second : undefined;
-    tlCommand.addCommand(buildNamespaceGroup(first, focus));
+export function registerGeneratedCommands(program: Command, argv: string[]): void {
+  program.addHelpText('after', '\n' + generatedSummaryLines().join('\n'));
+  for (const { ns } of namespaceCounts()) {
+    const curated = program.commands.find(c => c.name() === ns);
+    if (curated) curated.addHelpText('after', clashPointer(ns));
+  }
+
+  const cmd = argv[2];
+  if (!cmd || cmd.startsWith('-')) return;
+  const next = argv[3];
+  const method = next && !next.startsWith('-') ? next : undefined;
+
+  if (isGeneratedNamespace(cmd)) {
+    const curated = program.commands.find(c => c.name() === cmd);
+    if (curated) {
+      // Clash namespace: only hijack the operand when it is exactly a generated method name.
+      if (method) {
+        const className = methodClassName(cmd, method);
+        if (className) curated.addCommand(buildLeaf(cmd, method, className, true));
+      }
+    } else {
+      program.addCommand(buildNamespaceGroup(cmd, method));
+    }
     return;
   }
-  const className = tlTopLevelClassName(first);
-  if (className) tlCommand.addCommand(buildLeaf(first, className, true));
+  const rootClass = rootMethodClassName(cmd);
+  if (rootClass) program.addCommand(buildLeaf('', cmd, rootClass, true));
 }
-
-// Re-exported for tests: the full count and a sanity accessor.
-export const TL_METHOD_COUNT = TL_METHODS.length;
-export { tlTopLevelMethods };

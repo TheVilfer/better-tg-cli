@@ -7,9 +7,9 @@ import ora from './spinner.js';
 
 /**
  * One execution path for every raw TL call, shared by the generic `api` command and the generated
- * per-method `tl` commands (src/commands/tl.ts). It enforces the single source of truth in
+ * per-method commands (src/commands/generated.ts). It enforces the single source of truth in
  * src/api-methods.ts — the same hard refusals, read/write classification, write guard and audit —
- * so `telegram api messages.SendMessage --params …` and `telegram tl messages send-message …`
+ * so `telegram api messages.SendMessage --params …` and `telegram messages send-message …`
  * behave identically. `canonical` is the resolved `namespace.Method` class name; `params` is the
  * request body passed to `invokeApi` (peer/byte fields resolved there via {_chat}/{_base64}/…).
  */

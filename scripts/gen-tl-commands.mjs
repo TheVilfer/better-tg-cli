@@ -1,8 +1,9 @@
 // Writes src/generated/tl-commands.ts: one checked-in entry per TL schema method, so that every
-// one of teleproto's ~823 `isFunction` requests gets its own dedicated `telegram tl <ns> <method>`
-// command (issue #47). Only the stable name mapping is generated here — the per-parameter types
-// are derived at runtime from the TL schema that is already bundled (scripts/tl-compact.mjs), so
-// this table stays small.
+// one of teleproto's ~823 `isFunction` requests gets its own dedicated top-level command
+// `telegram <namespace> <method>` / `telegram <root-method>` (issue #47; built by
+// src/commands/generated.ts). Only the stable name mapping is generated here — the per-parameter
+// types are derived at runtime from the TL schema that is already bundled (scripts/tl-compact.mjs),
+// so this table stays small.
 //
 //   node scripts/gen-tl-commands.mjs          regenerate src/generated/tl-commands.ts
 //   node scripts/gen-tl-commands.mjs --check   exit 1 if the checked-in file is stale
@@ -10,6 +11,8 @@
 // scripts/gen-version.mjs calls writeTlCommands() on every build/pretest, so CI's existing
 // "Versioned files match package.json" step (git diff --exit-code after gen-version) also fails if
 // this file drifts from the schema — a new TL layer shows up as a diff that must be committed.
+// generateSource() also THROWS on a new name clash (see CURATED_COMMANDS below), so a future TL
+// layer that would silently shadow a curated command fails the build/test with a named error.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +21,51 @@ import { dirname, join } from 'node:path';
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(root, 'src/generated/tl-commands.ts');
+
+// ---- Clash policy (a curated command always wins) ---------------------------------------------
+// Curated top-level command names (keep in sync with the program in src/index.ts). A generated
+// namespace or root-method kebab that collides with one of these is a clash.
+const CURATED_COMMANDS = new Set([
+  'auth', 'onboard', 'logout', 'check', 'whoami', 'chats', 'read', 'get', 'info', 'topics', 'link',
+  'contacts', 'search', 'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'avatar', 'inline',
+  'watch', 'drafts', 'admin-log', 'profile-photos', 'permissions', 'stats', 'scheduled', 'sessions',
+  'stars', 'invites', 'contact', 'members', 'admins', 'groups', 'kick', 'promote', 'transfer-owner',
+  'mute', 'unmute', 'folders', 'folder', 'folder-add', 'folder-remove', 'send', 'reply', 'send-file',
+  'click', 'react', 'forward', 'pin', 'unpin', 'edit', 'delete', 'mark-read', 'poll', 'vote', 'block',
+  'unblock', 'add-contact', 'del-contact', 'join', 'leave', 'invite-link', 'archive', 'unarchive',
+  'create-group', 'create-channel', 'edit-permissions', 'topic', 'pin-chat', 'unpin-chat',
+  'mark-unread', 'delete-dialog', 'typing', 'set-name', 'set-bio', 'set-username', 'set-avatar',
+  'write-access', 'api', 'sync', 'download', 'update', 'skill', 'mcp', 'help-all', 'help',
+]);
+// Curated commands that can host the generated methods of a same-named namespace as subcommands
+// (src/commands/generated.ts attaches them). These clashes are intentional and allowed.
+const SUBCOMMAND_OK = new Set(['auth', 'stories', 'contacts', 'stats', 'folders', 'help']);
+// Explicit, documented exceptions: a clashing generated name mapped to an alternative (e.g. a
+// suffixed kebab) or simply acknowledged. Empty today. Add here (and handle the remap) to resolve a
+// future clash instead of silently shadowing a curated command.
+const OVERRIDES = new Map();
+
+function assertNoClashes(rows) {
+  const namespaces = new Set(rows.map((r) => r[0]).filter(Boolean));
+  const rootKebabs = rows.filter((r) => !r[0]).map((r) => r[1]);
+  const clashes = [];
+  for (const ns of namespaces) {
+    if (CURATED_COMMANDS.has(ns) && !SUBCOMMAND_OK.has(ns) && !OVERRIDES.has(ns)) {
+      clashes.push(`namespace "${ns}" collides with a curated command that cannot host subcommands`);
+    }
+  }
+  for (const rk of rootKebabs) {
+    if (CURATED_COMMANDS.has(rk) && !OVERRIDES.has(rk)) {
+      clashes.push(`root method "${rk}" collides with the curated command "${rk}"`);
+    }
+  }
+  if (clashes.length) {
+    throw new Error(
+      `gen-tl-commands: new TL layer clashes with curated commands:\n  - ${clashes.join('\n  - ')}\n` +
+      'Resolve in scripts/gen-tl-commands.mjs (SUBCOMMAND_OK if the curated command can host subcommands, or OVERRIDES with a renamed command).',
+    );
+  }
+}
 
 /** PascalCase/camelCase TL identifier → kebab-case (GetDHParams → get-dh-params). */
 export function kebabCase(s) {
@@ -43,6 +91,7 @@ export function tlMethods() {
 
 export function generateSource() {
   const rows = tlMethods();
+  assertNoClashes(rows);
   const namespaces = [...new Set(rows.map((r) => r[0]).filter(Boolean))].sort();
   const lines = [];
   lines.push('// Generated by scripts/gen-tl-commands.mjs from teleproto\'s TL schema; do not edit.');

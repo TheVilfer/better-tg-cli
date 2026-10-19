@@ -93,9 +93,10 @@ import {
   invitesCommand,
   editPermissionsCommand,
   topicCommand,
-  tlCommand,
-  registerTlSubcommands,
+  registerGeneratedCommands,
+  buildHelpCommand,
 } from './commands/index.js';
+import { generatedSummaryLines } from './commands/generated.js';
 
 
 const program = new Command();
@@ -104,6 +105,10 @@ program
   .name('tg')
   .description('Fast Telegram CLI for reading, searching, and sending messages')
   .version(VERSION);
+
+// Replace commander's built-in `help` command with our own, so `telegram help get-config` can run a
+// help.* API method while `telegram help` / `telegram help <command>` keep their usual behaviour.
+program.helpCommand(false);
 
 // Auth commands
 program.addCommand(authCommand);
@@ -198,7 +203,6 @@ program.addCommand(writeAccessCommand);
 
 // Utilities
 program.addCommand(apiCommand);
-program.addCommand(tlCommand);
 program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);
@@ -265,8 +269,13 @@ program
       if (cmd.name() !== 'help-all') emit(cmd, cmd.name());
     }
     lines.push('', 'Most read commands accept --json; --markdown where noted in `<cmd> --help`.');
+    lines.push('', ...generatedSummaryLines());
     console.log(lines.join('\n'));
   });
+
+// Our `help` command (commander's built-in was disabled above). Also hosts the help.* API methods
+// as subcommands (registerGeneratedCommands attaches `help get-config` etc. on demand).
+program.addCommand(buildHelpCommand(program));
 
 // Mock mode has no session to create, drop or unlock; these would otherwise prompt or touch the secret store
 const NOT_IN_MOCK = new Set(['auth', 'onboard', 'logout', 'write-access', 'update']);
@@ -288,9 +297,9 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   void runBackgroundCheck();
 } else {
   maybeNotifyUpdate();
-  // Attach only the generated `tl` subcommands the current invocation needs (lazy: the one
-  // namespace/method on the command line), so startup and help stay unaffected otherwise.
-  registerTlSubcommands(process.argv);
+  // Attach only the generated API command the current invocation needs (lazy: the one
+  // namespace/method or root method on the command line), so startup and help stay flat otherwise.
+  registerGeneratedCommands(program, process.argv);
   // Always node-style argv: commander would read it Electron-style inside Claude Desktop's
   // built-in Node (an Electron utility process) and take the script path for a command
   if (isMainThread) {
