@@ -204,16 +204,46 @@ telegram get "Chat" 812 813                   # exact messages by ID
 telegram download "Chat" 812                  # save the attached file
 telegram sync --chat "Chat" --output ./export --resume   # incremental markdown export
 
+telegram drafts                               # saved but unsent drafts
+telegram admin-log "Team"                     # a group's recent admin actions
+telegram profile-photos @alice                # a user's profile photos
+telegram read @channel -n 20 --full           # every message stat (views, reactions, flags, media)
+telegram stats "Mock News" --graphs           # full channel stats + growth graphs; --message <id> / --story <id> too
+telegram sessions ; telegram stars            # active login sessions; Telegram Stars balance & transactions
+telegram invites "Team" --requests            # a chat's invite links, or its pending join requests
+
 telegram write-access on --for 1h             # a human confirms this
 telegram send @alice "on my way"
 printf '%s' "$text" | telegram send @alice -  # long or multi-line text: from stdin, no quoting problems
 telegram reply "Chat" 812 "on it" --silent
 telegram click @SomeBot 4410 "Settings"       # press an inline button
+telegram pin-chat @alice                      # pin a chat; mark-unread / delete-dialog too
+telegram edit-permissions "Team" @alice --mute --until 1d   # restrict a member; --lift to undo
+telegram topic create "Dev Forum" "Release 2.0"            # forum topics: create/edit/close/reopen/pin
+
+telegram api messages.GetAllDrafts            # call any raw TL method (full API reachability)
+telegram api channels.GetAdminLog --params '{"channel":{"_chat":"Team"},"limit":20,"q":""}'
+telegram messages get-history --peer @durov --limit 10      # or a typed command per TL method
+telegram account get-authorizations           # telegram <namespace> --help lists a namespace
+telegram help get-config                      # telegram ping, telegram req-pq, … for root methods
 ```
 
-Read commands take `--json`, and some also take `--markdown`. See all commands with
-`telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
-explain: output shapes, threads, bot buttons, admin commands and troubleshooting.
+Read commands take `--json`, and some also take `--markdown`. `read`/`get`/`search`/`inbox`/`watch`
+take `--full` (alias `--stats`) to include every per-message statistic (views, forwards, full
+reaction breakdown, comments, flags, rich media metadata) — default output is unchanged without it.
+See all commands with `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
+explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
+`telegram api <namespace.Method>` reaches 100% of the Telegram client API, and every one of the 823
+TL methods also has its own typed top-level command `telegram <namespace> <method>` (root methods
+like `telegram ping` too), generated from the schema with the same refusals and read/write guard as
+`api`. Where a namespace name collides with a curated command (`stats`, `stories`, `contacts`,
+`auth`, `folders`, `help`), the curated command is unchanged and the generated methods attach as
+subcommands, picked only when the first word is exactly a method name (quote or use an ID for a
+chat literally named like a method). Each method carries its official description and per-parameter
+docs (from core.telegram.org): `telegram <namespace> --help` lists a namespace's methods marked
+`[read]`/`[write]`/`[refused]`, `telegram <namespace> <method> --help` shows params, an example and
+the docs link, and `telegram schema [<ns> [<method>]]` prints the same as JSON.
+[docs/api-coverage.md](docs/api-coverage.md) tracks coverage against the schema and Telethon.
 
 ## MCP server
 

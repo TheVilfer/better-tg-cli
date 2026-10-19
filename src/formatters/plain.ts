@@ -1,6 +1,27 @@
 import chalk from '../colors.js';
 import { isTTY } from '../spinner.js';
-import type { ChatInfo, MessageInfo, FolderInfo, MediaInfo, ButtonInfo, ButtonLayout, ClickOutcome } from '../client.js';
+import type { ChatInfo, MessageInfo, MessageFull, FolderInfo, MediaInfo, ButtonInfo, ButtonLayout, ClickOutcome } from '../client.js';
+
+function abbreviate(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+}
+
+/** Short, readable stats segment appended in `--full` mode, e.g. ` 👁1.2k ↪34 ❤️12 🧩3 ⭐5 ✎ 📌`. */
+export function formatStatsSuffix(full: MessageFull): string {
+  const parts: string[] = [];
+  if (full.views) parts.push(`👁${abbreviate(full.views)}`);
+  if (full.forwards) parts.push(`↪${full.forwards}`);
+  for (const r of (full.reactions ?? []).slice(0, 6)) {
+    const label = r.emoji ?? (r.paid ? '⭐' : '🧩');
+    parts.push(`${label}${abbreviate(r.count)}`);
+  }
+  if (full.editDate) parts.push('✎');
+  if (full.pinned) parts.push('📌');
+  if (full.silent) parts.push('🔕');
+  return parts.length ? ` ${parts.join(' ')}` : '';
+}
 
 function buttonTypeHint(b: ButtonInfo): string {
   switch (b.type) {
@@ -116,7 +137,8 @@ function compactMessage(msg: MessageInfo, maxText?: number, chatTitle?: string):
   // Collapse blank lines and indent continuation lines under the header
   const text = truncate(msg.text, maxText).replace(/\n\s*\n/g, '\n').trim().replace(/\n/g, '\n  ');
   const comments = msg.replies ? ` 💬${msg.replies}` : '';
-  const lines = [`#${msg.id} ${isoMinute(msg.date)}${where}${sender}${reply}${comments}: ${media}${text || (media ? '' : '(no text)')}`.trimEnd()];
+  const stats = msg.full ? formatStatsSuffix(msg.full) : '';
+  const lines = [`#${msg.id} ${isoMinute(msg.date)}${where}${sender}${reply}${comments}${stats}: ${media}${text || (media ? '' : '(no text)')}`.trimEnd()];
   if (msg.buttons) lines.push(compactButtons(msg.buttons));
   return lines.join('\n');
 }
@@ -126,7 +148,8 @@ function compactChat(chat: ChatInfo, previewMax: number): string {
   const user = chat.username ? ` @${chat.username}` : '';
   const unread = chat.unreadCount > 0 ? ` unread=${chat.unreadCount}` : '';
   const preview = chat.lastMessage && previewMax > 0 ? ` | ${oneLine(chat.lastMessage, previewMax)}` : '';
-  return `${chat.id} ${chat.type}${flags ? ' ' + flags : ''}${unread} ${chat.title}${user}${preview}`;
+  const stats = chat.full ? formatStatsSuffix(chat.full) : '';
+  return `${chat.id} ${chat.type}${flags ? ' ' + flags : ''}${unread} ${chat.title}${user}${stats}${preview}`;
 }
 
 export function formatChats(chats: ChatInfo[], previewMax = 60): string {
@@ -165,7 +188,8 @@ export function formatMessages(messages: MessageInfo[], chatTitle?: string, maxT
     const sender = msg.isOutgoing ? chalk.green('You') : chalk.cyan(msg.sender);
     const reply = msg.replyToMsgId ? chalk.gray(` [reply to #${msg.replyToMsgId}]`) : '';
 
-    lines.push(`${chalk.gray(time)} ${sender}${reply}:`);
+    const stats = msg.full ? chalk.gray(formatStatsSuffix(msg.full)) : '';
+    lines.push(`${chalk.gray(time)} ${sender}${reply}${stats}:`);
     if (msg.media) {
       lines.push(`  ${chalk.magenta(`[${formatMediaLabel(msg.media)}]`)}`);
     }

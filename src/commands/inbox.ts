@@ -13,6 +13,8 @@ export const inboxCommand = new Command('inbox')
   .option('--include-archived', 'Also count archived chats (Telegram itself does not badge them)')
   .option('--type <type>', 'Filter by type: user, group, supergroup, channel')
   .option('--preview <chars>', 'Last-message preview length (0 = none)', '50')
+  .option('--full', "Include full stats of each chat's last message (views, reactions, …)")
+  .option('--stats', 'Alias for --full')
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
   .action(async (options) => {
@@ -20,7 +22,7 @@ export const inboxCommand = new Command('inbox')
 
     try {
       const client = await getClient();
-      const chats = await getDialogs(client, 500);
+      const chats = await getDialogs(client, 500, { full: Boolean(options.full || options.stats) });
       let unreadChats = chats.filter(c => c.unreadCount > 0);
       if (!options.includeArchived) unreadChats = unreadChats.filter(c => !c.archived);
       if (options.unmuted) unreadChats = unreadChats.filter(c => !c.muted);

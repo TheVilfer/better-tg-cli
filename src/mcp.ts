@@ -4,6 +4,8 @@ import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
+import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
+import { resolveGeneratedCommand } from './generated-registry.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -22,7 +24,8 @@ const MAX_OUTPUT = 100_000;
 export const READ_COMMANDS = new Set([
   'check', 'whoami', 'chats', 'read', 'get', 'info', 'topics', 'link', 'contacts', 'search',
   'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'inline', 'watch', 'contact', 'members',
-  'admins', 'groups', 'folders', 'folder', 'write-access',
+  'admins', 'groups', 'folders', 'folder', 'write-access', 'drafts', 'admin-log', 'profile-photos',
+  'permissions', 'stats', 'scheduled', 'sessions', 'stars', 'invites', 'schema',
 ]);
 
 /** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
@@ -54,7 +57,8 @@ export const TOOLS = [
     title: 'Read Telegram',
     description:
       'Run a read-only telegram CLI command on the user\'s account, e.g. ["inbox","-n","10"], ["read","@user","-n","20"], ["search","invoice","--chat","Work"]. ' +
-      'args[0] is the command; chats are an ID, @username, "me" or a title. Output is compact text (add "--json" for JSON). watch needs -t or -n.',
+      'args[0] is the command; chats are an ID, @username, "me" or a title. Output is compact text (add "--json" for JSON). ' +
+      'Add "--full" (read/get/search/inbox/watch) for complete per-message stats: views, forwards, full reactions, comments, flags, media detail. watch needs -t or -n.',
     inputSchema: {
       type: 'object',
       properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1 } },
@@ -97,13 +101,61 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   }
   const [cmd] = args as string[];
   if (cmd.startsWith('-')) return 'args[0] must be a command name, not a flag';
-  if (EXCLUDED_COMMANDS.has(cmd)) return `"${cmd}" is not available over MCP; the user runs it in a terminal`;
+  // A pure help request just prints help (commander never runs the action), so it is a safe read —
+  // including a write or refused method's help (e.g. `["account","delete-account","--help"]`).
+  if (isPureHelpRequest(args as string[])) {
+    return tool === 'telegram_read'
+      ? { argv: args as string[], readOnly: true }
+      : `"${cmd} --help" only prints help; use telegram_read`;
+  }
+  // An excluded command name that is actually a generated API method (e.g. `["auth","send-code"]`,
+  // where `auth` is both the login command and a TL namespace) is classified below, not excluded.
+  if (EXCLUDED_COMMANDS.has(cmd) && !resolveGeneratedCommand(args as string[])) {
+    return `"${cmd}" is not available over MCP; the user runs it in a terminal`;
+  }
   if (cmd === 'write-access' && args.length > 1) {
     return 'Only the user can change write access (`telegram write-access on|off` in a terminal)';
   }
   if (cmd === 'watch' && !args.some(a => /^(-t|-n|--timeout|--limit)(=|$)/.test(a))) {
     return 'watch needs -t <seconds> or -n <count> (calls time out after 120s)';
   }
+  // `api` is classified per method: a read method (Get*/Check*/Search*/Resolve*) goes through
+  // telegram_read, everything else through telegram_write; refused methods never run.
+  if (cmd === 'api') {
+    const method = apiMethodToken(args as string[]);
+    if (!method) return 'api needs a method, e.g. ["api","messages.GetHistory"]';
+    const refusal = apiRefusalReason(method);
+    if (refusal) return refusal;
+    const read = isApiReadMethod(method);
+    if (tool === 'telegram_read') {
+      return read ? { argv: args as string[], readOnly: true } : `"api ${method}" changes something; use telegram_write`;
+    }
+    if (read) return `"api ${method}" is read-only; use telegram_read`;
+    const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
+    return { argv: args as string[], readOnly: false, stdin };
+  }
+  // Generated top-level API commands — `telegram <namespace> <method>`, `telegram <root-method>`,
+  // and a method on a clash namespace (`stats get-broadcast-stats`) — classified by the underlying
+  // TL method, exactly like `api`. `resolveGeneratedCommand` returns null when the operand is not a
+  // method name (e.g. `["stats","@chat"]`), so those fall through to the curated classification.
+  {
+    const className = resolveGeneratedCommand(args as string[]);
+    if (className) {
+      const second = (args as string[])[1];
+      const label = second && !second.startsWith('-') ? `${cmd} ${second}` : cmd;
+      const refusal = apiRefusalReason(className);
+      if (refusal) return refusal;
+      const read = isApiReadMethod(className);
+      if (tool === 'telegram_read') {
+        return read ? { argv: args as string[], readOnly: true } : `"${label}" changes something; use telegram_write`;
+      }
+      if (read) return `"${label}" is read-only; use telegram_read`;
+      const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
+      return { argv: args as string[], readOnly: false, stdin };
+    }
+  }
+  // `help` / `help <command>` is a harmless listing (its help.* methods were handled above).
+  if (cmd === 'help') return tool === 'telegram_read' ? { argv: args as string[], readOnly: true } : '"help" is read-only; use telegram_read';
   const known = READ_COMMANDS.has(cmd) || isWriteCommand(cmd);
   if (tool === 'telegram_read') {
     if (!READ_COMMANDS.has(cmd)) {
@@ -114,6 +166,36 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   if (READ_COMMANDS.has(cmd)) return `"${cmd}" is read-only; use telegram_read`;
   const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
   return { argv: args as string[], readOnly: false, stdin };
+}
+
+/**
+ * True only for a bare help request: a command path (at most two words, e.g. `["messages",
+ * "get-history"]`) followed by `--help`/`-h` and optionally `--json`, nothing else. Any other
+ * argument could make the help token an operand or an option value (`["send","@x","--","--help"]`,
+ * `["send","@x","hi","--reply-to","-h"]`), and then the command would really run, so such argv are
+ * classified like any other call.
+ */
+export function isPureHelpRequest(args: string[]): boolean {
+  let help = false;
+  let words = 0;
+  for (const a of args) {
+    if (a === '--help' || a === '-h') help = true;
+    else if (a === '--json') continue;
+    else if (a.startsWith('-')) return false;
+    else if (help || ++words > 2) return false;
+  }
+  return help;
+}
+
+/** The method name in an `api` argv (`["api","messages.GetHistory","--params","{…}"]`). */
+export function apiMethodToken(args: string[]): string | undefined {
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-p' || a === '--params') { i++; continue; } // skips the value too
+    if (a.startsWith('-')) continue; // other flags (--write, --params=…, -p=…)
+    return a;
+  }
+  return undefined;
 }
 
 function cliBase(): string[] {

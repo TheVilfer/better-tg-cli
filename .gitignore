@@ -13,3 +13,6 @@ __pycache__/
 release/
 *.mcpb
 .dev.vars
+
+# Raw HTML cache for scripts/fetch-tl-docs.mjs (rebuildable)
+.tl-docs-cache/
