@@ -29,9 +29,10 @@ jobs:
 
       - run: npm ci
       - run: npm run build
-      - name: API coverage >= 90% (reachability and Telethon accounting)
+      - name: API coverage (reachability/Telethon >= 90%, dedicated tl command per method = 100%)
         # Fails if TL-method reachability or Telethon 1.45.0 TelegramClient accounting drops below
-        # 90%, or if docs/api-coverage.md is stale. Threshold: --min / API_COVERAGE_MIN.
+        # 90%, if any TL method lacks a generated `tl` command (100% gate), or if
+        # docs/api-coverage.md is stale. Threshold: --min / API_COVERAGE_MIN (reachability/Telethon).
         run: npm run coverage:api
       # Offline tests only: no Telegram session or network is ever used in CI
       - run: npm test
