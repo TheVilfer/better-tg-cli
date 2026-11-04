@@ -6,7 +6,7 @@ describe('write access state', () => {
   const now = Date.UTC(2026, 8, 27, 12, 0, 0);
 
   it('"true" means on until turned off', () => {
-    expect(parseWriteState('true', now)).toEqual({ enabled: true });
+    expect(parseWriteState('true', now)).toEqual({ mode: 'on', enabled: true });
   });
 
   it('missing or unknown values mean read-only', () => {

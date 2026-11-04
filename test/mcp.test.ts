@@ -37,7 +37,7 @@ describe('planCall', () => {
   it('refuses excluded, unknown, flag-first and unbounded calls', () => {
     expect(planCall('telegram_write', { args: ['auth'] })).toMatch(/not available over MCP/);
     expect(planCall('telegram_write', { args: ['transfer-owner', 'g', 'u'] })).toMatch(/not available/);
-    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/Only the user/);
+    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/changed in a terminal/);
     expect(planCall('telegram_read', { args: ['write-access'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['--help'] })).toMatch(/command name/);
     expect(planCall('telegram_read', { args: ['nope'] })).toMatch(/Unknown command/);
