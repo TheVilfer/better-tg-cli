@@ -35,7 +35,7 @@ const en = {
   forLabel: 'For', forAlways: 'until I change it', for1h: '1 hour', for1d: '1 day', for1w: '1 week',
   save: 'Save',
   notConfirmed: 'Not confirmed in the dialog. Choose again.',
-  needsTerminal: 'This computer can only confirm that in a terminal. Run telegram write-access ask (or on) there. Until then the agent only reads.',
+  needsTerminal: 'This computer can only confirm that in a terminal. Run telegram write-access on there. Until then the agent asks before each write.',
   modeDone: 'Saved: {mode}. You can close this tab and go back to your agent.',
   doneMode: 'Logged in as {user}. Write mode: {mode}. You can close this tab and go back to your agent.',
 };
@@ -75,7 +75,7 @@ const es: Strings = {
   forLabel: 'Durante', forAlways: 'hasta que lo cambie', for1h: '1 hora', for1d: '1 día', for1w: '1 semana',
   save: 'Guardar',
   notConfirmed: 'No se confirmó en el diálogo. Elige de nuevo.',
-  needsTerminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí telegram write-access ask (u on). Hasta entonces el agente solo lee.',
+  needsTerminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí telegram write-access on. Hasta entonces el agente pregunta antes de cada escritura.',
   modeDone: 'Guardado: {mode}. Puedes cerrar esta pestaña y volver a tu agente.',
   doneMode: 'Has iniciado sesión como {user}. Modo de escritura: {mode}. Puedes cerrar esta pestaña y volver a tu agente.',
 };
@@ -113,7 +113,7 @@ const ru: Strings = {
   forLabel: 'На', forAlways: 'пока не поменяю', for1h: '1 час', for1d: '1 день', for1w: '1 неделю',
   save: 'Сохранить',
   notConfirmed: 'В диалоге не подтвердили. Выберите ещё раз.',
-  needsTerminal: 'На этом компьютере это подтверждается только в терминале. Запустите там telegram write-access ask (или on). До тех пор агент только читает.',
+  needsTerminal: 'На этом компьютере это подтверждается только в терминале. Запустите там telegram write-access on. До тех пор агент спрашивает перед каждой записью.',
   modeDone: 'Сохранено: {mode}. Эту вкладку можно закрыть и вернуться к агенту.',
   doneMode: 'Вы вошли как {user}. Режим записи: {mode}. Эту вкладку можно закрыть и вернуться к агенту.',
 };

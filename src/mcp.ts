@@ -75,7 +75,7 @@ export const TOOLS = [
     title: 'Write to Telegram',
     description:
       'Run a telegram CLI command that sends, edits, deletes or changes something (or saves files: download, sync), e.g. ["send","@user","-"] with stdin as the text. ' +
-      'Needs write access, which only the user can enable (`telegram write-access ask|on`). In mode "ask" the user approves each write: ' +
+      'Needs write access (mode "ask" after `telegram onboard`; the user changes it in a terminal). In mode "ask" the user approves each write: ' +
       'either the client shows them a dialog, or the result says "Approval needed" with the action and a code; then show the user that action word for word, ' +
       'and only after their explicit yes call again with the same args, stdin and "approval": "<code>". Writes need an ID, @username or exact chat title.',
     inputSchema: {
@@ -124,7 +124,7 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
     return `"${cmd}" is not available over MCP; the user runs it in a terminal`;
   }
   if (cmd === 'write-access' && args.length > 1) {
-    return 'Only the user can change write access (`telegram write-access ask|on|off` in a terminal)';
+    return 'Write access is changed in a terminal (`telegram write-access ask|on|off`), not over MCP';
   }
   if (cmd === 'watch' && !args.some(a => /^(-t|-n|--timeout|--limit)(=|$)/.test(a))) {
     return 'watch needs -t <seconds> or -n <count> (calls time out after 120s)';
