@@ -2,6 +2,7 @@ import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
+import { connectClient } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
@@ -32,12 +33,10 @@ export async function getClient(): Promise<TelegramClient> {
 
   const { apiId, apiHash } = getCredentials();
   const sessionString = getSessionString() || '';
-  const session = new StringSession(sessionString);
 
   // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
-  clientInstance = new TelegramClient(session, apiId, apiHash, clientParams());
-
-  await clientInstance.connect();
+  // A fresh StringSession per attempt: a failed TCP try must not leave state behind for WSS.
+  clientInstance = await connectClient(t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(undefined, t)));
 
   if (!await clientInstance.isUserAuthorized()) {
     const invited = loadConfig(() => {}).credentialSource === 'invite';
@@ -52,10 +51,7 @@ export async function getClient(): Promise<TelegramClient> {
 }
 
 export async function createClient(apiId: number, apiHash: string): Promise<TelegramClient> {
-  const session = new StringSession('');
-  const client = new TelegramClient(session, apiId, apiHash, clientParams());
-  await client.connect();
-  return client;
+  return connectClient(t => new TelegramClient(new StringSession(''), apiId, apiHash, clientParams(undefined, t)));
 }
 
 export async function saveSession(client: TelegramClient): Promise<void> {

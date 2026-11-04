@@ -2,6 +2,7 @@ import { TelegramClient } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { renderUnicodeCompact } from 'uqr';
 import { clientParams } from './client-options.js';
+import { connectClient } from './transport.js';
 import { loadConfig, saveConfig, setCredentials, setInviteCredentials, setSessionString } from './config.js';
 import { prompt, promptHidden } from './prompt.js';
 
@@ -39,12 +40,11 @@ export async function authenticate(
 
   console.log('\nConnecting to Telegram...');
 
-  const session = new StringSession('');
-  const client = new TelegramClient(session, apiId, apiHash, clientParams(testServers));
+  // Connected up front so a blocked TCP transport falls back to WebSocket before any prompt
+  const client = await connectClient(t => new TelegramClient(new StringSession(''), apiId, apiHash, clientParams(testServers, t)));
 
   const password = async () => await promptHidden('Enter your 2FA password (press Enter if none): ');
   if (qr) {
-    await client.connect();
     let drawn = 0;
     await client.signInUserWithQrCode({ apiId, apiHash }, {
       qrCode: async ({ token }) => {
@@ -107,11 +107,11 @@ export function rpcCode(err: Error): string {
 export function qrLoginDriver(testServers = false): LoginDriver {
   return {
     async login(creds, io) {
-      const client = new TelegramClient(new StringSession(''), creds.apiId, creds.apiHash, clientParams(testServers));
+      // A blocked TCP transport (cloud agent computers) falls back to WebSocket here
+      const client = await connectClient(t => new TelegramClient(new StringSession(''), creds.apiId, creds.apiHash, clientParams(testServers, t)));
       // teleproto reports a stop as AUTH_USER_CANCEL; keep the real cause to show instead
       let cause: string | undefined;
       try {
-        await client.connect();
         const user = await client.signInUserWithQrCode(creds, {
           qrCode: async ({ token }) => io.onQr(`tg://login?token=${Buffer.from(token).toString('base64url')}`),
           password: async (hint?: string) => io.password(hint),

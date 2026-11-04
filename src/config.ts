@@ -22,6 +22,8 @@ export interface TgConfig {
   credentialSource?: 'own' | 'invite';
   /** Session lives on Telegram's test DCs (`telegram auth --test-dc`). */
   testServers?: boolean;
+  /** How to reach Telegram: saved as "wss" when TCP is blocked (see src/transport.ts). */
+  transport?: 'tcp' | 'wss';
 }
 
 const DEFAULT_CONFIG: TgConfig = {
