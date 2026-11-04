@@ -22,16 +22,30 @@ function onPath(binary: string): boolean {
   return (process.env.PATH ?? '').split(delimiter).some(dir => dir && existsSync(join(dir, binary)));
 }
 
-/**
- * The file is honoured only where no secret store could exist at all: never on macOS or Windows
- * (Keychain and DPAPI are always there), and on Linux only without `secret-tool`. Otherwise a missing
- * store means it is broken or switched off (TG_NO_LIBSECRET, no D-Bus), and an agent could turn the
- * store off and drop in a file; then writes fail closed.
- */
-export function isFileFallbackAllowed(os: NodeJS.Platform = platform()): boolean {
-  if (os === 'darwin' || os === 'win32') return false;
-  return !onPath('secret-tool');
+/** A D-Bus session bus, which the Secret Service (GNOME Keyring, KWallet) needs. */
+function hasSessionBus(): boolean {
+  if (process.env.DBUS_SESSION_BUS_ADDRESS) return true;
+  const uid = process.getuid?.();
+  return uid !== undefined && existsSync(`/run/user/${uid}/bus`);
 }
+
+/**
+ * The file is honoured only where no secret store can work at all: never on macOS or Windows
+ * (Keychain and DPAPI are always there), and on Linux only without `secret-tool` or without a
+ * session bus for it to talk to. Cloud agent computers (Grok Bot) have neither, and installing
+ * `secret-tool` there must not lock writes for good. On a desktop Linux with a keyring, a store that
+ * is missing is broken or switched off (TG_NO_LIBSECRET), and writes fail closed, so an agent can't
+ * turn the store off and drop in a file.
+ */
+export function isFileFallbackAllowed(os: NodeJS.Platform = platform(), probe = { secretTool: onPath('secret-tool'), bus: hasSessionBus() }): boolean {
+  if (os === 'darwin' || os === 'win32') return false;
+  return !probe.secretTool || !probe.bus;
+}
+
+/** For agents on cloud computers: what to do instead of installing a keyring. */
+export const CLOUD_HINT =
+  'No secret store here, which is normal on cloud agent computers (Grok Bot and similar). Do not try to install one: ' +
+  'without a desktop session it can\'t work. `telegram write-access ask` works here as is; only `write-access on` prints a page link for the user.';
 
 export function getWriteValue(): string | null {
   if (isWriteModeProtected()) return secretGet('writeEnabled');

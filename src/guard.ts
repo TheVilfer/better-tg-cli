@@ -1,4 +1,4 @@
-import { getWriteValue, isFileFallbackAllowed, isWriteModeProtected } from './write-store.js';
+import { CLOUD_HINT, getWriteValue, isFileFallbackAllowed, isWriteModeProtected } from './write-store.js';
 import { describeWriteState, parseWriteState } from './write-state.js';
 import chalk from './colors.js';
 import { setStrictChatResolution } from './resolve-mode.js';
@@ -28,6 +28,7 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void
   if (!state.enabled) {
     console.error(chalk.red(`Write access is disabled (${describeWriteState(state)}).`));
     console.error(chalk.gray('To write, run `telegram write-access ask`: then each write waits for the user\'s yes in the chat. Writing without asking (`write-access on`) needs the user\'s own confirmation.'));
+    if (!isWriteModeProtected()) console.error(chalk.gray(CLOUD_HINT));
     process.exit(1);
   }
   if (state.mode === 'ask') requireApproval(argv);

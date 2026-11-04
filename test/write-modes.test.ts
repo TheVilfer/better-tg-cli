@@ -218,6 +218,20 @@ describe('the file fallback', () => {
     expect(isFileFallbackAllowed('darwin')).toBe(false);
     expect(isFileFallbackAllowed('win32')).toBe(false);
   });
+
+  it('on Linux, is used wherever the Secret Service cannot work: no secret-tool, or no session bus (#74)', () => {
+    expect(isFileFallbackAllowed('linux', { secretTool: false, bus: false })).toBe(true); // Grok Bot today
+    expect(isFileFallbackAllowed('linux', { secretTool: true, bus: false })).toBe(true); // secret-tool installed, still no keyring
+    expect(isFileFallbackAllowed('linux', { secretTool: false, bus: true })).toBe(true);
+    expect(isFileFallbackAllowed('linux', { secretTool: true, bus: true })).toBe(false); // desktop with a keyring: fail closed
+  });
+
+  it('tells agents on cloud computers not to install a keyring', () => {
+    store.available = false;
+    const r = guard(['send', '@alice', 'hi']);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/Do not try to install one/);
+  });
 });
 
 describe('choosing a mode', () => {

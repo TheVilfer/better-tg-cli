@@ -339,6 +339,9 @@ report problems in the issues.
 **Can I use it from Grok Bot, ChatGPT or another cloud agent?**
 Cloud agents can't start a program on your computer, so run the MCP server over HTTP and reach it through a tunnel. See [Grok Bot](#grok-bot-remote-mcp-over-http).
 
+**How do I allow writes on Grok Bot or another cloud agent?**
+After `telegram onboard` it is already in mode `ask`: the agent asks you in the chat before each write. If it says writes are off, ask it to run `telegram write-access ask`; that works there as is. Only `telegram write-access on --for 1h` (no questions) needs your choice: those computers have no secret store and no terminal for you, so it opens a page in the agent's own browser where you choose. Running the command in your own terminal doesn't help: it changes the CLI on your computer, not the agent's. The agent should not try to install a keyring there; it can't work without a desktop session. On such computers the setting sits in a plain file, which protects against mistakes but not against a hostile agent.
+
 **Login fails with "NetSocket was closed" on a cloud computer (Grok Bot and others).**
 Some hosted agent computers let only HTTPS out, which drops Telegram's TCP transport. The CLI then switches to MTProto over WebSocket (`wss://*.web.telegram.org`, the transport of web.telegram.org) by itself and remembers it for the profile. `TG_TRANSPORT=tcp|wss|auto` picks the transport by hand.
 
