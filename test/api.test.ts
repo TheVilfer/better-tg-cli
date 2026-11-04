@@ -1,3 +1,4 @@
+import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TelegramClient } from 'teleproto';
 import { invokeApi, serializeApiResult, disconnectClient } from '../src/client.js';
@@ -54,6 +55,23 @@ describe('api refusals', () => {
     expect(apiRefusalReason('account.UpdatePasswordSettings')).toMatch(/2FA/);
     expect(apiRefusalReason('channels.EditLocation')).toMatch(/location/);
     expect(apiRefusalReason('payments.SendStarsForm')).toMatch(/payment|Stars/);
+  });
+
+  it('refuses every wrapper request, so a refused method cannot ride inside one', () => {
+    // Every top-level request with an `X` (any request) argument, straight from the schema
+    const wrappers = (apiDefinitions as unknown as { name: string; isFunction: boolean; namespace?: string; argsConfig: Record<string, { type: string }> }[])
+      .filter(d => d.isFunction && !d.namespace && Object.values(d.argsConfig).some(a => a.type === 'X'))
+      .map(d => d.name);
+    expect(wrappers).toContain('InvokeWithLayer');
+    for (const w of wrappers) expect(apiRefusalReason(w), w).toMatch(/wrapper/);
+    // Teleproto builds the inner request from plain JSON, so the body is checked too
+    expect(apiRefusalReason('messages.SendMessage', { message: 'x', peer: { _: 'account.deleteAccount' } })).toMatch(/irreversible/);
+    expect(apiRefusalReason('messages.SendMessage', { message: 'x', peer: { className: 'auth.LogOut' } })).toMatch(/session/);
+  });
+
+  it('refuses contact and geo media in the schema spelling too', () => {
+    expect(apiRefusalReason('messages.SendMedia', { media: { _: 'inputMediaContact', phoneNumber: '1' } })).toMatch(/contact card/);
+    expect(apiRefusalReason('messages.SendMedia', { media: { _: 'inputMediaGeoPoint' } })).toMatch(/location/);
   });
 
   it('allows read-only payments and ordinary methods', () => {

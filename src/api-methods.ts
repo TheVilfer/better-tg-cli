@@ -108,8 +108,35 @@ const ALWAYS_REFUSED = new Map<string, string>([
   ['phone.getgroupcallstreamrtmpurl', 'Refused: this mints a stream key (a credential).'],
 ]);
 
-/** Media classes that share your phone number or location — refused in SendMedia/EditMessage. */
-const SHARED_MEDIA = /InputMediaContact|InputMediaGeoPoint|InputMediaGeoLive|InputMediaVenue/;
+/**
+ * Top-level requests that wrap another request in `query` (the CLI sets the layer and connection
+ * itself). teleproto builds the inner request from plain JSON (`{"_": "account.deleteAccount"}`), so
+ * allowing these would run any refused method under a harmless-looking outer name.
+ */
+const WRAPPERS = new Set([
+  'invokeaftermsg', 'invokeaftermsgs', 'initconnection', 'invokewithlayer', 'invokewithoutupdates',
+  'invokewithmessagesrange', 'invokewithtakeout', 'invokewithbusinessconnection',
+  'invokewithgoogleplayintegrity', 'invokewithapnssecret', 'invokewithrecaptcha',
+]);
+
+/**
+ * Media classes that share your phone number or location — refused in SendMedia/EditMessage.
+ * Case-insensitive: teleproto also takes the schema's own spelling, `{"_": "inputMediaContact"}`.
+ */
+const SHARED_MEDIA = /InputMediaContact|InputMediaGeoPoint|InputMediaGeoLive|InputMediaVenue/i;
+
+/** Constructor names inside the params (`_` or `className`), at any depth. */
+function nestedTypeNames(value: unknown, out: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const v of value) nestedTypeNames(v, out);
+  } else if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if ((k === '_' || k === 'className') && typeof v === 'string') out.push(v);
+      else nestedTypeNames(v, out);
+    }
+  }
+  return out;
+}
 
 /**
  * Should the call be refused? `params` enables param-level checks (sharing a contact/geo media,
@@ -117,6 +144,9 @@ const SHARED_MEDIA = /InputMediaContact|InputMediaGeoPoint|InputMediaGeoLive|Inp
  */
 export function apiRefusalReason(name: string, params?: Record<string, unknown>): string | null {
   const lower = name.toLowerCase();
+  if (WRAPPERS.has(lower)) {
+    return 'Refused: wrapper requests (InvokeWithLayer, InvokeWithoutUpdates, InitConnection, …) can carry any other request; call the inner method directly.';
+  }
   const nsRefusal = REFUSED_NAMESPACES[NAMESPACE(lower)];
   if (nsRefusal) return nsRefusal;
   const fixed = ALWAYS_REFUSED.get(lower);
@@ -126,6 +156,12 @@ export function apiRefusalReason(name: string, params?: Record<string, unknown>)
     return 'Refused: payment / Stars-spending methods are never run. Read-only payments methods (balances, transactions) are allowed.';
   }
   if (params) {
+    // A refused method nested anywhere in the body (defence in depth for the wrappers above)
+    for (const inner of nestedTypeNames(params)) {
+      const innerLower = inner.toLowerCase();
+      const innerRefusal = REFUSED_NAMESPACES[NAMESPACE(innerLower)] ?? ALWAYS_REFUSED.get(innerLower);
+      if (innerRefusal) return innerRefusal;
+    }
     if (lower === 'contacts.addcontact' && params.addPhonePrivacyException) {
       return 'Refused: addPhonePrivacyException shares your phone number with this contact.';
     }
