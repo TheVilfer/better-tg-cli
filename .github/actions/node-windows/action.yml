@@ -1,0 +1,28 @@
+name: Node 24 on Windows, fast
+description: >
+  actions/setup-node spends ~5 s of a Windows job printing node/npm/yarn versions. The runner
+  already has Node 24 in its tool cache, so put that on PATH and restore the npm cache directly.
+  Falls back to actions/setup-node when the tool cache has no Node 24.
+runs:
+  using: composite
+  steps:
+    - id: cached
+      shell: bash
+      run: |
+        d="$(ls -d /c/hostedtoolcache/windows/node/24.*/x64 2>/dev/null | sort -V | tail -1)"
+        if [ -n "$d" ]; then
+          cygpath -w "$d" >> "$GITHUB_PATH"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+        fi
+    - if: steps.cached.outputs.found == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        # `npm config get cache` on windows-latest
+        path: C:\npm\cache
+        key: npm-windows-${{ hashFiles('package-lock.json') }}
+        restore-keys: npm-windows-
+    - if: steps.cached.outputs.found != 'true'
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+        cache: npm
