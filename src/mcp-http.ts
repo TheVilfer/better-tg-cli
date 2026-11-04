@@ -19,7 +19,10 @@ export function mcpToken(options: { create?: boolean; rotate?: boolean } = {}): 
   const existing = options.rotate ? null : secretGet(TOKEN_KEY);
   if (existing || !(options.create || options.rotate)) return existing;
   const token = `tgmcp_${randomBytes(32).toString('base64url')}`;
-  return secretSet(TOKEN_KEY, token) ? token : null;
+  const saved = secretSet(TOKEN_KEY, token);
+  // Two servers starting at once both create one; serve whichever the store kept, so no server
+  // ends up with a token nobody can print
+  return secretGet(TOKEN_KEY) ?? (saved ? token : null);
 }
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
