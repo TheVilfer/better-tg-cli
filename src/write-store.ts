@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { platform } from 'node:os';
 import { isSecretStoreAvailable, secretDelete, secretGet, secretSet } from './secrets.js';
 import { configDir, configFile } from './paths.js';
@@ -17,8 +18,24 @@ export function isWriteModeProtected(): boolean {
   return isSecretStoreAvailable();
 }
 
+function onPath(binary: string): boolean {
+  return (process.env.PATH ?? '').split(delimiter).some(dir => dir && existsSync(join(dir, binary)));
+}
+
+/**
+ * The file is honoured only where no secret store could exist at all: never on macOS or Windows
+ * (Keychain and DPAPI are always there), and on Linux only without `secret-tool`. Otherwise a missing
+ * store means it is broken or switched off (TG_NO_LIBSECRET, no D-Bus), and an agent could turn the
+ * store off and drop in a file; then writes fail closed.
+ */
+export function isFileFallbackAllowed(os: NodeJS.Platform = platform()): boolean {
+  if (os === 'darwin' || os === 'win32') return false;
+  return !onPath('secret-tool');
+}
+
 export function getWriteValue(): string | null {
   if (isWriteModeProtected()) return secretGet('writeEnabled');
+  if (!isFileFallbackAllowed()) return null;
   try {
     return readFileSync(configFile(FILE), 'utf8').trim() || null;
   } catch {
@@ -28,6 +45,7 @@ export function getWriteValue(): string | null {
 
 export function setWriteValue(value: string): boolean {
   if (isWriteModeProtected()) return secretSet('writeEnabled', value);
+  if (!isFileFallbackAllowed()) return false;
   try {
     const dir = configDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -55,5 +73,5 @@ export function hasHumanChannel(): boolean {
  * where writes are unprotected anyway. Otherwise the person runs `telegram write-access` in a terminal.
  */
 export function mayTrustUnconfirmedChoice(): boolean {
-  return !hasHumanChannel() && !isWriteModeProtected();
+  return !hasHumanChannel() && !isWriteModeProtected() && isFileFallbackAllowed();
 }

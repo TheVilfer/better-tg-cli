@@ -18,6 +18,10 @@ let stdinText: string | undefined;
  * All of stdin, read once and kept: the write guard reads it first (an approval in "ask" mode
  * covers the exact text), and the command that consumes "-" gets the same bytes afterwards.
  */
+export function primeStdin(text: string): void {
+  stdinText = text;
+}
+
 export function readStdinOnce(): string {
   stdinText ??= readFileSync(0, 'utf-8');
   return stdinText;

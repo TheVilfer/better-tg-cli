@@ -38,9 +38,12 @@ export const onboardCommand = new Command('onboard')
   .option('--broker <url>', 'Login service URL (default: built-in, or TG_BROKER_URL)')
   .option('--test-dc', "Log in on Telegram's test servers (for development; use with TG_PROFILE)")
   .action(async (opts: { json?: boolean; open: boolean; timeout: string; broker?: string; testDc?: boolean }) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const emit = (e: OnboardEvent) => {
       console.log(opts.json ? JSON.stringify(e) : (HUMAN[e.event] as (x: OnboardEvent) => string)(e));
-    };
+      // The login is saved: the overall limit no longer applies, the mode step has its own (10 min)
+      if (e.event === 'logged_in' && timer) clearTimeout(timer);
+    };;
 
     // Never replace a working login, same as `telegram auth`
     if (isConfigured() && getSessionString()) {
@@ -69,7 +72,7 @@ export const onboardCommand = new Command('onboard')
     });
     if (opts.open) openBrowser(session.url);
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       console.log(opts.json ? JSON.stringify({ event: 'timeout' }) : `Timed out after ${minutes} min; run "telegram onboard" again.`);
       session.close();
       process.exit(1);

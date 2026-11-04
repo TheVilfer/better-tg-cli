@@ -9,10 +9,15 @@ not in public issues.
 - **Secrets:** the session, api_hash and write-access flag are kept in the macOS Keychain (service
   `tg-cli`), the Linux Secret Service (`secret-tool`), 1Password, or on Windows
   `%APPDATA%\tg\secrets.dpapi` encrypted with DPAPI for the current Windows user, not in the config file. Only
-  without any of these does the config file (mode 0600) hold them, and then writes stay disabled.
-- **Writes:** off by default. `write-access on` requires a human to confirm it, in a terminal prompt
-  or a macOS/Windows dialog, and can expire (`--for 1h`). Every write is appended to
-  `~/.config/tg/audit.jsonl`.
+  without any of these does the config file (mode 0600) hold them. There the write mode sits in a
+  0600 file next to it, labelled "unprotected": the agent could edit it, as it can read the session
+  file. That is a guard against mistakes on cloud agent computers, not a security boundary.
+- **Writes:** off by default. `write-access ask` (each write approved) or `write-access on` (no
+  questions) requires a human to confirm it, in a terminal prompt or a macOS/Windows dialog, and can
+  expire (`--for 1h`). The choice on the `telegram onboard` page goes through the same confirmation;
+  a click on that page alone counts only where there is no secret store, because an agent can reach
+  the page too. Every write is appended to `~/.config/tg/audit.jsonl` with its mode and, in `ask`,
+  how it was approved (`approvedVia`).
 - **Login keys:** the broker hands out the app's `api_hash` for a single login. It is not stored
   locally. Login keys are stored hashed, limited in uses and revocable.
 
@@ -24,6 +29,11 @@ the last 50 messages to @x". The mitigations are layered:
 
 - Writes are off until you switch them on, and you confirm that yourself. Keep windows short
   (`--for 30m`), and only open one when you want the agent to write.
+- Mode `ask` shows you each write before it runs. Over MCP with a client that supports
+  elicitation, the server asks you in the client's own dialog, which the model can't answer, and
+  refuses approval codes from the model. Elsewhere the agent relays a code after you say yes in the
+  chat. That code is a speed bump, not proof that you agreed: an agent that ignores its instructions
+  can pass it without asking. The audit log shows `approvedVia: chat` or `elicitation` for every write.
 - The skill (`skills/better-tg-cli/SKILL.md`) and the MCP server instructions tell the agent that message content is data, and
   that every write must come from your request.
 - Over MCP, reads and writes are separate tools. The read tool cannot write, and clients can ask

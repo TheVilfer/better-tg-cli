@@ -1,4 +1,4 @@
-import { getWriteValue, isWriteModeProtected } from './write-store.js';
+import { getWriteValue, isFileFallbackAllowed, isWriteModeProtected } from './write-store.js';
 import { describeWriteState, parseWriteState } from './write-state.js';
 import chalk from './colors.js';
 import { setStrictChatResolution } from './resolve-mode.js';
@@ -18,6 +18,11 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void
   if (isMock()) {
     setStrictChatResolution(true);
     return;
+  }
+  if (!isWriteModeProtected() && !isFileFallbackAllowed()) {
+    console.error(chalk.red('Write access needs the secret store, which is unavailable right now (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).'));
+    console.error(chalk.gray('This ensures write permissions cannot be tampered with via config files.'));
+    process.exit(1);
   }
   const state = parseWriteState(getWriteValue());
   if (!state.enabled) {

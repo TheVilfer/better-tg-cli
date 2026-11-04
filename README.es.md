@@ -213,7 +213,8 @@ telegram get "Chat" 812 813                   # mensajes exactos por ID
 telegram download "Chat" 812                  # guarda el archivo adjunto
 telegram sync --chat "Chat" --output ./export --resume   # exportación incremental a markdown
 
-telegram write-access on --for 1h             # esto lo confirma una persona
+telegram write-access ask                     # lo confirma una persona; luego cada escritura espera su sí
+telegram write-access on --for 1h             # o: escribir sin preguntar durante una hora
 telegram send @alice "on my way"
 printf '%s' "$text" | telegram send @alice -  # texto largo o de varias líneas: desde stdin, sin problemas de comillas
 telegram reply "Chat" 812 "on it" --silent
@@ -296,7 +297,7 @@ Usar tu propia cuenta desde un cliente de terceros está permitido por los [tér
 No. Inicia sesión como tú por MTProto, igual que Telegram Desktop, y ve exactamente lo que ves tú. Los bots no pueden leer tus chats; esto sí.
 
 **¿Puede un agente enviar mensajes por su cuenta?**
-Solo después de que actives la escritura. `telegram write-access on` te pide que lo confirmes en el terminal o en un diálogo de macOS, algo que un agente no puede responder. A partir de ahí, las escrituras necesitan un chat exacto y cada una queda registrada. Por MCP, escribir es una herramienta aparte que los clientes pueden pedirte que apruebes cada vez. Los detalles están en [SECURITY.md](SECURITY.md).
+Solo después de que lo permitas. `telegram write-access ask` (apruebas cada escritura en el chat o en el diálogo de tu cliente MCP) o `telegram write-access on` (sin preguntas) te pide que lo confirmes en el terminal o en un diálogo de macOS, algo que un agente no puede responder. El último paso de `telegram onboard` ofrece la misma elección. A partir de ahí, las escrituras necesitan un chat exacto y cada una queda registrada. Por MCP, escribir es una herramienta aparte que los clientes pueden pedirte que apruebes cada vez. Los detalles están en [SECURITY.md](SECURITY.md).
 
 **¿Leer marca los mensajes como leídos?**
 No. `read`, `inbox` y `search` dejan los chats sin leer. Solo `telegram mark-read` los marca.

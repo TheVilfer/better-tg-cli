@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+// Linux, as on a cloud agent computer: the file fallback is allowed only off macOS and Windows
+vi.mock('node:os', async orig => ({ ...(await orig<typeof import('node:os')>()), platform: () => 'linux' }));
 // An in-memory secret store, switchable to "none" (a cloud agent computer): the real Keychain is never touched
 const store = vi.hoisted(() => ({ available: true, values: new Map<string, string>() }));
 vi.mock('../src/secrets.js', () => ({
@@ -25,12 +27,13 @@ vi.mock('../src/write-store.js', async orig => {
 });
 
 import { describeWriteState, encodeWriteState, parseWriteState } from '../src/write-state.js';
-import { actionHash, consumeApproval, createApproval, APPROVAL_TTL_MS, EXIT_NEEDS_APPROVAL } from '../src/approval.js';
+import { actionHash, consumeApproval, createApproval, describeAction, APPROVAL_TTL_MS, EXIT_NEEDS_APPROVAL } from '../src/approval.js';
 import { assertWriteEnabled } from '../src/guard.js';
 import { auditLog } from '../src/audit.js';
 import { applyModeChoice } from '../src/write-mode.js';
-import { getWriteValue } from '../src/write-store.js';
+import { getWriteValue, isFileFallbackAllowed } from '../src/write-store.js';
 import { configDir } from '../src/paths.js';
+import { gateWrite } from '../src/mcp.js';
 
 const saved = { ...process.env };
 let dir: string;
@@ -109,11 +112,31 @@ describe('approvals', () => {
     expect(consumeApproval(old, hash, now + APPROVAL_TTL_MS + 1)).toMatchObject({ ok: false });
   });
 
-  it('store a hash, never the message, in a 0600 file', () => {
-    createApproval(actionHash(['send', '@alice', '-'], 'very secret text'));
-    const file = join(dir, 'approvals.json');
+  it('store a hash, never the message, one 0600 file per code', () => {
+    const code = createApproval(actionHash(['send', '@alice', '-'], 'very secret text'));
+    const file = join(dir, 'approvals', `${code}.json`);
     expect(readFileSync(file, 'utf8')).not.toContain('secret');
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600); // Windows reports 0o666
+    expect(readdirSync(join(dir, 'approvals'))).toEqual([`${code}.json`]);
+  });
+
+  it('cover the contents of files named in the arguments, also as --opt=path', () => {
+    mkdirSync(dir, { recursive: true });
+    const f = join(dir, 'doc.txt');
+    writeFileSync(f, 'v1');
+    const a = actionHash(['send-file', '@alice', f]);
+    const b = actionHash(['send-file', '@alice', `--file=${f}`]);
+    writeFileSync(f, 'v2'); // same size, changed contents
+    expect(actionHash(['send-file', '@alice', f])).not.toBe(a);
+    expect(actionHash(['send-file', '@alice', `--file=${f}`])).not.toBe(b);
+  });
+
+  it('show the whole text, with control and bidi characters escaped', () => {
+    const long = 'x'.repeat(5000);
+    expect(describeAction(['send', '@alice', '-'], long)).toContain(long);
+    const shown = describeAction(['send', '@alice', '-'], 'pay \u202Eevil');
+    expect(shown).not.toContain('\u202E');
+    expect(shown).toContain('\\u{202e}');
   });
 });
 
@@ -136,7 +159,7 @@ describe('the guard', () => {
     stdin.text = 'Hello Alice';
     const first = guard(['send', '@alice', '-']);
     expect(first.code).toBe(EXIT_NEEDS_APPROVAL);
-    expect(first.err).toContain('"Hello Alice"');
+    expect(first.err).toContain('| Hello Alice');
     const code = codeIn(first.err)!;
     expect(code).toBeTruthy();
 
@@ -179,6 +202,13 @@ describe('the guard', () => {
   });
 });
 
+describe('the file fallback', () => {
+  it('is never used on macOS or Windows, where a missing store means a broken or disabled one', () => {
+    expect(isFileFallbackAllowed('darwin')).toBe(false);
+    expect(isFileFallbackAllowed('win32')).toBe(false);
+  });
+});
+
 describe('choosing a mode', () => {
   it('asks the person where there is a terminal or dialog, and keeps read-only on a no', async () => {
     human.channel = true;
@@ -202,5 +232,40 @@ describe('choosing a mode', () => {
     expect(getWriteValue()).toBeNull();
     expect(existsSync(join(dir, 'write-access'))).toBe(false);
     expect(human.asked).toEqual([]);
+  });
+});
+
+describe('MCP in mode "ask"', () => {
+  const plan = () => ({ argv: ['send', '@alice', '-'], readOnly: false, stdin: 'Hi' } as { argv: string[]; readOnly: boolean; stdin?: string; approval?: string });
+
+  it('asks the user through the client and mints the approval itself', async () => {
+    store.values.set('writeEnabled', 'ask');
+    const asked: string[] = [];
+    const p = plan();
+    expect(await gateWrite(p, {}, async m => (asked.push(m), true))).toBeUndefined();
+    expect(asked[0]).toContain('| Hi');
+    expect(consumeApproval(p.approval!, actionHash(p.argv, 'Hi'))).toEqual({ ok: true, via: 'elicitation' });
+  });
+
+  it('sends nothing when the user declines, and refuses codes from the model when it can ask', async () => {
+    store.values.set('writeEnabled', 'ask');
+    expect(await gateWrite(plan(), {}, async () => false)).toMatch(/did not approve/);
+    const p = plan();
+    expect(await gateWrite(p, { approval: 'ABCDEF' }, async () => true)).toMatch(/not accepted here/);
+    expect(p.approval).toBeUndefined();
+  });
+
+  it('passes the chat code on when the client has no elicitation', async () => {
+    store.values.set('writeEnabled', 'ask');
+    const p = plan();
+    expect(await gateWrite(p, { approval: 'ABCDEF' })).toBeUndefined();
+    expect(p.approval).toBe('ABCDEF');
+  });
+
+  it('does not ask in other modes', async () => {
+    store.values.set('writeEnabled', 'true');
+    let asked = false;
+    expect(await gateWrite(plan(), {}, async () => (asked = true))).toBeUndefined();
+    expect(asked).toBe(false);
   });
 });

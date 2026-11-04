@@ -212,7 +212,8 @@ telegram stats "Mock News" --graphs           # full channel stats + growth grap
 telegram sessions ; telegram stars            # active login sessions; Telegram Stars balance & transactions
 telegram invites "Team" --requests            # a chat's invite links, or its pending join requests
 
-telegram write-access on --for 1h             # a human confirms this
+telegram write-access ask                     # a human confirms; then each write needs their yes
+telegram write-access on --for 1h             # or: writes without asking, for an hour
 telegram send @alice "on my way"
 printf '%s' "$text" | telegram send @alice -  # long or multi-line text: from stdin, no quoting problems
 telegram reply "Chat" 812 "on it" --silent
@@ -315,7 +316,7 @@ Using your own account from a third-party client is allowed by the [Telegram API
 No. It logs in as you over MTProto, like Telegram Desktop, and sees exactly what you see. Bots can't read your chats; this can.
 
 **Can an agent send messages on its own?**
-Only after you turn writes on. `telegram write-access on` asks you to confirm in the terminal or in a macOS dialog, which an agent can't answer. Writes then need an exact chat, and each one is logged. Over MCP, writing is a separate tool that clients can ask you to approve every time. Details are in [SECURITY.md](SECURITY.md).
+Only after you allow it. `telegram write-access ask` (you approve each write in the chat or in your MCP client's dialog) or `telegram write-access on` (no questions) asks you to confirm in the terminal or in a macOS dialog, which an agent can't answer. `telegram onboard` ends with the same choice. Writes then need an exact chat, and each one is logged. Over MCP, writing is a separate tool that clients can ask you to approve every time. Details are in [SECURITY.md](SECURITY.md).
 
 **Does reading mark messages as read?**
 No. `read`, `inbox` and `search` leave chats unread. Only `telegram mark-read` marks them.
