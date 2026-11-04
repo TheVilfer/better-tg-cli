@@ -1,7 +1,8 @@
-import { createHash, randomInt } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configFile } from './paths.js';
+import { isSecretStoreAvailable, secretGet, secretSet } from './secrets.js';
 
 /**
  * Approvals for write mode "ask": each write runs only with an approval of that exact action.
@@ -23,6 +24,37 @@ interface Pending {
   hash: string;
   expiresAt: number;
   via: ApprovedVia;
+  /** HMAC over the record with a key from the secret store: a file dropped in by hand doesn't verify */
+  mac: string;
+}
+
+/**
+ * The signing key lives in the secret store, next to the write mode, so writing a file into the
+ * profile is not enough to forge an approval (or a fake "elicitation" in the audit log). An agent
+ * with a shell that can read the store could still sign one; this raises the bar, it is not a wall.
+ * Without a store the key sits in the profile like everything else there (unprotected).
+ */
+function signingKey(): Buffer {
+  if (isSecretStoreAvailable()) {
+    let key = secretGet('approvalKey');
+    if (!key) {
+      key = randomBytes(32).toString('hex');
+      if (!secretSet('approvalKey', key)) throw new Error('Could not store the approval signing key in the secret store');
+    }
+    return Buffer.from(key, 'hex');
+  }
+  const file = configFile('approval-key');
+  try {
+    return Buffer.from(readFileSync(file, 'utf8').trim(), 'hex');
+  } catch {
+    const key = randomBytes(32).toString('hex');
+    writeFileSync(file, key, { encoding: 'utf8', mode: 0o600 });
+    return Buffer.from(key, 'hex');
+  }
+}
+
+function sign(key: Buffer, code: string, p: Omit<Pending, 'mac'>): string {
+  return createHmac('sha256', key).update(JSON.stringify([code, p.hash, p.expiresAt, p.via])).digest('hex');
 }
 
 export const APPROVAL_TTL_MS = 10 * 60_000;
@@ -81,11 +113,13 @@ export function readsStdin(argv: string[]): boolean {
 export function createApproval(hash: string, via: ApprovedVia = 'chat', now = Date.now()): string {
   prune(now);
   if (!existsSync(storeDir())) mkdirSync(storeDir(), { recursive: true, mode: 0o700 });
+  const key = signingKey();
   for (;;) {
     const code = newCode();
+    const record = { hash, expiresAt: now + APPROVAL_TTL_MS, via };
     try {
       // wx: never overwrite another pending code
-      writeFileSync(join(storeDir(), `${code}.json`), JSON.stringify({ hash, expiresAt: now + APPROVAL_TTL_MS, via }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      writeFileSync(join(storeDir(), `${code}.json`), JSON.stringify({ ...record, mac: sign(key, code, record) }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       return code;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
@@ -109,6 +143,9 @@ export function consumeApproval(code: string, hash: string, now = Date.now()): {
   } catch {
     return { ok: false, reason: 'unknown or expired approval code' };
   }
+  const expected = Buffer.from(sign(signingKey(), key, pending), 'hex');
+  const got = Buffer.from(typeof pending.mac === 'string' ? pending.mac : '', 'hex');
+  if (got.length !== expected.length || !timingSafeEqual(got, expected)) return { ok: false, reason: 'the approval record is not genuine' };
   if (!(pending.expiresAt > now)) return { ok: false, reason: 'unknown or expired approval code' };
   if (pending.hash !== hash) return { ok: false, reason: 'the approval was for a different command or text' };
   return { ok: true, via: pending.via };

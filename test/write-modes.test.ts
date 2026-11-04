@@ -120,6 +120,17 @@ describe('approvals', () => {
     expect(readdirSync(join(dir, 'approvals'))).toEqual([`${code}.json`]);
   });
 
+  it('reject a record dropped into the store by hand (forged, e.g. as "elicitation")', () => {
+    const hash = actionHash(['send', '@alice', 'hi']);
+    createApproval(hash); // creates the store and the signing key
+    writeFileSync(join(dir, 'approvals', 'FAKE22.json'), JSON.stringify({ hash, expiresAt: Date.now() + 60_000, via: 'elicitation', mac: '00'.repeat(32) }));
+    expect(consumeApproval('FAKE22', hash)).toEqual({ ok: false, reason: 'the approval record is not genuine' });
+    const code = createApproval(hash);
+    const rec = JSON.parse(readFileSync(join(dir, 'approvals', `${code}.json`), 'utf8'));
+    writeFileSync(join(dir, 'approvals', `${code}.json`), JSON.stringify({ ...rec, via: 'elicitation' })); // relabelled
+    expect(consumeApproval(code, hash)).toMatchObject({ ok: false });
+  });
+
   it('cover the contents of files named in the arguments, also as --opt=path', () => {
     mkdirSync(dir, { recursive: true });
     const f = join(dir, 'doc.txt');
