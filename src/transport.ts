@@ -1,4 +1,6 @@
 import type { TelegramClient } from 'teleproto';
+import { PromisedWebSockets } from 'teleproto/extensions/PromisedWebSockets.js';
+import { WebSocket as WsWebSocket } from 'ws';
 import { loadConfig, saveConfig } from './config.js';
 
 /**
@@ -25,9 +27,13 @@ export function transportSetting(env = process.env.TG_TRANSPORT): TransportSetti
   return saved === 'tcp' || saved === 'wss' ? saved : 'auto';
 }
 
-/** Node 22+ and Bun have a global WebSocket; Node 20 does not. */
-export function hasWebSocket(): boolean {
-  return typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'function';
+/**
+ * Node 22+ and Bun have a global WebSocket; Node 20 does not, and Grok Bot computers run Node 20.
+ * There teleproto gets the bundled `ws` package instead (same browser-style API).
+ */
+export function useWebSocketImpl(hasGlobal = typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'function'): void {
+  const impl = PromisedWebSockets as unknown as { webSocketImpl?: unknown };
+  if (!hasGlobal && !impl.webSocketImpl) impl.webSocketImpl = WsWebSocket;
 }
 
 const NETWORK_CODES = new Set([
@@ -47,10 +53,6 @@ export const BLOCKED_HINT =
   "Telegram's servers are unreachable from this machine over TCP and over WebSocket (wss://*.web.telegram.org). " +
   'Check the network or firewall; cloud agent computers sometimes block Telegram entirely.';
 
-const NO_WEBSOCKET_HINT =
-  "Telegram's TCP transport is blocked on this network (common on cloud agent computers that only allow HTTPS). " +
-  'The WebSocket transport that gets through needs Node.js 22+ or the standalone binary (brew install thevilfer/tap/better-tg-cli).';
-
 /**
  * Connects a client made by `make`, choosing the transport by `transportSetting()`. In auto mode a
  * network failure over TCP is retried once over WSS; when that works, `transport: "wss"` is saved
@@ -63,10 +65,14 @@ export async function connectClient(
   const setting = options.setting ?? transportSetting();
   const notice = options.notice ?? ((m: string) => process.stderr.write(`${m}\n`));
 
-  if (setting === 'wss' && !hasWebSocket()) throw new Error(`TG_TRANSPORT=wss: ${NO_WEBSOCKET_HINT}`);
   const first = make(setting === 'wss' ? 'wss' : 'tcp');
+  // In auto mode a blocked TCP try would print a stack trace per retry before the switch; keep it
+  // quiet unless TG_LOG_LEVEL asks for logs, and restore the level once connected
+  const hush = setting === 'auto' && !process.env.TG_LOG_LEVEL;
+  if (hush) first.setLogLevel?.('none' as never);
   try {
     await first.connect();
+    if (hush) first.setLogLevel?.('error' as never);
     return first;
   } catch (e) {
     await first.destroy().catch(() => {});
@@ -75,7 +81,6 @@ export async function connectClient(
     if (setting === 'tcp') {
       throw new Error(`${(e as Error).message}. Telegram is unreachable over TCP here; try TG_TRANSPORT=wss.`);
     }
-    if (!hasWebSocket()) throw new Error(`${NO_WEBSOCKET_HINT} (${(e as Error).message})`);
     notice(`Telegram over TCP failed (${(e as Error).message}); switching to WebSocket (wss://*.web.telegram.org).`);
   }
 

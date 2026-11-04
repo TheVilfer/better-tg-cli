@@ -2,7 +2,7 @@ import { Logger, LogLevel } from 'teleproto/extensions/Logger.js';
 import { PromisedWebSockets } from 'teleproto/extensions/PromisedWebSockets.js';
 import { loadConfig } from './config.js';
 import { isMock } from './paths.js';
-import type { Transport } from './transport.js';
+import { useWebSocketImpl, type Transport } from './transport.js';
 
 const LEVELS: Record<string, LogLevel> = {
   none: LogLevel.NONE, error: LogLevel.ERROR, warn: LogLevel.WARN, info: LogLevel.INFO, debug: LogLevel.DEBUG,
@@ -41,6 +41,7 @@ export function clientParams(testServers = !!loadConfig(() => {}).testServers, t
   if (isMock()) {
     throw new Error('This needs a real Telegram connection, which mock mode (TG_MOCK) never opens. Unset TG_MOCK to use a real account.');
   }
+  if (transport === 'wss') useWebSocketImpl();
   return {
     connectionRetries: 5,
     baseLogger: createLogger(),

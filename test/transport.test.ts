@@ -6,7 +6,7 @@ import { PromisedWebSockets } from 'teleproto/extensions/PromisedWebSockets.js';
 import { clientParams } from '../src/client-options.js';
 import { configDir } from '../src/paths.js';
 import { saveConfig } from '../src/config.js';
-import { BLOCKED_HINT, connectClient, isNetworkFailure, transportSetting, type Transport } from '../src/transport.js';
+import { BLOCKED_HINT, connectClient, isNetworkFailure, transportSetting, useWebSocketImpl, type Transport } from '../src/transport.js';
 
 class NetSocketClosedError extends Error {
   constructor() { super('NetSocket was closed'); this.name = 'NetSocketClosedError'; }
@@ -89,17 +89,6 @@ describe('connectClient', () => {
     expect(readFileSync(join(dir, 'config.json5'), 'utf8')).toMatch(/transport.*wss/);
     expect(transportSetting(undefined)).toBe('wss');
   });
-
-  it('says what is missing when there is no WebSocket (Node 20)', async () => {
-    vi.stubGlobal('WebSocket', undefined);
-    try {
-      const f = fakes({ tcp: new NetSocketClosedError() });
-      await expect(connectClient(f.make, { ...quiet, setting: 'auto' })).rejects.toThrow(/Node\.js 22\+/);
-      expect(f.tried).toEqual(['tcp']);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
 });
 
 describe('transportSetting', () => {
@@ -124,6 +113,23 @@ describe('isNetworkFailure', () => {
     expect(isNetworkFailure(Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }))).toBe(true);
     expect(isNetworkFailure(new Error('FLOOD_WAIT_X'))).toBe(false);
     expect(isNetworkFailure('NetSocket was closed')).toBe(false);
+  });
+});
+
+describe('useWebSocketImpl', () => {
+  it('gives teleproto the bundled ws only when there is no global WebSocket (Node 20)', async () => {
+    const { WebSocket: Ws } = await import('ws');
+    const impl = PromisedWebSockets as unknown as { webSocketImpl?: unknown };
+    const before = impl.webSocketImpl;
+    try {
+      impl.webSocketImpl = undefined;
+      useWebSocketImpl(true);
+      expect(impl.webSocketImpl).toBeUndefined();
+      useWebSocketImpl(false);
+      expect(impl.webSocketImpl).toBe(Ws);
+    } finally {
+      impl.webSocketImpl = before;
+    }
   });
 });
 
