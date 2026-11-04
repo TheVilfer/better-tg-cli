@@ -15,6 +15,7 @@ import { profile } from '../src/paths.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
 import { loadWorld, mockStatePath, saveWorld, seedWorld, type MockWorld } from '../src/mock/world.js';
+import { cliArgs } from './cli.js';
 
 const mock = (world: MockWorld = seedWorld(), saved?: (world: MockWorld) => void) =>
   new MockClient(world, saved) as unknown as TelegramClient;
@@ -222,7 +223,7 @@ describe('CLI in mock mode (from src/)', () => {
   const state = join(home, 'state.json');
   // Same rule as configDir() in src/paths.ts: %APPDATA% on Windows, ~/.config elsewhere
   const configDir = (name: string) => (process.platform === 'win32' ? join(home, 'AppData', name) : join(home, '.config', name));
-  const run = (...args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', 'src/index.ts', ...args], {
+  const run = (...args: string[]) => execFileSync(process.execPath, [...cliArgs(), ...args], {
     encoding: 'utf8',
     env: { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_MOCK: state, TG_NO_UPDATE_CHECK: '1', TG_PROFILE: '' },
     stdio: ['ignore', 'pipe', 'pipe'],

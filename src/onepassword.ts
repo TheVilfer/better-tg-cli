@@ -115,44 +115,49 @@ export function opGet(key: string): string | null {
   }
 }
 
+interface OpField { id?: string; label?: string; type?: string; value?: string }
+
+/**
+ * Stores the secret through stdin as an item JSON template, never as a `credential=<value>`
+ * argument: a process's arguments are visible to every user on the machine (`ps`).
+ */
 export function opSet(key: string, value: string): boolean {
   if (!isOnePasswordAvailable()) return false;
   const binary = getOpBinary()!;
   const vault = resolveVault()!;
   const token = getToken()!;
   const name = itemName(key);
-  const env = { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token };
+  const run = (args: string[], input?: string): string => execFileSync(binary, args, {
+    input,
+    encoding: 'utf8',
+    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
+    windowsHide: true,
+    env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
+  });
 
   try {
-    // Check if item exists
-    let exists = false;
+    let item: { fields?: OpField[] } | null = null;
     try {
-      execFileSync(binary, ['item', 'get', name, '--vault', vault], {
-        stdio: 'ignore',
-        windowsHide: true,
-        env,
-      });
-      exists = true;
+      item = JSON.parse(run(['item', 'get', name, '--vault', vault, '--format', 'json']));
     } catch {
       // Item doesn't exist
     }
 
-    if (exists) {
-      execFileSync(binary, [
-        'item', 'edit', name,
-        '--vault', vault,
-        `credential=${value}`,
-      ], { stdio: 'ignore', env, windowsHide: true });
+    if (item) {
+      const fields = item.fields ?? [];
+      const field = fields.find(f => f.id === 'credential' || f.label === 'credential');
+      if (field) field.value = value;
+      else fields.push({ id: 'credential', label: 'credential', type: 'CONCEALED', value });
+      item.fields = fields;
+      run(['item', 'edit', name, '--vault', vault], JSON.stringify(item));
     } else {
-      execFileSync(binary, [
-        'item', 'create',
-        '--category', 'API Credential',
-        '--vault', vault,
-        '--title', name,
-        `credential=${value}`,
-      ], { stdio: 'ignore', env, windowsHide: true });
+      const template = {
+        title: name,
+        category: 'API_CREDENTIAL',
+        fields: [{ id: 'credential', label: 'credential', type: 'CONCEALED', value }],
+      };
+      run(['item', 'create', '--vault', vault, '-'], JSON.stringify(template));
     }
-
     return true;
   } catch {
     return false;

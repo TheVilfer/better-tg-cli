@@ -9,12 +9,16 @@ name: Release
 on:
   push:
     tags: ['v*.*.*']
+  # Dry run on any branch: verify, every binary and the Windows smoke test, nothing is published
+  # (gh workflow run release.yml --ref <branch>)
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release
+  # Real releases queue one after another; a dry run never waits for them
+  group: ${{ startsWith(github.ref, 'refs/tags/') && 'release' || format('release-dry-run-{0}', github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -26,6 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version # pinned: cached between runs, and the same Bun in every binary
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -35,7 +41,11 @@ jobs:
         run: |
           version="$(node -p "require('./package.json').version")"
           tag="${GITHUB_REF_NAME#v}"
-          if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "Dry run of $version from $GITHUB_REF_NAME: nothing is published"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             newer="$(node -e 'const n=v=>v.split("-")[0].split(".").map(Number);const [a,b]=process.argv.slice(1).map(n);console.log(a[0]>b[0]||(a[0]===b[0]&&(a[1]>b[1]||(a[1]===b[1]&&a[2]>b[2]))))' "$tag" "$version")"
             if [ "$newer" != true ]; then
               echo "::error::Pre-release $GITHUB_REF_NAME does not lead to a version newer than $version in package.json"
@@ -63,7 +73,7 @@ jobs:
           if-no-files-found: error
 
   binaries:
-    needs: verify
+    # Starts with verify, not after it: the slowest part of a release. github-release still waits for both.
     strategy:
       matrix:
         include:
@@ -78,26 +88,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version # pinned: cached between runs, and the same Bun in every binary
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
       - run: npm ci
       - name: Use the pre-release version from the tag
-        if: needs.verify.outputs.prerelease == 'true'
+        # verify checks the tag in parallel; a release candidate's version comes from its tag
         shell: bash
-        env:
-          VERSION: ${{ needs.verify.outputs.version }}
-        run: npm version "$VERSION" --no-git-tag-version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then npm version "$tag" --no-git-tag-version; fi
       - run: scripts/build-binary.sh "$TARGET" release
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
       - name: Smoke test (native targets)
         if: matrix.smoke
-        env:
-          VERSION: ${{ needs.verify.outputs.version }}
         run: |
+          VERSION="$(node -p "require('./package.json').version")"
           mkdir smoke && tar -xJf release/*.tar.xz -C smoke
           test "$(./smoke/telegram --version)" = "$VERSION"
           ./smoke/telegram help-all -g thread | grep -q 'read <chat>'
@@ -108,7 +119,7 @@ jobs:
           if-no-files-found: error
 
   windows-smoke:
-    needs: [verify, binaries]
+    needs: binaries
     runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -118,9 +129,10 @@ jobs:
       - name: Run telegram.exe
         shell: pwsh
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
           TG_NO_UPDATE_CHECK: '1'
         run: |
+          # better-tg-cli-<version>-windows-x64.zip
+          $env:VERSION = (Get-ChildItem release/*.zip).Name -replace '^better-tg-cli-(.+)-windows-x64\.zip$', '$1'
           Expand-Archive -Path (Get-ChildItem release/*.zip).FullName -DestinationPath smoke
           $v = & ./smoke/telegram.exe --version
           if ($v -ne $env:VERSION) { throw "version $v != $env:VERSION" }
@@ -134,6 +146,8 @@ jobs:
 
   github-release:
     needs: [verify, binaries, windows-smoke]
+    # Everything that publishes hangs off this job, so a dry run stops here
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -178,11 +192,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version # pinned: cached between runs, and the same Bun in every binary
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
+      - name: npm >= 11.5.1 for trusted publishing (Node 24 already ships it)
+        run: |
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$(npm -v)" \
+            || npm install -g npm@latest
       - run: npm ci
       - name: Use the pre-release version from the tag
         if: needs.verify.outputs.prerelease == 'true'
@@ -191,6 +210,7 @@ jobs:
         run: npm version "$VERSION" --no-git-tag-version
       - run: npm run build
       - name: Publish (skipped if this version is already on npm)
+        # --ignore-scripts: prepublishOnly would run the build above a second time
         env:
           VERSION: ${{ needs.verify.outputs.version }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
@@ -199,9 +219,9 @@ jobs:
             echo "better-tg-cli@$VERSION is already published"
           elif [ "$PRERELEASE" = true ]; then
             # "next", never "latest": npm install -g better-tg-cli keeps giving the stable version
-            npm publish --provenance --access public --tag next
+            npm publish --ignore-scripts --provenance --access public --tag next
           else
-            npm publish --provenance --access public
+            npm publish --ignore-scripts --provenance --access public
           fi
 
   homebrew:
@@ -287,9 +307,9 @@ jobs:
       - name: Wait for npm to serve this version
         # npm keeps a fresh version in validation for up to about an hour before serving it
         run: |
-          for i in $(seq 1 150); do
+          for i in $(seq 1 300); do
             [ "$(npm view "better-tg-cli@$VERSION" mcpName 2>/dev/null)" = "io.github.TheVilfer/better-tg-cli" ] && exit 0
-            sleep 30
+            sleep 15
           done
           echo "::error::better-tg-cli@$VERSION did not appear on npm within 75 minutes"; exit 1
       - name: Install mcp-publisher (pinned, checksum-verified)

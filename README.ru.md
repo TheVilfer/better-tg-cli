@@ -188,7 +188,9 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 `telegram logout` её удаляет. На Linux сессия хранится в Secret Service (GNOME Keyring, KWallet,
 KeePassXC) через `secret-tool`, для этого нужен пакет `libsecret-tools`. Сессия, которая уже лежит
 в конфиге, переедет туда сама. Если хранилища секретов нет, сессия лежит в
-`~/.config/tg/config.json5` (права 0600), а запись остаётся выключенной. На Linux
+`~/.config/tg/config.json5` (права 0600). На Linux без работающего Secret Service (нет `secret-tool`
+или сессионной шины, как на облачных компьютерах агентов) режим записи тогда тоже хранится в
+обычном файле профиля: это защита от ошибок, но не от агента, который может править файлы. На Linux
 `write-access on` подтверждается в терминале. На Windows секреты лежат в
 `%APPDATA%\tg\secrets.dpapi`, зашифрованные DPAPI для вашего пользователя Windows (расшифровать их
 можете только вы на этой машине), а `write-access on` без терминала спрашивает в окне «Да/Нет».
@@ -272,11 +274,116 @@ telegram mcp --http --read-only             # слушает 127.0.0.1:8787; б�
 tailscale funnel --bg 8787                  # или: cloudflared tunnel --url http://127.0.0.1:8787
 ```
 
-Держите сервер и туннель в терминале или в tmux. Затем добавьте в Grok Bot коннектор: адрес
+Держите сервер и туннель в терминале или в tmux либо запустите сервер как фоновую службу (ниже).
+Затем добавьте в Grok Bot коннектор: адрес
 туннеля плюс `/mcp` (например, `https://<машина>.<tailnet>.ts.net/mcp`) и заголовок
 `Authorization: Bearer <токен>`. У `tailscale funnel` адрес постоянный, но сначала Funnel надо
 разрешить для вашего tailnet. Быстрый туннель `cloudflared` при каждом запуске получает новый
 адрес. Сначала прочитайте раздел «Remote MCP over HTTP» в [SECURITY.md](SECURITY.md).
+
+#### Сервер как фоновая служба
+
+Служба запускает сервер сама и поднимает его заново после сбоя. На macOS LaunchAgent ниже
+стартует при входе в систему и работает, пока вы в ней. На Linux пользовательский юнит может
+стартовать и при загрузке, без входа (см. linger ниже). Ни один из файлов ниже не хранит секретов: сессия и bearer-токен остаются в Keychain или Secret Service, и сервер
+читает их при запуске. Туннель тоже должен работать постоянно: `tailscale funnel --bg` живёт сам по
+себе, а быстрый туннель `cloudflared` — нет.
+
+Обоим файлам нужны пути, которые печатают `command -v telegram` и, если вы ставили через npm,
+`command -v node`. npm-сборка `telegram` — это скрипт Node, а служба стартует с коротким `PATH`, где
+нет каталогов Homebrew и nvm. Без правильного `PATH` она завершится с
+`env: node: No such file or directory`.
+
+**macOS (launchd).** Сохраните это как `~/Library/LaunchAgents/com.better-tg-cli.mcp.plist`. В
+`ProgramArguments` укажите свой путь к `telegram`, в `PATH` — каталог `node`, а вместо `you` — имя
+пользователя (`id -un`): launchd не раскрывает ни `~`, ни `$HOME`.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.better-tg-cli.mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/telegram</string>
+    <string>mcp</string>
+    <string>--http</string>
+    <string>--read-only</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>TG_NO_UPDATE_CHECK</key>
+    <string>1</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.better-tg-cli.mcp.plist
+launchctl print gui/$(id -u)/com.better-tg-cli.mcp | grep -E 'state|last exit'
+launchctl kickstart -k gui/$(id -u)/com.better-tg-cli.mcp   # перезапуск
+launchctl bootout gui/$(id -u)/com.better-tg-cli.mcp        # остановить и выгрузить
+```
+
+`KeepAlive` с `SuccessfulExit` false перезапускает сервер, когда тот падает или его убивают. Если при
+первом запуске macOS спросит доступ к Keychain, разрешите.
+
+**Linux (пользовательский юнит systemd).** Сохраните это как
+`~/.config/systemd/user/better-tg-cli-mcp.service`, указав в `PATH` каталоги `telegram` и `node`:
+
+```ini
+[Unit]
+Description=Better-TG-CLI MCP server over HTTP
+After=network-online.target
+
+[Service]
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=TG_NO_UPDATE_CHECK=1
+ExecStart=/usr/bin/env telegram mcp --http --read-only
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now better-tg-cli-mcp.service
+systemctl --user status better-tg-cli-mcp.service
+journalctl --user -u better-tg-cli-mcp.service -f
+```
+
+Юнит работает, пока вы вошли в систему. `sudo loginctl enable-linger "$USER"` запускает его при
+загрузке и оставляет после выхода, но связку ключей не разблокирует. Если Secret Service для службы
+нет или он заблокирован, сервер завершается с «The HTTP server needs a secret store for its token»,
+и systemd запускает его снова через 5 секунд. Чтобы увидеть, какое хранилище находит служба,
+выполните `telegram check` с окружением юнита.
+
+Если у службы нет Secret Service (например, на сервере без рабочего стола), используйте хранилище
+1Password. Один раз войдите с `telegram auth --op-vault <vault>` в том же профиле, добавьте каталог
+`op` в `PATH` юнита, а `OP_SERVICE_ACCOUNT_TOKEN=…` держите в файле, доступном только вам (права
+0600), и подключите его строкой `EnvironmentFile=%h/.config/tg/mcp.env` в `[Service]`. Этот токен —
+секрет, поэтому в самом юните его нет.
+
+После `telegram mcp --rotate-token` перезапустите службу (`launchctl kickstart -k …` или
+`systemctl --user restart better-tg-cli-mcp`): до этого работающий сервер принимает старый токен.
 
 ## FAQ
 

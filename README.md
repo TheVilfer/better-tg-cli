@@ -189,8 +189,10 @@ The session is stored in the macOS Keychain (service `tg-cli`), or in 1Password 
 `--op-vault <vault>`. `telegram logout` removes it. On Linux it goes to the Secret Service (GNOME
 Keyring, KWallet, KeePassXC) through `secret-tool`, which needs the `libsecret-tools` package. A
 session already saved in the config file moves there automatically. Without any secret store, the
-session is kept in `~/.config/tg/config.json5` (mode 0600) and write commands stay disabled.
-On Linux, `write-access on` is confirmed at a terminal prompt. On Windows the secrets live in
+session is kept in `~/.config/tg/config.json5` (mode 0600). On Linux without a working Secret
+Service (no `secret-tool` or no session bus, as on cloud agent computers) the write mode is then kept
+in a plain file in the profile too, which guards against mistakes, not against an agent that can
+edit files. On Linux, `write-access on` is confirmed at a terminal prompt. On Windows the secrets live in
 `%APPDATA%\tg\secrets.dpapi`, encrypted with DPAPI for your Windows user (only you on this machine
 can decrypt it), and `write-access on` asks in a Yes/No window when there's no terminal.
 
@@ -302,11 +304,116 @@ telegram mcp --http --read-only             # listens on 127.0.0.1:8787; drop --
 tailscale funnel --bg 8787                  # or: cloudflared tunnel --url http://127.0.0.1:8787
 ```
 
-Keep the server and the tunnel in a terminal or tmux. Then add a connector in Grok Bot with the
+Keep the server and the tunnel in a terminal or tmux, or run the server as a background service
+(below). Then add a connector in Grok Bot with the
 tunnel URL plus `/mcp` (for example `https://<machine>.<tailnet>.ts.net/mcp`) and the header
 `Authorization: Bearer <token>`. `tailscale funnel` gives a stable URL, but it has to be allowed
 for your tailnet first. A `cloudflared` quick tunnel gets a new URL on every start. Read "Remote
 MCP over HTTP" in [SECURITY.md](SECURITY.md) first.
+
+#### Running the server as a background service
+
+A service starts the server on its own and brings it back after a crash. On macOS the LaunchAgent
+below starts when you log in and runs while you stay logged in. On Linux the user unit can also
+start at boot without a login (see linger below). Neither file below holds a secret: the session and the bearer token stay in the Keychain or the Secret Service, and the server
+reads them when it starts. The tunnel has to stay up as well: `tailscale funnel --bg` keeps running
+by itself, a `cloudflared` quick tunnel does not.
+
+Both files need the paths that `command -v telegram` and, after an npm install, `command -v node`
+print. The npm build of `telegram` is a Node script, and a service starts with a short `PATH`
+without Homebrew's or nvm's directories, so without the right `PATH` it exits with
+`env: node: No such file or directory`.
+
+**macOS (launchd).** Save this as `~/Library/LaunchAgents/com.better-tg-cli.mcp.plist`, with your
+path to `telegram` in `ProgramArguments`, the directory of `node` in `PATH`, and your user name
+(`id -un`) where `you` is (launchd expands neither `~` nor `$HOME`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.better-tg-cli.mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/telegram</string>
+    <string>mcp</string>
+    <string>--http</string>
+    <string>--read-only</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>TG_NO_UPDATE_CHECK</key>
+    <string>1</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.better-tg-cli.mcp.plist
+launchctl print gui/$(id -u)/com.better-tg-cli.mcp | grep -E 'state|last exit'
+launchctl kickstart -k gui/$(id -u)/com.better-tg-cli.mcp   # restart
+launchctl bootout gui/$(id -u)/com.better-tg-cli.mcp        # stop and unload
+```
+
+`KeepAlive` with `SuccessfulExit` false restarts the server whenever it fails or is killed. If macOS
+asks for Keychain access on the first start, allow it.
+
+**Linux (systemd user unit).** Save this as `~/.config/systemd/user/better-tg-cli-mcp.service`, with
+the directories of `telegram` and `node` in `PATH`:
+
+```ini
+[Unit]
+Description=Better-TG-CLI MCP server over HTTP
+After=network-online.target
+
+[Service]
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=TG_NO_UPDATE_CHECK=1
+ExecStart=/usr/bin/env telegram mcp --http --read-only
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now better-tg-cli-mcp.service
+systemctl --user status better-tg-cli-mcp.service
+journalctl --user -u better-tg-cli-mcp.service -f
+```
+
+The unit runs while you are logged in. `sudo loginctl enable-linger "$USER"` starts it at boot and
+keeps it after you log out, but it does not unlock the keyring. If the Secret Service is missing or
+locked for the service, the server exits with "The HTTP server needs a secret store for its token",
+and systemd starts it again 5 seconds later. To see which secret store the service finds, run
+`telegram check` with the unit's environment.
+
+Where the service has no Secret Service (a headless server, say), use the 1Password store. Log in
+once with `telegram auth --op-vault <vault>` under the same profile, put the directory of `op` in
+the unit's `PATH`, and keep `OP_SERVICE_ACCOUNT_TOKEN=…` in a file only you can read (mode 0600),
+loaded with `EnvironmentFile=%h/.config/tg/mcp.env` in `[Service]`. That token is a secret, so it
+stays out of the unit file.
+
+After `telegram mcp --rotate-token`, restart the service (`launchctl kickstart -k …` or
+`systemctl --user restart better-tg-cli-mcp`): the running server keeps the old token until then.
 
 ## FAQ
 
