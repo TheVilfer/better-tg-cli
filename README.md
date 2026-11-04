@@ -189,8 +189,10 @@ The session is stored in the macOS Keychain (service `tg-cli`), or in 1Password 
 `--op-vault <vault>`. `telegram logout` removes it. On Linux it goes to the Secret Service (GNOME
 Keyring, KWallet, KeePassXC) through `secret-tool`, which needs the `libsecret-tools` package. A
 session already saved in the config file moves there automatically. Without any secret store, the
-session is kept in `~/.config/tg/config.json5` (mode 0600) and write commands stay disabled.
-On Linux, `write-access on` is confirmed at a terminal prompt. On Windows the secrets live in
+session is kept in `~/.config/tg/config.json5` (mode 0600). On Linux without a working Secret
+Service (no `secret-tool` or no session bus, as on cloud agent computers) the write mode is then kept
+in a plain file in the profile too, which guards against mistakes, not against an agent that can
+edit files. On Linux, `write-access on` is confirmed at a terminal prompt. On Windows the secrets live in
 `%APPDATA%\tg\secrets.dpapi`, encrypted with DPAPI for your Windows user (only you on this machine
 can decrypt it), and `write-access on` asks in a Yes/No window when there's no terminal.
 

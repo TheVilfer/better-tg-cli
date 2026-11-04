@@ -188,7 +188,9 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 `telegram logout` её удаляет. На Linux сессия хранится в Secret Service (GNOME Keyring, KWallet,
 KeePassXC) через `secret-tool`, для этого нужен пакет `libsecret-tools`. Сессия, которая уже лежит
 в конфиге, переедет туда сама. Если хранилища секретов нет, сессия лежит в
-`~/.config/tg/config.json5` (права 0600), а запись остаётся выключенной. На Linux
+`~/.config/tg/config.json5` (права 0600). На Linux без работающего Secret Service (нет `secret-tool`
+или сессионной шины, как на облачных компьютерах агентов) режим записи тогда тоже хранится в
+обычном файле профиля: это защита от ошибок, но не от агента, который может править файлы. На Linux
 `write-access on` подтверждается в терминале. На Windows секреты лежат в
 `%APPDATA%\tg\secrets.dpapi`, зашифрованные DPAPI для вашего пользователя Windows (расшифровать их
 можете только вы на этой машине), а `write-access on` без терминала спрашивает в окне «Да/Нет».

@@ -8,6 +8,7 @@ import { Command } from 'commander';
 import { isMock, profile } from './paths.js';
 import { startMcpServer } from './mcp.js';
 import { mcpToken, startMcpHttpServer } from './mcp-http.js';
+import { isSecretStoreAvailable } from './secrets.js';
 import { BACKGROUND_CHECK_COMMAND, maybeNotifyUpdate, runBackgroundCheck } from './update.js';
 import {
   authCommand,
@@ -233,7 +234,9 @@ program
     if (options.token || options.rotateToken) {
       const token = mcpToken({ create: true, rotate: options.rotateToken });
       if (!token) {
-        console.error('No secret store for the token (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).');
+        console.error(isSecretStoreAvailable()
+          ? 'Could not save the token in the secret store; the previous token, if any, is unchanged.'
+          : 'No secret store for the token (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).');
         process.exit(1);
       }
       console.log(token);

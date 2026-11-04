@@ -196,8 +196,10 @@ La sesión se guarda en el Keychain de macOS (servicio `tg-cli`) o en 1Password 
 `--op-vault <vault>`. `telegram logout` la elimina. En Linux va al Secret Service (GNOME Keyring,
 KWallet, KeePassXC) a través de `secret-tool`, que necesita el paquete `libsecret-tools`. Una sesión
 ya guardada en el archivo de configuración se traslada allí automáticamente. Sin ningún almacén de
-secretos, la sesión se guarda en `~/.config/tg/config.json5` (modo 0600) y los comandos de escritura
-siguen desactivados. En Linux, `write-access on` se confirma en un prompt del terminal. En Windows los
+secretos, la sesión se guarda en `~/.config/tg/config.json5` (modo 0600). En Linux sin un Secret
+Service que funcione (sin `secret-tool` o sin bus de sesión, como en los ordenadores de agentes en la
+nube) el modo de escritura también se guarda en un archivo normal del perfil, que protege de errores
+pero no de un agente que pueda editar archivos. En Linux, `write-access on` se confirma en un prompt del terminal. En Windows los
 secretos se guardan en `%APPDATA%\tg\secrets.dpapi`, cifrados con DPAPI para tu usuario de Windows
 (solo tú puedes descifrarlos en esta máquina), y `write-access on` pregunta en una ventana Sí/No
 cuando no hay terminal.
