@@ -319,6 +319,9 @@ Linux. Por favor, informa de los problemas en los issues.
 **¿Puedo usarlo desde Grok Bot, ChatGPT u otro agente en la nube?**
 Los agentes en la nube no pueden iniciar un programa en tu ordenador, así que ejecuta el servidor MCP por HTTP y accede a él a través de un túnel. Consulta [Grok Bot](#grok-bot-mcp-remoto-por-http).
 
+**¿Cómo permito escribir en Grok Bot u otro agente en la nube?**
+Tras `telegram onboard` ya está en modo `ask`: el agente te pregunta en el chat antes de cada escritura. Si dice que la escritura está desactivada, pídele que ejecute `telegram write-access ask`; ahí funciona tal cual. Solo `telegram write-access on --for 1h` (sin preguntar) necesita tu elección: esos ordenadores no tienen almacén de secretos ni una terminal para ti, así que abre una página en el navegador del propio agente donde eliges. Ejecutarlo en tu terminal no sirve: cambia la CLI de tu ordenador, no la del agente. El agente no debe intentar instalar un llavero allí: sin sesión de escritorio no funciona. En esos ordenadores el ajuste está en un archivo normal, que protege de errores pero no de un agente malicioso.
+
 **El inicio de sesión falla con «NetSocket was closed» en un ordenador en la nube (Grok Bot y otros).**
 Algunos ordenadores de agentes en la nube solo dejan salir HTTPS, y eso corta el transporte TCP de Telegram. La CLI cambia entonces sola a MTProto sobre WebSocket (`wss://*.web.telegram.org`, el transporte de web.telegram.org) y lo recuerda para el perfil. `TG_TRANSPORT=tcp|wss|auto` elige el transporte a mano.
 

@@ -83,7 +83,8 @@ async function chooseOnPage(open: boolean) {
     site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
     emit: e => {
       if (e.event === 'url') {
-        console.log(`Ask the user to open this page and choose what you may do (it stays on this computer): ${e.url}`);
+        console.log(`Ask the user to open this page and choose what you may do: ${e.url}`);
+        console.log('It is on 127.0.0.1 of this computer, so it opens in this computer\'s browser (on a cloud agent: the one the user watches), not in a browser on the user\'s own machine. Waiting up to 10 minutes…');
         if (open) openBrowser(e.url);
       }
     },
