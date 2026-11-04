@@ -311,8 +311,9 @@ MCP over HTTP" in [SECURITY.md](SECURITY.md) first.
 
 #### Running the server as a background service
 
-A service brings the server back after a crash, a logout or a reboot. Neither file below holds a
-secret: the session and the bearer token stay in the Keychain or the Secret Service, and the server
+A service starts the server on its own and brings it back after a crash. On macOS the LaunchAgent
+below starts when you log in and runs while you stay logged in. On Linux the user unit can also
+start at boot without a login (see linger below). Neither file below holds a secret: the session and the bearer token stay in the Keychain or the Secret Service, and the server
 reads them when it starts. The tunnel has to stay up as well: `tailscale funnel --bg` keeps running
 by itself, a `cloudflared` quick tunnel does not.
 
@@ -397,12 +398,17 @@ systemctl --user status better-tg-cli-mcp.service
 journalctl --user -u better-tg-cli-mcp.service -f
 ```
 
-The unit runs while you are logged in; `sudo loginctl enable-linger "$USER"` keeps it running after
-you log out. After a reboot the keyring stays locked until you log in, and until then the server
-restarts every 5 seconds. A server without a desktop session has no Secret Service at all, and the
-server exits with "The HTTP server needs a secret store for its token": use the 1Password store
-there (`--op-vault`, see [Log in](#log-in)), with `OP_SERVICE_ACCOUNT_TOKEN` in a separate
-`EnvironmentFile=` readable only by you (mode 0600), since that token is a secret.
+The unit runs while you are logged in. `sudo loginctl enable-linger "$USER"` starts it at boot and
+keeps it after you log out, but it does not unlock the keyring. If the Secret Service is missing or
+locked for the service, the server exits with "The HTTP server needs a secret store for its token",
+and systemd starts it again 5 seconds later. To see which secret store the service finds, run
+`telegram check` with the unit's environment.
+
+Where the service has no Secret Service (a headless server, say), use the 1Password store. Log in
+once with `telegram auth --op-vault <vault>` under the same profile, put the directory of `op` in
+the unit's `PATH`, and keep `OP_SERVICE_ACCOUNT_TOKEN=…` in a file only you can read (mode 0600),
+loaded with `EnvironmentFile=%h/.config/tg/mcp.env` in `[Service]`. That token is a secret, so it
+stays out of the unit file.
 
 After `telegram mcp --rotate-token`, restart the service (`launchctl kickstart -k …` or
 `systemctl --user restart better-tg-cli-mcp`): the running server keeps the old token until then.

@@ -291,8 +291,10 @@ para tu tailnet. Un túnel rápido de `cloudflared` obtiene una URL nueva en cad
 
 #### El servidor como servicio en segundo plano
 
-Un servicio vuelve a levantar el servidor tras un fallo, un cierre de sesión o un reinicio. Ninguno
-de los archivos de abajo guarda secretos: la sesión y el token bearer siguen en el Keychain o en el
+Un servicio arranca el servidor por sí solo y lo vuelve a levantar tras un fallo. En macOS el
+LaunchAgent de abajo arranca al iniciar sesión y funciona mientras sigues con la sesión iniciada. En
+Linux la unidad de usuario también puede arrancar al encender, sin iniciar sesión (ver linger
+abajo). Ninguno de los archivos de abajo guarda secretos: la sesión y el token bearer siguen en el Keychain o en el
 Secret Service, y el servidor los lee al arrancar. El túnel también tiene que seguir activo:
 `tailscale funnel --bg` sigue funcionando por sí solo, un túnel rápido de `cloudflared` no.
 
@@ -378,13 +380,17 @@ systemctl --user status better-tg-cli-mcp.service
 journalctl --user -u better-tg-cli-mcp.service -f
 ```
 
-La unidad funciona mientras tienes la sesión iniciada; `sudo loginctl enable-linger "$USER"` la
-mantiene después de cerrarla. Tras un reinicio el llavero sigue bloqueado hasta que inicias sesión, y
-hasta entonces el servidor se reinicia cada 5 segundos. Un servidor sin sesión de escritorio no
-tiene Secret Service, y el servidor termina con "The HTTP server needs a secret store for its token":
-ahí usa el almacén de 1Password (`--op-vault`, ver [Inicio de sesión](#inicio-de-sesión)), con
-`OP_SERVICE_ACCOUNT_TOKEN` en un `EnvironmentFile=` aparte que solo tú puedas leer (modo 0600), porque
-ese token es un secreto.
+La unidad funciona mientras tienes la sesión iniciada. `sudo loginctl enable-linger "$USER"` la
+arranca al encender y la mantiene tras cerrar sesión, pero no desbloquea el llavero. Si el servicio
+no tiene Secret Service o está bloqueado, el servidor termina con "The HTTP server needs a secret
+store for its token" y systemd lo vuelve a arrancar 5 segundos después. Para ver qué almacén de
+secretos encuentra el servicio, ejecuta `telegram check` con el entorno de la unidad.
+
+Si el servicio no tiene Secret Service (por ejemplo, en un servidor sin escritorio), usa el almacén
+de 1Password. Inicia sesión una vez con `telegram auth --op-vault <vault>` en el mismo perfil, añade
+el directorio de `op` al `PATH` de la unidad y guarda `OP_SERVICE_ACCOUNT_TOKEN=…` en un archivo que
+solo tú puedas leer (modo 0600), cargado con `EnvironmentFile=%h/.config/tg/mcp.env` en
+`[Service]`. Ese token es un secreto, así que no va en la unidad.
 
 Tras `telegram mcp --rotate-token`, reinicia el servicio (`launchctl kickstart -k …` o
 `systemctl --user restart better-tg-cli-mcp`): hasta entonces el servidor en marcha acepta el token
