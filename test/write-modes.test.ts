@@ -221,15 +221,21 @@ describe('the file fallback', () => {
 });
 
 describe('choosing a mode', () => {
-  it('asks the person where there is a terminal or dialog, and keeps read-only on a no', async () => {
+  it('"on" asks the person where there is a terminal or dialog, and keeps read-only on a no', async () => {
     human.channel = true;
     human.answer = false;
-    expect(await applyModeChoice({ mode: 'ask', forSeconds: 3600 })).toEqual({ ok: false, error: 'not_confirmed' });
-    expect(human.asked[0]).toMatch(/одобрения каждого действия/);
+    expect(await applyModeChoice({ mode: 'on', forSeconds: 3600 })).toEqual({ ok: false, error: 'not_confirmed' });
+    expect(human.asked[0]).toMatch(/без вопросов/);
     expect(getWriteValue()).toBeNull();
     human.answer = true;
-    expect((await applyModeChoice({ mode: 'ask', forSeconds: 3600 })).ok).toBe(true);
+    expect((await applyModeChoice({ mode: 'on', forSeconds: 3600 })).ok).toBe(true);
+    expect(parseWriteState(getWriteValue()).mode).toBe('on');
+  });
+
+  it('"ask" needs no dialog anywhere: the yes in the chat before each write is the confirmation', async () => {
+    expect((await applyModeChoice({ mode: 'ask' })).ok).toBe(true); // secret store, no terminal
     expect(parseWriteState(getWriteValue()).mode).toBe('ask');
+    expect(human.asked).toEqual([]);
   });
 
   it('never takes a page click alone where the mode is protected (a secret store but no terminal)', async () => {

@@ -19,7 +19,9 @@ function humanSpan(seconds: number): string {
 }
 
 /**
- * Saves a write mode. Read-only needs nobody's permission. Anything else needs the person:
+ * Saves a write mode. Read-only and "ask" need nobody's permission: in "ask" nothing is sent until
+ * the user says yes in the chat to that exact action, so that yes is the gate. "on" (no questions)
+ * needs the person:
  * - `alreadyConfirmed`: the caller asked them already (`write-access` at a terminal or in a dialog);
  * - a terminal or an OS dialog: asked here, so a click on a page the agent can reach is not enough;
  * - neither, and no secret store: the click on the local page is taken as is, because there the
@@ -31,7 +33,7 @@ export async function applyModeChoice(choice: ModeChoice, options: { alreadyConf
     deleteWriteValue();
     return { ok: true };
   }
-  if (!options.alreadyConfirmed) {
+  if (choice.mode === 'on' && !options.alreadyConfirmed) {
     if (hasHumanChannel()) {
       if (!(await confirmByHuman(modeQuestion(choice.mode, choice.forSeconds)))) return { ok: false, error: 'not_confirmed' };
     } else if (!mayTrustUnconfirmedChoice()) {

@@ -29,7 +29,7 @@ export interface OnboardState {
   hint?: string;
   error?: string;
   user?: LoginUser;
-  /** The write mode saved on the page (step done) */
+  /** The write mode in effect: the default after the login, then the one picked on the page */
   mode?: WriteMode;
   /** Only the mode step is shown: `write-access` without a terminal, not a login */
   modeOnly?: boolean;
@@ -72,6 +72,8 @@ export interface OnboardOptions {
   applyMode?(choice: ModeChoice): Promise<ModeResult>;
   /** Skip the login and show only the mode step */
   modeOnly?: boolean;
+  /** What the profile is set to right after the login, before (or without) a choice on the page */
+  defaultMode?: WriteMode;
 }
 
 export interface OnboardSession {
@@ -115,7 +117,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
 
   const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined }, patch);
 
-  function finish(mode?: WriteMode): void {
+  function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : options.defaultMode): void {
     if (modeTimer) clearTimeout(modeTimer);
     set({ step: 'done', mode, qrSvg: undefined });
     options.emit({ event: 'done', ...(state.user ? { user: state.user } : {}), ...(mode ? { mode } : {}) });
@@ -153,7 +155,8 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
         signal: abort.signal,
       });
       options.save(result.session, creds, creds.invite);
-      set({ user: result.user });
+      set({ user: result.user, mode: options.defaultMode });
+      if (options.applyMode && options.defaultMode) await options.applyMode({ mode: options.defaultMode });
       if (options.applyMode) {
         options.emit({ event: 'logged_in', user: result.user });
         askMode();

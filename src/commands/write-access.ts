@@ -14,12 +14,22 @@ const UNPROTECTED_NOTE =
   'It guards against mistakes, not against a hostile agent.';
 
 export const writeAccessCommand = new Command('write-access')
-  .description('Manage write access: read-only (default), ask (the user approves each write) or on. Changing it needs the user\'s confirmation')
+  .description('Manage write access: read-only, ask (the user approves each write in the chat; set after onboarding) or on (no questions; needs the user\'s confirmation)')
   .argument('[action]', 'ask, on, off, or omit to show status')
   .option('--for <duration>', 'With "ask" or "on": back to read-only automatically after 30m / 2h / 1d / 1w')
   .option('--no-open', 'Without a terminal or dialog: print the page URL instead of opening a browser')
   .action(async (action: string | undefined, options: { for?: string; open: boolean }) => {
-    if (action === 'on' || action === 'ask') {
+    if (action === 'ask') {
+      // No dialog: in "ask" every write waits for the user's yes in the chat, which is the confirmation
+      const result = await applyModeChoice({ mode: 'ask', forSeconds: options.for ? parseForDuration(options.for) : undefined });
+      if (!result.ok) {
+        console.error(chalk.red(`Write access unchanged (${result.error}).`));
+        process.exit(1);
+      }
+      console.log(chalk.green(`Write access: ${currentModeLine()}.`));
+      console.log(chalk.gray('Before every send, show the user the exact action and wait for their yes in the chat.'));
+      if (!isWriteModeProtected()) console.log(chalk.gray(UNPROTECTED_NOTE));
+    } else if (action === 'on') {
       const forSeconds = options.for ? parseForDuration(options.for) : undefined;
       let result;
       if (hasHumanChannel()) {
@@ -49,7 +59,7 @@ export const writeAccessCommand = new Command('write-access')
       console.log(state.mode === 'read-only' ? chalk.yellow(line) : chalk.green(line));
       if (!isWriteModeProtected()) console.log(chalk.gray(UNPROTECTED_NOTE));
       if (state.mode === 'read-only') {
-        console.log(chalk.gray('To allow writes (asks the user to confirm): telegram write-access ask (approve each write) | on [--for 1h]'));
+        console.log(chalk.gray('To allow writes: telegram write-access ask (the user approves each one in the chat) | on [--for 1h] (no questions, the user confirms)'));
       }
     } else {
       console.error(chalk.red(`Unknown action: ${action}`));

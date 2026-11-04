@@ -69,6 +69,8 @@ export const onboardCommand = new Command('onboard')
       emit,
       site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
       applyMode: choice => applyModeChoice(choice),
+      // Writes are possible right away, each one after the user's yes in the chat; the page can change it
+      defaultMode: 'ask',
     });
     if (opts.open) openBrowser(session.url);
 

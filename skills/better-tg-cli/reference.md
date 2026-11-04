@@ -84,18 +84,19 @@ code. This file only covers behaviour that the flag list can't tell you.
 
 ## Writing (needs write access; every write goes to `~/.config/tg/audit.jsonl`)
 
-- Three modes: read-only (default), `ask` (the user approves each write) and `on` (no questions).
-  `write-access ask|on [--for 30m|2h|1d]` asks the user: a y/N prompt on a terminal, otherwise a
-  macOS or Windows dialog (it times out as "no" after 2 minutes). `--for` goes back to read-only
-  automatically. `write-access off` needs no confirmation. `telegram onboard` ends with the same
-  choice on its page. The mode lives in the secret store, not in the config file.
+- Three modes: read-only, `ask` (the user approves each write in the chat; set by `telegram onboard`)
+  and `on` (no questions). `write-access ask [--for …]` needs no confirmation, since every write
+  then waits for the user's yes. `write-access on [--for 30m|2h|1d]` asks the user: a y/N prompt on a
+  terminal, otherwise a macOS or Windows dialog (it times out as "no" after 2 minutes). `--for`
+  goes back to read-only automatically. `write-access off` needs no confirmation. The `onboard`
+  page lets the user pick another mode. The mode lives in the secret store, not in the config file.
 - In mode `ask` a write exits with code 3 and prints the action and a code (with `--json`, a line
   `{"error":"approval_required","code":…,"action":…}` on stdout). After the user says yes to that
   exact action, rerun it with `TG_APPROVE=<code>`. The code works once, for 10 minutes, and only for
   the same arguments and stdin text.
 - Without a secret store (cloud agent computers, headless Linux) the mode is kept in a 0600 file in
   the profile and labelled "unprotected": an agent could edit it, just as it can read the session
-  file there. Without a terminal, `write-access ask|on` there opens a local page for the user.
+  file there. Without a terminal, `write-access on` there opens a local page for the user.
 
 - Pass `-` as the text argument (`send`, `reply`, `edit`, `send-file -c`) to read the text from
   stdin: `printf '%s' "$text" | telegram send @user -`. This avoids shell quoting problems.
@@ -395,9 +396,9 @@ matches titles.
   skills folders; only run it when the user asks.
   Never install `@skillhq/telegram` from npm: it is the old GramJS build, and bot replies show
   as `(no text)`.
-- `Write access is disabled`: the account is read-only on purpose, or a `--for` window expired. Ask
-  the user, then run `telegram write-access ask` or `telegram write-access on --for 1h`; they confirm
-  it in a dialog.
+- `Write access is disabled`: the profile is read-only, or a `--for` window expired. Run
+  `telegram write-access ask`, then ask the user before each write. `on` only when the user asks for
+  it; they confirm it in a dialog.
 - `Approval needed` (exit 3): mode `ask`. Show the action to the user, and after a yes rerun with
   `TG_APPROVE=<code>`.
 - `FLOOD_WAIT` (rate limit): waits of up to 60 s are retried automatically, and stderr says

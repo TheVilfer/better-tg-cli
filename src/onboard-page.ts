@@ -29,8 +29,8 @@ const en = {
   modeTitle: 'What may your agent do in Telegram?',
   modeH: 'Last step. What may the agent do?',
   modeNote: 'You can change this later with telegram write-access.',
-  roName: 'Read only', roNote: 'Reads and searches. To send anything, it asks you to change this setting. Recommended to start.',
-  askName: 'Ask me each time', askNote: 'Before each message or action, the agent shows it to you in the chat and waits for your yes. A convenience, not a lock: an agent that ignores its instructions could approve on its own.',
+  roName: 'Read only', roNote: 'Reads and searches only.',
+  askName: 'Ask me each time (recommended)', askNote: 'Before each message or action, the agent shows it to you in the chat and sends only after your yes. It relies on the agent following its instructions.',
   onName: 'Write freely', onNote: 'Sends, edits and deletes without asking. Only for an agent you trust: a message it reads could talk it into posting as you.',
   forLabel: 'For', forAlways: 'until I change it', for1h: '1 hour', for1d: '1 day', for1w: '1 week',
   save: 'Save',
@@ -69,8 +69,8 @@ const es: Strings = {
   modeTitle: '¿Qué puede hacer tu agente en Telegram?',
   modeH: 'Último paso. ¿Qué puede hacer el agente?',
   modeNote: 'Puedes cambiarlo más tarde con telegram write-access.',
-  roName: 'Solo lectura', roNote: 'Lee y busca. Para enviar algo, te pide que cambies este ajuste. Recomendado para empezar.',
-  askName: 'Preguntarme cada vez', askNote: 'Antes de cada mensaje o acción, el agente te lo muestra en el chat y espera tu sí. Es una comodidad, no un candado: un agente que ignore sus instrucciones podría aprobarlo solo.',
+  roName: 'Solo lectura', roNote: 'Solo lee y busca.',
+  askName: 'Preguntarme cada vez (recomendado)', askNote: 'Antes de cada mensaje o acción, el agente te lo muestra en el chat y solo lo envía tras tu sí. Depende de que el agente siga sus instrucciones.',
   onName: 'Escribir libremente', onNote: 'Envía, edita y borra sin preguntar. Solo para un agente de confianza: un mensaje que lea podría convencerlo de publicar en tu nombre.',
   forLabel: 'Durante', forAlways: 'hasta que lo cambie', for1h: '1 hora', for1d: '1 día', for1w: '1 semana',
   save: 'Guardar',
@@ -107,8 +107,8 @@ const ru: Strings = {
   modeTitle: 'Что агенту можно делать в Telegram?',
   modeH: 'Последний шаг. Что можно агенту?',
   modeNote: 'Это можно поменять потом командой telegram write-access.',
-  roName: 'Только чтение', roNote: 'Читает и ищет. Чтобы что-то отправить, попросит вас поменять эту настройку. Лучший вариант для начала.',
-  askName: 'Спрашивать каждый раз', askNote: 'Перед каждым сообщением или действием агент показывает его вам в чате и ждёт вашего «да». Это удобство, а не замок: агент, который не слушается инструкций, может одобрить сам.',
+  roName: 'Только чтение', roNote: 'Только читает и ищет.',
+  askName: 'Спрашивать каждый раз (рекомендуем)', askNote: 'Перед каждым сообщением или действием агент показывает его вам в чате и отправляет только после вашего «да». Держится на том, что агент слушается инструкций.',
   onName: 'Писать без вопросов', onNote: 'Отправляет, правит и удаляет, не спрашивая. Только для агента, которому вы доверяете: прочитанное сообщение может уговорить его написать от вашего имени.',
   forLabel: 'На', forAlways: 'пока не поменяю', for1h: '1 час', for1d: '1 день', for1w: '1 неделю',
   save: 'Сохранить',
@@ -198,8 +198,8 @@ select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:
 
 <section id="mode" hidden>
   <h2 data-t="modeH"></h2><p data-t="modeNote"></p>
-  <label class="opt"><input type="radio" name="mode" value="read-only" checked><b data-t="roName"></b><small data-t="roNote"></small></label>
-  <label class="opt"><input type="radio" name="mode" value="ask"><b data-t="askName"></b><small data-t="askNote"></small></label>
+  <label class="opt"><input type="radio" name="mode" value="read-only"><b data-t="roName"></b><small data-t="roNote"></small></label>
+  <label class="opt"><input type="radio" name="mode" value="ask" checked><b data-t="askName"></b><small data-t="askNote"></small></label>
   <label class="opt"><input type="radio" name="mode" value="on"><b data-t="onName"></b><small data-t="onNote"></small></label>
   <p id="forrow" hidden><span data-t="forLabel"></span><select id="for"><option value="" data-t="forAlways"></option><option value="1h" data-t="for1h"></option><option value="1d" data-t="for1d"></option><option value="1w" data-t="for1w"></option></select></p>
   <button id="modego" data-t="save"></button>
@@ -249,12 +249,13 @@ for (const r of document.querySelectorAll('input[name=mode]')) r.onchange = () =
 const MODE_NAMES = { 'read-only': 'roName', ask: 'askName', on: 'onName' };
 $('modego').onclick = () => act('mode', { mode: picked(), for: picked() === 'read-only' ? '' : $('for').value }, $('modego'));
 
-let last = '', timer;
+let last = '', timer, modeSeeded = false;
 async function poll() {
   let s;
   try { s = await (await fetch(base + 'state', { cache: 'no-store' })).json(); }
   catch { msg(L.gone); clearInterval(timer); return; }
   for (const id of ['invite', 'connecting', 'scan', 'password', 'mode', 'done', 'error']) $(id).hidden = s.step !== id;
+  if (s.step === 'mode' && !modeSeeded && s.mode) { const r = document.querySelector('input[name=mode][value="' + s.mode + '"]'); if (r) r.checked = true; $('forrow').hidden = s.mode === 'read-only'; modeSeeded = true; }
   if (s.modeOnly) { document.title = L.modeTitle; document.querySelector('h1').textContent = L.modeTitle; document.querySelector('h1 + p').hidden = true; }
   // qrSvg is rendered by this local CLI from the Telegram login token, not taken from any site
   if (s.step === 'scan' && s.qrSvg !== last) { $('qr').innerHTML = s.qrSvg; last = s.qrSvg; }

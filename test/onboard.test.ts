@@ -193,18 +193,20 @@ describe('rpcCode', () => {
       return { choices, applyMode: async (c: unknown) => { choices.push(c); return answer; } };
     };
 
-    it('asks after the login, then sends done with the mode (the agent still waits for done)', async () => {
+    it('sets the default mode at the login, lets the page change it, then sends done', async () => {
       const m = modes({ ok: true });
-      const { events, post, until } = await start({}, { applyMode: m.applyMode });
+      const { events, post, until } = await start({}, { applyMode: m.applyMode, defaultMode: 'ask' });
       await post('invite', { invite: 'tok' });
       const s = await until('mode');
       expect(s.user).toMatchObject({ username: 'alice' });
+      expect(s.mode).toBe('ask'); // already in effect; the page preselects it
+      expect(m.choices).toEqual([{ mode: 'ask' }]);
       expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'logged_in', 'waiting_mode']);
-      expect((await post('mode', { mode: 'ask', for: '1d' })).status).toBe(202);
-      expect(m.choices).toEqual([{ mode: 'ask', forSeconds: 86_400 }]);
-      expect((await until('done')).mode).toBe('ask');
+      expect((await post('mode', { mode: 'read-only', for: '' })).status).toBe(202);
+      expect(m.choices).toEqual([{ mode: 'ask' }, { mode: 'read-only', forSeconds: undefined }]);
+      expect((await until('done')).mode).toBe('read-only');
       expect(events.slice(-2).map(e => e.event)).toEqual(['mode', 'done']);
-      await expect(session!.done).resolves.toMatchObject({ mode: 'ask', user: { username: 'alice' } });
+      await expect(session!.done).resolves.toMatchObject({ mode: 'read-only', user: { username: 'alice' } });
     });
 
     it('stays on the step when the person declines the dialog, and says so', async () => {

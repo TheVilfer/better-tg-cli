@@ -58,10 +58,10 @@ Un fork de [skillhq/telegram](https://github.com/skillhq/telegram), rehecho para
 - **Lecturas exactas.** Paginación real para `--since/--until`, `--unread`, hilos y comentarios de
   canales, temas de foros, `get` por ID, filtros de búsqueda por tipo, remitente o fecha, y `me` /
   `Избранное` para los Mensajes guardados.
-- **Seguro por defecto.** La cuenta es de solo lectura hasta que una persona ejecuta
-  `write-access on [--for 1h]` y lo confirma en un prompt del terminal o en un diálogo de macOS, así
-  que un agente no puede activarlo por su cuenta. Cada escritura se registra en
-  `~/.config/tg/audit.jsonl`. Los secretos se guardan en el Keychain de macOS, en el Secret Service
+- **Tú apruebas cada mensaje.** Tras iniciar sesión, el agente te pregunta en el chat antes de
+  cada envío, edición o borrado y te muestra el texto exacto; solo envía tras tu sí. Escribir sin
+  preguntar (`write-access on`) requiere tu propia confirmación en un terminal o en un diálogo de
+  macOS. Cada escritura se registra en `~/.config/tg/audit.jsonl`. Los secretos se guardan en el Keychain de macOS, en el Secret Service
   de Linux o en 1Password.
 - **Pequeño y autónomo.** El paquete de npm es un único archivo de 0,3 MB sin dependencias en tiempo
   de ejecución. Homebrew instala un binario independiente que no necesita Node.
@@ -213,7 +213,7 @@ telegram get "Chat" 812 813                   # mensajes exactos por ID
 telegram download "Chat" 812                  # guarda el archivo adjunto
 telegram sync --chat "Chat" --output ./export --resume   # exportación incremental a markdown
 
-telegram write-access ask                     # lo confirma una persona; luego cada escritura espera su sí
+telegram write-access ask                     # cada escritura espera tu sí en el chat (por defecto tras onboard)
 telegram write-access on --for 1h             # o: escribir sin preguntar durante una hora
 telegram send @alice "on my way"
 printf '%s' "$text" | telegram send @alice -  # texto largo o de varias líneas: desde stdin, sin problemas de comillas
@@ -297,7 +297,7 @@ Usar tu propia cuenta desde un cliente de terceros está permitido por los [tér
 No. Inicia sesión como tú por MTProto, igual que Telegram Desktop, y ve exactamente lo que ves tú. Los bots no pueden leer tus chats; esto sí.
 
 **¿Puede un agente enviar mensajes por su cuenta?**
-Solo después de que lo permitas. `telegram write-access ask` (apruebas cada escritura en el chat o en el diálogo de tu cliente MCP) o `telegram write-access on` (sin preguntas) te pide que lo confirmes en el terminal o en un diálogo de macOS, algo que un agente no puede responder. El último paso de `telegram onboard` ofrece la misma elección. A partir de ahí, las escrituras necesitan un chat exacto y cada una queda registrada. Por MCP, escribir es una herramienta aparte que los clientes pueden pedirte que apruebes cada vez. Los detalles están en [SECURITY.md](SECURITY.md).
+No debería. Tras iniciar sesión el perfil está en modo `ask`: antes de cada escritura el agente te muestra en el chat la acción exacta y solo la envía tras tu sí, y el código que recibe por ese sí funciona una vez y solo para ese texto. Por MCP, los clientes que admiten elicitation te preguntan en su propio diálogo. Todo esto depende de que el agente siga sus instrucciones: un agente con una terminal en tu usuario puede leer la sesión del Keychain y actuar en tu nombre, así que dale solo chats de confianza o conéctalo solo por MCP. `write-access on` (sin preguntar) requiere tu confirmación en un terminal o en un diálogo de macOS. Más detalles en [SECURITY.md](SECURITY.md).
 
 **¿Leer marca los mensajes como leídos?**
 No. `read`, `inbox` y `search` dejan los chats sin leer. Solo `telegram mark-read` los marca.

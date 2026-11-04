@@ -27,7 +27,7 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void
   const state = parseWriteState(getWriteValue());
   if (!state.enabled) {
     console.error(chalk.red(`Write access is disabled (${describeWriteState(state)}).`));
-    console.error(chalk.gray('Ask the user to run: telegram write-access ask (approve each write) or telegram write-access on [--for 1h]. Both need their confirmation.'));
+    console.error(chalk.gray('To write, run `telegram write-access ask`: then each write waits for the user\'s yes in the chat. Writing without asking (`write-access on`) needs the user\'s own confirmation.'));
     process.exit(1);
   }
   if (state.mode === 'ask') requireApproval(argv);
