@@ -57,9 +57,10 @@ A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for 
 - **Exact reads.** Real pagination for `--since/--until`, `--unread`, threads and channel
   comments, forum topics, `get` by ID, search filters by type, sender or date, and `me` / `Избранное`
   for Saved Messages.
-- **Safe by default.** The account is read-only until a human runs `write-access on [--for 1h]`
-  and confirms it in a terminal prompt or a macOS dialog, so an agent cannot switch it on itself.
-  Every write is logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
+- **You approve every message.** After login the agent asks you in the chat before each send,
+  edit or delete, and shows the exact text; it sends only after your yes. Writing without asking
+  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Every write is
+  logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
   Linux Secret Service or 1Password.
 - **Small and self-contained.** The npm package is one 0.3 MB file with zero runtime
   dependencies. Homebrew installs a standalone binary with no Node.
@@ -204,16 +205,47 @@ telegram get "Chat" 812 813                   # exact messages by ID
 telegram download "Chat" 812                  # save the attached file
 telegram sync --chat "Chat" --output ./export --resume   # incremental markdown export
 
-telegram write-access on --for 1h             # a human confirms this
+telegram drafts                               # saved but unsent drafts
+telegram admin-log "Team"                     # a group's recent admin actions
+telegram profile-photos @alice                # a user's profile photos
+telegram read @channel -n 20 --full           # every message stat (views, reactions, flags, media)
+telegram stats "Mock News" --graphs           # full channel stats + growth graphs; --message <id> / --story <id> too
+telegram sessions ; telegram stars            # active login sessions; Telegram Stars balance & transactions
+telegram invites "Team" --requests            # a chat's invite links, or its pending join requests
+
+telegram write-access ask                     # each write waits for your yes in the chat (default after onboard)
+telegram write-access on --for 1h             # or: writes without asking, for an hour
 telegram send @alice "on my way"
 printf '%s' "$text" | telegram send @alice -  # long or multi-line text: from stdin, no quoting problems
 telegram reply "Chat" 812 "on it" --silent
 telegram click @SomeBot 4410 "Settings"       # press an inline button
+telegram pin-chat @alice                      # pin a chat; mark-unread / delete-dialog too
+telegram edit-permissions "Team" @alice --mute --until 1d   # restrict a member; --lift to undo
+telegram topic create "Dev Forum" "Release 2.0"            # forum topics: create/edit/close/reopen/pin
+
+telegram api messages.GetAllDrafts            # call any raw TL method (full API reachability)
+telegram api channels.GetAdminLog --params '{"channel":{"_chat":"Team"},"limit":20,"q":""}'
+telegram messages get-history --peer @durov --limit 10      # or a typed command per TL method
+telegram account get-authorizations           # telegram <namespace> --help lists a namespace
+telegram help get-config                      # telegram ping, telegram req-pq, … for root methods
 ```
 
-Read commands take `--json`, and some also take `--markdown`. See all commands with
-`telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
-explain: output shapes, threads, bot buttons, admin commands and troubleshooting.
+Read commands take `--json`, and some also take `--markdown`. `read`/`get`/`search`/`inbox`/`watch`
+take `--full` (alias `--stats`) to include every per-message statistic (views, forwards, full
+reaction breakdown, comments, flags, rich media metadata) — default output is unchanged without it.
+See all commands with `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
+explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
+`telegram api <namespace.Method>` reaches 100% of the Telegram client API, and every one of the 823
+TL methods also has its own typed top-level command `telegram <namespace> <method>` (root methods
+like `telegram ping` too), generated from the schema with the same refusals and read/write guard as
+`api`. Where a namespace name collides with a curated command (`stats`, `stories`, `contacts`,
+`auth`, `folders`, `help`), the curated command is unchanged and the generated methods attach as
+subcommands, picked only when the first word is exactly a method name (quote or use an ID for a
+chat literally named like a method). Each method carries its official description and per-parameter
+docs (from core.telegram.org): `telegram <namespace> --help` lists a namespace's methods marked
+`[read]`/`[write]`/`[refused]`, `telegram <namespace> <method> --help` shows params, an example and
+the docs link, and `telegram schema [<ns> [<method>]]` prints the same as JSON.
+[docs/api-coverage.md](docs/api-coverage.md) tracks coverage against the schema and Telethon.
 
 ## MCP server
 
@@ -458,7 +490,7 @@ Using your own account from a third-party client is allowed by the [Telegram API
 No. It logs in as you over MTProto, like Telegram Desktop, and sees exactly what you see. Bots can't read your chats; this can.
 
 **Can an agent send messages on its own?**
-Only after you turn writes on. `telegram write-access on` asks you to confirm in the terminal or in a macOS dialog, which an agent can't answer. Writes then need an exact chat, and each one is logged. Over MCP, writing is a separate tool that clients can ask you to approve every time. Details are in [SECURITY.md](SECURITY.md).
+Not by design. After login the profile is in mode `ask`: before each write the agent shows you the exact action in the chat and sends only after your yes, and the code it gets for that yes works once, for that exact text. Over MCP, clients that support elicitation ask you in their own dialog instead. This relies on the agent following its instructions: an agent that has a shell on your user account can read the session from the Keychain and act as you, so give such agents only chats you trust, or connect them through MCP only. `write-access on` (no questions) needs your confirmation in a terminal or a macOS dialog. Details are in [SECURITY.md](SECURITY.md).
 
 **Does reading mark messages as read?**
 No. `read`, `inbox` and `search` leave chats unread. Only `telegram mark-read` marks them.
@@ -479,6 +511,12 @@ report problems in the issues.
 
 **Can I use it from Grok Bot, ChatGPT or another cloud agent?**
 Cloud agents can't start a program on your computer, so run the MCP server over HTTP and reach it through a tunnel. See [Grok Bot](#grok-bot-remote-mcp-over-http).
+
+**How do I allow writes on Grok Bot or another cloud agent?**
+After `telegram onboard` it is already in mode `ask`: the agent asks you in the chat before each write. If it says writes are off, ask it to run `telegram write-access ask`; that works there as is. Only `telegram write-access on --for 1h` (no questions) needs your choice: those computers have no secret store and no terminal for you, so it opens a page in the agent's own browser where you choose. Running the command in your own terminal doesn't help: it changes the CLI on your computer, not the agent's. The agent should not try to install a keyring there; it can't work without a desktop session. On such computers the setting sits in a plain file, which protects against mistakes but not against a hostile agent.
+
+**Login fails with "NetSocket was closed" on a cloud computer (Grok Bot and others).**
+Some hosted agent computers let only HTTPS out, which drops Telegram's TCP transport. The CLI then switches to MTProto over WebSocket (`wss://*.web.telegram.org`, the transport of web.telegram.org) by itself and remembers it for the profile. `TG_TRANSPORT=tcp|wss|auto` picks the transport by hand.
 
 **How do I update?**
 Run `telegram update`. It uses the same channel you installed from: Homebrew, npm or a release binary.

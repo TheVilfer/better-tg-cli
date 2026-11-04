@@ -14,6 +14,8 @@ export interface MockWorld {
   users: MockUser[];
   chats: MockChat[];
   folders?: MockFolder[];
+  /** Telegram Stars balance (for `stars`). */
+  stars?: number;
 }
 
 export interface MockUser {
@@ -27,6 +29,8 @@ export interface MockUser {
   mutual?: boolean;
   about?: string;
   blocked?: boolean;
+  /** How many profile photos this user has (for `profile-photos`); synthesized deterministically. */
+  profilePhotos?: number;
   /** Bots only: what the bot answers to a message with exactly this text (e.g. "/start"). */
   commands?: Record<string, MockReply>;
 }
@@ -64,15 +68,40 @@ export interface MockChat {
   role?: 'creator' | 'admin';
   members?: { userId: number; role?: 'creator' | 'admin' }[];
   membersCount?: number;
+  onlineCount?: number;
+  kickedCount?: number;
+  bannedCount?: number;
+  slowModeSeconds?: number;
+  verified?: boolean;
+  scam?: boolean;
+  fake?: boolean;
+  /** This account may view aggregate statistics for this chat (otherwise CHAT_ADMIN_REQUIRED). */
+  stats?: boolean;
   unread?: number;
   readInboxMaxId?: number;
   /** Unix time the chat is muted until. */
   mutedUntil?: number;
   archived?: boolean;
-  topics?: { id: number; title: string; unread?: number; closed?: boolean; pinned?: boolean }[];
+  /** Pinned in the dialog list (for `pin-chat` / `unpin-chat`). */
+  pinnedDialog?: boolean;
+  /** Marked unread with no unread messages (for `mark-unread`). */
+  markedUnread?: boolean;
+  /** A saved but unsent draft message (for `drafts`). */
+  draft?: string;
+  /** Recent admin-log entries (for `admin-log`), newest last. */
+  adminLog?: { id: number; userId: number; action: 'join' | 'leave' | 'title'; prev?: string; now?: string; ago?: number }[];
+  /** Pending join requests (for `invites --requests`). */
+  joinRequests?: { userId: number; about?: string; ago?: number }[];
+  topics?: { id: number; title: string; unread?: number; closed?: boolean; pinned?: boolean; hidden?: boolean }[];
+  /** Default restrictions set by `edit-permissions` (denied right names). */
+  defaultBannedFlags?: string[];
+  /** Per-user restrictions set by `edit-permissions` (channels.EditBanned). */
+  bannedUsers?: { userId: number; flags: string[]; until?: number }[];
   /** Channel → its discussion group (bare ID), where post comments live. */
   linkedChatId?: number;
   messages: MockMessage[];
+  /** Messages queued to send later (listed by `scheduled`). */
+  scheduled?: MockMessage[];
 }
 
 export interface MockMessage {
@@ -93,10 +122,25 @@ export interface MockMessage {
   keyboard?: boolean;
   pinned?: boolean;
   edited?: boolean;
-  reactions?: { userId: number; emoji: string }[];
+  /** A reaction: a standard `emoji`, a `customEmojiId`, or a `paid` (star) reaction. */
+  reactions?: { userId: number; emoji?: string; customEmojiId?: string; paid?: boolean }[];
   /** Comment count shown on a channel post or thread root. */
   replies?: number;
   forwardedFrom?: number;
+  /** --full stats. */
+  views?: number;
+  forwards?: number;
+  viaBotId?: number;
+  /** Album group id (shared by messages in the same album). */
+  groupedId?: number;
+  postAuthor?: string;
+  ttlPeriod?: number;
+  silent?: boolean;
+  noforwards?: boolean;
+  /** A poll attached to this message (for `--full` media detail). */
+  poll?: { question: string; options: { text: string; voters?: number; chosen?: boolean; correct?: boolean }[]; quiz?: boolean; multiple?: boolean; closed?: boolean; totalVoters?: number };
+  /** Unix time this message is scheduled to send (listed by `scheduled`, not in normal history). */
+  scheduledFor?: number;
 }
 
 export interface MockFolder {
@@ -138,7 +182,7 @@ export function seedWorld(): MockWorld {
     me: 1000,
     users: [
       { id: 1000, firstName: 'Mock', lastName: 'Owner', username: 'mock_owner', phone: '15550000000', about: 'The account TG_MOCK logs you in as' },
-      { id: 1001, firstName: 'Alice', lastName: 'Example', username: 'alice_example', phone: '15550000001', contact: true, mutual: true, about: 'Designer. Replies slowly on Fridays.' },
+      { id: 1001, firstName: 'Alice', lastName: 'Example', username: 'alice_example', phone: '15550000001', contact: true, mutual: true, about: 'Designer. Replies slowly on Fridays.', profilePhotos: 2 },
       { id: 1002, firstName: 'Bob', lastName: 'Sample', username: 'bob_sample', contact: true },
       { id: 1003, firstName: 'Carol', phone: '15550000003', contact: true, mutual: true },
       {
@@ -170,12 +214,22 @@ export function seedWorld(): MockWorld {
         kind: 'user',
         unread: 2,
         readInboxMaxId: 3,
+        draft: 'Let us pick the deadline on the call tomorrow',
         messages: [
           { id: 1, ago: 3 * DAY, text: 'Hi! Did you get the mockups?' },
           { id: 2, ago: 3 * DAY - 5 * MIN, out: true, text: 'Yes, looking now', replyTo: 1 },
           { id: 3, ago: 1 * DAY, text: 'Here is the new header', media: { kind: 'photo' } },
           { id: 4, ago: 2 * HOUR, text: 'Can we talk about the deadline tomorrow?' },
-          { id: 5, ago: 25 * MIN, text: 'Ping me when you are free', reactions: [{ userId: 1000, emoji: '👍' }] },
+          { id: 5, ago: 25 * MIN, text: 'Ping me when you are free', edited: true, reactions: [
+            { userId: 1000, emoji: '👍' },
+            { userId: 1002, emoji: '👍' },
+            { userId: 1003, emoji: '❤️' },
+            { userId: 1001, customEmojiId: '5201' },
+            { userId: 1002, paid: true },
+          ] },
+        ],
+        scheduled: [
+          { id: 1001, date: 4102444800, out: true, text: 'Happy New Year! 🎉' },
         ],
       },
       {
@@ -222,12 +276,21 @@ export function seedWorld(): MockWorld {
         role: 'creator',
         about: 'Work chat',
         membersCount: 4,
+        onlineCount: 2,
+        slowModeSeconds: 10,
+        stats: true,
         members: [{ userId: 1000, role: 'creator' }, { userId: 1001, role: 'admin' }, { userId: 1002 }, { userId: 1003 }],
         unread: 1,
         readInboxMaxId: 2,
+        adminLog: [
+          { id: 1, userId: 1000, action: 'title', prev: 'Project', now: 'Team', ago: 9 * DAY },
+          { id: 2, userId: 1002, action: 'join', ago: 5 * DAY },
+          { id: 3, userId: 1003, action: 'leave', ago: 2 * HOUR },
+        ],
+        joinRequests: [{ userId: 1003, about: 'Please add me', ago: 3 * HOUR }],
         messages: [
-          { id: 1, ago: 5 * DAY, from: 1001, text: 'Release checklist is in the doc: https://example.com/checklist' },
-          { id: 2, ago: 4 * DAY, out: true, text: 'Shipping on Thursday', pinned: true },
+          { id: 1, ago: 5 * DAY, from: 1001, text: 'Release checklist is in the doc: https://example.com/checklist', viaBotId: 2001, groupedId: 7001, reactions: [{ userId: 1000, emoji: '🚀' }, { userId: 1002, emoji: '🚀' }] },
+          { id: 2, ago: 4 * DAY, out: true, text: 'Shipping on Thursday', pinned: true, silent: true },
           { id: 3, ago: 40 * MIN, from: 1002, text: 'CI is green again' },
         ],
       },
@@ -270,13 +333,18 @@ export function seedWorld(): MockWorld {
         username: 'mock_news',
         about: 'Announcements',
         membersCount: 15230,
+        onlineCount: 320,
+        kickedCount: 4,
+        bannedCount: 1,
+        verified: true,
+        stats: true,
         linkedChatId: 5002,
         unread: 2,
         readInboxMaxId: 1,
         messages: [
-          { id: 1, ago: 6 * DAY, text: 'Version 1.0 is out', replies: 2, pinned: true },
-          { id: 2, ago: 1 * DAY, text: 'Maintenance window on Sunday', media: { kind: 'photo' }, replies: 0 },
-          { id: 3, ago: 3 * HOUR, text: 'Weekly digest: three things shipped', media: { kind: 'video', fileName: 'digest.mp4', mimeType: 'video/mp4', size: 5242880, duration: 34 } },
+          { id: 1, ago: 6 * DAY, text: 'Version 1.0 is out', replies: 2, pinned: true, views: 15230, forwards: 42, postAuthor: 'Editor', reactions: [{ userId: 1001, emoji: '🎉' }, { userId: 1002, emoji: '🎉' }, { userId: 1003, emoji: '👍' }] },
+          { id: 2, ago: 1 * DAY, text: 'Maintenance window on Sunday', media: { kind: 'photo' }, replies: 0, views: 9800, forwards: 5 },
+          { id: 3, ago: 3 * HOUR, text: 'Weekly digest: three things shipped', views: 12044, forwards: 18, media: { kind: 'video', fileName: 'digest.mp4', mimeType: 'video/mp4', size: 5242880, duration: 34 } },
         ],
       },
       {
@@ -294,6 +362,7 @@ export function seedWorld(): MockWorld {
       },
     ],
     folders: [{ id: 2, title: 'Work', emoticon: '💼', include: [4001, 4002, 1001], exclude: [5002] }],
+    stars: 250,
   };
 }
 

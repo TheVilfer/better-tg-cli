@@ -76,6 +76,9 @@ export class MockClient {
       megagroup: chat.kind === 'supergroup',
       broadcast: chat.kind === 'channel',
       forum: chat.forum,
+      verified: chat.verified,
+      scam: chat.scam,
+      fake: chat.fake,
       creator: chat.role === 'creator',
       adminRights: chat.role ? new Api.ChatAdminRights({ changeInfo: true, deleteMessages: true, banUsers: true, inviteUsers: true, pinMessages: true }) : undefined,
       participantsCount: chat.membersCount ?? chat.members?.length,
@@ -212,6 +215,42 @@ export class MockClient {
     });
   }
 
+  private reactionOf(r: NonNullable<MockMessage['reactions']>[number]): Api.TypeReaction {
+    if (r.paid) return new Api.ReactionPaid();
+    if (r.customEmojiId) return new Api.ReactionCustomEmoji({ documentId: bigInt(r.customEmojiId) });
+    return new Api.ReactionEmoji({ emoticon: r.emoji ?? '👍' });
+  }
+
+  private reactions(m: MockMessage): Api.MessageReactions | undefined {
+    if (!m.reactions?.length) return undefined;
+    const groups = new Map<string, { reaction: Api.TypeReaction; count: number; chosenOrder?: number }>();
+    for (const r of m.reactions) {
+      const key = r.paid ? 'paid' : r.customEmojiId ? `c:${r.customEmojiId}` : `e:${r.emoji}`;
+      const g = groups.get(key) ?? { reaction: this.reactionOf(r), count: 0 };
+      g.count += 1;
+      if (r.userId === this.world.me) g.chosenOrder = 0;
+      groups.set(key, g);
+    }
+    return new Api.MessageReactions(args({
+      results: [...groups.values()].map(g => new Api.ReactionCount(args({ reaction: g.reaction, count: g.count, chosenOrder: g.chosenOrder }))),
+      recentReactions: m.reactions.map(r => new Api.MessagePeerReaction(args({
+        peerId: new Api.PeerUser({ userId: bigInt(r.userId) }), date: now(), reaction: this.reactionOf(r), my: r.userId === this.world.me || undefined,
+      }))),
+      canSeeList: true,
+    }));
+  }
+
+  private pollMedia(poll: NonNullable<MockMessage['poll']>): Api.MessageMediaPoll {
+    const answers = poll.options.map((o, i) => new Api.PollAnswer({ text: new Api.TextWithEntities({ text: o.text, entities: [] }), option: Buffer.from([i]) }));
+    return new Api.MessageMediaPoll({
+      poll: new Api.Poll(args({ id: HASH, question: new Api.TextWithEntities({ text: poll.question, entities: [] }), answers, quiz: poll.quiz, multipleChoice: poll.multiple, closed: poll.closed })),
+      results: new Api.PollResults(args({
+        totalVoters: poll.totalVoters,
+        results: poll.options.map((o, i) => new Api.PollAnswerVoters(args({ option: Buffer.from([i]), voters: o.voters ?? 0, chosen: o.chosen, correct: o.correct }))),
+      })),
+    });
+  }
+
   private message(chat: MockChat, m: MockMessage): Api.Message {
     const from = chat.kind === 'group' || chat.kind === 'supergroup' ? this.senderId(chat, m) : undefined;
     return new Api.Message(args({
@@ -219,14 +258,24 @@ export class MockClient {
       date: this.date(m),
       message: m.text,
       out: m.out,
+      post: chat.kind === 'channel' || undefined,
+      silent: m.silent,
+      noforwards: m.noforwards,
       peerId: this.peerOf(chat),
       fromId: from ? new Api.PeerUser({ userId: bigInt(from) }) : undefined,
       replyTo: m.replyTo || m.thread
         ? new Api.MessageReplyHeader({ replyToMsgId: m.replyTo ?? m.thread, replyToTopId: m.thread, forumTopic: chat.forum && !!m.thread })
         : undefined,
-      media: this.media(m),
+      media: m.poll ? this.pollMedia(m.poll) : this.media(m),
       replyMarkup: this.markup(m),
-      replies: m.replies === undefined ? undefined : new Api.MessageReplies({ replies: m.replies, repliesPts: 0 }),
+      replies: m.replies === undefined ? undefined : new Api.MessageReplies(args({ replies: m.replies, repliesPts: 0, comments: chat.kind === 'channel' || undefined, channelId: chat.linkedChatId ? bigInt(chat.linkedChatId) : undefined })),
+      reactions: this.reactions(m),
+      views: m.views,
+      forwards: m.forwards,
+      viaBotId: m.viaBotId ? bigInt(m.viaBotId) : undefined,
+      groupedId: m.groupedId ? bigInt(m.groupedId) : undefined,
+      postAuthor: m.postAuthor,
+      ttlPeriod: m.ttlPeriod,
       pinned: m.pinned,
       editDate: m.edited ? this.date(m) : undefined,
       fwdFrom: m.forwardedFrom ? new Api.MessageFwdHeader({ date: this.date(m), fromId: this.peerOf(this.chat(bigInt(m.forwardedFrom))) }) : undefined,
@@ -427,6 +476,18 @@ export class MockClient {
 
   // --- raw requests ---
 
+  private statsGraph(data: string): Api.StatsGraph {
+    return new Api.StatsGraph(args({ json: new Api.DataJSON({ data }) }));
+  }
+
+  private asyncGraph(token: string): Api.StatsGraphAsync {
+    return new Api.StatsGraphAsync({ token });
+  }
+
+  private errorGraph(error: string): Api.StatsGraphError {
+    return new Api.StatsGraphError({ error });
+  }
+
   async invoke(request: { className: string } & Record<string, any>): Promise<any> {
     switch (request.className) {
       case 'messages.GetReplies': return this.getReplies(request);
@@ -440,16 +501,88 @@ export class MockClient {
       case 'channels.GetFullChannel': {
         const chat = this.chat(request.channel);
         return {
-          fullChat: {
+          fullChat: new Api.ChannelFull(args({
+            id: bigInt(chat.id),
             about: chat.about ?? '',
             participantsCount: chat.membersCount ?? chat.members?.length,
             adminsCount: chat.members?.filter(m => m.role).length,
+            kickedCount: chat.kickedCount,
+            bannedCount: chat.bannedCount,
+            onlineCount: chat.onlineCount,
+            slowmodeSeconds: chat.slowModeSeconds,
             unreadCount: chat.unread ?? 0,
             linkedChatId: chat.linkedChatId ? bigInt(chat.linkedChatId) : undefined,
-          },
+          })),
           chats: [this.entityOf(chat)],
           users: [],
         };
+      }
+      case 'stats.GetBroadcastStats': {
+        const chat = this.chat(request.channel);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        const avp = (current: number, previous = current) => new Api.StatsAbsValueAndPrev({ current, previous });
+        const g = this.statsGraph('{"columns":[["x",1,2],["y",10,20]]}');
+        return new Api.stats.BroadcastStats(args({
+          period: new Api.StatsDateRangeDays({ minDate: 1_700_000_000, maxDate: 1_700_600_000 }),
+          followers: avp(chat.membersCount ?? 0, (chat.membersCount ?? 0) - 50),
+          viewsPerPost: avp(12044, 11000),
+          sharesPerPost: avp(18, 12),
+          reactionsPerPost: avp(9, 7),
+          viewsPerStory: avp(400, 380), sharesPerStory: avp(3, 2), reactionsPerStory: avp(5, 4),
+          enabledNotifications: new Api.StatsPercentValue({ part: 62, total: 100 }),
+          // One async graph (loaded via LoadAsyncGraph) and one error graph, to exercise both paths.
+          growthGraph: g, followersGraph: this.asyncGraph('async-followers'), muteGraph: this.errorGraph('no data'),
+          topHoursGraph: g, interactionsGraph: g, ivInteractionsGraph: g, viewsBySourceGraph: g,
+          newFollowersBySourceGraph: g, languagesGraph: g, reactionsByEmotionGraph: g,
+          storyInteractionsGraph: g, storyReactionsByEmotionGraph: g,
+          recentPostsInteractions: chat.messages.slice(0, 3).map(m => new Api.PostInteractionCountersMessage({ msgId: m.id, views: m.views ?? 0, forwards: m.forwards ?? 0, reactions: (m.reactions ?? []).length })),
+        }));
+      }
+      case 'stats.GetMegagroupStats': {
+        const chat = this.chat(request.channel);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        const avp = (current: number, previous = current) => new Api.StatsAbsValueAndPrev({ current, previous });
+        const g = this.statsGraph('{"columns":[["x",1,2],["y",3,4]]}');
+        const members = chat.members ?? [];
+        return new Api.stats.MegagroupStats(args({
+          period: new Api.StatsDateRangeDays({ minDate: 1_700_000_000, maxDate: 1_700_600_000 }),
+          members: avp(chat.membersCount ?? members.length, (chat.membersCount ?? members.length) - 2),
+          messages: avp(chat.messages.length, chat.messages.length - 1),
+          viewers: avp(3, 2),
+          posters: avp(2, 2),
+          growthGraph: g, membersGraph: this.asyncGraph('async-members'), newMembersBySourceGraph: g,
+          languagesGraph: this.errorGraph('not enough data'), messagesGraph: g, actionsGraph: g,
+          topHoursGraph: g, weekdaysGraph: g,
+          topPosters: members.slice(0, 2).map((m, i) => new Api.StatsGroupTopPoster({ userId: bigInt(m.userId), messages: 20 - i * 5, avgChars: 80 - i * 10 })),
+          topAdmins: members.filter(m => m.role).map(m => new Api.StatsGroupTopAdmin({ userId: bigInt(m.userId), deleted: 2, kicked: 1, banned: 0 })),
+          topInviters: members.slice(0, 1).map(m => new Api.StatsGroupTopInviter({ userId: bigInt(m.userId), invitations: 7 })),
+          users: members.flatMap(m => { const u = this.findUser(m.userId); return u ? [this.user(u)] : []; }),
+        }));
+      }
+      case 'stats.LoadAsyncGraph': {
+        return this.statsGraph(`{"token":"${request.token}","columns":[["x",1,2],["y",5,6]]}`);
+      }
+      case 'stats.GetMessagePublicForwards':
+      case 'stats.GetStoryPublicForwards': {
+        const chat = this.chat(request.channel ?? request.peer);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        // A public forward of this post into another supergroup we can name.
+        const into = this.world.chats.find(c => c.kind === 'supergroup' && c.id !== chat.id) ?? chat;
+        const fwdMsg = new Api.Message(args({ id: 999, date: now(), message: 'reposted', peerId: this.peerOf(into), views: 123 }));
+        return new Api.stats.PublicForwards(args({
+          count: 1,
+          forwards: [new Api.PublicForwardMessage({ message: fwdMsg })],
+          chats: [this.entityOf(into)],
+          users: [],
+          nextOffset: undefined,
+        }));
+      }
+      case 'stats.GetMessageStats':
+      case 'stats.GetStoryStats': {
+        const chat = this.chat(request.channel ?? request.peer);
+        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        const g = this.statsGraph('{"columns":[["x",1,2],["y",7,8]]}');
+        return new Api.stats.MessageStats(args({ viewsGraph: g, reactionsByEmotionGraph: this.errorGraph('no reactions') }));
       }
       case 'messages.GetFullChat': return this.fullChat(this.chat(bigInt(`-${request.chatId.toString()}`)));
       case 'channels.GetParticipants': return this.participants(request);
@@ -519,7 +652,7 @@ export class MockClient {
           reactions: reactions.map(r => new Api.MessagePeerReaction({
             peerId: new Api.PeerUser({ userId: bigInt(r.userId) }),
             date: now(),
-            reaction: new Api.ReactionEmoji({ emoticon: r.emoji }),
+            reaction: this.reactionOf(r),
           })),
           users: reactions.flatMap(r => { const u = this.findUser(r.userId); return u ? [this.user(u)] : []; }),
           chats: [],
@@ -557,6 +690,167 @@ export class MockClient {
           const user = this.locate(id).user;
           if (user) delete user.contact;
         }
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
+      }
+      case 'channels.GetParticipant': {
+        const chat = this.chat(request.channel);
+        const userId = this.locate(request.participant).user?.id;
+        const member = chat.members?.find(m => m.userId === userId);
+        if (!member) throw new Error('USER_NOT_PARTICIPANT');
+        const uid = bigInt(member.userId);
+        const rights = new Api.ChatAdminRights({ changeInfo: true, deleteMessages: true, banUsers: true, inviteUsers: true, pinMessages: true });
+        const participant = member.role === 'creator'
+          ? new Api.ChannelParticipantCreator({ userId: uid, adminRights: rights })
+          : member.role === 'admin'
+            ? new Api.ChannelParticipantAdmin(args({ userId: uid, promotedBy: uid, date: 0, adminRights: rights }))
+            : new Api.ChannelParticipant({ userId: uid, date: 0 });
+        const u = this.findUser(member.userId);
+        return new Api.channels.ChannelParticipant(args({ participant, chats: [this.entityOf(chat)], users: u ? [this.user(u)] : [] }));
+      }
+      case 'messages.EditChatDefaultBannedRights': {
+        const chat = this.chat(request.peer);
+        chat.defaultBannedFlags = bannedFlags(request.bannedRights);
+        if (!chat.defaultBannedFlags.length) delete chat.defaultBannedFlags;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'channels.EditBanned': {
+        const chat = this.chat(request.channel);
+        const userId = this.locate(request.participant).user?.id;
+        if (userId === undefined) throw new Error('USER_ID_INVALID');
+        const flags = bannedFlags(request.bannedRights);
+        const list = (chat.bannedUsers ??= []).filter(b => b.userId !== userId);
+        if (flags.length) list.push({ userId, flags, until: request.bannedRights?.untilDate || undefined });
+        chat.bannedUsers = list;
+        if (!chat.bannedUsers.length) delete chat.bannedUsers;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'messages.CreateForumTopic': {
+        const chat = this.chat(request.peer);
+        const topics = (chat.topics ??= []);
+        const id = topics.reduce((max, t) => Math.max(max, t.id), 1) + 1;
+        topics.push({ id, title: request.title });
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'messages.EditForumTopic': {
+        const chat = this.chat(request.peer);
+        const topic = (chat.topics ?? []).find(t => t.id === request.topicId);
+        if (!topic) throw new Error('TOPIC_ID_INVALID');
+        if (request.title !== undefined) topic.title = request.title;
+        if (request.closed !== undefined) topic.closed = request.closed || undefined;
+        if (request.hidden !== undefined) topic.hidden = request.hidden || undefined;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'messages.UpdatePinnedForumTopic': {
+        const chat = this.chat(request.peer);
+        const topic = (chat.topics ?? []).find(t => t.id === request.topicId);
+        if (!topic) throw new Error('TOPIC_ID_INVALID');
+        topic.pinned = request.pinned || undefined;
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+      }
+      case 'account.GetAuthorizations': {
+        return new Api.account.Authorizations(args({
+          authorizationTtlDays: 180,
+          authorizations: [
+            new Api.Authorization(args({ current: true, officialApp: true, hash: bigInt(0), deviceModel: 'CLI', platform: 'Linux', systemVersion: '6.12', apiId: 1, appName: 'better-tg-cli', appVersion: '0', dateCreated: now() - 86400, dateActive: now(), ip: '127.0.0.1', country: 'Nowhere', region: '' })),
+            new Api.Authorization(args({ hash: bigInt(2), deviceModel: 'iPhone', platform: 'iOS', systemVersion: '18', apiId: 2, appName: 'Telegram', appVersion: '11', dateCreated: now() - 30 * 86400, dateActive: now() - 3600, ip: '10.0.0.2', country: 'Elsewhere', region: '' })),
+          ],
+        }));
+      }
+      case 'payments.GetStarsStatus': {
+        return new Api.payments.StarsStatus(args({ balance: new Api.StarsAmount({ amount: bigInt(this.world.stars ?? 0), nanos: 0 }), history: [], chats: [], users: [] }));
+      }
+      case 'payments.GetStarsTransactions': {
+        const tx = (id: string, stars: number, title: string, refund = false) => new Api.StarsTransaction(args({
+          id, amount: new Api.StarsAmount({ amount: bigInt(stars), nanos: 0 }), date: now() - 3600, title, refund: refund || undefined, peer: new Api.StarsTransactionPeerAppStore(),
+        }));
+        return new Api.payments.StarsStatus(args({
+          balance: new Api.StarsAmount({ amount: bigInt(this.world.stars ?? 0), nanos: 0 }),
+          history: [tx('t1', 100, 'Top-up'), tx('t2', 25, 'Reaction', true)],
+          chats: [], users: [],
+        }));
+      }
+      case 'messages.GetExportedChatInvites': {
+        const chat = this.chat(request.peer);
+        const invites = chat.role
+          ? [new Api.ChatInviteExported(args({ link: `https://t.me/+mock${chat.id}`, permanent: true, adminId: bigInt(this.world.me), date: now() - 86400, usage: 12 }))]
+          : [];
+        return new Api.messages.ExportedChatInvites(args({ count: invites.length, invites, users: [] }));
+      }
+      case 'messages.GetChatInviteImporters': {
+        const chat = this.chat(request.peer);
+        const reqs = request.requested ? (chat.joinRequests ?? []) : [];
+        return new Api.messages.ChatInviteImporters(args({
+          count: reqs.length,
+          importers: reqs.map(r => new Api.ChatInviteImporter(args({ requested: true, userId: bigInt(r.userId), date: now() - (r.ago ?? 0), about: r.about }))),
+          users: reqs.flatMap(r => { const u = this.findUser(r.userId); return u ? [this.user(u)] : []; }),
+        }));
+      }
+      case 'messages.GetScheduledHistory': {
+        const chat = this.chat(request.peer);
+        const list = chat.scheduled ?? [];
+        return new Api.messages.Messages(args({ messages: list.map(m => this.message(chat, m)), chats: [], users: [] }));
+      }
+      case 'messages.GetAllDrafts': {
+        const drafts = this.world.chats.filter(c => c.draft);
+        return new Api.Updates(args({
+          updates: drafts.map(c => new Api.UpdateDraftMessage({ peer: this.peerOf(c), draft: new Api.DraftMessage({ message: c.draft!, date: now() }) })),
+          users: this.world.users.map(u => this.user(u)),
+          chats: this.world.chats.filter(c => c.kind !== 'user').map(c => this.entityOf(c)),
+          date: now(), seq: 0,
+        }));
+      }
+      case 'channels.GetAdminLog': {
+        const chat = this.chat(request.channel);
+        const toAction = (e: NonNullable<MockChat['adminLog']>[number]) =>
+          e.action === 'title' ? new Api.ChannelAdminLogEventActionChangeTitle({ prevValue: e.prev ?? '', newValue: e.now ?? '' })
+            : e.action === 'join' ? new Api.ChannelAdminLogEventActionParticipantJoin()
+              : new Api.ChannelAdminLogEventActionParticipantLeave();
+        const events = [...(chat.adminLog ?? [])].reverse().map(e => new Api.ChannelAdminLogEvent(args({
+          id: bigInt(e.id), date: now() - (e.ago ?? 0), userId: bigInt(e.userId), action: toAction(e),
+        })));
+        return new Api.channels.AdminLogResults(args({
+          events, chats: [this.entityOf(chat)], users: this.world.users.map(u => this.user(u)),
+        }));
+      }
+      case 'photos.GetUserPhotos': {
+        const user = this.locate(request.userId).user;
+        if (!user) throw new Error('USER_ID_INVALID');
+        const count = user.profilePhotos ?? 0;
+        const photos = Array.from({ length: count }, (_unused, i) => new Api.Photo(args({
+          id: bigInt(user.id * 100 + i), accessHash: HASH, fileReference: Buffer.alloc(0),
+          date: now() - i * 86400, sizes: [], dcId: 1,
+        })));
+        return new Api.photos.PhotosSlice(args({ count, photos, users: [this.user(user)] }));
+      }
+      case 'messages.ToggleDialogPin': {
+        const chat = this.chat(request.peer);
+        if (request.pinned) chat.pinnedDialog = true; else delete chat.pinnedDialog;
+        this.save();
+        return true;
+      }
+      case 'messages.MarkDialogUnread': {
+        const chat = this.chat(request.peer);
+        if (request.unread) chat.markedUnread = true; else delete chat.markedUnread;
+        this.save();
+        return true;
+      }
+      case 'messages.DeleteHistory': {
+        const chat = this.chat(request.peer);
+        if (request.justClear) chat.messages = [];
+        else { const i = this.world.chats.indexOf(chat); if (i >= 0) this.world.chats.splice(i, 1); }
+        this.save();
+        return new Api.messages.AffectedHistory(args({ pts: 0, ptsCount: 0, offset: 0 }));
+      }
+      case 'channels.LeaveChannel': {
+        const chat = this.chat(request.channel);
+        const i = this.world.chats.indexOf(chat);
+        if (i >= 0) this.world.chats.splice(i, 1);
         this.save();
         return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
       }
@@ -741,6 +1035,12 @@ export class MockClient {
 
   addEventHandler(): never { return notImplemented('live updates (`watch`)'); }
   uploadFile(): never { return notImplemented('uploadFile (profile photos)'); }
+}
+
+/** The true boolean flags of a ChatBannedRights request object (the denied rights). */
+function bannedFlags(rights: Record<string, unknown> | undefined): string[] {
+  if (!rights) return [];
+  return Object.entries(rights).filter(([k, v]) => v === true && k !== 'className').map(([k]) => k);
 }
 
 function describe(like: unknown): string {

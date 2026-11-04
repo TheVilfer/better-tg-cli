@@ -5,5 +5,6 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     // Same Node 25+ localStorage shim the CLI loads first
     setupFiles: ['src/env.ts'],
+    globalSetup: ['test/global-setup.ts'],
   },
 });

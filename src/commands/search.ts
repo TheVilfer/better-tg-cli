@@ -18,6 +18,8 @@ export const searchCommand = new Command('search')
   .option('--until <time>', 'Only messages before this time')
   .option('-n, --limit <number>', 'Maximum results', '50')
   .option('--max-text <chars>', 'Truncate each message text to N characters')
+  .option('--full', 'Include full per-message stats (views, forwards, reactions, flags, media detail)')
+  .option('--stats', 'Alias for --full')
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
   .action(async (query, options) => {
@@ -34,6 +36,7 @@ export const searchCommand = new Command('search')
         type: options.type,
         minDate: options.since ? parseTimeOffset(options.since) : undefined,
         maxDate: options.until ? parseTimeOffset(options.until) : undefined,
+        full: Boolean(options.full || options.stats),
       });
 
       const maxText = options.maxText ? parseInt(options.maxText) : undefined;

@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import { Api } from 'teleproto';
 import { NewMessage, type NewMessageEvent } from 'teleproto/events/index.js';
-import { getClient, resolveChat, disconnectClient, messageText } from '../client.js';
+import { getClient, resolveChat, disconnectClient, messageText, buildMessageFull } from '../client.js';
+import { formatStatsSuffix } from '../formatters/plain.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 
@@ -10,8 +11,11 @@ export const watchCommand = new Command('watch')
   .argument('[chat]', 'Restrict to one chat (name, @user, or ID). Omit to watch everything.')
   .option('-t, --timeout <seconds>', 'Stop after N seconds')
   .option('-n, --limit <number>', 'Stop after N messages')
+  .option('--full', 'Include full per-message stats (views, forwards, reactions, flags, media detail)')
+  .option('--stats', 'Alias for --full')
   .option('--json', 'Emit each message as a JSON line')
   .action(async (chat, options) => {
+    const full = Boolean(options.full || options.stats);
     const timeoutSec = options.timeout ? parseInt(options.timeout, 10) : undefined;
     const limit = options.limit ? parseInt(options.limit, 10) : undefined;
 
@@ -53,11 +57,13 @@ export const watchCommand = new Command('watch')
             // ignore
           }
 
+          const stats = full ? buildMessageFull(msg) : undefined;
           if (options.json) {
-            console.log(JSON.stringify({ id: msg.id, chatId: msg.chatId?.toString(), sender, text: messageText(msg), date: new Date(msg.date * 1000).toISOString() }));
+            console.log(JSON.stringify({ id: msg.id, chatId: msg.chatId?.toString(), sender, text: messageText(msg), date: new Date(msg.date * 1000).toISOString(), ...(stats ? { full: stats } : {}) }));
           } else {
             const time = new Date(msg.date * 1000).toLocaleTimeString();
-            console.log(`${chalk.gray(time)} ${chalk.cyan(sender)}: ${messageText(msg) || chalk.gray('(no text)')} ${chalk.gray(`#${msg.id}`)}`);
+            const suffix = stats ? chalk.gray(formatStatsSuffix(stats)) : '';
+            console.log(`${chalk.gray(time)} ${chalk.cyan(sender)}: ${messageText(msg) || chalk.gray('(no text)')}${suffix} ${chalk.gray(`#${msg.id}`)}`);
           }
 
           if (limit && count >= limit) finish();

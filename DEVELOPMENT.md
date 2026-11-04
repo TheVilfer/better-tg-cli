@@ -115,11 +115,47 @@ and any tool that imports the compiler. `.vscode/settings.json` points the edito
 npm test                # vitest, offline (no session, no network)
 npm run test:watch
 npm run typecheck       # or typecheck:watch
+npm run coverage:api    # API coverage gate: fails below 90% (see below)
 npm run dev:dist -- check   # build the real bundle and run it (dev profile)
 ```
 
 Source mode skips the bundle's shrink plugin (TL re-encoding, stubs). Run `npm run dev:dist` or
 `npm run build && npm test` before a release. `test/bundle-shrink.test.ts` and
 `test/sync-and-cli.test.ts` cover the bundle.
+
+`npm run coverage:api` (CI runs it after the build) runs `scripts/api-coverage.mjs --check
+--min 90`: TL schema reachability and Telethon 1.45.0 `TelegramClient` accounting (member list in
+`scripts/data/telethon-1.45.0-client-methods.tsv`) must each be at least 90%, every TL method must
+have a dedicated `telegram <namespace> <method>` command (100%), and `docs/api-coverage.md` must be
+current (regenerate with `node scripts/api-coverage.mjs`). Override the threshold with `--min <n>` or
+`API_COVERAGE_MIN`; `--json` prints the numbers. `test/api-coverage.test.ts` enforces the same gate
+in `npm test`.
+
+`scripts/gen-tl-commands.mjs` generates `src/generated/tl-commands.ts` — one entry per TL schema
+method, which `src/commands/generated.ts` turns into the top-level `telegram <namespace> <method>`
+commands (and `telegram <root-method>` for the namespace-less invoke/transport wrappers) — and
+`src/generated/tl-docs.ts`, the human descriptions embedded as one JSON string per namespace,
+decoded lazily by `src/tl-docs.ts` only when help/`schema` is rendered (so `--version`/`--help`
+startup stays flat). Both are run by `scripts/gen-version.mjs` (so build and `pretest` keep them
+current), and CI's "Versioned files match package.json" step fails if either drifts; regenerate by
+hand with `node scripts/gen-tl-commands.mjs`. Only the name mapping is checked in — parameter types
+come from the TL schema that is already bundled.
+
+**Refreshing the descriptions.** `src/generated/tl-docs.ts` is built from the committed
+`scripts/data/tl-docs-layer229.json`, which `node scripts/fetch-tl-docs.mjs` fetches once from
+`core.telegram.org/method/<ns.lowerCamel>` (polite: cached raw HTML under the gitignored
+`.tl-docs-cache/`; rerun is cheap, `--no-fetch` rebuilds from the cache). The docs site trails the
+schema by a layer, so new methods get a fallback line. Re-run it when bumping the TL layer, then
+`node scripts/gen-tl-commands.mjs` and commit the data file + generated module. The CLI never fetches
+at runtime.
+
+**Clash policy.** A curated command always wins. Six namespaces are also curated commands (`auth`,
+`stories`, `contacts`, `stats`, `folders`, `help`): the generated methods attach to them as
+subcommands, chosen only when the first operand is exactly a method name. If a future TL layer adds a
+namespace that clashes with a curated command that cannot host subcommands, or a root method whose
+kebab name equals a curated command, `generateSource()` throws (failing build/test with the named
+clash) — resolve it in `scripts/gen-tl-commands.mjs` via `SUBCOMMAND_OK` (if the curated command can
+host subcommands) or the `OVERRIDES` table (rename the generated command). Keep `CURATED_COMMANDS`
+there in sync with the program in `src/index.ts`.
 
 Releasing is described in `CLAUDE.md` (`scripts/release.sh`, which picks the version from the PR titles, then `scripts/release.sh tag`).

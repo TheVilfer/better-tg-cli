@@ -6,9 +6,11 @@ const CLI = 'dist/telegram.mjs';
 // Unconfigured profile: nothing here can reach a real account
 const env = { ...process.env, TG_PROFILE: 'mcp-test', TG_NO_UPDATE_CHECK: '1' };
 
+let helpAllText: string | undefined;
+// `help-all` from one CLI process for the whole file
+const helpAll = (): string => (helpAllText ??= spawnSync(process.execPath, [CLI, 'help-all'], { encoding: 'utf8', env }).stdout);
 function commandNames(): string[] {
-  const out = spawnSync(process.execPath, [CLI, 'help-all'], { encoding: 'utf8', env }).stdout;
-  return out.split('\n').filter(l => /^[a-z]/.test(l)).map(l => l.split(' ')[0]);
+  return helpAll().split('\n').filter(l => /^[a-z]/.test(l)).map(l => l.split(' ')[0]);
 }
 
 beforeAll(() => setKnownCommands(commandNames()));
@@ -37,7 +39,7 @@ describe('planCall', () => {
   it('refuses excluded, unknown, flag-first and unbounded calls', () => {
     expect(planCall('telegram_write', { args: ['auth'] })).toMatch(/not available over MCP/);
     expect(planCall('telegram_write', { args: ['transfer-owner', 'g', 'u'] })).toMatch(/not available/);
-    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/Only the user/);
+    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/changed in a terminal/);
     expect(planCall('telegram_read', { args: ['write-access'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['--help'] })).toMatch(/command name/);
     expect(planCall('telegram_read', { args: ['nope'] })).toMatch(/Unknown command/);
@@ -73,7 +75,8 @@ describe('worker mode', () => {
 });
 
 // Child processes everywhere else; worker threads inside Claude Desktop (forced here with TG_MCP_WORKER)
-describe.each([
+// The two modes are independent servers, so they run at the same time
+describe.concurrent.each([
   ['child processes', {}],
   ['worker threads', { TG_MCP_WORKER: '1' }],
 ])('telegram mcp over stdio (%s)', (_mode, extraEnv) => {
@@ -105,7 +108,7 @@ describe.each([
     expect(lines[3].result.isError).toBe(true);
     expect(lines[3].result.content[0].text).toMatch(/Write access|secret store/);
     // Full output survives process.exit right after the write
-    const direct = spawnSync(process.execPath, [CLI, 'help-all'], { encoding: 'utf8', env }).stdout.trimEnd();
+    const direct = helpAll().trimEnd();
     expect(lines[4].result.content[0].text).toBe(direct);
     // A real read on the unconfigured profile fails cleanly instead of hanging on a prompt
     expect(lines[5].result.isError).toBe(true);
