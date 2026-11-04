@@ -57,9 +57,10 @@ A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for 
 - **Exact reads.** Real pagination for `--since/--until`, `--unread`, threads and channel
   comments, forum topics, `get` by ID, search filters by type, sender or date, and `me` / `Избранное`
   for Saved Messages.
-- **Safe by default.** The account is read-only until a human runs `write-access on [--for 1h]`
-  and confirms it in a terminal prompt or a macOS dialog, so an agent cannot switch it on itself.
-  Every write is logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
+- **You approve every message.** After login the agent asks you in the chat before each send,
+  edit or delete, and shows the exact text; it sends only after your yes. Writing without asking
+  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Every write is
+  logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
   Linux Secret Service or 1Password.
 - **Small and self-contained.** The npm package is one 0.3 MB file with zero runtime
   dependencies. Homebrew installs a standalone binary with no Node.
@@ -212,7 +213,8 @@ telegram stats "Mock News" --graphs           # full channel stats + growth grap
 telegram sessions ; telegram stars            # active login sessions; Telegram Stars balance & transactions
 telegram invites "Team" --requests            # a chat's invite links, or its pending join requests
 
-telegram write-access on --for 1h             # a human confirms this
+telegram write-access ask                     # each write waits for your yes in the chat (default after onboard)
+telegram write-access on --for 1h             # or: writes without asking, for an hour
 telegram send @alice "on my way"
 printf '%s' "$text" | telegram send @alice -  # long or multi-line text: from stdin, no quoting problems
 telegram reply "Chat" 812 "on it" --silent
@@ -315,7 +317,7 @@ Using your own account from a third-party client is allowed by the [Telegram API
 No. It logs in as you over MTProto, like Telegram Desktop, and sees exactly what you see. Bots can't read your chats; this can.
 
 **Can an agent send messages on its own?**
-Only after you turn writes on. `telegram write-access on` asks you to confirm in the terminal or in a macOS dialog, which an agent can't answer. Writes then need an exact chat, and each one is logged. Over MCP, writing is a separate tool that clients can ask you to approve every time. Details are in [SECURITY.md](SECURITY.md).
+Not by design. After login the profile is in mode `ask`: before each write the agent shows you the exact action in the chat and sends only after your yes, and the code it gets for that yes works once, for that exact text. Over MCP, clients that support elicitation ask you in their own dialog instead. This relies on the agent following its instructions: an agent that has a shell on your user account can read the session from the Keychain and act as you, so give such agents only chats you trust, or connect them through MCP only. `write-access on` (no questions) needs your confirmation in a terminal or a macOS dialog. Details are in [SECURITY.md](SECURITY.md).
 
 **Does reading mark messages as read?**
 No. `read`, `inbox` and `search` leave chats unread. Only `telegram mark-read` marks them.

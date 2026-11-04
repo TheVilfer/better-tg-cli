@@ -2,6 +2,7 @@
 
 import './env.js';
 import { isMainThread } from 'node:worker_threads';
+import { primeStdin } from './text.js';
 import { VERSION } from './version.js';
 import { Command } from 'commander';
 import { isMock, profile } from './paths.js';
@@ -317,8 +318,10 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
     program.parse(process.argv, { from: 'node' });
   } else {
     // An MCP call in a worker thread (src/mcp.ts): its piped stdin keeps the thread alive,
-    // so end it once the command is done, as a child process would exit on its own
-    program.parseAsync(process.argv, { from: 'node' }).then(
+    // so end it once the command is done, as a child process would exit on its own.
+    // fd 0 there is the server's own stdin (the MCP channel), not this call's text: read the
+    // worker's stdin stream (the server always ends it) into the shared cache first.
+    readWorkerStdin().then(text => { primeStdin(text); return program.parseAsync(process.argv, { from: 'node' }); }).then(
       () => process.exit(process.exitCode ?? 0),
       (error: unknown) => {
         console.error(error instanceof Error ? error.message : String(error));
@@ -326,4 +329,14 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
       },
     );
   }
+}
+
+function readWorkerStdin(): Promise<string> {
+  return new Promise(resolve => {
+    let text = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', chunk => { text += chunk; });
+    process.stdin.on('end', () => resolve(text));
+    process.stdin.on('error', () => resolve(text));
+  });
 }
