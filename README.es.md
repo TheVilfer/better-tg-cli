@@ -284,11 +284,119 @@ telegram mcp --http --read-only             # escucha en 127.0.0.1:8787; quita -
 tailscale funnel --bg 8787                  # o: cloudflared tunnel --url http://127.0.0.1:8787
 ```
 
-Mantén el servidor y el túnel en un terminal o en tmux. Después añade un conector en Grok Bot con la
+Mantén el servidor y el túnel en un terminal o en tmux, o ejecuta el servidor como servicio en
+segundo plano (abajo). Después añade un conector en Grok Bot con la
 URL del túnel más `/mcp` (por ejemplo `https://<machine>.<tailnet>.ts.net/mcp`) y la cabecera
 `Authorization: Bearer <token>`. `tailscale funnel` da una URL estable, pero antes hay que permitirlo
 para tu tailnet. Un túnel rápido de `cloudflared` obtiene una URL nueva en cada arranque. Lee antes
 "Remote MCP over HTTP" en [SECURITY.md](SECURITY.md).
+
+#### El servidor como servicio en segundo plano
+
+Un servicio arranca el servidor por sí solo y lo vuelve a levantar tras un fallo. En macOS el
+LaunchAgent de abajo arranca al iniciar sesión y funciona mientras sigues con la sesión iniciada. En
+Linux la unidad de usuario también puede arrancar al encender, sin iniciar sesión (ver linger
+abajo). Ninguno de los archivos de abajo guarda secretos: la sesión y el token bearer siguen en el Keychain o en el
+Secret Service, y el servidor los lee al arrancar. El túnel también tiene que seguir activo:
+`tailscale funnel --bg` sigue funcionando por sí solo, un túnel rápido de `cloudflared` no.
+
+Ambos archivos necesitan las rutas que imprimen `command -v telegram` y, tras instalar con npm,
+`command -v node`. La versión npm de `telegram` es un script de Node, y un servicio arranca con un
+`PATH` corto sin los directorios de Homebrew ni de nvm, así que sin el `PATH` correcto termina con
+`env: node: No such file or directory`.
+
+**macOS (launchd).** Guarda esto como `~/Library/LaunchAgents/com.better-tg-cli.mcp.plist`, con tu
+ruta a `telegram` en `ProgramArguments`, el directorio de `node` en `PATH` y tu nombre de usuario
+(`id -un`) en lugar de `you` (launchd no expande ni `~` ni `$HOME`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.better-tg-cli.mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/telegram</string>
+    <string>mcp</string>
+    <string>--http</string>
+    <string>--read-only</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>TG_NO_UPDATE_CHECK</key>
+    <string>1</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/better-tg-cli-mcp.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.better-tg-cli.mcp.plist
+launchctl print gui/$(id -u)/com.better-tg-cli.mcp | grep -E 'state|last exit'
+launchctl kickstart -k gui/$(id -u)/com.better-tg-cli.mcp   # reiniciar
+launchctl bootout gui/$(id -u)/com.better-tg-cli.mcp        # detener y descargar
+```
+
+`KeepAlive` con `SuccessfulExit` false reinicia el servidor cuando falla o lo matan. Si macOS pide
+acceso al Keychain en el primer arranque, permítelo.
+
+**Linux (unidad de usuario de systemd).** Guarda esto como
+`~/.config/systemd/user/better-tg-cli-mcp.service`, con los directorios de `telegram` y `node` en
+`PATH`:
+
+```ini
+[Unit]
+Description=Better-TG-CLI MCP server over HTTP
+After=network-online.target
+
+[Service]
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=TG_NO_UPDATE_CHECK=1
+ExecStart=/usr/bin/env telegram mcp --http --read-only
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now better-tg-cli-mcp.service
+systemctl --user status better-tg-cli-mcp.service
+journalctl --user -u better-tg-cli-mcp.service -f
+```
+
+La unidad funciona mientras tienes la sesión iniciada. `sudo loginctl enable-linger "$USER"` la
+arranca al encender y la mantiene tras cerrar sesión, pero no desbloquea el llavero. Si el servicio
+no tiene Secret Service o está bloqueado, el servidor termina con "The HTTP server needs a secret
+store for its token" y systemd lo vuelve a arrancar 5 segundos después. Para ver qué almacén de
+secretos encuentra el servicio, ejecuta `telegram check` con el entorno de la unidad.
+
+Si el servicio no tiene Secret Service (por ejemplo, en un servidor sin escritorio), usa el almacén
+de 1Password. Inicia sesión una vez con `telegram auth --op-vault <vault>` en el mismo perfil, añade
+el directorio de `op` al `PATH` de la unidad y guarda `OP_SERVICE_ACCOUNT_TOKEN=…` en un archivo que
+solo tú puedas leer (modo 0600), cargado con `EnvironmentFile=%h/.config/tg/mcp.env` en
+`[Service]`. Ese token es un secreto, así que no va en la unidad.
+
+Tras `telegram mcp --rotate-token`, reinicia el servicio (`launchctl kickstart -k …` o
+`systemctl --user restart better-tg-cli-mcp`): hasta entonces el servidor en marcha acepta el token
+antiguo.
 
 ## FAQ
 
