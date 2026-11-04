@@ -318,6 +318,9 @@ Linux. Por favor, informa de los problemas en los issues.
 **¿Puedo usarlo desde Grok Bot, ChatGPT u otro agente en la nube?**
 Los agentes en la nube no pueden iniciar un programa en tu ordenador, así que ejecuta el servidor MCP por HTTP y accede a él a través de un túnel. Consulta [Grok Bot](#grok-bot-mcp-remoto-por-http).
 
+**El inicio de sesión falla con «NetSocket was closed» en un ordenador en la nube (Grok Bot y otros).**
+Algunos ordenadores de agentes en la nube solo dejan salir HTTPS, y eso corta el transporte TCP de Telegram. La CLI cambia entonces sola a MTProto sobre WebSocket (`wss://*.web.telegram.org`, el transporte de web.telegram.org) y lo recuerda para el perfil. `TG_TRANSPORT=tcp|wss|auto` elige el transporte a mano.
+
 **¿Cómo actualizo?**
 Ejecuta `telegram update`. Usa el mismo canal desde el que instalaste: Homebrew, npm o un binario de release.
 Si instalaste la skill de agente con `telegram skill install`, vuelve a ejecutarlo para actualizarla.
