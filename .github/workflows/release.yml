@@ -9,7 +9,6 @@ name: Release
 on:
   push:
     tags: ['v*.*.*']
-    branches: [ci-speed-2] # TEMPORARY: exercise the dry run before merging
   # Dry run on any branch: verify, every binary and the Windows smoke test, nothing is published
   # (gh workflow run release.yml --ref <branch>)
   workflow_dispatch:
