@@ -89,4 +89,14 @@ describe('MCP HTTP token', () => {
     store.set = false;
     expect(mcpToken({ create: true })).toBeNull();
   });
+
+  it('a failed rotation reports failure instead of the old token', async () => {
+    const { mcpToken } = await import('../src/mcp-http.js');
+    store.get = ['tgmcp_old'];
+    store.set = false;
+    expect(mcpToken({ rotate: true })).toBeNull();
+    store.get = ['tgmcp_old'];
+    store.set = true; // claims success, but the store still holds the old one
+    expect(mcpToken({ rotate: true })).toBeNull();
+  });
 });

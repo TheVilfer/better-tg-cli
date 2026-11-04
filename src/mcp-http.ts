@@ -20,6 +20,8 @@ export function mcpToken(options: { create?: boolean; rotate?: boolean } = {}): 
   if (existing || !(options.create || options.rotate)) return existing;
   const token = `tgmcp_${randomBytes(32).toString('base64url')}`;
   const saved = secretSet(TOKEN_KEY, token);
+  // A rotation succeeds only if the new token is what the store now holds; never hand back the old one
+  if (options.rotate) return saved && secretGet(TOKEN_KEY) === token ? token : null;
   // Two servers starting at once both create one; serve whichever the store kept, so no server
   // ends up with a token nobody can print
   return secretGet(TOKEN_KEY) ?? (saved ? token : null);
