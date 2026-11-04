@@ -337,6 +337,9 @@ report problems in the issues.
 **Can I use it from Grok Bot, ChatGPT or another cloud agent?**
 Cloud agents can't start a program on your computer, so run the MCP server over HTTP and reach it through a tunnel. See [Grok Bot](#grok-bot-remote-mcp-over-http).
 
+**Login fails with "NetSocket was closed" on a cloud computer (Grok Bot and others).**
+Some hosted agent computers let only HTTPS out, which drops Telegram's TCP transport. The CLI then switches to MTProto over WebSocket (`wss://*.web.telegram.org`, the transport of web.telegram.org) by itself and remembers it for the profile. That needs Node.js 22+ or the standalone binary. `TG_TRANSPORT=tcp|wss|auto` picks the transport by hand.
+
 **How do I update?**
 Run `telegram update`. It uses the same channel you installed from: Homebrew, npm or a release binary.
 If you installed the agent skill with `telegram skill install`, run that again to refresh it.

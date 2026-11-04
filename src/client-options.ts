@@ -1,6 +1,8 @@
 import { Logger, LogLevel } from 'teleproto/extensions/Logger.js';
+import { PromisedWebSockets } from 'teleproto/extensions/PromisedWebSockets.js';
 import { loadConfig } from './config.js';
 import { isMock } from './paths.js';
+import type { Transport } from './transport.js';
 
 const LEVELS: Record<string, LogLevel> = {
   none: LogLevel.NONE, error: LogLevel.ERROR, warn: LogLevel.WARN, info: LogLevel.INFO, debug: LogLevel.DEBUG,
@@ -31,14 +33,22 @@ export function createLogger(level = process.env.TG_LOG_LEVEL?.toLowerCase()): L
 
 /**
  * Options for every TelegramClient. `testServers` comes from the profile's config
- * (set by `telegram auth --test-dc`): a session belongs to one environment.
+ * (set by `telegram auth --test-dc`): a session belongs to one environment. `transport` picks
+ * raw TCP or MTProto over WebSocket (see `src/transport.ts`; `connectClient()` chooses it).
  */
-export function clientParams(testServers = !!loadConfig(() => {}).testServers) {
+export function clientParams(testServers = !!loadConfig(() => {}).testServers, transport: Transport = 'tcp') {
   // Every real TelegramClient is built with these options, so this one check keeps TG_MOCK offline
   if (isMock()) {
     throw new Error('This needs a real Telegram connection, which mock mode (TG_MOCK) never opens. Unset TG_MOCK to use a real account.');
   }
-  return { connectionRetries: 5, baseLogger: createLogger(), testServers, floodSleepThreshold: floodWaitMax() };
+  return {
+    connectionRetries: 5,
+    baseLogger: createLogger(),
+    testServers,
+    floodSleepThreshold: floodWaitMax(),
+    // teleproto maps each DC to wss://<name>.web.telegram.org/apiws and picks the obfuscated framing itself
+    ...(transport === 'wss' ? { networkSocket: PromisedWebSockets } : {}),
+  };
 }
 
 /**

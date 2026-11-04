@@ -392,6 +392,10 @@ matches titles.
   `Telegram rate limit on <method>: waiting Ns`. Longer waits fail with the wait in the error
   message. `TG_FLOOD_WAIT_MAX=<seconds>` changes the limit: `0` fails fast, a larger value suits
   long `sync` runs. Don't retry in a loop, because Telegram extends the ban.
+- `NetSocket was closed` or timeouts while connecting: the network blocks Telegram's TCP transport
+  (common on cloud agent computers that allow only HTTPS). The CLI retries over WebSocket
+  (`wss://*.web.telegram.org`) by itself and saves `transport: "wss"` for the profile; stderr says
+  so. It needs Node.js 22+ or the standalone binary. Force one with `TG_TRANSPORT=wss` (or `tcp`).
 - `CHANNELS_TOO_MUCH` on `join`: the account hit Telegram's channel limit, so leave some first.
 - `Could not find the input entity`: the ID is not in your dialogs. Use `@username` or open the
   chat first.
