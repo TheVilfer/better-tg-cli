@@ -16,3 +16,6 @@ release/
 
 # Raw HTML cache for scripts/fetch-tl-docs.mjs (rebuildable)
 .tl-docs-cache/
+
+# Bundle of src/ for tests that run the CLI as a child process (test/global-setup.ts)
+.test-cli/

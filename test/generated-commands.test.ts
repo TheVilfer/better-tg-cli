@@ -13,6 +13,7 @@ import { resolveGeneratedCommand, methodClassName, rootMethodClassName, kebabCas
 import { planCall } from '../src/mcp.js';
 import { disconnectClient } from '../src/client.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
+import { cliArgs } from './cli.js';
 
 const schemaFunctionCount = (apiDefinitions as unknown as { isFunction: boolean }[]).filter(d => d.isFunction).length;
 
@@ -205,14 +206,14 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
   const exec = promisify(execFile);
   // Each call is a separate CLI process (~0.3-1 s); the tests only read, so they run concurrently
   const run = async (...args: string[]): Promise<string> =>
-    (await exec(process.execPath, ['--import', 'tsx', 'src/index.ts', ...args], { encoding: 'utf8', env, maxBuffer: 64 << 20 })).stdout;
+    (await exec(process.execPath, [...cliArgs(), ...args], { encoding: 'utf8', env, maxBuffer: 64 << 20 })).stdout;
   const fails = async (...args: string[]): Promise<string> => {
     try { return await run(...args); }
     catch (e) { return String((e as { stderr?: string }).stderr ?? '') + String((e as { stdout?: string }).stdout ?? ''); }
   };
   // Create the mock state once, before the concurrent tests read it
   beforeAll(() => {
-    execFileSync(process.execPath, ['--import', 'tsx', 'src/index.ts', 'whoami'], { env, stdio: 'ignore' });
+    execFileSync(process.execPath, [...cliArgs(), 'whoami'], { env, stdio: 'ignore' });
   }, 30_000);
   afterAll(async () => { await disconnectClient(); setStrictChatResolution(false); rmSync(home, { recursive: true, force: true }); });
 
@@ -327,7 +328,7 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
   it('help output is clean when the pipe closes early (no EPIPE crash)', async () => {
     // node stdout → head (closes early); node stderr is inherited to the shell and captured here.
     await Promise.all(['help', 'help stats', 'help messages', 'messages --help'].map(async cmd => {
-      const r = await exec('sh', ['-c', `node --import tsx src/index.ts ${cmd} | head -c 20`], { env, encoding: 'utf8' }).catch(e => e as { stderr: string });
+      const r = await exec('sh', ['-c', `node ${cliArgs().map(a => JSON.stringify(a.replace(/\\/g, '/'))).join(' ')} ${cmd} | head -c 20`], { env, encoding: 'utf8' }).catch(e => e as { stderr: string });
       expect(r.stderr, `${cmd}: ${r.stderr}`).not.toMatch(/EPIPE|Unhandled 'error'/);
     }));
   }, 30_000);
