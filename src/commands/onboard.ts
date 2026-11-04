@@ -4,18 +4,23 @@ import { qrLoginDriver, saveLogin } from '../auth.js';
 import { fetchInviteCredentials } from '../broker.js';
 import { getSessionString, isConfigured } from '../config.js';
 import { ONBOARD_SITE, startOnboarding, type OnboardEvent } from '../onboard.js';
+import { applyModeChoice } from '../write-mode.js';
 
 const HUMAN: Record<OnboardEvent['event'], (e: never) => string> = {
   url: (e: { url: string }) => `Open this page to log in (it stays on this computer): ${e.url}`,
   waiting_invite: () => 'Waiting for a login key or API keys on the page…',
   waiting_scan: () => 'Waiting for the QR scan (Telegram → Settings → Devices → Link Desktop Device)…',
   need_password: () => 'Waiting for the two-step verification password on the page…',
-  done: (e: { user: { name: string; username?: string } }) =>
+  logged_in: (e: { user: { name: string; username?: string } }) =>
     `Logged in as ${e.user.name}${e.user.username ? ` (@${e.user.username})` : ''}. Session saved.`,
+  waiting_mode: () => 'Waiting for the user to choose on the page what you may do: read-only, ask before each write, or write freely…',
+  mode: (e: { mode: string; until?: string }) => `Write mode: ${e.mode}${e.until ? ` until ${new Date(e.until).toLocaleString()}` : ''}.`,
+  done: (e: { user?: { name: string; username?: string }; mode?: string }) =>
+    e.user ? `Done: ${e.user.name}${e.user.username ? ` (@${e.user.username})` : ''}, write mode ${e.mode ?? 'read-only'}.` : `Done: write mode ${e.mode ?? 'unchanged'}.`,
   error: (e: { message: string }) => `Login failed: ${e.message}. The page offers a retry.`,
 };
 
-function openBrowser(url: string): void {
+export function openBrowser(url: string): void {
   const [cmd, ...args] = process.platform === 'darwin' ? ['open', url]
     // explorer.exe mangles URLs with query strings; the URL protocol handler opens the default browser
     : process.platform === 'win32' ? ['rundll32', 'url.dll,FileProtocolHandler', url]
@@ -27,7 +32,7 @@ function openBrowser(url: string): void {
 
 export const onboardCommand = new Command('onboard')
   .description('Guided login for agents: opens a local page where you get a login key (or use your own keys), scan a QR code and enter your 2FA password; the agent never sees any of it')
-  .option('--json', 'Print progress as JSON lines (events: url, waiting_invite, waiting_scan, need_password, done, error)')
+  .option('--json', 'Print progress as JSON lines (events: url, waiting_invite, waiting_scan, need_password, logged_in, waiting_mode, mode, done, error)')
   .option('--no-open', "Don't open the browser, just print the URL")
   .option('--timeout <minutes>', 'Give up after this many minutes', '15')
   .option('--broker <url>', 'Login service URL (default: built-in, or TG_BROKER_URL)')
@@ -60,6 +65,7 @@ export const onboardCommand = new Command('onboard')
       save: (s, creds, invite) => saveLogin(s, creds, invite, !!opts.testDc),
       emit,
       site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
+      applyMode: choice => applyModeChoice(choice),
     });
     if (opts.open) openBrowser(session.url);
 

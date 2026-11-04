@@ -55,7 +55,7 @@ function fakeDriver(plan: { password?: string; wrongFirst?: boolean; failFirst?:
 let session: OnboardSession | undefined;
 afterEach(() => session?.close());
 
-async function start(plan?: Parameters<typeof fakeDriver>[0]) {
+async function start(plan?: Parameters<typeof fakeDriver>[0], extra: Partial<Parameters<typeof startOnboarding>[0]> = {}) {
   const events: OnboardEvent[] = [];
   const saved: unknown[] = [];
   const redeemed: string[] = [];
@@ -66,6 +66,7 @@ async function start(plan?: Parameters<typeof fakeDriver>[0]) {
     save: (s, creds, invite) => saved.push({ s, creds, invite }),
     emit: e => events.push(e),
     site: 'https://site.test',
+    ...extra,
   });
   const origin = new URL(session.url).origin;
   const post = (route: string, body: unknown, o = origin) => call(session!.url + route, { method: 'POST', origin: o, body });
@@ -120,7 +121,7 @@ describe('telegram onboard server', () => {
     expect(saved).toEqual([{ s: 'SESSION', creds: { apiId: 42, apiHash: 'h'.repeat(32), invite: true }, invite: true }]);
     expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'need_password', 'done']);
     expect(JSON.stringify(events)).not.toContain('secret');
-    await expect(session!.done).resolves.toMatchObject({ username: 'alice' });
+    await expect(session!.done).resolves.toMatchObject({ user: { username: 'alice' } });
     expect((await post('invite', { invite: 'again' })).status).toBe(409);
   });
 
@@ -184,5 +185,65 @@ describe('rpcCode', () => {
     Object.defineProperty(e, 'message', { value: 'The password (and thus its hash value) you entered is invalid' });
     expect(rpcCode(e)).toBe('PASSWORD_HASH_INVALID');
     expect(rpcCode(new Error('plain'))).toBe('plain');
+  });
+
+  describe('the write-mode step', () => {
+    const modes = (answer: Awaited<ReturnType<NonNullable<Parameters<typeof startOnboarding>[0]['applyMode']>>>) => {
+      const choices: unknown[] = [];
+      return { choices, applyMode: async (c: unknown) => { choices.push(c); return answer; } };
+    };
+
+    it('asks after the login, then sends done with the mode (the agent still waits for done)', async () => {
+      const m = modes({ ok: true });
+      const { events, post, until } = await start({}, { applyMode: m.applyMode });
+      await post('invite', { invite: 'tok' });
+      const s = await until('mode');
+      expect(s.user).toMatchObject({ username: 'alice' });
+      expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'logged_in', 'waiting_mode']);
+      expect((await post('mode', { mode: 'ask', for: '1d' })).status).toBe(202);
+      expect(m.choices).toEqual([{ mode: 'ask', forSeconds: 86_400 }]);
+      expect((await until('done')).mode).toBe('ask');
+      expect(events.slice(-2).map(e => e.event)).toEqual(['mode', 'done']);
+      await expect(session!.done).resolves.toMatchObject({ mode: 'ask', user: { username: 'alice' } });
+    });
+
+    it('stays on the step when the person declines the dialog, and says so', async () => {
+      const m = modes({ ok: false, error: 'not_confirmed' });
+      const { post, until, state } = await start({}, { applyMode: m.applyMode });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      const res = await post('mode', { mode: 'on', for: '' });
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe('not_confirmed');
+      expect((await state()).step).toBe('mode');
+    });
+
+    it('rejects unknown modes and spans, and a mode before the login', async () => {
+      const m = modes({ ok: true });
+      const { post, until } = await start({}, { applyMode: m.applyMode });
+      expect((await post('mode', { mode: 'ask' })).status).toBe(409); // still at the login key
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'root' })).status).toBe(400);
+      expect((await post('mode', { mode: 'on', for: 'forever' })).status).toBe(400);
+      expect((await post('mode', { mode: 'on' }, 'https://evil.example')).status).toBe(403);
+      expect(m.choices).toEqual([]);
+    });
+
+    it('can run alone, without a login (write-access with no terminal)', async () => {
+      const m = modes({ ok: true });
+      const { events, post, until, state } = await start({}, { applyMode: m.applyMode, modeOnly: true });
+      expect((await state())).toMatchObject({ step: 'mode', modeOnly: true });
+      expect(events.map(e => e.event)).toEqual(['url', 'waiting_mode']);
+      await post('mode', { mode: 'read-only' });
+      expect((await until('done')).mode).toBe('read-only');
+      await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'read-only' });
+    });
+
+    it('serves the mode strings in all three languages', async () => {
+      await start();
+      const res = await call(session!.url);
+      for (const t of ['Ask me each time', 'Preguntarme cada vez', 'Спрашивать каждый раз']) expect(res.body).toContain(t);
+    });
   });
 });

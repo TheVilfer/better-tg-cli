@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { readFileSync } from 'fs';
+import { readStdinOnce } from '../text.js';
 import { resolveApiMethod } from '../api-methods.js';
 import { runApiMethod } from '../api-run.js';
 
@@ -39,7 +39,7 @@ export const apiCommand = new Command('api')
       process.exit(1);
     }
 
-    const raw = options.params === '-' ? readFileSync(0, 'utf-8') : options.params;
+    const raw = options.params === '-' ? readStdinOnce() : options.params;
     try {
       parsed = raw.trim() ? JSON.parse(raw) : {};
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {

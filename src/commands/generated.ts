@@ -1,5 +1,5 @@
 import { Command, Option } from 'commander';
-import { readFileSync } from 'node:fs';
+import { readStdinOnce } from '../text.js';
 import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { runApiMethod } from '../api-run.js';
 import { apiRefusalReason, isApiReadMethod } from '../api-methods.js';
@@ -224,7 +224,7 @@ function coerce(p: TlParam, raw: string): unknown {
 function baseJsonParams(opts: Record<string, unknown>): Record<string, unknown> {
   const jp = opts.jsonParams;
   if (jp === undefined) return {};
-  const raw = jp === '-' ? readFileSync(0, 'utf-8') : String(jp);
+  const raw = jp === '-' ? readStdinOnce() : String(jp);
   if (!raw.trim()) return {};
   let parsed: unknown;
   try {

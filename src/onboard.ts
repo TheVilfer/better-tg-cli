@@ -5,6 +5,7 @@ import { renderSVG } from 'uqr';
 import type { LoginDriver, LoginUser } from './auth.js';
 import { onboardPage } from './onboard-page.js';
 import { errorMessage } from './text.js';
+import type { WriteMode } from './write-state.js';
 
 /**
  * `telegram onboard`: a one-shot page on 127.0.0.1 where the person logs in, so an agent can start
@@ -20,7 +21,7 @@ import { errorMessage } from './text.js';
 export const ONBOARD_SITE = 'https://better-tg-cli.com';
 const MAX_BODY = 16_000;
 
-export type OnboardStep = 'invite' | 'connecting' | 'scan' | 'password' | 'done' | 'error';
+export type OnboardStep = 'invite' | 'connecting' | 'scan' | 'password' | 'mode' | 'done' | 'error';
 
 export interface OnboardState {
   step: OnboardStep;
@@ -28,6 +29,10 @@ export interface OnboardState {
   hint?: string;
   error?: string;
   user?: LoginUser;
+  /** The write mode saved on the page (step done) */
+  mode?: WriteMode;
+  /** Only the mode step is shown: `write-access` without a terminal, not a login */
+  modeOnly?: boolean;
 }
 
 export type OnboardEvent =
@@ -35,8 +40,20 @@ export type OnboardEvent =
   | { event: 'waiting_invite' }
   | { event: 'waiting_scan' }
   | { event: 'need_password' }
-  | { event: 'done'; user: LoginUser }
+  | { event: 'logged_in'; user: LoginUser }
+  | { event: 'waiting_mode' }
+  | { event: 'mode'; mode: WriteMode; until?: string }
+  | { event: 'done'; user?: LoginUser; mode?: WriteMode }
   | { event: 'error'; message: string };
+
+/** A write mode picked on the page: how long it lasts, if it should end by itself. */
+export interface ModeChoice { mode: WriteMode; forSeconds?: number }
+export type ModeResult = { ok: true; until?: Date } | { ok: false; error: 'not_confirmed' | 'needs_terminal' | 'store_failed' };
+
+/** Choices the page offers for "until": nothing (no end), an hour, a day, a week. */
+const MODE_SPANS: Record<string, number | undefined> = { '': undefined, '1h': 3600, '1d': 86_400, '1w': 604_800 };
+/** The mode step gives up after this long and leaves the profile as it is (read-only by default) */
+const MODE_WAIT_MS = 10 * 60_000;
 
 export interface OnboardOptions {
   driver: LoginDriver;
@@ -47,12 +64,20 @@ export interface OnboardOptions {
   emit(event: OnboardEvent): void;
   site?: string;
   port?: number;
+  /**
+   * Saves a write mode picked on the page (after the login, or alone with `modeOnly`). It decides
+   * whether the click is enough or the person still has to confirm in a dialog or terminal.
+   * Without it there is no mode step and `done` follows the login, as before.
+   */
+  applyMode?(choice: ModeChoice): Promise<ModeResult>;
+  /** Skip the login and show only the mode step */
+  modeOnly?: boolean;
 }
 
 export interface OnboardSession {
   url: string;
-  /** Resolves with the user once the login is saved */
-  done: Promise<LoginUser>;
+  /** Resolves once the login (and the mode step, if any) is finished */
+  done: Promise<{ user?: LoginUser; mode?: WriteMode }>;
   close(): void;
 }
 
@@ -78,15 +103,32 @@ function readBody(req: IncomingMessage): Promise<unknown> {
 
 export async function startOnboarding(options: OnboardOptions): Promise<OnboardSession> {
   const secret = randomBytes(32).toString('base64url');
-  const state: OnboardState = { step: 'invite' };
+  const state: OnboardState = options.modeOnly ? { step: 'mode', modeOnly: true } : { step: 'invite' };
   const abort = new AbortController();
   let creds: { apiId: number; apiHash: string; invite: boolean } | undefined;
   let running = false;
   let passwordWaiter: ((password: string) => void) | undefined;
-  let resolveDone!: (user: LoginUser) => void;
-  const done = new Promise<LoginUser>(r => (resolveDone = r));
+  let resolveDone!: (result: { user?: LoginUser; mode?: WriteMode }) => void;
+  const done = new Promise<{ user?: LoginUser; mode?: WriteMode }>(r => (resolveDone = r));
+  let modeTimer: ReturnType<typeof setTimeout> | undefined;
+  let applying = false;
 
   const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined }, patch);
+
+  function finish(mode?: WriteMode): void {
+    if (modeTimer) clearTimeout(modeTimer);
+    set({ step: 'done', mode, qrSvg: undefined });
+    options.emit({ event: 'done', ...(state.user ? { user: state.user } : {}), ...(mode ? { mode } : {}) });
+    resolveDone({ user: state.user, mode });
+  }
+
+  /** After the login: the page asks what the agent may do; skipping or waiting too long keeps read-only. */
+  function askMode(): void {
+    set({ step: 'mode', qrSvg: undefined });
+    options.emit({ event: 'waiting_mode' });
+    modeTimer = setTimeout(() => finish(), MODE_WAIT_MS);
+    modeTimer.unref?.();
+  }
 
   async function runLogin(): Promise<void> {
     if (!creds || running) return;
@@ -111,9 +153,11 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
         signal: abort.signal,
       });
       options.save(result.session, creds, creds.invite);
-      set({ step: 'done', user: result.user, qrSvg: undefined });
-      options.emit({ event: 'done', user: result.user });
-      resolveDone(result.user);
+      set({ user: result.user });
+      if (options.applyMode) {
+        options.emit({ event: 'logged_in', user: result.user });
+        askMode();
+      } else finish();
     } catch (e) {
       if (abort.signal.aborted) return;
       const message = errorMessage(e);
@@ -188,6 +232,26 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       give(body.password);
       return json(res, 202, { ok: true });
     }
+    if (route === 'mode') {
+      if (state.step !== 'mode' || !options.applyMode || applying) return json(res, 409, { error: 'not_waiting_for_mode' });
+      const mode = body.mode;
+      const span = typeof body.for === 'string' ? body.for : '';
+      if ((mode !== 'read-only' && mode !== 'ask' && mode !== 'on') || !(span in MODE_SPANS)) return json(res, 400, { error: 'bad_mode' });
+      applying = true;
+      try {
+        // May show a dialog (macOS, Windows) or a terminal prompt and wait for the person
+        const result = await options.applyMode({ mode, forSeconds: MODE_SPANS[span] });
+        if (!result.ok) {
+          state.error = result.error;
+          return json(res, 409, { error: result.error });
+        }
+        options.emit({ event: 'mode', mode, ...(result.until ? { until: result.until.toISOString() } : {}) });
+        finish(mode);
+        return json(res, 202, { ok: true });
+      } finally {
+        applying = false;
+      }
+    }
     if (route === 'retry') {
       // Same credentials, no new invite use: a timed-out scan or a failed attempt starts over
       if (!creds || running || state.step !== 'error') return json(res, 409, { error: 'nothing_to_retry' });
@@ -208,9 +272,11 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   origin = `http://127.0.0.1:${port}`;
   const url = `${origin}${base}`;
   options.emit({ event: 'url', url });
-  options.emit({ event: 'waiting_invite' });
+  if (options.modeOnly) askMode();
+  else options.emit({ event: 'waiting_invite' });
 
   const close = () => {
+    if (modeTimer) clearTimeout(modeTimer);
     abort.abort();
     server.closeAllConnections?.();
     server.close();

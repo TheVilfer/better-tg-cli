@@ -26,6 +26,18 @@ const en = {
   retry: 'Try again',
   gone: 'This page stopped answering. Run telegram onboard again.',
   failed: 'Something went wrong',
+  modeTitle: 'What may your agent do in Telegram?',
+  modeH: 'Last step. What may the agent do?',
+  modeNote: 'You can change this later with telegram write-access.',
+  roName: 'Read only', roNote: 'Reads and searches. To send anything, it asks you to change this setting. Recommended to start.',
+  askName: 'Ask me each time', askNote: 'Before each message or action, the agent shows it to you in the chat and waits for your yes. A convenience, not a lock: an agent that ignores its instructions could approve on its own.',
+  onName: 'Write freely', onNote: 'Sends, edits and deletes without asking. Only for an agent you trust: a message it reads could talk it into posting as you.',
+  forLabel: 'For', forAlways: 'until I change it', for1h: '1 hour', for1d: '1 day', for1w: '1 week',
+  save: 'Save',
+  notConfirmed: 'Not confirmed in the dialog. Choose again.',
+  needsTerminal: 'This computer can only confirm that in a terminal. Run telegram write-access ask (or on) there. Until then the agent only reads.',
+  modeDone: 'Saved: {mode}. You can close this tab and go back to your agent.',
+  doneMode: 'Logged in as {user}. Write mode: {mode}. You can close this tab and go back to your agent.',
 };
 
 type Strings = typeof en;
@@ -54,6 +66,18 @@ const es: Strings = {
   retry: 'Intentar de nuevo',
   gone: 'Esta página ya no responde. Vuelve a ejecutar telegram onboard.',
   failed: 'Algo salió mal',
+  modeTitle: '¿Qué puede hacer tu agente en Telegram?',
+  modeH: 'Último paso. ¿Qué puede hacer el agente?',
+  modeNote: 'Puedes cambiarlo más tarde con telegram write-access.',
+  roName: 'Solo lectura', roNote: 'Lee y busca. Para enviar algo, te pide que cambies este ajuste. Recomendado para empezar.',
+  askName: 'Preguntarme cada vez', askNote: 'Antes de cada mensaje o acción, el agente te lo muestra en el chat y espera tu sí. Es una comodidad, no un candado: un agente que ignore sus instrucciones podría aprobarlo solo.',
+  onName: 'Escribir libremente', onNote: 'Envía, edita y borra sin preguntar. Solo para un agente de confianza: un mensaje que lea podría convencerlo de publicar en tu nombre.',
+  forLabel: 'Durante', forAlways: 'hasta que lo cambie', for1h: '1 hora', for1d: '1 día', for1w: '1 semana',
+  save: 'Guardar',
+  notConfirmed: 'No se confirmó en el diálogo. Elige de nuevo.',
+  needsTerminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí telegram write-access ask (u on). Hasta entonces el agente solo lee.',
+  modeDone: 'Guardado: {mode}. Puedes cerrar esta pestaña y volver a tu agente.',
+  doneMode: 'Has iniciado sesión como {user}. Modo de escritura: {mode}. Puedes cerrar esta pestaña y volver a tu agente.',
 };
 
 const ru: Strings = {
@@ -80,6 +104,18 @@ const ru: Strings = {
   retry: 'Попробовать ещё раз',
   gone: 'Страница больше не отвечает. Запустите telegram onboard ещё раз.',
   failed: 'Что-то пошло не так',
+  modeTitle: 'Что агенту можно делать в Telegram?',
+  modeH: 'Последний шаг. Что можно агенту?',
+  modeNote: 'Это можно поменять потом командой telegram write-access.',
+  roName: 'Только чтение', roNote: 'Читает и ищет. Чтобы что-то отправить, попросит вас поменять эту настройку. Лучший вариант для начала.',
+  askName: 'Спрашивать каждый раз', askNote: 'Перед каждым сообщением или действием агент показывает его вам в чате и ждёт вашего «да». Это удобство, а не замок: агент, который не слушается инструкций, может одобрить сам.',
+  onName: 'Писать без вопросов', onNote: 'Отправляет, правит и удаляет, не спрашивая. Только для агента, которому вы доверяете: прочитанное сообщение может уговорить его написать от вашего имени.',
+  forLabel: 'На', forAlways: 'пока не поменяю', for1h: '1 час', for1d: '1 день', for1w: '1 неделю',
+  save: 'Сохранить',
+  notConfirmed: 'В диалоге не подтвердили. Выберите ещё раз.',
+  needsTerminal: 'На этом компьютере это подтверждается только в терминале. Запустите там telegram write-access ask (или on). До тех пор агент только читает.',
+  modeDone: 'Сохранено: {mode}. Эту вкладку можно закрыть и вернуться к агенту.',
+  doneMode: 'Вы вошли как {user}. Режим записи: {mode}. Эту вкладку можно закрыть и вернуться к агенту.',
 };
 
 const STRINGS = { en, es, ru };
@@ -123,6 +159,10 @@ details>div{margin-top:12px}
 .qr svg{display:block;width:260px;height:260px}
 .err{color:var(--err)}
 .mono{font-family:ui-monospace,monospace}
+.opt{display:block;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer;background:var(--panel)}
+.opt:has(input:checked){border-color:var(--accent)}
+.opt input{width:auto;margin:0 8px 0 0}.opt b{color:var(--fg)}.opt small{display:block;color:var(--dim);margin:4px 0 0 24px}
+select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg);margin:0 0 14px 6px}
 [hidden]{display:none!important}
 </style></head><body><main>
 <div class="brand">BETTER-TG-CLI<i>.</i></div>
@@ -156,6 +196,15 @@ details>div{margin-top:12px}
   <button id="pwgo" data-t="send"></button>
 </section>
 
+<section id="mode" hidden>
+  <h2 data-t="modeH"></h2><p data-t="modeNote"></p>
+  <label class="opt"><input type="radio" name="mode" value="read-only" checked><b data-t="roName"></b><small data-t="roNote"></small></label>
+  <label class="opt"><input type="radio" name="mode" value="ask"><b data-t="askName"></b><small data-t="askNote"></small></label>
+  <label class="opt"><input type="radio" name="mode" value="on"><b data-t="onName"></b><small data-t="onNote"></small></label>
+  <p id="forrow" hidden><span data-t="forLabel"></span><select id="for"><option value="" data-t="forAlways"></option><option value="1h" data-t="for1h"></option><option value="1d" data-t="for1d"></option><option value="1w" data-t="for1w"></option></select></p>
+  <button id="modego" data-t="save"></button>
+</section>
+
 <section id="done" hidden><h2 data-t="doneH"></h2><p id="donetext"></p></section>
 <section id="error" hidden><h2 data-t="errorH"></h2><p class="mono" id="errtext"></p><button id="retry" data-t="retry"></button></section>
 <p class="err" id="msg" role="alert" hidden></p>
@@ -178,7 +227,7 @@ const msg = t => { $('msg').textContent = t || ''; $('msg').hidden = !t; };
 async function post(route, body) {
   const res = await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || data.error || L.failed);
+  if (!res.ok) throw new Error(data.error === 'not_confirmed' ? L.notConfirmed : data.error === 'needs_terminal' ? L.needsTerminal : data.message || data.error || L.failed);
 }
 async function act(route, body, btn) {
   msg(''); if (btn) btn.disabled = true;
@@ -195,20 +244,28 @@ $('keys').onclick = () => act('invite', { apiId: $('apiId').value, apiHash: $('a
 $('pwgo').onclick = () => { const pw = $('pw').value; $('pw').value = ''; act('password', { password: pw }, $('pwgo')); };
 $('pw').onkeydown = e => { if (e.key === 'Enter') $('pwgo').click(); };
 $('retry').onclick = () => act('retry', {}, $('retry'));
+const picked = () => document.querySelector('input[name=mode]:checked').value;
+for (const r of document.querySelectorAll('input[name=mode]')) r.onchange = () => { $('forrow').hidden = picked() === 'read-only'; };
+const MODE_NAMES = { 'read-only': 'roName', ask: 'askName', on: 'onName' };
+$('modego').onclick = () => act('mode', { mode: picked(), for: picked() === 'read-only' ? '' : $('for').value }, $('modego'));
 
 let last = '', timer;
 async function poll() {
   let s;
   try { s = await (await fetch(base + 'state', { cache: 'no-store' })).json(); }
   catch { msg(L.gone); clearInterval(timer); return; }
-  for (const id of ['invite', 'connecting', 'scan', 'password', 'done', 'error']) $(id).hidden = s.step !== id;
+  for (const id of ['invite', 'connecting', 'scan', 'password', 'mode', 'done', 'error']) $(id).hidden = s.step !== id;
+  if (s.modeOnly) { document.title = L.modeTitle; document.querySelector('h1').textContent = L.modeTitle; document.querySelector('h1 + p').hidden = true; }
   // qrSvg is rendered by this local CLI from the Telegram login token, not taken from any site
   if (s.step === 'scan' && s.qrSvg !== last) { $('qr').innerHTML = s.qrSvg; last = s.qrSvg; }
   if (s.step === 'password') { $('hint').textContent = s.hint || '—'; if (s.error === 'wrong_password') msg(L.wrong); }
   if (s.step === 'error') $('errtext').textContent = s.error || '';
   if (s.step === 'done') {
     const u = s.user || {};
-    $('donetext').textContent = L.doneNote.replace('{user}', (u.name || '') + (u.username ? ' (@' + u.username + ')' : ''));
+    const who = (u.name || '') + (u.username ? ' (@' + u.username + ')' : '');
+    const mode = s.mode ? L[MODE_NAMES[s.mode]] : '';
+    $('donetext').textContent = s.modeOnly ? L.modeDone.replace('{mode}', mode)
+      : s.mode ? L.doneMode.replace('{user}', who).replace('{mode}', mode) : L.doneNote.replace('{user}', who);
     clearInterval(timer);
   }
 }
