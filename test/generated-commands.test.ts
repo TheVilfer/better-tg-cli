@@ -1,5 +1,6 @@
-import { afterAll, describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +10,6 @@ import { TL_METHODS } from '../src/generated/tl-commands.js';
 import { buildParams, paramsOf, access, methodSchema, exampleInvocation } from '../src/commands/generated.js';
 import { methodDoc, paramDoc, docsUrl, TL_DOCS_META } from '../src/tl-docs.js';
 import { resolveGeneratedCommand, methodClassName, rootMethodClassName, kebabCase } from '../src/generated-registry.js';
-import { spawnSync } from 'node:child_process';
 import { planCall } from '../src/mcp.js';
 import { disconnectClient } from '../src/client.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
@@ -198,66 +198,70 @@ describe('embedded descriptions and schema', () => {
   });
 });
 
-describe('CLI, mock mode (top-level form, clashes, help)', () => {
+describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
   const home = mkdtempSync(join(tmpdir(), 'tg-gen-home-'));
   const state = join(home, 'state.json');
-  const run = (...args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', 'src/index.ts', ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_MOCK: state, TG_NO_UPDATE_CHECK: '1', TG_PROFILE: '' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const fails = (...args: string[]): string => {
-    try { return run(...args); }
+  const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_MOCK: state, TG_NO_UPDATE_CHECK: '1', TG_PROFILE: '' };
+  const exec = promisify(execFile);
+  // Each call is a separate CLI process (~0.3-1 s); the tests only read, so they run concurrently
+  const run = async (...args: string[]): Promise<string> =>
+    (await exec(process.execPath, ['--import', 'tsx', 'src/index.ts', ...args], { encoding: 'utf8', env, maxBuffer: 64 << 20 })).stdout;
+  const fails = async (...args: string[]): Promise<string> => {
+    try { return await run(...args); }
     catch (e) { return String((e as { stderr?: string }).stderr ?? '') + String((e as { stdout?: string }).stdout ?? ''); }
   };
+  // Create the mock state once, before the concurrent tests read it
+  beforeAll(() => {
+    execFileSync(process.execPath, ['--import', 'tsx', 'src/index.ts', 'whoami'], { env, stdio: 'ignore' });
+  }, 30_000);
   afterAll(async () => { await disconnectClient(); setStrictChatResolution(false); rmSync(home, { recursive: true, force: true }); });
 
-  it('runs a pure-generated namespace read', () => {
-    const json = JSON.parse(run('channels', 'get-full-channel', '--channel', 'Team'));
+  it('runs a pure-generated namespace read', async () => {
+    const json = JSON.parse(await run('channels', 'get-full-channel', '--channel', 'Team'));
     expect(json.chats[0].title).toBe('Team');
   }, 30_000);
 
-  it('short get-history form works (paging cursors default to 0 — no missing-required error)', () => {
-    const err = fails('messages', 'get-history', '--peer', 'Team', '--limit', '3');
+  it('short get-history form works (paging cursors default to 0 — no missing-required error)', async () => {
+    const err = await fails('messages', 'get-history', '--peer', 'Team', '--limit', '3');
     expect(err).not.toMatch(/Missing required/);
   }, 30_000);
 
-  it('clash: stats <chat> is curated, stats <method> is the generated command', () => {
-    const curated = JSON.parse(run('stats', 'Team', '--json'));
+  it('clash: stats <chat> is curated, stats <method> is the generated command', async () => {
+    const curated = JSON.parse(await run('stats', 'Team', '--json'));
     expect(curated).toHaveProperty('title'); // curated shaped output
     expect(curated).not.toHaveProperty('className'); // not a raw TL object
-    const generated = JSON.parse(run('stats', 'get-broadcast-stats', '--channel', 'Team'));
+    const generated = JSON.parse(await run('stats', 'get-broadcast-stats', '--channel', 'Team'));
     expect(generated.className).toBe('stats.BroadcastStats'); // raw TL result
   }, 30_000);
 
-  it('clash: stories only treats an exact method name as the generated command', () => {
+  it('clash: stories only treats an exact method name as the generated command', async () => {
     // generated form accepts --peer (a flag the curated `stories <user>` does not have)
-    const generated = fails('stories', 'get-peer-stories', '--peer', 'alice');
+    const generated = await fails('stories', 'get-peer-stories', '--peer', 'alice');
     expect(generated).not.toMatch(/unknown option/i);
     // curated form treats the operand as <user>; --peer is unknown there
-    const curated = fails('stories', 'alice', '--peer', 'x');
+    const curated = await fails('stories', 'alice', '--peer', 'x');
     expect(curated).toMatch(/unknown option/i);
   }, 30_000);
 
-  it('help: `help <method>` runs it, `help <command>` shows help', () => {
-    expect(fails('help', 'get-config')).toMatch(/help\.GetConfig/); // ran the method (mock: unimplemented)
-    expect(run('help', 'stats')).toMatch(/Usage: tg stats/);
-    expect(run('help', 'messages')).toMatch(/get-history/); // namespace help lists methods
+  it('help: `help <method>` runs it, `help <command>` shows help', async () => {
+    expect(await fails('help', 'get-config')).toMatch(/help\.GetConfig/); // ran the method (mock: unimplemented)
+    expect(await run('help', 'stats')).toMatch(/Usage: tg stats/);
+    expect(await run('help', 'messages')).toMatch(/get-history/); // namespace help lists methods
   }, 30_000);
 
-  it('root methods are top-level commands', () => {
-    const help = run('ping', '--help');
+  it('root methods are top-level commands', async () => {
+    const help = await run('ping', '--help');
     expect(help).toMatch(/Returns: Pong/);
     expect(help).toMatch(/--ping-id <value>\s+long, required/);
   }, 30_000);
 
-  it('a refused method refuses with a clear message and exit 1', () => {
-    expect(fails('account', 'delete-account')).toMatch(/Refused:.*irreversible/i);
-    expect(fails('auth', 'send-code')).toMatch(/login|session/i);
+  it('a refused method refuses with a clear message and exit 1', async () => {
+    expect(await fails('account', 'delete-account')).toMatch(/Refused:.*irreversible/i);
+    expect(await fails('auth', 'send-code')).toMatch(/login|session/i);
   }, 30_000);
 
-  it('top-level --help stays small with an API-namespace summary (no 823 lines)', () => {
-    const help = run('--help');
+  it('top-level --help stays small with an API-namespace summary (no 823 lines)', async () => {
+    const help = await run('--help');
     const n = help.split('\n').length;
     expect(n).toBeLessThan(130);
     expect(help).toMatch(/Telegram API — a dedicated command for every TL method/);
@@ -266,8 +270,8 @@ describe('CLI, mock mode (top-level form, clashes, help)', () => {
     expect(help).not.toMatch(/TL API methods/); // the group description, shown only if one were listed
   }, 30_000);
 
-  it('a namespace --help lists its methods with access marks + descriptions', () => {
-    const ns = run('messages', '--help');
+  it('a namespace --help lists its methods with access marks + descriptions', async () => {
+    const ns = await run('messages', '--help');
     expect(ns).toMatch(/get-history/);
     expect(ns.split('\n').filter(l => /^\s{2}\S/.test(l)).length).toBeGreaterThan(100);
     expect(ns).toMatch(/\[read\]/); // get-history etc.
@@ -275,14 +279,14 @@ describe('CLI, mock mode (top-level form, clashes, help)', () => {
     expect(ns).toMatch(/\[refused\]/);
   }, 30_000);
 
-  it('a method --help shows description, typed params, access, example and docs link', () => {
-    const method = run('messages', 'get-history', '--help');
+  it('a method --help shows description, typed params, access, example and docs link', async () => {
+    const method = await run('messages', 'get-history', '--help');
     expect(method).toMatch(/Returns the message history in a peer\./); // official description
     // shown once, at the top, with the access mark (not repeated after the options)
     expect(method.match(/Returns the message history in a peer\./g)).toHaveLength(1);
     expect(method.indexOf('[read] Returns the message history')).toBeLessThan(method.indexOf('Options:'));
     // the full (unshortened) description is used, not the namespace list's one-liner
-    expect(run('account', 'delete-account', '--help')).not.toMatch(/^\[refused\][^\n]*…$/m);
+    expect(await run('account', 'delete-account', '--help')).not.toMatch(/^\[refused\][^\n]*…$/m);
     expect(method).toMatch(/--peer <value>\s+InputPeer, required — Target peer/); // type + param desc
     expect(method).toMatch(/--offset-id <value>\s+int, default 0/);
     expect(method).toMatch(/--hash <value>\s+long, default 0/);
@@ -293,44 +297,43 @@ describe('CLI, mock mode (top-level form, clashes, help)', () => {
     expect(method).toMatch(/CHANNEL_INVALID/); // common errors
   }, 30_000);
 
-  it('a refused method --help states the refusal + reason (and never runs anything)', () => {
-    const help = run('account', 'delete-account', '--help');
+  it('a refused method --help states the refusal + reason (and never runs anything)', async () => {
+    const help = await run('account', 'delete-account', '--help');
     expect(help).toMatch(/Access: refused — Refused:.*irreversible/i);
     expect(help).toMatch(/Delete the user's account/); // official description still shown
   }, 30_000);
 
-  it('schema prints JSON for a method, a namespace, and the index', () => {
-    const method = JSON.parse(run('schema', 'messages', 'get-history'));
+  it('schema prints JSON for a method, a namespace, and the index', async () => {
+    const method = JSON.parse(await run('schema', 'messages', 'get-history'));
     expect(method).toMatchObject({ command: 'messages get-history', className: 'messages.GetHistory', access: 'read', returns: 'messages.Messages' });
     expect(method.params.find((p: { flag: string }) => p.flag === '--peer')).toMatchObject({ required: true });
     expect(method.example).toContain('--peer @username --limit 20');
-    const nsList = JSON.parse(run('schema', 'messages'));
+    const nsList = JSON.parse(await run('schema', 'messages'));
     expect(Array.isArray(nsList)).toBe(true);
     expect(nsList[0]).toHaveProperty('access');
-    const index = JSON.parse(run('schema'));
+    const index = JSON.parse(await run('schema'));
     expect(index.namespaces.find((n: { namespace: string }) => n.namespace === 'messages')).toMatchObject({ methods: 259 });
     expect(index.rootMethods).toContain('ping');
     // className form and a refused method
-    expect(JSON.parse(run('schema', 'account.DeleteAccount'))).toMatchObject({ access: 'refused' });
+    expect(JSON.parse(await run('schema', 'account.DeleteAccount'))).toMatchObject({ access: 'refused' });
   }, 30_000);
 
-  it('an auto-generated example invocation parses and satisfies required flags', () => {
+  it('an auto-generated example invocation parses and satisfies required flags', async () => {
     // run the get-history example in mock: it fails to resolve @username, but NOT on parsing/required
-    const err = fails('messages', 'get-history', '--peer', '@username', '--limit', '20');
+    const err = await fails('messages', 'get-history', '--peer', '@username', '--limit', '20');
     expect(err).not.toMatch(/Missing required option|unknown option|error:/i);
   }, 30_000);
 
-  it('help output is clean when the pipe closes early (no EPIPE crash)', () => {
-    const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_MOCK: state, TG_NO_UPDATE_CHECK: '1', TG_PROFILE: '' };
+  it('help output is clean when the pipe closes early (no EPIPE crash)', async () => {
     // node stdout → head (closes early); node stderr is inherited to the shell and captured here.
-    for (const cmd of ['help', 'help stats', 'help messages', 'messages --help']) {
-      const r = spawnSync('sh', ['-c', `node --import tsx src/index.ts ${cmd} | head -c 20`], { env, encoding: 'utf8' });
+    await Promise.all(['help', 'help stats', 'help messages', 'messages --help'].map(async cmd => {
+      const r = await exec('sh', ['-c', `node --import tsx src/index.ts ${cmd} | head -c 20`], { env, encoding: 'utf8' }).catch(e => e as { stderr: string });
       expect(r.stderr, `${cmd}: ${r.stderr}`).not.toMatch(/EPIPE|Unhandled 'error'/);
-    }
+    }));
   }, 30_000);
 
-  it('a clash command --help shows curated usage plus a generated-methods pointer', () => {
-    const help = run('stats', '--help');
+  it('a clash command --help shows curated usage plus a generated-methods pointer', async () => {
+    const help = await run('stats', '--help');
     expect(help).toMatch(/Usage: tg stats \[options\] <chat>/); // curated usage intact
     expect(help).toMatch(/Generated API methods \(telegram stats <method>/);
     expect(help).toMatch(/get-broadcast-stats/);
