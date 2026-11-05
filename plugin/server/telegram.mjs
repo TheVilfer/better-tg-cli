@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Better-TG-CLI 0.39.2: the telegram CLI and its MCP server, run by the Claude plugin.
+// Better-TG-CLI 0.39.3: the telegram CLI and its MCP server, run by the Claude plugin.
 // cli/*.js is one readable (not minified) CommonJS bundle of https://github.com/TheVilfer/better-tg-cli
-// at v0.39.2, built by `bun scripts/bundle.mjs plugin` and cut into parts under 256 KiB. The parts
+// at v0.39.3, built by `bun scripts/bundle.mjs plugin` and cut into parts under 256 KiB. The parts
 // are not separate modules: this file joins them in order and runs the result, like dist/telegram.mjs.
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
