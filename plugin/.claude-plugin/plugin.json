@@ -17,10 +17,9 @@
   ],
   "mcpServers": {
     "telegram": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "better-tg-cli@0.39.1",
+        "${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs",
         "mcp"
       ]
     }

@@ -117,7 +117,8 @@ The skill and the MCP server together, in one install:
 /plugin install better-tg-cli@better-tg-cli
 ```
 
-It runs the MCP server through `npx`, so Node 20+ is enough. Log in once with `telegram auth --qr`
+It runs its own copy of the MCP server, included in the plugin, so Node 20+ is enough and nothing
+is downloaded at install time. Log in once with `telegram auth --qr`
 (or `npx better-tg-cli auth --qr`) in a terminal.
 
 ### Codex plugin
@@ -277,7 +278,7 @@ claude mcp add telegram -- telegram mcp          # Claude Code (or use the plugi
 
 Use the JSON form for Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`).
 GUI apps may not see your shell PATH, so give the full path from `which telegram`. Without a
-global install, run it through npx, which is also what the Claude Code plugin does:
+global install, run it through npx:
 
 ```json
 { "mcpServers": { "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] } } }
