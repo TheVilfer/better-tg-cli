@@ -5003,7 +5003,7 @@ function readTextArg(value) {
 }
 
 // src/version.ts
-var VERSION = "0.39.1";
+var VERSION = "0.39.2";
 
 // node_modules/commander/lib/error.js
 class CommanderError extends Error {
