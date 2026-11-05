@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -122,54 +121,30 @@ describe('MCP', () => {
 });
 
 describe('plugin/ (Anthropic plugin directory)', () => {
-  it('pins the MCP server to this version and carries the current skill', () => {
+  it('carries the current skill, and pins the MCP server to this version for Codex and Cursor', () => {
     const root = new URL('../', import.meta.url);
     const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
     const manifest = JSON.parse(readFileSync(new URL('plugin/.claude-plugin/plugin.json', root), 'utf8'));
     expect(manifest.version).toBe(version);
-    // Claude Code runs the copy in plugin/server/; Codex and Cursor the pinned npm package
-    expect(manifest.mcpServers.telegram).toEqual({ command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs', 'mcp'] });
     const codex = JSON.parse(readFileSync(new URL('plugin/.codex-plugin/mcp.json', root), 'utf8'));
     expect(codex.mcpServers.telegram.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
+    const cursor = JSON.parse(readFileSync(new URL('plugin/.cursor-plugin/plugin.json', root), 'utf8'));
+    expect(cursor.mcpServers.telegram.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
     for (const [file, content] of Object.entries(SKILL_FILES)) {
       expect(readFileSync(new URL(`plugin/skills/better-tg-cli/${file}`, root), 'utf8')).toBe(content);
     }
     expect(readFileSync(new URL('plugin/LICENSE', root), 'utf8')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
   });
 
-  it('ships a readable server of this version, in files the directory reads (under 256 KiB, under 512 files)', () => {
+  it('the Claude plugin is the skill alone: no MCP server, no code', () => {
+    // The directory accepts MCP servers that run on the user's computer only from Verified organizations
     const root = new URL('../', import.meta.url);
-    const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
-    const out = execFileSync(process.execPath, [fileURLToPath(new URL('plugin/server/telegram.mjs', root)), '--version'], {
-      encoding: 'utf8', env: { ...process.env, TG_NO_UPDATE_CHECK: '1' },
-    }).trim();
-    // release.sh rebuilds it with the version bump (npm run bundle:plugin)
-    expect(out, 'plugin/server is stale: run npm run bundle:plugin').toBe(version);
+    const manifest = JSON.parse(readFileSync(new URL('plugin/.claude-plugin/plugin.json', root), 'utf8'));
+    expect(manifest.mcpServers).toBeUndefined();
+    expect(existsSync(new URL('plugin/.mcp.json', root))).toBe(false);
     const files = (function walk(dir: string): string[] {
       return readdirSync(dir, { withFileTypes: true }).flatMap(e => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
     })(fileURLToPath(new URL('plugin', root)));
-    expect(files.length).toBeLessThan(512);
-    for (const f of files) expect(statSync(f).size, f).toBeLessThan(256 * 1024);
-  });
-
-  it('the plugin server carries nothing the directory scan flags: no WebAssembly, no installer', () => {
-    const root = new URL('../', import.meta.url);
-    const dir = fileURLToPath(new URL('plugin/server/cli', root));
-    for (const name of readdirSync(dir)) {
-      const code = readFileSync(join(dir, name), 'utf8');
-      expect(code, `${name}: WebAssembly (base64 "\\0asm")`).not.toContain('AGFzbQ');
-      expect(code, `${name}: cifrante's native addon lookup`).not.toContain('CIFRANTE_NATIVE');
-      expect(code, `${name}: an installer command`).not.toMatch(/npm install -g|brew (install|upgrade)|scoop (install|update)/);
-    }
-    let failed: { status: number | null; stderr: string } | undefined;
-    try {
-      execFileSync(process.execPath, [fileURLToPath(new URL('plugin/server/telegram.mjs', root)), 'update'], {
-        encoding: 'utf8', stdio: 'pipe', env: { ...process.env, TG_NO_UPDATE_CHECK: '1' },
-      });
-    } catch (e) {
-      failed = e as { status: number | null; stderr: string };
-    }
-    expect(failed?.status).toBe(1);
-    expect(failed?.stderr).toContain('Claude Code updates it');
+    expect(files.filter(f => /\.(c|m)?js$|\.node$|\.wasm$/.test(f))).toEqual([]);
   });
 });
