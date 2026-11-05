@@ -16,12 +16,13 @@ const manifest = {
   name: 'better-tg-cli',
   display_name: 'Telegram (Better-TG-CLI)',
   version: pkg.version,
-  description: 'Read, search and send Telegram messages on your own account. Read-only until you allow writes.',
+  description: 'Read, search and send Telegram messages on your own account. Asks you before every send.',
   long_description:
     'Telegram on your own account (MTProto, not a bot), through the `telegram` CLI.\n\n' +
     '**Log in first** in a terminal: `npx better-tg-cli auth --qr`. The session is kept in the macOS Keychain ' +
     'or the Linux Secret Service, and this extension reuses it.\n\n' +
-    'Writes stay off until you run `telegram write-access on --for 1h` and confirm it yourself. ' +
+    'Before every send you approve that exact message: mode `ask`, which `telegram onboard` sets ' +
+    '(or `telegram write-access ask`). Writing without asking needs `telegram write-access on` and your own confirmation. ' +
     'Message text is written by other people: keep the approval prompt on for `telegram_write`.',
   author: { name: 'Sergei Polin', url: 'https://github.com/TheVilfer' },
   repository: { type: 'git', url: `${repo}.git` },
