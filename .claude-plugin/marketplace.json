@@ -11,7 +11,7 @@
     {
       "name": "better-tg-cli",
       "source": "./plugin",
-      "description": "Telegram on your own account: the better-tg-cli skill plus its MCP server. Log in once with `telegram onboard`."
+      "description": "Telegram on your own account: the better-tg-cli skill for the telegram CLI. Install the CLI and log in once with `telegram onboard`."
     }
   ]
 }
