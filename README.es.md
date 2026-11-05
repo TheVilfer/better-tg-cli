@@ -100,7 +100,7 @@ Todos los canales distribuyen la misma versión desde una única release:
 | [npm](https://www.npmjs.com/package/better-tg-cli) | CLI y servidor MCP (Node 20+) | `npm install -g better-tg-cli` |
 | [Scoop](https://github.com/TheVilfer/scoop-bucket) (Windows, experimental) | `telegram.exe` independiente | `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` y luego `scoop install better-tg-cli` |
 | [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | binarios y SHA256SUMS | descarga manual |
-| Plugin de Claude Code | skill y servidor MCP | [ver abajo](#plugin-para-claude-code) |
+| Plugin de Claude Code | skill (usa la CLI instalada) | [ver abajo](#plugin-para-claude-code) |
 | Extensión de Claude Desktop | servidor MCP, se ejecuta con el Node integrado de Claude | [descarga el `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) y ábrelo |
 | Plugin de Grok Build | skill y servidor MCP | [ver abajo](#plugin-para-grok-build) |
 | Extensión de Gemini CLI | skill y servidor MCP | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
@@ -112,20 +112,22 @@ Todos los canales distribuyen la misma versión desde una única release:
 
 ### Plugin para Claude Code
 
-La skill y el servidor MCP juntos, en una sola instalación:
+La skill como plugin, que Claude Code mantiene al día:
 
 ```
 /plugin marketplace add TheVilfer/better-tg-cli
 /plugin install better-tg-cli@better-tg-cli
 ```
 
-Ejecuta su propia copia del servidor MCP, incluida en el plugin, así que basta con Node 20+ y no se
-descarga nada al instalar. Inicia sesión una vez con
-`telegram auth --qr` (o `npx better-tg-cli auth --qr`) en un terminal.
+El plugin es solo la skill: instala antes la CLI (arriba) e inicia sesión una vez con
+`telegram onboard` en un terminal. Después Claude Code ejecuta `telegram` por su cuenta. El directorio
+de plugins de Anthropic solo acepta servidores MCP que se ejecutan en tu ordenador si vienen de
+organizaciones Verified, así que el servidor MCP se añade aparte si lo quieres:
+`claude mcp add telegram -- telegram mcp`.
 
 ### Plugin para Codex
 
-La misma skill y el mismo servidor MCP como plugin de Codex (también aparece en la app de escritorio
+La skill y el servidor MCP como plugin de Codex (también aparece en la app de escritorio
 de ChatGPT):
 
 ```bash
@@ -135,7 +137,7 @@ codex plugin add better-tg-cli@better-tg-cli
 
 ### Plugin para Grok Build
 
-[Grok Build](https://x.ai/cli) instala el mismo plugin, con la skill y el servidor MCP juntos:
+[Grok Build](https://x.ai/cli) instala el plugin con la skill y el servidor MCP juntos:
 
 ```bash
 grok plugin install TheVilfer/better-tg-cli --trust

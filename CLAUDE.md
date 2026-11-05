@@ -108,22 +108,13 @@ Anthropic's plugin directory (claude.ai/directory/manage, path `plugin`) and the
 plugin (`plugin/.cursor-plugin/plugin.json`, root `.cursor-plugin/marketplace.json`) and the Codex
 plugin (`plugin/.codex-plugin/`, repo marketplace `.agents/plugins/marketplace.json`; its MCP config
 sits in `.codex-plugin/mcp.json`, since a `.mcp.json` in the plugin root would load twice in Claude Code). `gen-version.mjs`
-regenerates everything in it except `plugin/README.md` and `plugin/server/`: regular-file copies of
-the skill and LICENSE, and the manifests. Keep it free of symlinks, binaries and lockfiles.
-The directory holds plugins that run a pinned npx package ("Runs a pinned npx or uvx package") until
-a reviewer looks, and npm 12 dropped `npm-shrinkwrap.json`, so there is no lockfile to ship. So the
-Claude manifest runs `node ${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs mcp`: `plugin/server/` is a
-readable (not minified) bundle of the CLI cut into parts under the directory's 256 KiB per file, built
-by `npm run bundle:plugin` (`bun scripts/bundle.mjs plugin`). `release.sh` rebuilds it with each
-version bump, and a test fails if its `--version` differs from `package.json`. Between releases it
-stays the last release's build, so don't rebuild it in feature PRs (unless the PR changes that build).
-The directory's scanner reads it, so the plugin build differs from `dist/`: teleproto's own schema
-(one definition per line) and error classes instead of the compact encodings, cifrante without its
-WebAssembly and native addon (`scripts/strip-wasm.mjs`; every cipher falls back to node:crypto or JS,
-and a test proves the bytes match), and `src/plugin-build/` in place of `src/update.ts`, `src/commands/update.ts` and
-`src/skill-files.ts` (no installer runs: Claude Code updates the plugin; the skill is read from the
-plugin's `skills/`). The Codex and Cursor manifests
-still run the pinned `npx better-tg-cli@<version>` (the directory blocks `@latest`).
+regenerates everything in it except `plugin/README.md`: regular-file copies of the skill and LICENSE,
+and the manifests. Keep it free of symlinks, binaries, lockfiles and code.
+The Claude manifest declares no MCP server: the directory accepts MCP servers that run on the user's
+computer only from Verified organizations (`LOCAL_CODE_MCP_SERVER`; nobody can apply yet), so the
+Claude plugin is the skill alone and uses the installed `telegram` CLI. The Codex and Cursor
+manifests run the pinned `npx better-tg-cli@<version> mcp` (the directory blocks `@latest`). The
+directory scans every new commit on `main` by itself.
 
 Grok Build reads `.claude-plugin/plugin.json` as is, but refuses a marketplace entry that points at
 the repo root (`"./"`, which Claude Code requires), so `.grok-plugin/marketplace.json` (preferred

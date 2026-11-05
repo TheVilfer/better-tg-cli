@@ -97,7 +97,7 @@ scoop install better-tg-cli
 | [npm](https://www.npmjs.com/package/better-tg-cli) | CLI и MCP-сервер (Node 20+) | `npm install -g better-tg-cli` |
 | [Scoop](https://github.com/TheVilfer/scoop-bucket) (Windows, экспериментально) | отдельный `telegram.exe` | `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket`, затем `scoop install better-tg-cli` |
 | [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | бинарники и SHA256SUMS | скачать вручную |
-| Плагин Claude Code | скилл и MCP-сервер | [см. ниже](#плагин-для-claude-code) |
+| Плагин Claude Code | скилл (работает через установленный CLI) | [см. ниже](#плагин-для-claude-code) |
 | Расширение Claude Desktop | MCP-сервер на встроенном Node из Claude | [скачать `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) и открыть |
 | Плагин Grok Build | скилл и MCP-сервер | [см. ниже](#плагин-для-grok-build) |
 | Расширение Gemini CLI | скилл и MCP-сервер | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
@@ -109,20 +109,21 @@ scoop install better-tg-cli
 
 ### Плагин для Claude Code
 
-Скилл и MCP-сервер ставятся вместе:
+Скилл в виде плагина, который Claude Code обновляет сам:
 
 ```
 /plugin marketplace add TheVilfer/better-tg-cli
 /plugin install better-tg-cli@better-tg-cli
 ```
 
-Плагин запускает собственную копию MCP-сервера, которая лежит в нём самом, так что хватит Node 20+,
-и при установке ничего не скачивается. Один раз войдите в терминале:
-`telegram auth --qr` (или `npx better-tg-cli auth --qr`).
+В плагине только скилл, поэтому сначала установите CLI (см. выше) и один раз войдите в терминале
+через `telegram onboard`. Дальше Claude Code сам запускает `telegram`. Каталог плагинов Anthropic
+принимает MCP-серверы, которые работают на вашем компьютере, только от Verified-организаций, поэтому
+MCP-сервер, если он нужен, добавляется отдельно: `claude mcp add telegram -- telegram mcp`.
 
 ### Плагин для Codex
 
-Тот же скилл и MCP-сервер в виде плагина Codex (он появится и в десктопном приложении ChatGPT):
+Скилл и MCP-сервер в виде плагина Codex (он появится и в десктопном приложении ChatGPT):
 
 ```bash
 codex plugin marketplace add TheVilfer/better-tg-cli
@@ -131,7 +132,7 @@ codex plugin add better-tg-cli@better-tg-cli
 
 ### Плагин для Grok Build
 
-[Grok Build](https://x.ai/cli) ставит тот же плагин, скилл и MCP-сервер вместе:
+[Grok Build](https://x.ai/cli) ставит плагин, скилл и MCP-сервер вместе:
 
 ```bash
 grok plugin install TheVilfer/better-tg-cli --trust

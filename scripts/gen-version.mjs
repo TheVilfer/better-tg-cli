@@ -41,16 +41,18 @@ try {
 if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
 
 // plugin/ is the folder submitted to Anthropic's plugin directory: regular files only (no links
-// into the repo), the MCP server pinned to this exact version, the skill and LICENSE copied in
+// into the repo), the skill and LICENSE copied in, the MCP server (Codex, Cursor) pinned to this version
 {
   const root = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
-  // Codex and Cursor start the pinned npm package; Claude Code runs the copy in plugin/server/
-  // (bun scripts/bundle.mjs plugin, rebuilt by release.sh), so nothing is downloaded at install time
+  // Codex and Cursor start the pinned npm package. The Claude plugin is the skill alone: Anthropic's
+  // directory accepts MCP servers that run on the user's computer only from Verified organizations,
+  // so Claude Code uses the installed telegram CLI (or `claude mcp add`) instead
   const npxServers = { telegram: { command: 'npx', args: ['-y', `better-tg-cli@${version}`, 'mcp'] } };
-  root.mcpServers = { telegram: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs', 'mcp'] } };
+  delete root.mcpServers;
   // Unofficial client: no brand name in the display name
   root.displayName = 'Better-TG-CLI';
-  root.description = 'Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. The agent asks you before every send.';
+  const description = 'Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. The agent asks you before every send.';
+  root.description = 'Unofficial Telegram client for your own account: a skill that teaches Claude the telegram CLI to read, search and send messages (install the CLI first). The agent asks you before every send.';
   const files = {
     '.claude-plugin/plugin.json': JSON.stringify(root, null, 2) + '\n',
     'LICENSE': readFileSync(new URL('../LICENSE', import.meta.url), 'utf8'),
@@ -62,7 +64,7 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
     '.codex-plugin/plugin.json': JSON.stringify({
       name: root.name,
       version,
-      description: root.description,
+      description,
       author: root.author,
       homepage: root.homepage,
       repository: root.repository,
@@ -77,7 +79,7 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
     '.cursor-plugin/plugin.json': JSON.stringify({
       name: root.name,
       displayName: root.displayName,
-      description: root.description,
+      description,
       version,
       author: root.author,
       homepage: root.homepage,

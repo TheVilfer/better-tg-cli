@@ -1,7 +1,7 @@
 {
   "name": "better-tg-cli",
   "displayName": "Better-TG-CLI",
-  "description": "Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. The agent asks you before every send.",
+  "description": "Unofficial Telegram client for your own account: a skill that teaches Claude the telegram CLI to read, search and send messages (install the CLI first). The agent asks you before every send.",
   "author": {
     "name": "Sergei Polin",
     "url": "https://github.com/TheVilfer"
@@ -15,14 +15,5 @@
     "cli",
     "mcp"
   ],
-  "mcpServers": {
-    "telegram": {
-      "command": "node",
-      "args": [
-        "${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs",
-        "mcp"
-      ]
-    }
-  },
-  "version": "0.39.3"
+  "version": "0.39.4"
 }

@@ -8,7 +8,7 @@ import { compactModuleSource, loadOriginalDefinitions } from '../scripts/tl-comp
 // @ts-expect-error plain .mjs build helpers
 import { compactErrorsSource, originalErrorsPath } from '../scripts/errors-compact.mjs';
 // @ts-expect-error plain .mjs build helpers
-import { stripWasm } from '../scripts/strip-wasm.mjs';
+import { noNativeAddon } from '../scripts/cifrante-no-native.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -67,22 +67,20 @@ describe('bundle shrinking keeps teleproto behaviour identical', () => {
   });
 });
 
-describe('the Claude plugin build drops cifrante\'s WebAssembly and native addon without changing a byte', () => {
-  it('ciphers, hashes and PBKDF2 give the same output with and without WebAssembly', async () => {
+describe('the bundles never look up cifrante\'s native addon', () => {
+  it('the patched cifrante skips the lookup and gives the same bytes as with CIFRANTE_NATIVE=0', async () => {
     const originalPath = require.resolve('cifrante');
     const source = readFileSync(originalPath, 'utf8');
-    expect(source).toContain('AGFzbQ');
-    const stripped = stripWasm(source, originalPath);
-    expect(stripped).not.toContain('AGFzbQ');
+    const patched = noNativeAddon(source, originalPath);
+    expect(patched).not.toContain('CIFRANTE_NATIVE');
+    expect(patched.split('\n').length).toBe(source.split('\n').length);
     // Next to the original, so its own requires resolve the same way
-    const strippedPath = join(dirname(originalPath), `__nowasm_${process.pid}.cjs`);
+    const patchedPath = join(dirname(originalPath), `__nonative_${process.pid}.cjs`);
     try {
-      writeFileSync(strippedPath, stripped);
-      // The original then runs on WebAssembly, not on the native addon CI has installed, so this
-      // compares WebAssembly with the JS fallback (the lazy loaders read the variable on first use)
-      process.env.CIFRANTE_NATIVE = '0';
+      writeFileSync(patchedPath, patched);
+      process.env.CIFRANTE_NATIVE = '0'; // the original then skips the addon too
       const A = require(originalPath);
-      const B = require(strippedPath);
+      const B = require(patchedPath);
       const bytes = (n: number, seed: number) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed) & 255);
       const key = bytes(32, 7);
       const data = bytes(16 * 70, 3);
@@ -93,14 +91,13 @@ describe('the Claude plugin build drops cifrante\'s WebAssembly and native addon
         c.aes.ctr(key).create({ iv: bytes(16, 5) }).update(data),
         c.sha256.sync(data),
         c.sha1.sync(data),
-        await c.sha512(data),
         c.hmac.sha256.sync(key, data),
         await c.kdf.pbkdf2(data.subarray(0, 40), bytes(16, 1), { hash: 'sha512', iterations: 1000, length: 64 }),
       ].map(x => Buffer.from(x).toString('hex'));
       expect(await run(B)).toEqual(await run(A));
     } finally {
       delete process.env.CIFRANTE_NATIVE;
-      rmSync(strippedPath, { force: true });
+      rmSync(patchedPath, { force: true });
     }
   });
 });
