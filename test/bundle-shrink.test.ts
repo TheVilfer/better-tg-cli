@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { compactModuleSource, loadOriginalDefinitions } from '../scripts/tl-compact.mjs';
 // @ts-expect-error plain .mjs build helpers
 import { compactErrorsSource, originalErrorsPath } from '../scripts/errors-compact.mjs';
+// @ts-expect-error plain .mjs build helpers
+import { stripWasm } from '../scripts/strip-wasm.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -61,6 +63,44 @@ describe('bundle shrinking keeps teleproto behaviour identical', () => {
     } finally {
       rmSync(compactPath, { force: true });
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the Claude plugin build drops cifrante\'s WebAssembly and native addon without changing a byte', () => {
+  it('ciphers, hashes and PBKDF2 give the same output with and without WebAssembly', async () => {
+    const originalPath = require.resolve('cifrante');
+    const source = readFileSync(originalPath, 'utf8');
+    expect(source).toContain('AGFzbQ');
+    const stripped = stripWasm(source, originalPath);
+    expect(stripped).not.toContain('AGFzbQ');
+    // Next to the original, so its own requires resolve the same way
+    const strippedPath = join(dirname(originalPath), `__nowasm_${process.pid}.cjs`);
+    try {
+      writeFileSync(strippedPath, stripped);
+      // The original then runs on WebAssembly, not on the native addon CI has installed, so this
+      // compares WebAssembly with the JS fallback (the lazy loaders read the variable on first use)
+      process.env.CIFRANTE_NATIVE = '0';
+      const A = require(originalPath);
+      const B = require(strippedPath);
+      const bytes = (n: number, seed: number) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed) & 255);
+      const key = bytes(32, 7);
+      const data = bytes(16 * 70, 3);
+      const run = async (c: typeof A) => [
+        c.aes.ige(key).encryptSync(data, { iv: bytes(32, 9) }),
+        c.aes.ige(key).decryptSync(data, { iv: bytes(32, 9) }),
+        await c.aes.ctr(key).encrypt(data, { iv: bytes(16, 5) }),
+        c.aes.ctr(key).create({ iv: bytes(16, 5) }).update(data),
+        c.sha256.sync(data),
+        c.sha1.sync(data),
+        await c.sha512(data),
+        c.hmac.sha256.sync(key, data),
+        await c.kdf.pbkdf2(data.subarray(0, 40), bytes(16, 1), { hash: 'sha512', iterations: 1000, length: 64 }),
+      ].map(x => Buffer.from(x).toString('hex'));
+      expect(await run(B)).toEqual(await run(A));
+    } finally {
+      delete process.env.CIFRANTE_NATIVE;
+      rmSync(strippedPath, { force: true });
     }
   });
 });

@@ -151,4 +151,25 @@ describe('plugin/ (Anthropic plugin directory)', () => {
     expect(files.length).toBeLessThan(512);
     for (const f of files) expect(statSync(f).size, f).toBeLessThan(256 * 1024);
   });
+
+  it('the plugin server carries nothing the directory scan flags: no WebAssembly, no installer', () => {
+    const root = new URL('../', import.meta.url);
+    const dir = fileURLToPath(new URL('plugin/server/cli', root));
+    for (const name of readdirSync(dir)) {
+      const code = readFileSync(join(dir, name), 'utf8');
+      expect(code, `${name}: WebAssembly (base64 "\\0asm")`).not.toContain('AGFzbQ');
+      expect(code, `${name}: cifrante's native addon lookup`).not.toContain('CIFRANTE_NATIVE');
+      expect(code, `${name}: an installer command`).not.toMatch(/npm install -g|brew (install|upgrade)|scoop (install|update)/);
+    }
+    let failed: { status: number | null; stderr: string } | undefined;
+    try {
+      execFileSync(process.execPath, [fileURLToPath(new URL('plugin/server/telegram.mjs', root)), 'update'], {
+        encoding: 'utf8', stdio: 'pipe', env: { ...process.env, TG_NO_UPDATE_CHECK: '1' },
+      });
+    } catch (e) {
+      failed = e as { status: number | null; stderr: string };
+    }
+    expect(failed?.status).toBe(1);
+    expect(failed?.stderr).toContain('Claude Code updates it');
+  });
 });
