@@ -67,7 +67,7 @@ describe('bundle shrinking keeps teleproto behaviour identical', () => {
   });
 });
 
-describe('the Claude plugin build drops cifrante\'s WebAssembly without changing a byte', () => {
+describe('the Claude plugin build drops cifrante\'s WebAssembly and native addon without changing a byte', () => {
   it('ciphers, hashes and PBKDF2 give the same output with and without WebAssembly', async () => {
     const originalPath = require.resolve('cifrante');
     const source = readFileSync(originalPath, 'utf8');
@@ -78,6 +78,9 @@ describe('the Claude plugin build drops cifrante\'s WebAssembly without changing
     const strippedPath = join(dirname(originalPath), `__nowasm_${process.pid}.cjs`);
     try {
       writeFileSync(strippedPath, stripped);
+      // The original then runs on WebAssembly, not on the native addon CI has installed, so this
+      // compares WebAssembly with the JS fallback (the lazy loaders read the variable on first use)
+      process.env.CIFRANTE_NATIVE = '0';
       const A = require(originalPath);
       const B = require(strippedPath);
       const bytes = (n: number, seed: number) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed) & 255);
@@ -96,6 +99,7 @@ describe('the Claude plugin build drops cifrante\'s WebAssembly without changing
       ].map(x => Buffer.from(x).toString('hex'));
       expect(await run(B)).toEqual(await run(A));
     } finally {
+      delete process.env.CIFRANTE_NATIVE;
       rmSync(strippedPath, { force: true });
     }
   });

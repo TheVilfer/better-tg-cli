@@ -158,6 +158,7 @@ describe('plugin/ (Anthropic plugin directory)', () => {
     for (const name of readdirSync(dir)) {
       const code = readFileSync(join(dir, name), 'utf8');
       expect(code, `${name}: WebAssembly (base64 "\\0asm")`).not.toContain('AGFzbQ');
+      expect(code, `${name}: cifrante's native addon lookup`).not.toContain('CIFRANTE_NATIVE');
       expect(code, `${name}: an installer command`).not.toMatch(/npm install -g|brew (install|upgrade)|scoop (install|update)/);
     }
     let failed: { status: number | null; stderr: string } | undefined;

@@ -119,8 +119,8 @@ version bump, and a test fails if its `--version` differs from `package.json`. B
 stays the last release's build, so don't rebuild it in feature PRs (unless the PR changes that build).
 The directory's scanner reads it, so the plugin build differs from `dist/`: teleproto's own schema
 (one definition per line) and error classes instead of the compact encodings, cifrante without its
-WebAssembly (`scripts/strip-wasm.mjs`; every cipher falls back to node:crypto or JS, and a test proves
-the bytes match), and `src/plugin-build/` in place of `src/update.ts`, `src/commands/update.ts` and
+WebAssembly and native addon (`scripts/strip-wasm.mjs`; every cipher falls back to node:crypto or JS,
+and a test proves the bytes match), and `src/plugin-build/` in place of `src/update.ts`, `src/commands/update.ts` and
 `src/skill-files.ts` (no installer runs: Claude Code updates the plugin; the skill is read from the
 plugin's `skills/`). The Codex and Cursor manifests
 still run the pinned `npx better-tg-cli@<version>` (the directory blocks `@latest`).

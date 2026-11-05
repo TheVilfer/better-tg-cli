@@ -1583,8 +1583,7 @@ var require_cifrante_node = __commonJS((exports2) => {
     };
   }
   var addon = /* @__PURE__ */ lazy(() => {
-    if (process.env.CIFRANTE_NATIVE === "0")
-      return;
+    return;
     const load2 = (0, node_module.createRequire)(require("url").pathToFileURL(__filename).href);
     const base = `@cifrante/${process.platform}-${process.arch}`;
     const candidates = process.platform === "linux" ? [`${base}-gnu`, `${base}-musl`] : [base];
