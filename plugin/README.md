@@ -4,7 +4,8 @@ An unofficial, open-source Telegram client for your own account, packaged for Cl
 adds the `better-tg-cli` skill, which teaches Claude to use the `telegram` command-line tool, and a
 local MCP server (`telegram mcp`). The server ships inside the plugin, in `server/`: a readable,
 unminified build of this release that Node runs from `${CLAUDE_PLUGIN_ROOT}`, so nothing is
-downloaded at install or start time. With it Claude
+downloaded at install or start time. That build carries no WebAssembly or packed data, and it never
+runs an installer: `telegram update` there only points to Claude Code's `/plugin`. With it Claude
 can read and search your chats, open threads and forum topics, press bot buttons, and, only if you
 allow it, send, edit, react and forward.
 

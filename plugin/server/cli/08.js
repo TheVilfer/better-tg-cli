@@ -1,7601 +1,1856 @@
-  function _toDate(value) {
-    return value instanceof Date ? Math.floor(value.getTime() / 1000) : value;
-  }
-  async function exportChatInvite(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.ExportChatInvite({
-      peer,
-      title: params.title,
-      expireDate: _toDate(params.expireDate),
-      usageLimit: params.usageLimit,
-      requestNeeded: params.requestNeeded,
-      legacyRevokePermanent: params.legacyRevokePermanent,
-      subscriptionPricing: params.subscriptionPricing
-    }));
-  }
-  async function editExportedChatInvite(client, entity, link, params) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.EditExportedChatInvite({
-      peer,
-      link,
-      revoked: params.revoked,
-      expireDate: _toDate(params.expireDate),
-      usageLimit: params.usageLimit,
-      requestNeeded: params.requestNeeded,
-      title: params.title
-    }));
-  }
-  async function getExportedChatInvite(client, entity, link) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.messages.getExportedChatInvite({
-      peer,
-      link
-    });
-  }
-  async function deleteExportedChatInvite(client, entity, link) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.messages.deleteExportedChatInvite({
-      peer,
-      link
-    });
-  }
-  async function deleteRevokedExportedChatInvites(client, entity, admin) {
-    const peer = await client.getInputEntity(entity);
-    const adminId = admin ? await client.getInputEntity(admin) : new tl_1.Api.InputUserSelf;
-    return client.invoke(new tl_1.Api.messages.DeleteRevokedExportedChatInvites({
-      peer,
-      adminId
-    }));
-  }
-  async function getAdminsWithInvites(client, entity) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.messages.getAdminsWithInvites({ peer });
-  }
-
-  class _ExportedChatInvitesIter extends requestIter_1.RequestIter {
-    async _init(params) {
-      const peer = await this.client.getInputEntity(params.entity);
-      const adminId = params.admin ? await this.client.getInputEntity(params.admin) : new tl_1.Api.InputUserSelf;
-      this.request = new tl_1.Api.messages.GetExportedChatInvites({
-        peer,
-        adminId,
-        revoked: params.revoked,
-        limit: 0
-      });
-    }
-    async _loadNextChunk() {
-      if (!this.request) {
-        return true;
-      }
-      this.request.limit = Math.min(this.left, _MAX_INVITES_CHUNK_SIZE);
-      const result = await this.client.invoke(this.request);
-      this.total = result.count;
-      if (!result.invites.length) {
-        return true;
-      }
-      for (const invite of result.invites) {
-        this.buffer?.push(invite);
-      }
-      const last = result.invites[result.invites.length - 1];
-      if (!(last instanceof tl_1.Api.ChatInviteExported)) {
-        return true;
-      }
-      this.request.offsetDate = last.date;
-      this.request.offsetLink = last.link;
-      if (result.invites.length < this.request.limit) {
-        return true;
-      }
-    }
-    [Symbol.asyncIterator]() {
-      return super[Symbol.asyncIterator]();
-    }
-  }
-  exports2._ExportedChatInvitesIter = _ExportedChatInvitesIter;
-  function iterExportedChatInvites(client, entity, params = {}) {
-    return new _ExportedChatInvitesIter(client, params.limit ?? Number.MAX_SAFE_INTEGER, {}, { entity, ...params });
-  }
-  async function getExportedChatInvites(client, entity, params = {}) {
-    return await iterExportedChatInvites(client, entity, params).collect();
-  }
-
-  class _ChatInviteImportersIter extends requestIter_1.RequestIter {
-    async _init(params) {
-      const peer = await this.client.getInputEntity(params.entity);
-      this.request = new tl_1.Api.messages.GetChatInviteImporters({
-        peer,
-        link: params.link,
-        requested: params.requested,
-        subscriptionExpired: params.subscriptionExpired,
-        q: params.search,
-        offsetDate: 0,
-        offsetUser: new tl_1.Api.InputUserEmpty,
-        limit: 0
-      });
-    }
-    async _loadNextChunk() {
-      if (!this.request) {
-        return true;
-      }
-      this.request.limit = Math.min(this.left, _MAX_IMPORTERS_CHUNK_SIZE);
-      const result = await this.client.invoke(this.request);
-      this.total = result.count;
-      if (!result.importers.length) {
-        return true;
-      }
-      for (const importer of result.importers) {
-        this.buffer?.push(importer);
-      }
-      const last = result.importers[result.importers.length - 1];
-      this.request.offsetDate = last.date;
-      this.request.offsetUser = await this.client.getInputEntity(last.userId);
-      if (result.importers.length < this.request.limit) {
-        return true;
-      }
-    }
-    [Symbol.asyncIterator]() {
-      return super[Symbol.asyncIterator]();
-    }
-  }
-  exports2._ChatInviteImportersIter = _ChatInviteImportersIter;
-  function iterChatInviteImporters(client, entity, params = {}) {
-    return new _ChatInviteImportersIter(client, params.limit ?? Number.MAX_SAFE_INTEGER, {}, { entity, ...params });
-  }
-  async function getChatInviteImporters(client, entity, params = {}) {
-    return await iterChatInviteImporters(client, entity, params).collect();
-  }
-  async function hideChatJoinRequest(client, entity, user, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    const userId = await client.getInputEntity(user);
-    return client.invoke(new tl_1.Api.messages.HideChatJoinRequest({
-      peer,
-      userId,
-      approved: params.approved
-    }));
-  }
-  async function hideAllChatJoinRequests(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.HideAllChatJoinRequests({
-      peer,
-      approved: params.approved,
-      link: params.link
-    }));
-  }
-  async function checkChatInvite(client, link) {
-    return client.api.messages.checkChatInvite({
-      hash: _parseInviteHash(link)
-    });
-  }
+    { name: "GetStarsTransactionsByID", constructorId: 768218808, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, ton: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStarsTransaction", useVectorId: true } }, subclassOfId: 1855724911, result: "payments.StarsStatus", isFunction: true, namespace: "payments" },
+    { name: "GetStarsGiftOptions", constructorId: 3553192904, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, userId: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "InputUser", useVectorId: null } }, subclassOfId: 3919820757, result: "Vector<StarsGiftOption>", isFunction: true, namespace: "payments" },
+    { name: "GetStarsSubscriptions", constructorId: 52761285, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, missingBalance: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 1855724911, result: "payments.StarsStatus", isFunction: true, namespace: "payments" },
+    { name: "ChangeStarsSubscription", constructorId: 3346466936, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, subscriptionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, canceled: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "FulfillStarsSubscription", constructorId: 3428576179, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, subscriptionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "GetStarsGiveawayOptions", constructorId: 3172924734, argsConfig: {}, subclassOfId: 4175114409, result: "Vector<StarsGiveawayOption>", isFunction: true, namespace: "payments" },
+    { name: "GetStarGifts", constructorId: 3293984144, argsConfig: { hash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1635309988, result: "payments.StarGifts", isFunction: true, namespace: "payments" },
+    { name: "SaveStarGift", constructorId: 707422588, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, unsave: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, stargift: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "ConvertStarGift", constructorId: 1958676331, argsConfig: { stargift: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "BotCancelStarsSubscription", constructorId: 1845102114, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, restore: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, userId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null }, chargeId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "GetConnectedStarRefBots", constructorId: 1483318611, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, offsetDate: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "int", useVectorId: null }, offsetLink: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 593369703, result: "payments.ConnectedStarRefBots", isFunction: true, namespace: "payments" },
+    { name: "GetConnectedStarRefBot", constructorId: 3084490992, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, bot: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null } }, subclassOfId: 593369703, result: "payments.ConnectedStarRefBots", isFunction: true, namespace: "payments" },
+    { name: "GetSuggestedStarRefBots", constructorId: 225134839, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, orderByRevenue: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, orderByDate: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1880658499, result: "payments.SuggestedStarRefBots", isFunction: true, namespace: "payments" },
+    { name: "ConnectStarRefBot", constructorId: 2127901834, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, bot: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null } }, subclassOfId: 593369703, result: "payments.ConnectedStarRefBots", isFunction: true, namespace: "payments" },
+    { name: "EditConnectedStarRefBot", constructorId: 3841762467, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, revoked: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, link: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 593369703, result: "payments.ConnectedStarRefBots", isFunction: true, namespace: "payments" },
+    { name: "GetStarGiftUpgradePreview", constructorId: 2627386545, argsConfig: { giftId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 1579903175, result: "payments.StarGiftUpgradePreview", isFunction: true, namespace: "payments" },
+    { name: "UpgradeStarGift", constructorId: 2933318901, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, keepOriginalDetails: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, stargift: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "payments" },
+    { name: "TransferStarGift", constructorId: 2132285290, argsConfig: { stargift: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: null }, toId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "payments" },
+    { name: "GetUniqueStarGift", constructorId: 2711047538, argsConfig: { slug: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2024850939, result: "payments.UniqueStarGift", isFunction: true, namespace: "payments" },
+    { name: "GetSavedStarGifts", constructorId: 2736383337, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, excludeUnsaved: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, excludeSaved: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, excludeUnlimited: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, excludeUnique: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "true", useVectorId: null }, sortByValue: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "true", useVectorId: null }, excludeUpgradable: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 7, flagIndicator: false, type: "true", useVectorId: null }, excludeUnupgradable: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 8, flagIndicator: false, type: "true", useVectorId: null }, peerColorAvailable: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 9, flagIndicator: false, type: "true", useVectorId: null }, excludeHosted: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 10, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, collectionId: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 6, flagIndicator: false, type: "int", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 3574671511, result: "payments.SavedStarGifts", isFunction: true, namespace: "payments" },
+    { name: "GetSavedStarGift", constructorId: 3025510662, argsConfig: { stargift: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: true } }, subclassOfId: 3574671511, result: "payments.SavedStarGifts", isFunction: true, namespace: "payments" },
+    { name: "GetStarGiftWithdrawalUrl", constructorId: 3496907688, argsConfig: { stargift: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: null }, password: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputCheckPasswordSRP", useVectorId: null } }, subclassOfId: 2726440389, result: "payments.StarGiftWithdrawalUrl", isFunction: true, namespace: "payments" },
+    { name: "ToggleChatStarGiftNotifications", constructorId: 1626009505, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, enabled: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "ToggleStarGiftsPinnedToTop", constructorId: 353626032, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, stargift: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: true } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "CanPurchaseStore", constructorId: 1339842215, argsConfig: { purpose: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStorePaymentPurpose", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "GetResaleStarGifts", constructorId: 2053087798, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, sortByPrice: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, sortByNum: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, forCraft: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "true", useVectorId: null }, starsOnly: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "true", useVectorId: null }, attributesHash: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "long", useVectorId: null }, giftId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, attributes: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "StarGiftAttributeId", useVectorId: true }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 3000743907, result: "payments.ResaleStarGifts", isFunction: true, namespace: "payments" },
+    { name: "UpdateStarGiftPrice", constructorId: 3988679883, argsConfig: { stargift: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: null }, resellAmount: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "StarsAmount", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "payments" },
+    { name: "CreateStarGiftCollection", constructorId: 524947079, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, stargift: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: true } }, subclassOfId: 1138805578, result: "StarGiftCollection", isFunction: true, namespace: "payments" },
+    { name: "UpdateStarGiftCollection", constructorId: 1339932391, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, collectionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, title: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, deleteStargift: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: true }, addStargift: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "InputSavedStarGift", useVectorId: true }, order: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "InputSavedStarGift", useVectorId: true } }, subclassOfId: 1138805578, result: "StarGiftCollection", isFunction: true, namespace: "payments" },
+    { name: "ReorderStarGiftCollections", constructorId: 3274372300, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, order: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "DeleteStarGiftCollection", constructorId: 2908113128, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, collectionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "payments" },
+    { name: "GetStarGiftCollections", constructorId: 2551943645, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, hash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 4028047852, result: "payments.StarGiftCollections", isFunction: true, namespace: "payments" },
+    { name: "GetUniqueStarGiftValueInfo", constructorId: 1130737515, argsConfig: { slug: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 372595652, result: "payments.UniqueStarGiftValueInfo", isFunction: true, namespace: "payments" },
+    { name: "CheckCanSendGift", constructorId: 3234131401, argsConfig: { giftId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 1664023088, result: "payments.CheckCanSendGiftResult", isFunction: true, namespace: "payments" },
+    { name: "GetStarGiftAuctionState", constructorId: 1553986774, argsConfig: { auction: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStarGiftAuction", useVectorId: null }, version: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 439453081, result: "payments.StarGiftAuctionState", isFunction: true, namespace: "payments" },
+    { name: "GetStarGiftAuctionAcquiredGifts", constructorId: 1805831148, argsConfig: { giftId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2802321947, result: "payments.StarGiftAuctionAcquiredGifts", isFunction: true, namespace: "payments" },
+    { name: "GetStarGiftActiveAuctions", constructorId: 2781892941, argsConfig: { hash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2440941767, result: "payments.StarGiftActiveAuctions", isFunction: true, namespace: "payments" },
+    { name: "ResolveStarGiftOffer", constructorId: 3922622492, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, decline: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, offerMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "payments" },
+    { name: "SendStarGiftOffer", constructorId: 2411227969, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, slug: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, price: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "StarsAmount", useVectorId: null }, duration: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, allowPaidStars: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "payments" },
+    { name: "GetStarGiftUpgradeAttributes", constructorId: 1828948824, argsConfig: { giftId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 256290031, result: "payments.StarGiftUpgradeAttributes", isFunction: true, namespace: "payments" },
+    { name: "GetCraftStarGifts", constructorId: 4245019904, argsConfig: { giftId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 3574671511, result: "payments.SavedStarGifts", isFunction: true, namespace: "payments" },
+    { name: "CraftStarGift", constructorId: 2969135183, argsConfig: { stargift: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputSavedStarGift", useVectorId: true } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "payments" },
+    { name: "CreateStickerSet", constructorId: 2418125671, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, masks: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, emojis: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "true", useVectorId: null }, textColor: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 6, flagIndicator: false, type: "true", useVectorId: null }, userId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, shortName: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, thumb: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "InputDocument", useVectorId: null }, stickers: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStickerSetItem", useVectorId: true }, software: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "RemoveStickerFromSet", constructorId: 4151709521, argsConfig: { sticker: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputDocument", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "ChangeStickerPosition", constructorId: 4290172106, argsConfig: { sticker: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputDocument", useVectorId: null }, position: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "AddStickerToSet", constructorId: 2253651646, argsConfig: { stickerset: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStickerSet", useVectorId: null }, sticker: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStickerSetItem", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "SetStickerSetThumb", constructorId: 2808763282, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, stickerset: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStickerSet", useVectorId: null }, thumb: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "InputDocument", useVectorId: null }, thumbDocumentId: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "CheckShortName", constructorId: 676017721, argsConfig: { shortName: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stickers" },
+    { name: "SuggestShortName", constructorId: 1303364867, argsConfig: { title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 3293203233, result: "stickers.SuggestedShortName", isFunction: true, namespace: "stickers" },
+    { name: "ChangeSticker", constructorId: 4115889852, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, sticker: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputDocument", useVectorId: null }, emoji: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, maskCoords: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "MaskCoords", useVectorId: null }, keywords: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "RenameStickerSet", constructorId: 306912256, argsConfig: { stickerset: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStickerSet", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "DeleteStickerSet", constructorId: 2272281492, argsConfig: { stickerset: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStickerSet", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stickers" },
+    { name: "ReplaceSticker", constructorId: 1184253338, argsConfig: { sticker: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputDocument", useVectorId: null }, newSticker: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputStickerSetItem", useVectorId: null } }, subclassOfId: 2607827546, result: "messages.StickerSet", isFunction: true, namespace: "stickers" },
+    { name: "GetCallConfig", constructorId: 1430593449, argsConfig: {}, subclassOfId: 2902676200, result: "DataJSON", isFunction: true, namespace: "phone" },
+    { name: "RequestCall", constructorId: 1124046573, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, video: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, userId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, gAHash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, protocol: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "PhoneCallProtocol", useVectorId: null } }, subclassOfId: 3565878863, result: "phone.PhoneCall", isFunction: true, namespace: "phone" },
+    { name: "AcceptCall", constructorId: 1003664544, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null }, gB: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, protocol: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "PhoneCallProtocol", useVectorId: null } }, subclassOfId: 3565878863, result: "phone.PhoneCall", isFunction: true, namespace: "phone" },
+    { name: "ConfirmCall", constructorId: 788404002, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null }, gA: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, keyFingerprint: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, protocol: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "PhoneCallProtocol", useVectorId: null } }, subclassOfId: 3565878863, result: "phone.PhoneCall", isFunction: true, namespace: "phone" },
+    { name: "ReceivedCall", constructorId: 399855457, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "phone" },
+    { name: "DiscardCall", constructorId: 2999697856, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, video: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null }, duration: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, reason: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "PhoneCallDiscardReason", useVectorId: null }, connectionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "SetCallRating", constructorId: 1508562471, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, userInitiative: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null }, rating: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, comment: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "SaveCallDebug", constructorId: 662363518, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null }, debug: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "DataJSON", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "phone" },
+    { name: "SendSignalingData", constructorId: 4286223235, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null }, data: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "phone" },
+    { name: "CreateGroupCall", constructorId: 1221445336, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, rtmpStream: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, title: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, scheduleDate: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "JoinGroupCall", constructorId: 2411016279, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, muted: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, videoStopped: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, joinAs: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, inviteHash: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "string", useVectorId: null }, publicKey: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "int256", useVectorId: null }, block: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "bytes", useVectorId: null }, params: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "DataJSON", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "LeaveGroupCall", constructorId: 1342404601, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, source: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "InviteToGroupCall", constructorId: 2067345760, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, users: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: true } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "DiscardGroupCall", constructorId: 2054648117, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "ToggleGroupCallSettings", constructorId: 2537788146, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, resetInviteHash: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, joinMuted: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "Bool", useVectorId: null }, messagesEnabled: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "Bool", useVectorId: null }, sendPaidMessagesStars: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "GetGroupCall", constructorId: 68699611, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 809572030, result: "phone.GroupCall", isFunction: true, namespace: "phone" },
+    { name: "GetGroupParticipants", constructorId: 3310934187, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, ids: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: true }, sources: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1926431988, result: "phone.GroupParticipants", isFunction: true, namespace: "phone" },
+    { name: "CheckGroupCall", constructorId: 3046963575, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, sources: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 1344696591, result: "Vector<int>", isFunction: true, namespace: "phone" },
+    { name: "ToggleGroupCallRecord", constructorId: 4045981448, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, start: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, video: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, title: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "string", useVectorId: null }, videoPortrait: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "EditGroupCallParticipant", constructorId: 2770811583, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, participant: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, muted: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "Bool", useVectorId: null }, volume: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "int", useVectorId: null }, raiseHand: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "Bool", useVectorId: null }, videoStopped: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "Bool", useVectorId: null }, videoPaused: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "Bool", useVectorId: null }, presentationPaused: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "EditGroupCallTitle", constructorId: 480685066, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "GetGroupCallJoinAs", constructorId: 4017889594, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 3031920891, result: "phone.JoinAsPeers", isFunction: true, namespace: "phone" },
+    { name: "ExportGroupCallInvite", constructorId: 3869926527, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, canSelfUnmute: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null } }, subclassOfId: 993787535, result: "phone.ExportedGroupCallInvite", isFunction: true, namespace: "phone" },
+    { name: "ToggleGroupCallStartSubscription", constructorId: 563885286, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, subscribed: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "StartScheduledGroupCall", constructorId: 1451287362, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "SaveDefaultGroupCallJoinAs", constructorId: 1465786252, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, joinAs: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "phone" },
+    { name: "JoinGroupCallPresentation", constructorId: 3421137860, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, params: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "DataJSON", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "LeaveGroupCallPresentation", constructorId: 475058500, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "GetGroupCallStreamChannels", constructorId: 447879488, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null } }, subclassOfId: 2438448612, result: "phone.GroupCallStreamChannels", isFunction: true, namespace: "phone" },
+    { name: "GetGroupCallStreamRtmpUrl", constructorId: 1525991226, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, liveStory: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, revoke: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 3522500043, result: "phone.GroupCallStreamRtmpUrl", isFunction: true, namespace: "phone" },
+    { name: "SaveCallLog", constructorId: 1092913030, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPhoneCall", useVectorId: null }, file: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputFile", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "phone" },
+    { name: "CreateConferenceCall", constructorId: 2097431739, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, muted: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, videoStopped: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, join: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "true", useVectorId: null }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, publicKey: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "int256", useVectorId: null }, block: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "bytes", useVectorId: null }, params: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "DataJSON", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "DeleteConferenceCallParticipants", constructorId: 2359690533, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, onlyLeft: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, kick: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, ids: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: true }, block: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "SendConferenceCallBroadcast", constructorId: 3329235200, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, block: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "InviteConferenceCallParticipant", constructorId: 3169986181, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, video: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, userId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "DeclineConferenceCallInvite", constructorId: 1011325297, argsConfig: { msgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "GetGroupCallChainBlocks", constructorId: 4003432614, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, subChainId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "SendGroupCallMessage", constructorId: 2983269392, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, message: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "TextWithEntities", useVectorId: null }, allowPaidStars: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "long", useVectorId: null }, sendAs: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "SendGroupCallEncryptedMessage", constructorId: 3853493613, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, encryptedMessage: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "phone" },
+    { name: "DeleteGroupCallMessages", constructorId: 4132394231, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, reportSpam: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, messages: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "DeleteGroupCallParticipantMessages", constructorId: 499117216, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, reportSpam: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, participant: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "phone" },
+    { name: "GetGroupCallStars", constructorId: 1868784386, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null } }, subclassOfId: 3024584730, result: "phone.GroupCallStars", isFunction: true, namespace: "phone" },
+    { name: "SaveDefaultSendAs", constructorId: 1097313745, argsConfig: { call: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputGroupCall", useVectorId: null }, sendAs: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "phone" },
+    { name: "GetLangPack", constructorId: 4075959050, argsConfig: { langPack: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, langCode: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 1382427989, result: "LangPackDifference", isFunction: true, namespace: "langpack" },
+    { name: "GetStrings", constructorId: 4025104387, argsConfig: { langPack: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, langCode: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, keys: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: true } }, subclassOfId: 3350672701, result: "Vector<LangPackString>", isFunction: true, namespace: "langpack" },
+    { name: "GetDifference", constructorId: 3449309861, argsConfig: { langPack: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, langCode: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, fromVersion: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1382427989, result: "LangPackDifference", isFunction: true, namespace: "langpack" },
+    { name: "GetLanguages", constructorId: 1120311183, argsConfig: { langPack: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 671683273, result: "Vector<LangPackLanguage>", isFunction: true, namespace: "langpack" },
+    { name: "GetLanguage", constructorId: 1784243458, argsConfig: { langPack: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, langCode: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2880211383, result: "LangPackLanguage", isFunction: true, namespace: "langpack" },
+    { name: "EditPeerFolders", constructorId: 1749536939, argsConfig: { folderPeers: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputFolderPeer", useVectorId: true } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "folders" },
+    { name: "GetBroadcastStats", constructorId: 2873246746, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, dark: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, channel: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null } }, subclassOfId: 2146587688, result: "stats.BroadcastStats", isFunction: true, namespace: "stats" },
+    { name: "LoadAsyncGraph", constructorId: 1646092192, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, token: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, x: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2609918291, result: "StatsGraph", isFunction: true, namespace: "stats" },
+    { name: "GetMegagroupStats", constructorId: 3705636359, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, dark: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, channel: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null } }, subclassOfId: 1532608141, result: "stats.MegagroupStats", isFunction: true, namespace: "stats" },
+    { name: "GetMessagePublicForwards", constructorId: 1595212100, argsConfig: { channel: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null }, msgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2804429329, result: "stats.PublicForwards", isFunction: true, namespace: "stats" },
+    { name: "GetMessageStats", constructorId: 3068175349, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, dark: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, channel: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null }, msgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2516886306, result: "stats.MessageStats", isFunction: true, namespace: "stats" },
+    { name: "GetStoryStats", constructorId: 927985472, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, dark: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2337096660, result: "stats.StoryStats", isFunction: true, namespace: "stats" },
+    { name: "GetStoryPublicForwards", constructorId: 2789441270, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2804429329, result: "stats.PublicForwards", isFunction: true, namespace: "stats" },
+    { name: "GetPollStats", constructorId: 3263036008, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, dark: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, msgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 3914437839, result: "stats.PollStats", isFunction: true, namespace: "stats" },
+    { name: "ExportChatlistInvite", constructorId: 2222081934, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, peers: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: true } }, subclassOfId: 3261681385, result: "chatlists.ExportedChatlistInvite", isFunction: true, namespace: "chatlists" },
+    { name: "DeleteExportedInvite", constructorId: 1906072670, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null }, slug: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "chatlists" },
+    { name: "EditExportedInvite", constructorId: 1698543165, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null }, slug: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, title: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "string", useVectorId: null }, peers: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "InputPeer", useVectorId: true } }, subclassOfId: 1997666559, result: "ExportedChatlistInvite", isFunction: true, namespace: "chatlists" },
+    { name: "GetExportedInvites", constructorId: 3456359043, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null } }, subclassOfId: 3871476160, result: "chatlists.ExportedInvites", isFunction: true, namespace: "chatlists" },
+    { name: "CheckChatlistInvite", constructorId: 1103171583, argsConfig: { slug: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 1097993845, result: "chatlists.ChatlistInvite", isFunction: true, namespace: "chatlists" },
+    { name: "JoinChatlistInvite", constructorId: 2796675994, argsConfig: { slug: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, peers: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: true } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "chatlists" },
+    { name: "GetChatlistUpdates", constructorId: 2302776609, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null } }, subclassOfId: 2098610666, result: "chatlists.ChatlistUpdates", isFunction: true, namespace: "chatlists" },
+    { name: "JoinChatlistUpdates", constructorId: 3767138549, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null }, peers: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: true } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "chatlists" },
+    { name: "HideChatlistUpdates", constructorId: 1726252795, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "chatlists" },
+    { name: "GetLeaveChatlistSuggestions", constructorId: 4257011476, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null } }, subclassOfId: 3113508222, result: "Vector<Peer>", isFunction: true, namespace: "chatlists" },
+    { name: "LeaveChatlist", constructorId: 1962598714, argsConfig: { chatlist: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChatlist", useVectorId: null }, peers: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: true } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "chatlists" },
+    { name: "CanSendStory", constructorId: 820732912, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 3411255960, result: "stories.CanSendStoryCount", isFunction: true, namespace: "stories" },
+    { name: "SendStory", constructorId: 2409523352, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, pinned: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, noforwards: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "true", useVectorId: null }, fwdModified: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 7, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, media: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputMedia", useVectorId: null }, mediaAreas: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "MediaArea", useVectorId: true }, caption: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, entities: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "MessageEntity", useVectorId: true }, privacyRules: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPrivacyRule", useVectorId: true }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, period: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "int", useVectorId: null }, fwdFromId: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 6, flagIndicator: false, type: "InputPeer", useVectorId: null }, fwdFromStory: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 6, flagIndicator: false, type: "int", useVectorId: null }, albums: { isVector: true, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 8, flagIndicator: false, type: "int", useVectorId: true }, music: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 9, flagIndicator: false, type: "InputDocument", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "stories" },
+    { name: "EditStory", constructorId: 744728363, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, media: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "InputMedia", useVectorId: null }, mediaAreas: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "MediaArea", useVectorId: true }, caption: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "string", useVectorId: null }, entities: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "MessageEntity", useVectorId: true }, privacyRules: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "InputPrivacyRule", useVectorId: true }, music: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "InputDocument", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "stories" },
+    { name: "DeleteStories", constructorId: 2925124447, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 1344696591, result: "Vector<int>", isFunction: true, namespace: "stories" },
+    { name: "TogglePinned", constructorId: 2591400431, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true }, pinned: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 1344696591, result: "Vector<int>", isFunction: true, namespace: "stories" },
+    { name: "GetAllStories", constructorId: 4004566565, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, next: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, hidden: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, state: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2120274125, result: "stories.AllStories", isFunction: true, namespace: "stories" },
+    { name: "GetPinnedStories", constructorId: 1478600156, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, offsetId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 622595116, result: "stories.Stories", isFunction: true, namespace: "stories" },
+    { name: "GetStoriesArchive", constructorId: 3023380502, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, offsetId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 622595116, result: "stories.Stories", isFunction: true, namespace: "stories" },
+    { name: "GetStoriesByID", constructorId: 1467271796, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 622595116, result: "stories.Stories", isFunction: true, namespace: "stories" },
+    { name: "ToggleAllStoriesHidden", constructorId: 2082822084, argsConfig: { hidden: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stories" },
+    { name: "ReadStories", constructorId: 2773932744, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, maxId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1344696591, result: "Vector<int>", isFunction: true, namespace: "stories" },
+    { name: "IncrementStoryViews", constructorId: 2986511099, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stories" },
+    { name: "GetStoryViewsList", constructorId: 2127707223, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, justContacts: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, reactionsFirst: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, forwardsFirst: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, q: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "string", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 3108205920, result: "stories.StoryViewsList", isFunction: true, namespace: "stories" },
+    { name: "GetStoriesViews", constructorId: 685862088, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 1262470330, result: "stories.StoryViews", isFunction: true, namespace: "stories" },
+    { name: "ExportStoryLink", constructorId: 2072899360, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 264585638, result: "ExportedStoryLink", isFunction: true, namespace: "stories" },
+    { name: "Report", constructorId: 433646405, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true }, option: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, message: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2899571768, result: "ReportResult", isFunction: true, namespace: "stories" },
+    { name: "ActivateStealthMode", constructorId: 1471926630, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, past: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, future: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "stories" },
+    { name: "SendReaction", constructorId: 2144810674, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, addToRecent: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, storyId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, reaction: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "Reaction", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "stories" },
+    { name: "GetPeerStories", constructorId: 743103056, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 2639712208, result: "stories.PeerStories", isFunction: true, namespace: "stories" },
+    { name: "GetAllReadPeerStories", constructorId: 2606426105, argsConfig: {}, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "stories" },
+    { name: "GetPeerMaxIDs", constructorId: 2018087280, argsConfig: { id: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: true } }, subclassOfId: 1018597718, result: "Vector<RecentStory>", isFunction: true, namespace: "stories" },
+    { name: "GetChatsToSend", constructorId: 2775223136, argsConfig: {}, subclassOfId: 2580925204, result: "messages.Chats", isFunction: true, namespace: "stories" },
+    { name: "TogglePeerStoriesHidden", constructorId: 3171161540, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, hidden: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stories" },
+    { name: "GetStoryReactionsList", constructorId: 3115485215, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, forwardsFirst: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, reaction: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "Reaction", useVectorId: null }, offset: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 74420707, result: "stories.StoryReactionsList", isFunction: true, namespace: "stories" },
+    { name: "TogglePinnedToTop", constructorId: 187268763, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stories" },
+    { name: "SearchPosts", constructorId: 3514894599, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, hashtag: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, area: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "MediaArea", useVectorId: null }, peer: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "InputPeer", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 393808693, result: "stories.FoundStories", isFunction: true, namespace: "stories" },
+    { name: "CreateAlbum", constructorId: 2741212901, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, stories: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 2089574050, result: "StoryAlbum", isFunction: true, namespace: "stories" },
+    { name: "UpdateAlbum", constructorId: 1582455222, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, albumId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, title: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, deleteStories: { isVector: true, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "int", useVectorId: true }, addStories: { isVector: true, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "int", useVectorId: true }, order: { isVector: true, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 2089574050, result: "StoryAlbum", isFunction: true, namespace: "stories" },
+    { name: "ReorderAlbums", constructorId: 2234907609, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, order: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: true } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stories" },
+    { name: "DeleteAlbum", constructorId: 2369017552, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, albumId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "stories" },
+    { name: "GetAlbums", constructorId: 632548039, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, hash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 94846265, result: "stories.Albums", isFunction: true, namespace: "stories" },
+    { name: "GetAlbumStories", constructorId: 2894097761, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, albumId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 622595116, result: "stories.Stories", isFunction: true, namespace: "stories" },
+    { name: "StartLive", constructorId: 3496594654, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, pinned: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, noforwards: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "true", useVectorId: null }, rtmpStream: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, caption: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, entities: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "MessageEntity", useVectorId: true }, privacyRules: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPrivacyRule", useVectorId: true }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, messagesEnabled: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 6, flagIndicator: false, type: "Bool", useVectorId: null }, sendPaidMessagesStars: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 7, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "stories" },
+    { name: "GetBoostsList", constructorId: 1626764896, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, gifts: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 573941949, result: "premium.BoostsList", isFunction: true, namespace: "premium" },
+    { name: "GetMyBoosts", constructorId: 199719754, argsConfig: {}, subclassOfId: 2905936603, result: "premium.MyBoosts", isFunction: true, namespace: "premium" },
+    { name: "ApplyBoost", constructorId: 1803396934, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, slots: { isVector: true, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "int", useVectorId: true }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 2905936603, result: "premium.MyBoosts", isFunction: true, namespace: "premium" },
+    { name: "GetBoostsStatus", constructorId: 70197089, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 3273333433, result: "premium.BoostsStatus", isFunction: true, namespace: "premium" },
+    { name: "GetUserBoosts", constructorId: 965037343, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, userId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null } }, subclassOfId: 573941949, result: "premium.BoostsList", isFunction: true, namespace: "premium" },
+    { name: "IsEligibleToJoin", constructorId: 249313744, argsConfig: {}, subclassOfId: 1589076134, result: "smsjobs.EligibilityToJoin", isFunction: true, namespace: "smsjobs" },
+    { name: "Join", constructorId: 2806959661, argsConfig: {}, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "smsjobs" },
+    { name: "Leave", constructorId: 2560142707, argsConfig: {}, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "smsjobs" },
+    { name: "UpdateSettings", constructorId: 155164863, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, allowInternational: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "smsjobs" },
+    { name: "GetStatus", constructorId: 279353576, argsConfig: {}, subclassOfId: 3448711973, result: "smsjobs.Status", isFunction: true, namespace: "smsjobs" },
+    { name: "GetSmsJob", constructorId: 2005766191, argsConfig: { jobId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 522459262, result: "SmsJob", isFunction: true, namespace: "smsjobs" },
+    { name: "FinishJob", constructorId: 1327415076, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, jobId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, error: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "smsjobs" },
+    { name: "GetCollectibleInfo", constructorId: 3189671354, argsConfig: { collectible: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputCollectible", useVectorId: null } }, subclassOfId: 3572127632, result: "fragment.CollectibleInfo", isFunction: true, namespace: "fragment" },
+    { name: "CreateTone", constructorId: 1252538643, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, displayAuthor: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, emojiId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, prompt: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 3564565261, result: "AiComposeTone", isFunction: true, namespace: "aicompose" },
+    { name: "UpdateTone", constructorId: 2419838809, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, tone: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputAiComposeTone", useVectorId: null }, displayAuthor: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "Bool", useVectorId: null }, emojiId: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "long", useVectorId: null }, title: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "string", useVectorId: null }, prompt: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 3564565261, result: "AiComposeTone", isFunction: true, namespace: "aicompose" },
+    { name: "SaveTone", constructorId: 394447793, argsConfig: { tone: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputAiComposeTone", useVectorId: null }, unsave: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "Bool", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "aicompose" },
+    { name: "DeleteTone", constructorId: 3711512938, argsConfig: { tone: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputAiComposeTone", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "aicompose" },
+    { name: "GetTone", constructorId: 3001596419, argsConfig: { tone: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputAiComposeTone", useVectorId: null } }, subclassOfId: 4066377433, result: "aicompose.Tones", isFunction: true, namespace: "aicompose" },
+    { name: "GetTones", constructorId: 2882900481, argsConfig: { hash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 4066377433, result: "aicompose.Tones", isFunction: true, namespace: "aicompose" },
+    { name: "GetToneExample", constructorId: 3518278420, argsConfig: { tone: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputAiComposeTone", useVectorId: null }, num: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2351207381, result: "AiComposeToneExample", isFunction: true, namespace: "aicompose" },
+    { name: "Create", constructorId: 2788710892, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, hidden: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, title: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, about: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "communities" },
+    { name: "TogglePeerLink", constructorId: 1936576490, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, visible: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, hidden: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "true", useVectorId: null }, deleted: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "true", useVectorId: null }, community: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "communities" },
+    { name: "GetJoinedCommunities", constructorId: 2791565360, argsConfig: {}, subclassOfId: 2580925204, result: "messages.Chats", isFunction: true, namespace: "communities" },
+    { name: "ToggleCommunityCollapsedInDialogs", constructorId: 3613844458, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, collapsed: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, community: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "communities" },
+    { name: "GetPeerLinkRequests", constructorId: 2474062660, argsConfig: { community: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null }, offset: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, limit: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1135216367, result: "communities.PeerLinkRequests", isFunction: true, namespace: "communities" },
+    { name: "TogglePeerLinkRequestApproval", constructorId: 2357336488, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, reject: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, community: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "communities" },
+    { name: "ToggleAllPeerLinkRequestApproval", constructorId: 3219381565, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, reject: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, community: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "communities" },
+    { name: "ToggleParticipantBanned", constructorId: 2573708559, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, unban: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "true", useVectorId: null }, community: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null }, participant: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "communities" },
+    { name: "GetParticipantJoinedChats", constructorId: 4169051051, argsConfig: { community: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputChannel", useVectorId: null }, participant: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 2262480277, result: "communities.ParticipantJoinedChats", isFunction: true, namespace: "communities" },
+    { name: "SendMessage", constructorId: 3129827125, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, invertMedia: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 6, flagIndicator: false, type: "true", useVectorId: null }, welcome: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 7, flagIndicator: false, type: "true", useVectorId: null }, anchor: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 9, flagIndicator: false, type: "true", useVectorId: null }, noforwards: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 10, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 8, flagIndicator: false, type: "InputPeer", useVectorId: null }, receiverId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null }, queryId: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "long", useVectorId: null }, message: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, entities: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "MessageEntity", useVectorId: true }, media: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "InputMedia", useVectorId: null }, replyMarkup: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "ReplyMarkup", useVectorId: null }, richMessage: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "InputRichMessage", useVectorId: null }, randomId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, replyTo: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "InputReplyTo", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "ephemeral" },
+    { name: "DeleteMessage", constructorId: 2465654679, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "InputPeer", useVectorId: null }, receiverId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "ephemeral" },
+    { name: "ReportMessage", constructorId: 2265248447, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, option: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, message: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 2899571768, result: "ReportResult", isFunction: true, namespace: "ephemeral" },
+    { name: "GetCallbackAnswer", constructorId: 1067738312, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, data: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 1817039244, result: "messages.BotCallbackAnswer", isFunction: true, namespace: "ephemeral" },
+    { name: "EditMessage", constructorId: 3483136603, argsConfig: { flags: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: true, type: null, useVectorId: null }, invertMedia: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 5, flagIndicator: false, type: "true", useVectorId: null }, welcome: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 6, flagIndicator: false, type: "true", useVectorId: null }, peer: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 7, flagIndicator: false, type: "InputPeer", useVectorId: null }, receiverId: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputUser", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, message: { isVector: false, isFlag: true, skipConstructorId: true, flagName: "flags", flagIndex: 0, flagIndicator: false, type: "string", useVectorId: null }, media: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 3, flagIndicator: false, type: "InputMedia", useVectorId: null }, entities: { isVector: true, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 1, flagIndicator: false, type: "MessageEntity", useVectorId: true }, replyMarkup: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 2, flagIndicator: false, type: "ReplyMarkup", useVectorId: null }, richMessage: { isVector: false, isFlag: true, skipConstructorId: false, flagName: "flags", flagIndex: 4, flagIndicator: false, type: "InputRichMessage", useVectorId: null } }, subclassOfId: 2331323052, result: "Updates", isFunction: true, namespace: "ephemeral" },
+    { name: "DeleteWelcomeMessage", constructorId: 3900877281, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, id: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "ephemeral" },
+    { name: "DeleteAllWelcomeMessages", constructorId: 1934595873, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null } }, subclassOfId: 4122188204, result: "Bool", isFunction: true, namespace: "ephemeral" },
+    { name: "GetWelcomeMessages", constructorId: 3684352397, argsConfig: { peer: { isVector: false, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "InputPeer", useVectorId: null }, hash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 1869912621, result: "ephemeral.WelcomeMessages", isFunction: true, namespace: "ephemeral" },
+    { name: "ResPQ", constructorId: 85337187, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, pq: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, serverPublicKeyFingerprints: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: true } }, subclassOfId: 2020181688, result: "ResPQ", isFunction: false },
+    { name: "PQInnerData", constructorId: 2211011308, argsConfig: { pq: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, p: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, q: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int256", useVectorId: null } }, subclassOfId: 1097864055, result: "P_Q_inner_data", isFunction: false },
+    { name: "PQInnerDataDc", constructorId: 2851430293, argsConfig: { pq: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, p: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, q: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int256", useVectorId: null }, dc: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1097864055, result: "P_Q_inner_data", isFunction: false },
+    { name: "PQInnerDataTemp", constructorId: 1013613780, argsConfig: { pq: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, p: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, q: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int256", useVectorId: null }, expiresIn: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1097864055, result: "P_Q_inner_data", isFunction: false },
+    { name: "PQInnerDataTempDc", constructorId: 1459478408, argsConfig: { pq: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, p: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, q: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int256", useVectorId: null }, dc: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, expiresIn: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1097864055, result: "P_Q_inner_data", isFunction: false },
+    { name: "BindAuthKeyInner", constructorId: 1973679973, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, tempAuthKeyId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, permAuthKeyId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, tempSessionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, expiresAt: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 789156209, result: "BindAuthKeyInner", isFunction: false },
+    { name: "ServerDHParamsFail", constructorId: 2043348061, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonceHash: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null } }, subclassOfId: 2786626974, result: "Server_DH_Params", isFunction: false },
+    { name: "ServerDHParamsOk", constructorId: 3504867164, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, encryptedAnswer: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 2786626974, result: "Server_DH_Params", isFunction: false },
+    { name: "ServerDHInnerData", constructorId: 3045658042, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, g: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, dhPrime: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, gA: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, serverTime: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 3332007868, result: "Server_DH_inner_data", isFunction: false },
+    { name: "ClientDHInnerData", constructorId: 1715713620, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, retryId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, gB: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 4176408426, result: "Client_DH_Inner_Data", isFunction: false },
+    { name: "DhGenOk", constructorId: 1003222836, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonceHash1: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null } }, subclassOfId: 1440574683, result: "Set_client_DH_params_answer", isFunction: false },
+    { name: "DhGenRetry", constructorId: 1188831161, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonceHash2: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null } }, subclassOfId: 1440574683, result: "Set_client_DH_params_answer", isFunction: false },
+    { name: "DhGenFail", constructorId: 2795351554, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, newNonceHash3: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null } }, subclassOfId: 1440574683, result: "Set_client_DH_params_answer", isFunction: false },
+    { name: "DestroyAuthKeyOk", constructorId: 4133544404, argsConfig: {}, subclassOfId: 2190599822, result: "DestroyAuthKeyRes", isFunction: false },
+    { name: "DestroyAuthKeyNone", constructorId: 178201177, argsConfig: {}, subclassOfId: 2190599822, result: "DestroyAuthKeyRes", isFunction: false },
+    { name: "DestroyAuthKeyFail", constructorId: 3926956819, argsConfig: {}, subclassOfId: 2190599822, result: "DestroyAuthKeyRes", isFunction: false },
+    { name: "ReqPq", constructorId: 1615239032, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null } }, subclassOfId: 2020181688, result: "ResPQ", isFunction: true },
+    { name: "ReqPqMulti", constructorId: 3195965169, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null } }, subclassOfId: 2020181688, result: "ResPQ", isFunction: true },
+    { name: "ReqDHParams", constructorId: 3608339646, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, p: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, q: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null }, publicKeyFingerprint: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, encryptedData: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 2786626974, result: "Server_DH_Params", isFunction: true },
+    { name: "SetClientDHParams", constructorId: 4110704415, argsConfig: { nonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, serverNonce: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int128", useVectorId: null }, encryptedData: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 1440574683, result: "Set_client_DH_params_answer", isFunction: true },
+    { name: "DestroyAuthKey", constructorId: 3510849888, argsConfig: {}, subclassOfId: 2190599822, result: "DestroyAuthKeyRes", isFunction: true },
+    { name: "MsgsAck", constructorId: 1658238041, argsConfig: { msgIds: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: true } }, subclassOfId: 2188801988, result: "MsgsAck", isFunction: false },
+    { name: "BadMsgNotification", constructorId: 2817521681, argsConfig: { badMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, badMsgSeqno: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, errorCode: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 3468337495, result: "BadMsgNotification", isFunction: false },
+    { name: "BadServerSalt", constructorId: 3987424379, argsConfig: { badMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, badMsgSeqno: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, errorCode: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, newServerSalt: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 3468337495, result: "BadMsgNotification", isFunction: false },
+    { name: "MsgsStateReq", constructorId: 3664378706, argsConfig: { msgIds: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: true } }, subclassOfId: 418389456, result: "MsgsStateReq", isFunction: false },
+    { name: "MsgsStateInfo", constructorId: 81704317, argsConfig: { reqMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, info: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 118098532, result: "MsgsStateInfo", isFunction: false },
+    { name: "MsgsAllInfo", constructorId: 2361446705, argsConfig: { msgIds: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: true }, info: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 4203727700, result: "MsgsAllInfo", isFunction: false },
+    { name: "MsgDetailedInfo", constructorId: 661470918, argsConfig: { msgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, answerMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, bytes: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, status: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1597167086, result: "MsgDetailedInfo", isFunction: false },
+    { name: "MsgNewDetailedInfo", constructorId: 2157819615, argsConfig: { answerMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, bytes: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, status: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1597167086, result: "MsgDetailedInfo", isFunction: false },
+    { name: "MsgResendReq", constructorId: 2105940488, argsConfig: { msgIds: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: true } }, subclassOfId: 33703188, result: "MsgResendReq", isFunction: false },
+    { name: "RpcError", constructorId: 558156313, argsConfig: { errorCode: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, errorMessage: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 1243079269, result: "RpcError", isFunction: false },
+    { name: "RpcAnswerUnknown", constructorId: 1579864942, argsConfig: {}, subclassOfId: 1271559536, result: "RpcDropAnswer", isFunction: false },
+    { name: "RpcAnswerDroppedRunning", constructorId: 3447252358, argsConfig: {}, subclassOfId: 1271559536, result: "RpcDropAnswer", isFunction: false },
+    { name: "RpcAnswerDropped", constructorId: 2755319991, argsConfig: { msgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, seqNo: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, bytes: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 1271559536, result: "RpcDropAnswer", isFunction: false },
+    { name: "FutureSalt", constructorId: 155834844, argsConfig: { validSince: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, validUntil: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, salt: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 1172651471, result: "FutureSalt", isFunction: false },
+    { name: "FutureSalts", constructorId: 2924480661, argsConfig: { reqMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, now: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, salts: { isVector: true, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "FutureSalt", useVectorId: false } }, subclassOfId: 277935383, result: "FutureSalts", isFunction: false },
+    { name: "Pong", constructorId: 880243653, argsConfig: { msgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, pingId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2171268721, result: "Pong", isFunction: false },
+    { name: "DestroySessionOk", constructorId: 3793765884, argsConfig: { sessionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2936858557, result: "DestroySessionRes", isFunction: false },
+    { name: "DestroySessionNone", constructorId: 1658015945, argsConfig: { sessionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2936858557, result: "DestroySessionRes", isFunction: false },
+    { name: "NewSessionCreated", constructorId: 2663516424, argsConfig: { firstMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, uniqueId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, serverSalt: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 1359818801, result: "NewSession", isFunction: false },
+    { name: "HttpWait", constructorId: 2459514271, argsConfig: { maxDelay: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, waitAfter: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, maxWait: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 310685398, result: "HttpWait", isFunction: false },
+    { name: "IpPort", constructorId: 3560156531, argsConfig: { ipv4: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, port: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2728408870, result: "IpPort", isFunction: false },
+    { name: "IpPortSecret", constructorId: 932718150, argsConfig: { ipv4: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, port: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, secret: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "bytes", useVectorId: null } }, subclassOfId: 2728408870, result: "IpPort", isFunction: false },
+    { name: "AccessPointRule", constructorId: 1182381663, argsConfig: { phonePrefixRules: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null }, dcId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, ips: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "IpPort", useVectorId: false } }, subclassOfId: 2980880637, result: "AccessPointRule", isFunction: false },
+    { name: "ConfigSimple", constructorId: 1515793004, argsConfig: { date: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, expires: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null }, rules: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "AccessPointRule", useVectorId: false } }, subclassOfId: 689453764, result: "help.ConfigSimple", isFunction: false, namespace: "help" },
+    { name: "TlsClientHello", constructorId: 262524817, argsConfig: { blocks: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "TlsBlock", useVectorId: false } }, subclassOfId: 3203533088, result: "TlsClientHello", isFunction: false },
+    { name: "TlsBlockString", constructorId: 1488907607, argsConfig: { data: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "string", useVectorId: null } }, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockRandom", constructorId: 3265966728, argsConfig: { length: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockZero", constructorId: 3400654219, argsConfig: { length: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockDomain", constructorId: 283665263, argsConfig: {}, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockGrease", constructorId: 2623335513, argsConfig: { seed: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockPublicKey", constructorId: 2662947676, argsConfig: {}, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockScope", constructorId: 3638474097, argsConfig: { entries: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "TlsBlock", useVectorId: true } }, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockPermutation", constructorId: 48631757, argsConfig: { entries: { isVector: true, isFlag: false, skipConstructorId: false, flagName: null, flagIndex: -1, flagIndicator: false, type: "TlsBlock", useVectorId: true } }, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockM", constructorId: 2648724363, argsConfig: {}, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockE", constructorId: 2615944565, argsConfig: {}, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "TlsBlockPadding", constructorId: 2754966040, argsConfig: {}, subclassOfId: 4044764304, result: "TlsBlock", isFunction: false },
+    { name: "RpcDropAnswer", constructorId: 1491380032, argsConfig: { reqMsgId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 1271559536, result: "RpcDropAnswer", isFunction: true },
+    { name: "GetFutureSalts", constructorId: 3105996036, argsConfig: { num: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 277935383, result: "FutureSalts", isFunction: true },
+    { name: "Ping", constructorId: 2059302892, argsConfig: { pingId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2171268721, result: "Pong", isFunction: true },
+    { name: "PingDelayDisconnect", constructorId: 4081220492, argsConfig: { pingId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null }, disconnectDelay: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "int", useVectorId: null } }, subclassOfId: 2171268721, result: "Pong", isFunction: true },
+    { name: "DestroySession", constructorId: 3880853798, argsConfig: { sessionId: { isVector: false, isFlag: false, skipConstructorId: true, flagName: null, flagIndex: -1, flagIndicator: false, type: "long", useVectorId: null } }, subclassOfId: 2936858557, result: "DestroySessionRes", isFunction: true }
+  ];
 });
 
-// node_modules/teleproto/client/chats.js
-var require_chats = __commonJS((exports2) => {
-  var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() {
-        return m[k];
-      } };
-    }
-    Object.defineProperty(o, k2, desc);
-  } : function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    o[k2] = m[k];
-  });
-  var __setModuleDefault = exports2 && exports2.__setModuleDefault || (Object.create ? function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-  } : function(o, v) {
-    o["default"] = v;
-  });
-  var __importStar = exports2 && exports2.__importStar || function() {
-    var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
-        var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
-            ar[ar.length] = k;
-        return ar;
-      };
-      return ownKeys(o);
-    };
-    return function(mod) {
-      if (mod && mod.__esModule)
-        return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k = ownKeys(mod), i = 0;i < k.length; i++)
-          if (k[i] !== "default")
-            __createBinding(result, mod, k[i]);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-  }();
-  var __importDefault = exports2 && exports2.__importDefault || function(mod) {
-    return mod && mod.__esModule ? mod : { default: mod };
-  };
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2._AdminLogIter = exports2._ParticipantsIter = undefined;
-  exports2.iterParticipants = iterParticipants;
-  exports2.getParticipants = getParticipants;
-  exports2.kickParticipant = kickParticipant;
-  exports2.editBanned = editBanned;
-  exports2.editAdmin = editAdmin;
-  exports2.editChatDefaultBannedRights = editChatDefaultBannedRights;
-  exports2.getParticipant = getParticipant;
-  exports2.editTitle = editTitle;
-  exports2.editPhoto = editPhoto;
-  exports2.editChatAbout = editChatAbout;
-  exports2.toggleSlowMode = toggleSlowMode;
-  exports2.createChannel = createChannel;
-  exports2.createChat = createChat;
-  exports2.joinChannel = joinChannel;
-  exports2.importChatInvite = importChatInvite;
-  exports2.leaveChannel = leaveChannel;
-  exports2.deleteHistory = deleteHistory;
-  exports2.editPeerFolders = editPeerFolders;
-  exports2.setTyping = setTyping;
-  exports2.iterAdminLog = iterAdminLog;
-  exports2.getAdminLog = getAdminLog;
-  var uploads_1 = require_uploads();
-  var inviteLinks_1 = require_inviteLinks();
-  var Helpers_1 = require_Helpers();
-  var requestIter_1 = require_requestIter();
-  var helpers = __importStar(require_Helpers());
-  var utils = __importStar(require_Utils());
-  var tl_1 = require_tl();
-  var big_integer_1 = __importDefault(require_BigInteger());
-  var Utils_1 = require_Utils();
-  var _MAX_PARTICIPANTS_CHUNK_SIZE = 200;
-  var _MAX_ADMIN_LOG_CHUNK_SIZE = 100;
-
-  class _ChatAction {
-    static {
-      this._str_mapping = {
-        typing: new tl_1.Api.SendMessageTypingAction,
-        contact: new tl_1.Api.SendMessageChooseContactAction,
-        game: new tl_1.Api.SendMessageGamePlayAction,
-        location: new tl_1.Api.SendMessageGeoLocationAction,
-        "record-audio": new tl_1.Api.SendMessageRecordAudioAction,
-        "record-voice": new tl_1.Api.SendMessageRecordAudioAction,
-        "record-round": new tl_1.Api.SendMessageRecordRoundAction,
-        "record-video": new tl_1.Api.SendMessageRecordVideoAction,
-        audio: new tl_1.Api.SendMessageUploadAudioAction({ progress: 1 }),
-        voice: new tl_1.Api.SendMessageUploadAudioAction({ progress: 1 }),
-        song: new tl_1.Api.SendMessageUploadAudioAction({ progress: 1 }),
-        round: new tl_1.Api.SendMessageUploadRoundAction({ progress: 1 }),
-        video: new tl_1.Api.SendMessageUploadVideoAction({ progress: 1 }),
-        photo: new tl_1.Api.SendMessageUploadPhotoAction({ progress: 1 }),
-        document: new tl_1.Api.SendMessageUploadDocumentAction({ progress: 1 }),
-        file: new tl_1.Api.SendMessageUploadDocumentAction({ progress: 1 }),
-        cancel: new tl_1.Api.SendMessageCancelAction
-      };
-    }
-    constructor(client, chat, action, params = {
-      delay: 4,
-      autoCancel: true
-    }) {
-      this._client = client;
-      this._chat = chat;
-      this._action = action;
-      this._delay = params.delay;
-      this.autoCancel = params.autoCancel;
-      this._request = undefined;
-      this._task = null;
-      this._running = false;
-    }
-    async start() {
-      this._request = new tl_1.Api.messages.SetTyping({
-        peer: this._chat,
-        action: this._action
-      });
-      this._running = true;
-      this._update();
-    }
-    async stop() {
-      this._running = false;
-      if (this.autoCancel) {
-        await this._client.invoke(new tl_1.Api.messages.SetTyping({
-          peer: this._chat,
-          action: new tl_1.Api.SendMessageCancelAction
-        }));
-      }
-    }
-    async _update() {
-      while (this._running) {
-        if (this._request != null) {
-          await this._client.invoke(this._request);
-        }
-        await (0, Helpers_1.sleep)(this._delay * 1000);
-      }
-    }
-    progress(current, total) {
-      if ("progress" in this._action) {
-        this._action.progress = 100 * Math.round(current / total);
-      }
-    }
-  }
-
-  class _ParticipantsIter extends requestIter_1.RequestIter {
-    async _init({ entity, filter, offset, search, showTotal }) {
-      if (!offset) {
-        offset = 0;
-      }
-      if (filter && filter.constructor === Function) {
-        if ([
-          tl_1.Api.ChannelParticipantsBanned,
-          tl_1.Api.ChannelParticipantsKicked,
-          tl_1.Api.ChannelParticipantsSearch,
-          tl_1.Api.ChannelParticipantsContacts
-        ].includes(filter)) {
-          filter = new filter({
-            q: ""
-          });
-        } else {
-          filter = new filter;
-        }
-      }
-      entity = await this.client.getInputEntity(entity);
-      const ty = helpers._entityType(entity);
-      if (search && (filter || ty != helpers._EntityType.CHANNEL)) {
-        search = search.toLowerCase();
-        this.filterEntity = (entity2) => {
-          return utils.getDisplayName(entity2).toLowerCase().includes(search) || ("username" in entity2 ? entity2.username || "" : "").toLowerCase().includes(search);
-        };
-      } else {
-        this.filterEntity = (entity2) => true;
-      }
-      this.request = undefined;
-      if (ty == helpers._EntityType.CHANNEL) {
-        if (showTotal) {
-          const channel = await this.client.api.channels.getFullChannel({ channel: utils.getInputChannel(entity) });
-          if (channel.fullChat instanceof tl_1.Api.ChannelFull) {
-            this.total = channel.fullChat.participantsCount;
-          }
-        }
-        if (this.total && this.total <= 0) {
-          return false;
-        }
-        this.request = new tl_1.Api.channels.GetParticipants({
-          channel: entity,
-          filter: filter || new tl_1.Api.ChannelParticipantsSearch({
-            q: search || ""
-          }),
-          offset,
-          limit: _MAX_PARTICIPANTS_CHUNK_SIZE,
-          hash: big_integer_1.default.zero
-        });
-      } else if (ty == helpers._EntityType.CHAT) {
-        if (!("chatId" in entity)) {
-          throw new Error("Found chat without id " + JSON.stringify(entity));
-        }
-        const full = await this.client.api.messages.getFullChat({
-          chatId: entity.chatId
-        });
-        if (full.fullChat instanceof tl_1.Api.ChatFull) {
-          if (!(full.fullChat.participants instanceof tl_1.Api.ChatParticipantsForbidden)) {
-            this.total = full.fullChat.participants.participants.length;
-          } else {
-            this.total = 0;
-            return false;
-          }
-          const users = new Map;
-          for (const user of full.users) {
-            users.set(user.id.toString(), user);
-          }
-          for (const participant of full.fullChat.participants.participants) {
-            const user = users.get(participant.userId.toString());
-            if (!user || !this.filterEntity(user)) {
-              continue;
-            }
-            user.participant = participant;
-            this.buffer?.push(user);
-          }
-          return true;
-        }
-      } else {
-        this.total = 1;
-        if (this.limit != 0) {
-          const user = await this.client.getEntity(entity);
-          if (this.filterEntity(user)) {
-            user.participant = undefined;
-            this.buffer?.push(user);
-          }
-        }
-        return true;
-      }
-    }
-    async _loadNextChunk() {
-      while (this.request) {
-        const request = this.request;
-        request.limit = Math.min(this.left, _MAX_PARTICIPANTS_CHUNK_SIZE);
-        const participants = await this.client.invoke(request);
-        if (participants instanceof tl_1.Api.channels.ChannelParticipantsNotModified || !participants.participants.length) {
-          this.request = undefined;
-          return true;
-        }
-        request.offset += participants.participants.length;
-        const users = new Map;
-        for (const user of participants.users) {
-          users.set(user.id.toString(), user);
-        }
-        for (const participant of participants.participants) {
-          const userId = "userId" in participant ? participant.userId : ("peer" in participant) && participant.peer instanceof tl_1.Api.PeerUser ? participant.peer.userId : undefined;
-          const user = userId && users.get(userId.toString());
-          if (!user || this.filterEntity && !this.filterEntity(user)) {
-            continue;
-          }
-          user.participant = participant;
-          this.buffer?.push(user);
-        }
-        if (this.buffer?.length)
-          return;
-      }
-      return true;
-    }
-    [Symbol.asyncIterator]() {
-      return super[Symbol.asyncIterator]();
-    }
-  }
-  exports2._ParticipantsIter = _ParticipantsIter;
-
-  class _AdminLogIter extends requestIter_1.RequestIter {
-    async _init(params) {
-      const { entity, search, admins, minId, maxId, limit, ...filterArgs } = params;
-      let eventsFilter = undefined;
-      if (Object.values(filterArgs).find((element) => element === true)) {
-        eventsFilter = new tl_1.Api.ChannelAdminLogEventsFilter({
-          ...filterArgs
-        });
-      }
-      this.entity = await this.client.getInputEntity(entity);
-      let adminList = undefined;
-      if (admins) {
-        adminList = [];
-        for (const admin of admins) {
-          adminList.push(await this.client.getInputEntity(admin));
-        }
-      }
-      this.request = new tl_1.Api.channels.GetAdminLog({
-        channel: this.entity,
-        q: search || "",
-        minId: minId ?? big_integer_1.default.zero,
-        maxId: maxId ?? big_integer_1.default.zero,
-        limit: 0,
-        eventsFilter,
-        admins: adminList
-      });
-    }
-    async _loadNextChunk() {
-      if (!this.request) {
-        return true;
-      }
-      this.request.limit = Math.min(this.left, _MAX_ADMIN_LOG_CHUNK_SIZE);
-      const r = await this.client.invoke(this.request);
-      if (!r.events.length) {
-        return true;
-      }
-      const entities = new Map;
-      for (const entity of [...r.users, ...r.chats]) {
-        entities.set(utils.getPeerId(entity), entity);
-      }
-      const eventIds = [];
-      for (const e of r.events) {
-        eventIds.push(e.id);
-      }
-      this.request.maxId = (0, Helpers_1.getMinBigInt)(eventIds);
-      for (const ev of r.events) {
-        if (ev.action instanceof tl_1.Api.ChannelAdminLogEventActionEditMessage) {
-          try {
-            ev.action.prevMessage._finishInit?.(this.client, entities, this.entity);
-            ev.action.newMessage._finishInit?.(this.client, entities, this.entity);
-          } catch (e) {}
-        }
-        this.buffer?.push(ev);
-      }
-      if (r.events.length < this.request.limit) {
-        return true;
-      }
-    }
-    [Symbol.asyncIterator]() {
-      return super[Symbol.asyncIterator]();
-    }
-  }
-  exports2._AdminLogIter = _AdminLogIter;
-  function iterParticipants(client, entity, { limit, offset, search, filter, showTotal = true }) {
-    return new _ParticipantsIter(client, limit ?? Number.MAX_SAFE_INTEGER, {}, {
-      entity,
-      filter,
-      offset: offset ?? 0,
-      search,
-      showTotal
-    });
-  }
-  async function getParticipants(client, entity, params) {
-    const it = client.iterParticipants(entity, params);
-    return await it.collect();
-  }
-  async function kickParticipant(client, entity, participant) {
-    const peer = await client.getInputEntity(entity);
-    const user = await client.getInputEntity(participant);
-    let resp;
-    let request;
-    const type = helpers._entityType(peer);
-    if (type === helpers._EntityType.CHAT) {
-      request = new tl_1.Api.messages.DeleteChatUser({
-        chatId: (0, Helpers_1.returnBigInt)((0, Utils_1.getPeerId)(entity)),
-        userId: (0, Helpers_1.returnBigInt)((0, Utils_1.getPeerId)(participant))
-      });
-      resp = await client.invoke(request);
-    } else if (type === helpers._EntityType.CHANNEL) {
-      if (user instanceof tl_1.Api.InputPeerSelf) {
-        request = new tl_1.Api.channels.LeaveChannel({
-          channel: peer
-        });
-        resp = await client.invoke(request);
-      } else {
-        request = new tl_1.Api.channels.EditBanned({
-          channel: peer,
-          participant: user,
-          bannedRights: new tl_1.Api.ChatBannedRights({
-            untilDate: 0,
-            viewMessages: true
-          })
-        });
-        resp = await client.invoke(request);
-        await (0, Helpers_1.sleep)(500);
-        await client.invoke(new tl_1.Api.channels.EditBanned({
-          channel: peer,
-          participant: user,
-          bannedRights: new tl_1.Api.ChatBannedRights({ untilDate: 0 })
-        }));
-      }
-    } else {
-      throw new Error("You must pass either a channel or a chat");
-    }
-    return client._getResponseMessage(request, resp, entity);
-  }
-  function _toBannedRights(params) {
-    if (params instanceof tl_1.Api.ChatBannedRights) {
-      return params;
-    }
-    const { untilDate, ...rights } = params;
-    return new tl_1.Api.ChatBannedRights({
-      ...rights,
-      untilDate: untilDate instanceof Date ? Math.floor(untilDate.getTime() / 1000) : untilDate || 0
-    });
-  }
-  async function editBanned(client, entity, participant, params = { viewMessages: true }) {
-    const channel = await client.getInputEntity(entity);
-    const peer = await client.getInputEntity(participant);
-    return client.invoke(new tl_1.Api.channels.EditBanned({
-      channel,
-      participant: peer,
-      bannedRights: _toBannedRights(params)
-    }));
-  }
-  async function editAdmin(client, entity, participant, params) {
-    const peer = await client.getInputEntity(entity);
-    const user = await client.getInputEntity(participant);
-    const type = helpers._entityType(peer);
-    if (type === helpers._EntityType.CHAT) {
-      const isAdmin = params instanceof tl_1.Api.ChatAdminRights || Object.entries(params).some(([key, value]) => key !== "rank" && value === true);
-      return client.invoke(new tl_1.Api.messages.EditChatAdmin({
-        chatId: (0, Helpers_1.returnBigInt)(utils.getPeerId(peer, false)),
-        userId: user,
-        isAdmin
-      }));
-    }
-    let rights;
-    let rank;
-    if (params instanceof tl_1.Api.ChatAdminRights) {
-      rights = params;
-    } else {
-      const { rank: paramsRank, ...flags } = params;
-      rank = paramsRank;
-      rights = new tl_1.Api.ChatAdminRights({ ...flags });
-    }
-    return client.invoke(new tl_1.Api.channels.EditAdmin({
-      channel: peer,
-      userId: user,
-      adminRights: rights,
-      rank
-    }));
-  }
-  async function editChatDefaultBannedRights(client, entity, params) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.EditChatDefaultBannedRights({
-      peer,
-      bannedRights: _toBannedRights(params)
-    }));
-  }
-  async function getParticipant(client, entity, participant) {
-    const channel = await client.getInputEntity(entity);
-    if (helpers._entityType(channel) !== helpers._EntityType.CHANNEL) {
-      throw new Error("getParticipant is only available for channels and supergroups; use getParticipants for small group chats");
-    }
-    const peer = await client.getInputEntity(participant);
-    return client.api.channels.getParticipant({
-      channel: utils.getInputChannel(channel),
-      participant: peer
-    });
-  }
-  async function editTitle(client, entity, title) {
-    const peer = await client.getInputEntity(entity);
-    if (helpers._entityType(peer) === helpers._EntityType.CHAT) {
-      return client.invoke(new tl_1.Api.messages.EditChatTitle({
-        chatId: (0, Helpers_1.returnBigInt)(utils.getPeerId(peer, false)),
-        title
-      }));
-    }
-    return client.api.channels.editTitle({ channel: utils.getInputChannel(peer), title });
-  }
-  async function editPhoto(client, entity, photo) {
-    const peer = await client.getInputEntity(entity);
-    let chatPhoto;
-    if (photo == undefined) {
-      chatPhoto = new tl_1.Api.InputChatPhotoEmpty;
-    } else if (photo instanceof tl_1.Api.InputChatPhotoEmpty || photo instanceof tl_1.Api.InputChatUploadedPhoto || photo instanceof tl_1.Api.InputChatPhoto) {
-      chatPhoto = photo;
-    } else {
-      const { fileHandle } = await (0, uploads_1._fileToMedia)(client, {
-        file: photo,
-        asImage: true
-      });
-      if (!fileHandle) {
-        throw new Error(`Cannot use ${photo} as a chat photo`);
-      }
-      chatPhoto = new tl_1.Api.InputChatUploadedPhoto({ file: fileHandle });
-    }
-    if (helpers._entityType(peer) === helpers._EntityType.CHAT) {
-      return client.invoke(new tl_1.Api.messages.EditChatPhoto({
-        chatId: (0, Helpers_1.returnBigInt)(utils.getPeerId(peer, false)),
-        photo: chatPhoto
-      }));
-    }
-    return client.invoke(new tl_1.Api.channels.EditPhoto({ channel: peer, photo: chatPhoto }));
-  }
-  async function editChatAbout(client, entity, about) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.messages.editChatAbout({ peer, about });
-  }
-  async function toggleSlowMode(client, entity, seconds = 0) {
-    const channel = await client.getInputEntity(entity);
-    return client.api.channels.toggleSlowMode({
-      channel: utils.getInputChannel(channel),
-      seconds
-    });
-  }
-  async function createChannel(client, params) {
-    const result = await client.invoke(new tl_1.Api.channels.CreateChannel({
-      title: params.title,
-      about: params.about || "",
-      broadcast: !params.megagroup,
-      megagroup: params.megagroup,
-      forum: params.forum,
-      forImport: params.forImport,
-      geoPoint: params.geoPoint,
-      address: params.address,
-      ttlPeriod: params.ttlPeriod
-    }));
-    if ("chats" in result) {
-      for (const chat of result.chats) {
-        if (chat instanceof tl_1.Api.Channel) {
-          return chat;
-        }
-      }
-    }
-    throw new Error("Could not find the created channel in the response");
-  }
-  async function createChat(client, params) {
-    const users = [];
-    for (const user of params.users) {
-      users.push(await client.getInputEntity(user));
-    }
-    const result = await client.invoke(new tl_1.Api.messages.CreateChat({
-      title: params.title,
-      users,
-      ttlPeriod: params.ttlPeriod
-    }));
-    if ("chats" in result.updates) {
-      for (const chat of result.updates.chats) {
-        if (chat instanceof tl_1.Api.Chat) {
-          return { chat, missingInvitees: result.missingInvitees };
-        }
-      }
-    }
-    throw new Error("Could not find the created chat in the response");
-  }
-  async function joinChannel(client, entity) {
-    const channel = await client.getInputEntity(entity);
-    return client.api.channels.joinChannel({ channel: utils.getInputChannel(channel) });
-  }
-  async function importChatInvite(client, link) {
-    return client.api.messages.importChatInvite({
-      hash: (0, inviteLinks_1._parseInviteHash)(link)
-    });
-  }
-  async function leaveChannel(client, entity) {
-    const channel = await client.getInputEntity(entity);
-    return client.api.channels.leaveChannel({ channel: utils.getInputChannel(channel) });
-  }
-  async function deleteHistory(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    if (helpers._entityType(peer) === helpers._EntityType.CHANNEL) {
-      return client.api.channels.deleteHistory({
-        channel: utils.getInputChannel(peer),
-        maxId: params.maxId ?? 0,
-        forEveryone: params.revoke
-      });
-    }
-    return client.api.messages.deleteHistory({
-      peer,
-      maxId: params.maxId ?? 0,
-      revoke: params.revoke,
-      justClear: params.justClear,
-      minDate: params.minDate,
-      maxDate: params.maxDate
-    });
-  }
-  async function editPeerFolders(client, entity, folderId) {
-    const entities = Array.isArray(entity) ? entity : [entity];
-    const folderPeers = [];
-    for (const e of entities) {
-      folderPeers.push(new tl_1.Api.InputFolderPeer({
-        peer: await client.getInputEntity(e),
-        folderId
-      }));
-    }
-    return client.invoke(new tl_1.Api.folders.EditPeerFolders({ folderPeers }));
-  }
-  async function setTyping(client, entity, action = "typing", params = {}) {
-    const peer = await client.getInputEntity(entity);
-    let resolved;
-    if (typeof action === "string") {
-      resolved = _ChatAction._str_mapping[action];
-      if (!resolved) {
-        throw new Error(`Unknown chat action: ${action}`);
-      }
-    } else {
-      resolved = action;
-    }
-    return client.invoke(new tl_1.Api.messages.SetTyping({
-      peer,
-      action: resolved,
-      topMsgId: params.topMsgId
-    }));
-  }
-  function iterAdminLog(client, entity, params = {}) {
-    return new _AdminLogIter(client, params.limit ?? Number.MAX_SAFE_INTEGER, {}, {
-      entity,
-      ...params
-    });
-  }
-  async function getAdminLog(client, entity, params = {}) {
-    return await iterAdminLog(client, entity, params).collect();
-  }
+// node_modules/teleproto/tl/generated/api.js
+var require_api = __commonJS((exports2, module2) => {
+  var { createApiFromDefinitions } = require_createApi();
+  var definitions = require_api_definitions();
+  var Api = createApiFromDefinitions(definitions);
+  module2.exports = { Api };
 });
 
-// node_modules/teleproto/client/communities.js
-var require_communities = __commonJS((exports2) => {
+// node_modules/teleproto/tl/api.js
+var require_api2 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.CommunityPeerLinkRequestsIter = undefined;
-  exports2.createCommunity = createCommunity;
-  exports2.getCommunity = getCommunity;
-  exports2.getJoinedCommunities = getJoinedCommunities;
-  exports2.getCommunityPeers = getCommunityPeers;
-  exports2.setCommunityPeerLink = setCommunityPeerLink;
-  exports2.setCommunityCollapsed = setCommunityCollapsed;
-  exports2.iterCommunityPeerLinkRequests = iterCommunityPeerLinkRequests;
-  exports2.getCommunityPeerLinkRequests = getCommunityPeerLinkRequests;
-  exports2.setCommunityPeerLinkRequestApproval = setCommunityPeerLinkRequestApproval;
-  exports2.setAllCommunityPeerLinkRequestsApproval = setAllCommunityPeerLinkRequestsApproval;
-  exports2.setCommunityParticipantBanned = setCommunityParticipantBanned;
-  exports2.getCommunityParticipantJoinedChats = getCommunityParticipantJoinedChats;
-  exports2.pinCommunity = pinCommunity;
-  exports2.getCommunityNotifySettings = getCommunityNotifySettings;
-  exports2.updateCommunityNotifySettings = updateCommunityNotifySettings;
-  var tl_1 = require_tl();
-  var Utils_1 = require_Utils();
-  var requestIter_1 = require_requestIter();
-  var Helpers_1 = require_Helpers();
-  async function createCommunity(client, params) {
-    const result = await client.invoke(new tl_1.Api.communities.Create({
-      title: params.title,
-      peer: await client.getInputEntity(params.peer),
-      about: params.about,
-      hidden: params.hidden
-    }));
-    if (result instanceof tl_1.Api.Updates || result instanceof tl_1.Api.UpdatesCombined) {
-      const community = result.chats.find((chat) => chat instanceof tl_1.Api.Community);
-      if (community)
-        return community;
-    }
-    throw new Error("Telegram did not return the created community");
-  }
-  async function getCommunity(client, community) {
-    const result = await client.invoke(new tl_1.Api.channels.GetFullChannel({
-      channel: (0, Utils_1.getInputChannel)(await client.getInputEntity(community))
-    }));
-    if (!(result.fullChat instanceof tl_1.Api.CommunityFull)) {
-      throw new Error("The entity is not a community");
-    }
-    return result;
-  }
-  async function getJoinedCommunities(client) {
-    const result = await client.invoke(new tl_1.Api.communities.GetJoinedCommunities);
-    const communities = new Helpers_1.TotalList;
-    for (const chat of result.chats) {
-      if (chat instanceof tl_1.Api.Community || chat instanceof tl_1.Api.CommunityForbidden) {
-        communities.push(chat);
-      }
-    }
-    communities.total = result instanceof tl_1.Api.messages.ChatsSlice ? result.count : communities.length;
-    return communities;
-  }
-  async function getCommunityPeers(client, community) {
-    const result = await getCommunity(client, community);
-    const entities = new Map([...result.chats, ...result.users].map((entity) => [(0, Utils_1.getPeerId)(entity), entity]));
-    return result.fullChat.linkedPeers.map((peer) => Object.assign(peer, {
-      entity: entities.get((0, Utils_1.getPeerId)(peer.peer))
-    }));
-  }
-  async function setCommunityPeerLink(client, community, peer, action) {
-    if (!["visible", "hidden", "deleted"].includes(action)) {
-      throw new Error("Community peer link action must be visible, hidden or deleted");
-    }
-    return client.invoke(new tl_1.Api.communities.TogglePeerLink({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community)),
-      peer: await client.getInputEntity(peer),
-      visible: action === "visible" || undefined,
-      hidden: action === "hidden" || undefined,
-      deleted: action === "deleted" || undefined
-    }));
-  }
-  async function setCommunityCollapsed(client, community, collapsed) {
-    return client.invoke(new tl_1.Api.communities.ToggleCommunityCollapsedInDialogs({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community)),
-      collapsed: collapsed || undefined
-    }));
-  }
-
-  class CommunityPeerLinkRequestsIter extends requestIter_1.RequestIter {
-    constructor() {
-      super(...arguments);
-      this.offsets = new Set;
-    }
-    async _init({ community, offset }) {
-      this.offsets.clear();
-      this.request = new tl_1.Api.communities.GetPeerLinkRequests({
-        community: (0, Utils_1.getInputChannel)(await this.client.getInputEntity(community)),
-        offset,
-        limit: Math.min(this.left || 1, 100)
-      });
-      if (this.left === 0) {
-        this.total = (await this.client.invoke(this.request)).totalCount;
-        return true;
-      }
-    }
-    async _loadNextChunk() {
-      while (this.request) {
-        const request = this.request;
-        this.offsets.add(request.offset);
-        request.limit = Math.min(this.left, 100);
-        const result = await this.client.invoke(request);
-        this.total = result.totalCount;
-        const entities = new Map([...result.chats, ...result.users].map((entity) => [(0, Utils_1.getPeerId)(entity), entity]));
-        const users = new Map(result.users.map((user) => [user.id.toString(), user]));
-        for (const entry of result.requests) {
-          const requestedBy = users.get(entry.requestedBy.toString());
-          this.buffer.push(Object.assign(entry, {
-            entity: entities.get((0, Utils_1.getPeerId)(entry.peer)),
-            requestedByUser: requestedBy instanceof tl_1.Api.User ? requestedBy : undefined
-          }));
-        }
-        if (!result.nextOffset || this.offsets.has(result.nextOffset)) {
-          this.request = undefined;
-          return true;
-        }
-        request.offset = result.nextOffset;
-        if (this.buffer.length)
-          return;
-      }
-      return true;
-    }
-    [Symbol.asyncIterator]() {
-      return super[Symbol.asyncIterator]();
-    }
-  }
-  exports2.CommunityPeerLinkRequestsIter = CommunityPeerLinkRequestsIter;
-  function iterCommunityPeerLinkRequests(client, community, params = {}) {
-    return new CommunityPeerLinkRequestsIter(client, params.limit, {
-      waitTime: params.waitTime
-    }, { community, offset: params.offset ?? "" });
-  }
-  async function getCommunityPeerLinkRequests(client, community, params = {}) {
-    return await iterCommunityPeerLinkRequests(client, community, params).collect();
-  }
-  async function setCommunityPeerLinkRequestApproval(client, community, peer, approved) {
-    return client.invoke(new tl_1.Api.communities.TogglePeerLinkRequestApproval({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community)),
-      peer: await client.getInputEntity(peer),
-      reject: !approved || undefined
-    }));
-  }
-  async function setAllCommunityPeerLinkRequestsApproval(client, community, approved) {
-    return client.invoke(new tl_1.Api.communities.ToggleAllPeerLinkRequestApproval({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community)),
-      reject: !approved || undefined
-    }));
-  }
-  async function setCommunityParticipantBanned(client, community, participant, banned) {
-    return client.invoke(new tl_1.Api.communities.ToggleParticipantBanned({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community)),
-      participant: await client.getInputEntity(participant),
-      unban: !banned || undefined
-    }));
-  }
-  async function getCommunityParticipantJoinedChats(client, community, participant) {
-    return client.invoke(new tl_1.Api.communities.GetParticipantJoinedChats({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community)),
-      participant: await client.getInputEntity(participant)
-    }));
-  }
-  async function pinCommunity(client, community, pinned = true) {
-    return client.invoke(new tl_1.Api.messages.ToggleDialogPin({
-      peer: new tl_1.Api.InputDialogPeerCommunity({
-        community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community))
-      }),
-      pinned: pinned || undefined
-    }));
-  }
-  async function getCommunityNotifySettings(client, community) {
-    return client.getNotifySettings(new tl_1.Api.InputNotifyCommunity({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community))
-    }));
-  }
-  async function updateCommunityNotifySettings(client, community, params) {
-    return client.updateNotifySettings(new tl_1.Api.InputNotifyCommunity({
-      community: (0, Utils_1.getInputChannel)(await client.getInputEntity(community))
-    }), params);
-  }
+  exports2.Api = undefined;
+  var api_1 = require_api();
+  Object.defineProperty(exports2, "Api", { enumerable: true, get: function() {
+    return api_1.Api;
+  } });
 });
 
-// node_modules/teleproto/client/account.js
-var require_account = __commonJS((exports2) => {
-  var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() {
-        return m[k];
-      } };
-    }
-    Object.defineProperty(o, k2, desc);
-  } : function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    o[k2] = m[k];
-  });
-  var __setModuleDefault = exports2 && exports2.__setModuleDefault || (Object.create ? function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-  } : function(o, v) {
-    o["default"] = v;
-  });
-  var __importStar = exports2 && exports2.__importStar || function() {
-    var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
-        var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
-            ar[ar.length] = k;
-        return ar;
-      };
-      return ownKeys(o);
-    };
-    return function(mod) {
-      if (mod && mod.__esModule)
-        return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k = ownKeys(mod), i = 0;i < k.length; i++)
-          if (k[i] !== "default")
-            __createBinding(result, mod, k[i]);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-  }();
+// node_modules/teleproto/tl/runtime/registry.js
+var require_registry = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.updateProfile = updateProfile;
-  exports2.updateUsername = updateUsername;
-  exports2.updateStatus = updateStatus;
-  exports2.uploadProfilePhoto = uploadProfilePhoto;
-  exports2.updateProfilePhoto = updateProfilePhoto;
-  exports2.deleteProfilePhotos = deleteProfilePhotos;
-  exports2.getUserPhotos = getUserPhotos;
-  exports2.getAuthorizations = getAuthorizations;
-  exports2.resetAuthorization = resetAuthorization;
-  exports2.getPrivacy = getPrivacy;
-  exports2.setPrivacy = setPrivacy;
-  exports2.getNotifySettings = getNotifySettings;
-  exports2.updateNotifySettings = updateNotifySettings;
-  exports2.getAccountTTL = getAccountTTL;
-  exports2.setAccountTTL = setAccountTTL;
-  exports2.getGlobalPrivacySettings = getGlobalPrivacySettings;
-  exports2.setGlobalPrivacySettings = setGlobalPrivacySettings;
-  var Helpers_1 = require_Helpers();
-  var utils = __importStar(require_Utils());
-  var tl_1 = require_tl();
-  var uploads_1 = require_uploads();
-  async function updateProfile(client, params) {
-    return client.api.account.updateProfile({
-      firstName: params.firstName,
-      lastName: params.lastName,
-      about: params.about
-    });
-  }
-  async function updateUsername(client, username) {
-    return client.api.account.updateUsername({ username });
-  }
-  async function updateStatus(client, online = true) {
-    return client.api.account.updateStatus({ offline: !online });
-  }
-  async function _toInputFile(client, file) {
-    const { fileHandle } = await (0, uploads_1._fileToMedia)(client, {
-      file,
-      asImage: true
-    });
-    if (!fileHandle) {
-      throw new Error(`Cannot upload ${file} as a profile photo`);
-    }
-    return fileHandle;
-  }
-  async function uploadProfilePhoto(client, params) {
-    return client.invoke(new tl_1.Api.photos.UploadProfilePhoto({
-      file: params.file ? await _toInputFile(client, params.file) : undefined,
-      video: params.video ? await _toInputFile(client, params.video) : undefined,
-      videoStartTs: params.videoStartTs,
-      videoEmojiMarkup: params.videoEmojiMarkup,
-      fallback: params.fallback,
-      bot: params.bot ? await client.getInputEntity(params.bot) : undefined
-    }));
-  }
-  async function updateProfilePhoto(client, photo, params = {}) {
-    return client.invoke(new tl_1.Api.photos.UpdateProfilePhoto({
-      id: utils.getInputPhoto(photo),
-      fallback: params.fallback,
-      bot: params.bot ? await client.getInputEntity(params.bot) : undefined
-    }));
-  }
-  async function deleteProfilePhotos(client, photos) {
-    return client.invoke(new tl_1.Api.photos.DeletePhotos({
-      id: photos.map((photo) => utils.getInputPhoto(photo))
-    }));
-  }
-  async function getUserPhotos(client, entity, params = {}) {
-    const user = await client.getInputEntity(entity);
-    const result = await client.invoke(new tl_1.Api.photos.GetUserPhotos({
-      userId: user,
-      offset: params.offset ?? 0,
-      maxId: params.maxId,
-      limit: params.limit ?? 100
-    }));
-    const photos = new Helpers_1.TotalList;
-    photos.push(...result.photos);
-    photos.total = result instanceof tl_1.Api.photos.PhotosSlice ? result.count : result.photos.length;
-    return photos;
-  }
-  async function getAuthorizations(client) {
-    return client.api.account.getAuthorizations({});
-  }
-  async function resetAuthorization(client, hash) {
-    if (hash == undefined || hash.isZero()) {
-      return client.api.auth.resetAuthorizations({});
-    }
-    return client.api.account.resetAuthorization({ hash });
-  }
-  async function getPrivacy(client, key) {
-    return client.invoke(new tl_1.Api.account.GetPrivacy({ key }));
-  }
-  async function setPrivacy(client, key, rules) {
-    return client.invoke(new tl_1.Api.account.SetPrivacy({ key, rules }));
-  }
-  async function getNotifySettings(client, entity) {
-    return client.invoke(new tl_1.Api.account.GetNotifySettings({
-      peer: await client._getInputNotify(entity)
-    }));
-  }
-  async function updateNotifySettings(client, entity, params) {
-    return client.invoke(new tl_1.Api.account.UpdateNotifySettings({
-      peer: await client._getInputNotify(entity),
-      settings: new tl_1.Api.InputPeerNotifySettings({
-        showPreviews: params.showPreviews,
-        silent: params.silent,
-        muteUntil: params.muteUntil,
-        sound: params.sound,
-        storiesMuted: params.storiesMuted,
-        storiesHideSender: params.storiesHideSender,
-        storiesSound: params.storiesSound
-      })
-    }));
-  }
-  async function getAccountTTL(client) {
-    const result = await client.api.account.getAccountTTL({});
-    return result.days;
-  }
-  async function setAccountTTL(client, days) {
-    return client.invoke(new tl_1.Api.account.SetAccountTTL({
-      ttl: new tl_1.Api.AccountDaysTTL({ days })
-    }));
-  }
-  async function getGlobalPrivacySettings(client) {
-    return client.api.account.getGlobalPrivacySettings({});
-  }
-  async function setGlobalPrivacySettings(client, settings) {
-    return client.invoke(new tl_1.Api.account.SetGlobalPrivacySettings({ settings }));
-  }
-});
-
-// node_modules/teleproto/client/contacts.js
-var require_contacts = __commonJS((exports2) => {
-  var __importDefault = exports2 && exports2.__importDefault || function(mod) {
-    return mod && mod.__esModule ? mod : { default: mod };
-  };
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.getContacts = getContacts;
-  exports2.addContact = addContact;
-  exports2.deleteContacts = deleteContacts;
-  exports2.importContacts = importContacts;
-  exports2.block = block;
-  exports2.unblock = unblock;
-  exports2.getBlocked = getBlocked;
-  var Helpers_1 = require_Helpers();
-  var tl_1 = require_tl();
-  var big_integer_1 = __importDefault(require_BigInteger());
-  async function getContacts(client) {
-    const result = await client.api.contacts.getContacts({
-      hash: big_integer_1.default.zero
-    });
-    if (result instanceof tl_1.Api.contacts.ContactsNotModified) {
-      return [];
-    }
-    return result.users.filter((user) => user instanceof tl_1.Api.User);
-  }
-  function _toNote(note) {
-    if (note == undefined) {
-      return;
-    }
-    if (typeof note === "string") {
-      return new tl_1.Api.TextWithEntities({ text: note, entities: [] });
-    }
-    return note;
-  }
-  async function addContact(client, entity, params) {
-    const user = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.contacts.AddContact({
-      id: user,
-      firstName: params.firstName,
-      lastName: params.lastName || "",
-      phone: params.phone || "",
-      addPhonePrivacyException: params.addPhonePrivacyException,
-      note: _toNote(params.note)
-    }));
-  }
-  async function deleteContacts(client, users) {
-    const list = Array.isArray(users) ? users : [users];
-    const ids = [];
-    for (const user of list) {
-      ids.push(await client.getInputEntity(user));
-    }
-    return client.invoke(new tl_1.Api.contacts.DeleteContacts({ id: ids }));
-  }
-  async function importContacts(client, contacts) {
-    return client.invoke(new tl_1.Api.contacts.ImportContacts({
-      contacts: contacts.map((contact, i) => new tl_1.Api.InputPhoneContact({
-        clientId: (0, Helpers_1.returnBigInt)(contact.clientId ?? i),
-        phone: contact.phone,
-        firstName: contact.firstName,
-        lastName: contact.lastName || "",
-        note: _toNote(contact.note)
-      }))
-    }));
-  }
-  async function block(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.contacts.block({
-      id: peer,
-      myStoriesFrom: params.myStoriesFrom
-    });
-  }
-  async function unblock(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.contacts.unblock({
-      id: peer,
-      myStoriesFrom: params.myStoriesFrom
-    });
-  }
-  async function getBlocked(client, params = {}) {
-    const result = await client.api.contacts.getBlocked({
-      offset: params.offset ?? 0,
-      limit: params.limit ?? 100,
-      myStoriesFrom: params.myStoriesFrom
-    });
-    const blocked = new Helpers_1.TotalList;
-    blocked.push(...result.blocked);
-    blocked.total = result instanceof tl_1.Api.contacts.BlockedSlice ? result.count : result.blocked.length;
-    return blocked;
-  }
-});
-
-// node_modules/teleproto/tl/custom/draft.js
-var require_draft = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.Draft = undefined;
-  var Utils_1 = require_Utils();
+  exports2.tlobjects = exports2.LAYER = undefined;
+  exports2.LAYER = 229;
   var api_1 = require_api2();
-
-  class Draft {
-    constructor(client, entity, draft) {
-      this._client = client;
-      this._peer = (0, Utils_1.getPeer)(entity);
-      this._entity = entity;
-      this._inputEntity = entity ? (0, Utils_1.getInputPeer)(entity) : undefined;
-      if (!draft || !(draft instanceof api_1.Api.DraftMessage)) {
-        draft = new api_1.Api.DraftMessage({
-          message: "",
-          date: -1
-        });
-      }
-      if (!(draft instanceof api_1.Api.DraftMessageEmpty)) {
-        this.linkPreview = !draft.noWebpage;
-        this._text = client.parseMode ? client.parseMode.unparse(draft.message, draft.entities || []) : draft.message;
-        this._rawText = draft.message;
-        this.date = draft.date;
-        const replyTo = draft.replyTo;
-        if (replyTo != null) {
-          if ("replyToMsgId" in replyTo) {
-            this.replyToMsgId = replyTo.replyToMsgId;
-          }
-        }
-      }
-    }
-    get entity() {
-      return this._entity;
-    }
-    get inputEntity() {
-      if (!this._inputEntity) {
-        this._inputEntity = this._client._entityCache.get(this._peer);
-      }
-      return this._inputEntity;
-    }
-  }
-  exports2.Draft = Draft;
-});
-
-// node_modules/teleproto/tl/custom/dialog.js
-var require_dialog = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.Dialog = undefined;
-  var api_1 = require_api2();
-  var Utils_1 = require_Utils();
-  var draft_1 = require_draft();
-  var Helpers_1 = require_Helpers();
-
-  class Dialog {
-    constructor(client, dialog, entities, message) {
-      this._client = client;
-      this.dialog = dialog;
-      this.pinned = !!dialog.pinned;
-      this.folderId = dialog instanceof api_1.Api.Dialog ? dialog.folderId : undefined;
-      this.archived = this.folderId != null;
-      this.message = message;
-      this.date = this.message?.date;
-      const peer = dialog instanceof api_1.Api.DialogCommunity ? new api_1.Api.PeerChannel({ channelId: dialog.communityId }) : dialog.peer;
-      this.entity = entities.get((0, Utils_1.getPeerId)(peer));
-      this.inputEntity = (0, Utils_1.getInputPeer)(this.entity);
-      if (this.entity) {
-        this.id = (0, Helpers_1.returnBigInt)((0, Utils_1.getPeerId)(this.entity));
-        this.name = this.title = (0, Utils_1.getDisplayName)(this.entity);
-      }
-      this.unreadCount = dialog instanceof api_1.Api.Dialog ? dialog.unreadCount : 0;
-      this.unreadMentionsCount = dialog instanceof api_1.Api.Dialog ? dialog.unreadMentionsCount : 0;
-      if (!this.entity) {
-        throw new Error("Entity not found for dialog");
-      }
-      this.draft = new draft_1.Draft(client, this.entity, dialog instanceof api_1.Api.Dialog ? dialog.draft : undefined);
-      this.isUser = this.entity instanceof api_1.Api.User;
-      this.isGroup = !!(this.entity instanceof api_1.Api.Chat || this.entity instanceof api_1.Api.ChatForbidden || this.entity instanceof api_1.Api.Channel && this.entity.megagroup);
-      this.isChannel = this.entity instanceof api_1.Api.Channel;
-      this.isCommunity = dialog instanceof api_1.Api.DialogCommunity;
-    }
-    get inputDialog() {
-      return this.isCommunity ? new api_1.Api.InputDialogPeerCommunity({ community: (0, Utils_1.getInputChannel)(this.inputEntity) }) : new api_1.Api.InputDialogPeer({ peer: this.inputEntity });
-    }
-    async setCollapsed(collapsed) {
-      if (!this.isCommunity)
-        throw new Error("The dialog is not a community");
-      const result = await this._client.setCommunityCollapsed(this.inputEntity, collapsed);
-      if (this.entity instanceof api_1.Api.Community) {
-        this.entity.collapsedInDialogs = collapsed || undefined;
-      }
-      return result;
-    }
-    async send(params) {
-      return this._client.sendMessage(this.inputEntity, typeof params === "string" ? { message: params } : params);
-    }
-    async markAsRead(params) {
-      return this._client.markAsRead(this.inputEntity, undefined, params);
-    }
-    async archive() {
-      this.archived = true;
-      this.folderId = 1;
-      return this._client.editPeerFolders(this.inputEntity, 1);
-    }
-    async unarchive() {
-      this.archived = false;
-      this.folderId = 0;
-      return this._client.editPeerFolders(this.inputEntity, 0);
-    }
-    async pin(pinned = true) {
-      const result = await this._client.invoke(new api_1.Api.messages.ToggleDialogPin({
-        peer: this.inputDialog,
-        pinned: pinned || undefined
-      }));
-      this.pinned = pinned;
-      return result;
-    }
-    async unpin() {
-      return this.pin(false);
-    }
-    async delete(params) {
-      if (this.isChannel || this.isCommunity) {
-        return this._client.leaveChannel(this.inputEntity);
-      }
-      return this._client.deleteHistory(this.inputEntity, params);
-    }
-  }
-  exports2.Dialog = Dialog;
-});
-
-// node_modules/teleproto/client/dialogs.js
-var require_dialogs = __commonJS((exports2) => {
-  var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() {
-        return m[k];
-      } };
-    }
-    Object.defineProperty(o, k2, desc);
-  } : function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    o[k2] = m[k];
-  });
-  var __setModuleDefault = exports2 && exports2.__setModuleDefault || (Object.create ? function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-  } : function(o, v) {
-    o["default"] = v;
-  });
-  var __importStar = exports2 && exports2.__importStar || function() {
-    var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
-        var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
-            ar[ar.length] = k;
-        return ar;
-      };
-      return ownKeys(o);
-    };
-    return function(mod) {
-      if (mod && mod.__esModule)
-        return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k = ownKeys(mod), i = 0;i < k.length; i++)
-          if (k[i] !== "default")
-            __createBinding(result, mod, k[i]);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-  }();
-  var __importDefault = exports2 && exports2.__importDefault || function(mod) {
-    return mod && mod.__esModule ? mod : { default: mod };
-  };
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2._DialogsIter = undefined;
-  exports2.iterDialogs = iterDialogs;
-  exports2.getDialogs = getDialogs;
-  var tl_1 = require_tl();
-  var requestIter_1 = require_requestIter();
-  var utils = __importStar(require_Utils());
-  var dialog_1 = require_dialog();
-  var big_integer_1 = __importDefault(require_BigInteger());
-  var _MAX_CHUNK_SIZE = 100;
-  function _dialogMessageKey(peer, messageId) {
-    return "" + [
-      peer instanceof tl_1.Api.PeerChannel ? peer.channelId : undefined,
-      messageId
-    ];
-  }
-
-  class _DialogsIter extends requestIter_1.RequestIter {
-    constructor() {
-      super(...arguments);
-      this.includeCommunities = false;
-    }
-    async _init({ offsetDate, offsetId, offsetPeer, ignorePinned, ignoreMigrated, folder, includeCommunities }) {
-      this.request = new tl_1.Api.messages.GetDialogs({
-        offsetDate: offsetDate ?? 0,
-        offsetId,
-        offsetPeer,
-        limit: 1,
-        hash: big_integer_1.default.zero,
-        excludePinned: ignorePinned,
-        folderId: folder
-      });
-      if (this.limit <= 0) {
-        const dialogs = await this.client.invoke(this.request);
-        if ("count" in dialogs) {
-          this.total = dialogs.count;
-        } else {
-          this.total = dialogs.dialogs.length;
-        }
-        return true;
-      }
-      this.seen = new Set;
-      this.filterDate = offsetDate;
-      this.ignoreMigrated = ignoreMigrated;
-      this.lastOffset = undefined;
-      this.includeCommunities = !!includeCommunities;
-    }
-    [Symbol.asyncIterator]() {
-      return super[Symbol.asyncIterator]();
-    }
-    async _loadNextChunk() {
-      if (!this.request || !this.seen || !this.buffer) {
-        return;
-      }
-      while (true) {
-        this.request.limit = Math.min(this.left, _MAX_CHUNK_SIZE);
-        const r = await this.client.invoke(this.request);
-        if (r instanceof tl_1.Api.messages.DialogsNotModified) {
-          return;
-        }
-        if ("count" in r) {
-          this.total = r.count;
-        } else {
-          this.total = r.dialogs.length;
-        }
-        const entities = new Map;
-        const messages = new Map;
-        for (const entity of [...r.users, ...r.chats]) {
-          if (entity instanceof tl_1.Api.UserEmpty || entity instanceof tl_1.Api.ChatEmpty) {
-            continue;
-          }
-          entities.set(utils.getPeerId(entity), entity);
-        }
-        for (const m of r.messages) {
-          let message = m;
-          try {
-            if (message && "_finishInit" in message) {
-              message._finishInit(this.client, entities, undefined);
-            }
-          } catch (e) {
-            this.client._log.error("Got error while trying to finish init message with id " + m.id, e);
-            if (this.client._errorHandler) {
-              await this.client._errorHandler(e);
-            }
-          }
-          messages.set(_dialogMessageKey(message.peerId, message.id), message);
-        }
-        for (const d of r.dialogs) {
-          if (d instanceof tl_1.Api.DialogFolder || !this.includeCommunities && d instanceof tl_1.Api.DialogCommunity) {
-            continue;
-          }
-          const peer = d instanceof tl_1.Api.DialogCommunity ? new tl_1.Api.PeerChannel({ channelId: d.communityId }) : d.peer;
-          const message = d instanceof tl_1.Api.Dialog ? messages.get(_dialogMessageKey(d.peer, d.topMessage)) : undefined;
-          if (this.filterDate != null && d instanceof tl_1.Api.Dialog) {
-            const date = message?.date;
-            if (date == undefined || date > this.filterDate) {
-              continue;
-            }
-          }
-          const peerId = utils.getPeerId(peer);
-          if (!this.seen.has(peerId)) {
-            this.seen.add(peerId);
-            if (!entities.has(peerId)) {
-              continue;
-            }
-            const cd = new dialog_1.Dialog(this.client, d, entities, message);
-            if (!this.ignoreMigrated || !(cd.entity instanceof tl_1.Api.Chat && cd.entity.migratedTo)) {
-              this.buffer.push(cd);
-            }
-          }
-        }
-        if (r.dialogs.length < this.request.limit || !(r instanceof tl_1.Api.messages.DialogsSlice)) {
-          return true;
-        }
-        const lastDialog = [...r.dialogs].reverse().find((dialog) => dialog instanceof tl_1.Api.Dialog);
-        if (!lastDialog) {
-          if (this.request.excludePinned)
-            return true;
-          this.request.excludePinned = true;
-          if (this.buffer.length)
-            return;
-          continue;
-        }
-        const lastMessage = messages.get(_dialogMessageKey(lastDialog.peer, lastDialog.topMessage));
-        const offsetEntity = entities.get(utils.getPeerId(lastDialog.peer));
-        const offsetPeer = offsetEntity ? utils.getInputPeer(offsetEntity) : await this.client.getInputEntity(lastDialog.peer);
-        const offset = `${utils.getPeerId(lastDialog.peer)}:${lastDialog.topMessage}`;
-        if (this.lastOffset === offset)
-          return true;
-        this.lastOffset = offset;
-        this.request.excludePinned = true;
-        this.request.offsetId = lastDialog.topMessage;
-        this.request.offsetDate = lastMessage ? lastMessage.date : 0;
-        this.request.offsetPeer = offsetPeer;
-        if (this.buffer.length)
-          return;
-      }
-    }
-  }
-  exports2._DialogsIter = _DialogsIter;
-  function iterDialogs(client, { limit = undefined, offsetDate = undefined, offsetId = 0, offsetPeer = new tl_1.Api.InputPeerEmpty, ignorePinned = false, ignoreMigrated = false, folder = undefined, archived = undefined, includeCommunities }) {
-    if (archived != null) {
-      folder = archived ? 1 : 0;
-    }
-    return new _DialogsIter(client, limit, {}, {
-      offsetDate,
-      offsetId,
-      offsetPeer,
-      ignorePinned,
-      ignoreMigrated,
-      folder,
-      includeCommunities
-    });
-  }
-  async function getDialogs(client, params) {
-    return await client.iterDialogs(params).collect();
-  }
-});
-
-// node_modules/teleproto/client/2fa.js
-var require_2fa = __commonJS((exports2) => {
-  var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() {
-        return m[k];
-      } };
-    }
-    Object.defineProperty(o, k2, desc);
-  } : function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    o[k2] = m[k];
-  });
-  var __setModuleDefault = exports2 && exports2.__setModuleDefault || (Object.create ? function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-  } : function(o, v) {
-    o["default"] = v;
-  });
-  var __importStar = exports2 && exports2.__importStar || function() {
-    var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
-        var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
-            ar[ar.length] = k;
-        return ar;
-      };
-      return ownKeys(o);
-    };
-    return function(mod) {
-      if (mod && mod.__esModule)
-        return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k = ownKeys(mod), i = 0;i < k.length; i++)
-          if (k[i] !== "default")
-            __createBinding(result, mod, k[i]);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-  }();
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.updateTwoFaSettings = updateTwoFaSettings;
-  var Helpers_1 = require_Helpers();
-  var Password_1 = require_Password();
-  var tl_1 = require_tl();
-  var errors = __importStar(require_errors());
-  async function updateTwoFaSettings(client, { isCheckPassword, currentPassword, newPassword, hint = "", email, emailCodeCallback, onEmailCodeError }) {
-    if (!newPassword && !currentPassword) {
-      throw new Error("Neither `currentPassword` nor `newPassword` is present");
-    }
-    if (email && !(emailCodeCallback && onEmailCodeError)) {
-      throw new Error("`email` present without `emailCodeCallback` and `onEmailCodeError`");
-    }
-    const pwd = await client.api.account.getPassword();
-    if (!(pwd.newAlgo instanceof tl_1.Api.PasswordKdfAlgoUnknown)) {
-      pwd.newAlgo.salt1 = Buffer.concat([
-        pwd.newAlgo.salt1,
-        (0, Helpers_1.generateRandomBytes)(32)
-      ]);
-    }
-    if (!pwd.hasPassword && currentPassword) {
-      currentPassword = undefined;
-    }
-    const password = currentPassword ? await (0, Password_1.computeCheck)(pwd, currentPassword) : new tl_1.Api.InputCheckPasswordEmpty;
-    if (isCheckPassword) {
-      await client.invoke(new tl_1.Api.auth.CheckPassword({ password }));
-      return;
-    }
-    if (pwd.newAlgo instanceof tl_1.Api.PasswordKdfAlgoUnknown) {
-      throw new Error("Unknown password encryption method");
-    }
-    try {
-      await client.invoke(new tl_1.Api.account.UpdatePasswordSettings({
-        password,
-        newSettings: new tl_1.Api.account.PasswordInputSettings({
-          newAlgo: pwd.newAlgo,
-          newPasswordHash: newPassword ? await (0, Password_1.computeDigest)(pwd.newAlgo, newPassword) : Buffer.alloc(0),
-          hint,
-          email,
-          newSecureSettings: undefined
-        })
-      }));
-    } catch (e) {
-      if (e instanceof errors.EmailUnconfirmedError) {
-        while (true) {
-          try {
-            const code = await emailCodeCallback(e.codeLength);
-            if (!code) {
-              throw new Error("Code is empty");
-            }
-            await client.api.account.confirmPasswordEmail({ code });
-            break;
-          } catch (err) {
-            onEmailCodeError(err);
-          }
-        }
-      } else {
-        throw e;
-      }
-    }
-  }
-});
-
-// node_modules/teleproto/client/forums.js
-var require_forums = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.createForumTopic = createForumTopic;
-  exports2.editForumTopic = editForumTopic;
-  exports2.updatePinnedForumTopic = updatePinnedForumTopic;
-  exports2.reorderPinnedForumTopics = reorderPinnedForumTopics;
-  exports2.getForumTopics = getForumTopics;
-  exports2.getForumTopicsByID = getForumTopicsByID;
-  exports2.toggleForum = toggleForum;
-  exports2.toggleViewForumAsMessages = toggleViewForumAsMessages;
-  var Helpers_1 = require_Helpers();
-  var tl_1 = require_tl();
-  var Utils_1 = require_Utils();
-  async function createForumTopic(client, entity, params) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.CreateForumTopic({
-      peer,
-      title: params.title,
-      iconColor: params.iconColor,
-      iconEmojiId: params.iconEmojiId,
-      titleMissing: params.titleMissing,
-      randomId: (0, Helpers_1.generateRandomBigInt)(),
-      sendAs: params.sendAs ? await client.getInputEntity(params.sendAs) : undefined
-    }));
-  }
-  async function editForumTopic(client, entity, topicId, params) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.EditForumTopic({
-      peer,
-      topicId,
-      title: params.title,
-      iconEmojiId: params.iconEmojiId,
-      closed: params.closed,
-      hidden: params.hidden
-    }));
-  }
-  async function updatePinnedForumTopic(client, entity, topicId, pinned) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.UpdatePinnedForumTopic({
-      peer,
-      topicId,
-      pinned
-    }));
-  }
-  async function reorderPinnedForumTopics(client, entity, order, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.ReorderPinnedForumTopics({
-      peer,
-      order,
-      force: params.force
-    }));
-  }
-  async function getForumTopics(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.GetForumTopics({
-      peer,
-      q: params.search,
-      offsetDate: params.offsetDate ?? 0,
-      offsetId: params.offsetId ?? 0,
-      offsetTopic: params.offsetTopic ?? 0,
-      limit: params.limit ?? 100
-    }));
-  }
-  async function getForumTopicsByID(client, entity, topicIds) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.messages.GetForumTopicsByID({
-      peer,
-      topics: Array.isArray(topicIds) ? topicIds : [topicIds]
-    }));
-  }
-  async function toggleForum(client, entity, enabled, tabs = false) {
-    const channel = await client.getInputEntity(entity);
-    return client.api.channels.toggleForum({
-      channel: (0, Utils_1.getInputChannel)(channel),
-      enabled,
-      tabs
-    });
-  }
-  async function toggleViewForumAsMessages(client, entity, enabled) {
-    const channel = await client.getInputEntity(entity);
-    return client.api.channels.toggleViewForumAsMessages({
-      channel: (0, Utils_1.getInputChannel)(channel),
-      enabled
-    });
-  }
-});
-
-// node_modules/teleproto/client/stories.js
-var require_stories = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.sendStory = sendStory;
-  exports2.editStory = editStory;
-  exports2.deleteStories = deleteStories;
-  exports2.toggleStoriesPinned = toggleStoriesPinned;
-  exports2.canSendStory = canSendStory;
-  exports2.getAllStories = getAllStories;
-  exports2.getPeerStories = getPeerStories;
-  exports2.getStoriesByID = getStoriesByID;
-  exports2.getPinnedStories = getPinnedStories;
-  exports2.getStoriesArchive = getStoriesArchive;
-  exports2.readStories = readStories;
-  exports2.incrementStoryViews = incrementStoryViews;
-  exports2.getStoryViewsList = getStoryViewsList;
-  exports2.exportStoryLink = exportStoryLink;
-  exports2.sendStoryReaction = sendStoryReaction;
-  var Helpers_1 = require_Helpers();
-  var tl_1 = require_tl();
-  var uploads_1 = require_uploads();
-  var messageParse_1 = require_messageParse();
-  async function _toStoryMedia(client, media) {
-    const converted = await (0, uploads_1._fileToMedia)(client, { file: media });
-    if (!converted.media) {
-      throw new Error(`Cannot use ${media} as story media`);
-    }
-    return converted.media;
-  }
-  async function sendStory(client, entity, params) {
-    const peer = await client.getInputEntity(entity);
-    let caption = params.caption;
-    let entities = params.entities;
-    if (caption != null && entities == undefined) {
-      [caption, entities] = await (0, messageParse_1._parseMessageText)(client, caption, params.parseMode);
-    }
-    return client.invoke(new tl_1.Api.stories.SendStory({
-      peer,
-      media: await _toStoryMedia(client, params.media),
-      caption,
-      entities,
-      privacyRules: params.privacyRules ?? [
-        new tl_1.Api.InputPrivacyValueAllowAll
-      ],
-      pinned: params.pinned,
-      noforwards: params.noforwards,
-      period: params.period,
-      mediaAreas: params.mediaAreas,
-      fwdFromId: params.fwdFromId ? await client.getInputEntity(params.fwdFromId) : undefined,
-      fwdFromStory: params.fwdFromStory,
-      fwdModified: params.fwdModified,
-      albums: params.albums,
-      music: params.music,
-      randomId: (0, Helpers_1.generateRandomBigInt)()
-    }));
-  }
-  async function editStory(client, entity, storyId, params) {
-    const peer = await client.getInputEntity(entity);
-    let caption = params.caption;
-    let entities = params.entities;
-    if (caption != null && entities == undefined) {
-      [caption, entities] = await (0, messageParse_1._parseMessageText)(client, caption, params.parseMode);
-    }
-    return client.invoke(new tl_1.Api.stories.EditStory({
-      peer,
-      id: storyId,
-      media: params.media ? await _toStoryMedia(client, params.media) : undefined,
-      caption,
-      entities,
-      privacyRules: params.privacyRules,
-      mediaAreas: params.mediaAreas,
-      music: params.music
-    }));
-  }
-  async function deleteStories(client, entity, ids) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.stories.DeleteStories({
-      peer,
-      id: Array.isArray(ids) ? ids : [ids]
-    }));
-  }
-  async function toggleStoriesPinned(client, entity, ids, pinned = true) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.stories.TogglePinned({
-      peer,
-      id: Array.isArray(ids) ? ids : [ids],
-      pinned
-    }));
-  }
-  async function canSendStory(client, entity) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.canSendStory({ peer });
-  }
-  async function getAllStories(client, params = {}) {
-    return client.api.stories.getAllStories({
-      next: params.next,
-      hidden: params.hidden,
-      state: params.state
-    });
-  }
-  async function getPeerStories(client, entity) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.getPeerStories({ peer });
-  }
-  async function getStoriesByID(client, entity, ids) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.getStoriesByID({
-      peer,
-      id: Array.isArray(ids) ? ids : [ids]
-    });
-  }
-  async function getPinnedStories(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.getPinnedStories({
-      peer,
-      offsetId: params.offsetId ?? 0,
-      limit: params.limit ?? 100
-    });
-  }
-  async function getStoriesArchive(client, entity, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.getStoriesArchive({
-      peer,
-      offsetId: params.offsetId ?? 0,
-      limit: params.limit ?? 100
-    });
-  }
-  async function readStories(client, entity, maxId) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.readStories({
-      peer,
-      maxId: maxId ?? 0
-    });
-  }
-  async function incrementStoryViews(client, entity, ids) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.incrementStoryViews({
-      peer,
-      id: Array.isArray(ids) ? ids : [ids]
-    });
-  }
-  async function getStoryViewsList(client, entity, storyId, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    return client.invoke(new tl_1.Api.stories.GetStoryViewsList({
-      peer,
-      id: storyId,
-      justContacts: params.justContacts,
-      reactionsFirst: params.reactionsFirst,
-      forwardsFirst: params.forwardsFirst,
-      q: params.search,
-      offset: params.offset ?? "",
-      limit: params.limit ?? 100
-    }));
-  }
-  async function exportStoryLink(client, entity, storyId) {
-    const peer = await client.getInputEntity(entity);
-    return client.api.stories.exportStoryLink({ peer, id: storyId });
-  }
-  async function sendStoryReaction(client, entity, storyId, reaction, params = {}) {
-    const peer = await client.getInputEntity(entity);
-    let resolved;
-    if (reaction == undefined) {
-      resolved = new tl_1.Api.ReactionEmpty;
-    } else if (typeof reaction === "string") {
-      resolved = new tl_1.Api.ReactionEmoji({ emoticon: reaction });
-    } else if (reaction instanceof tl_1.Api.ReactionEmoji || reaction instanceof tl_1.Api.ReactionCustomEmoji || reaction instanceof tl_1.Api.ReactionPaid || reaction instanceof tl_1.Api.ReactionEmpty) {
-      resolved = reaction;
+  var tlobjects = {};
+  exports2.tlobjects = tlobjects;
+  for (const tl of Object.values(api_1.Api)) {
+    if ("CONSTRUCTOR_ID" in tl) {
+      tlobjects[tl.CONSTRUCTOR_ID] = tl;
     } else {
-      resolved = new tl_1.Api.ReactionCustomEmoji({
-        documentId: reaction
-      });
+      for (const sub of Object.values(tl)) {
+        tlobjects[sub.CONSTRUCTOR_ID] = sub;
+      }
     }
-    return client.invoke(new tl_1.Api.stories.SendReaction({
-      peer,
-      storyId,
-      reaction: resolved,
-      addToRecent: params.addToRecent
-    }));
   }
 });
 
-// node_modules/teleproto/client/folders.js
-var require_folders = __commonJS((exports2) => {
+// node_modules/teleproto/tl/index.js
+var require_tl = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.getDialogFilters = getDialogFilters;
-  exports2.updateDialogFilter = updateDialogFilter;
-  exports2.updateDialogFiltersOrder = updateDialogFiltersOrder;
-  var tl_1 = require_tl();
-  async function getDialogFilters(client) {
-    return client.api.messages.getDialogFilters({});
-  }
-  async function updateDialogFilter(client, id, filter) {
-    return client.invoke(new tl_1.Api.messages.UpdateDialogFilter({
-      id,
-      filter
-    }));
-  }
-  async function updateDialogFiltersOrder(client, order) {
-    return client.api.messages.updateDialogFiltersOrder({ order });
-  }
-});
-
-// node_modules/teleproto/client/stickers.js
-var require_stickers = __commonJS((exports2) => {
-  var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() {
-        return m[k];
-      } };
-    }
-    Object.defineProperty(o, k2, desc);
-  } : function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    o[k2] = m[k];
-  });
-  var __setModuleDefault = exports2 && exports2.__setModuleDefault || (Object.create ? function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-  } : function(o, v) {
-    o["default"] = v;
-  });
-  var __importStar = exports2 && exports2.__importStar || function() {
-    var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
-        var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
-            ar[ar.length] = k;
-        return ar;
-      };
-      return ownKeys(o);
-    };
-    return function(mod) {
-      if (mod && mod.__esModule)
-        return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k = ownKeys(mod), i = 0;i < k.length; i++)
-          if (k[i] !== "default")
-            __createBinding(result, mod, k[i]);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-  }();
-  var __importDefault = exports2 && exports2.__importDefault || function(mod) {
-    return mod && mod.__esModule ? mod : { default: mod };
-  };
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.getStickerSet = getStickerSet;
-  exports2.getAllStickers = getAllStickers;
-  exports2.installStickerSet = installStickerSet;
-  exports2.uninstallStickerSet = uninstallStickerSet;
-  exports2.getRecentStickers = getRecentStickers;
-  exports2.saveRecentSticker = saveRecentSticker;
-  exports2.clearRecentStickers = clearRecentStickers;
-  exports2.getFavedStickers = getFavedStickers;
-  exports2.faveSticker = faveSticker;
-  exports2.getCustomEmojiDocuments = getCustomEmojiDocuments;
-  var big_integer_1 = __importDefault(require_BigInteger());
-  var utils = __importStar(require_Utils());
-  var tl_1 = require_tl();
-  function _toInputStickerSet(set) {
-    if (typeof set === "string") {
-      return new tl_1.Api.InputStickerSetShortName({ shortName: set });
-    }
-    return set;
-  }
-  async function getStickerSet(client, set) {
-    return client.invoke(new tl_1.Api.messages.GetStickerSet({
-      stickerset: _toInputStickerSet(set),
-      hash: 0
-    }));
-  }
-  async function getAllStickers(client) {
-    return client.api.messages.getAllStickers({ hash: big_integer_1.default.zero });
-  }
-  async function installStickerSet(client, set, params = {}) {
-    return client.invoke(new tl_1.Api.messages.InstallStickerSet({
-      stickerset: _toInputStickerSet(set),
-      archived: params.archived ?? false
-    }));
-  }
-  async function uninstallStickerSet(client, set) {
-    return client.invoke(new tl_1.Api.messages.UninstallStickerSet({
-      stickerset: _toInputStickerSet(set)
-    }));
-  }
-  async function getRecentStickers(client, params = {}) {
-    return client.api.messages.getRecentStickers({
-      hash: big_integer_1.default.zero,
-      attached: params.attached
-    });
-  }
-  async function saveRecentSticker(client, document, params = {}) {
-    return client.invoke(new tl_1.Api.messages.SaveRecentSticker({
-      id: utils.getInputDocument(document),
-      unsave: params.unsave ?? false,
-      attached: params.attached
-    }));
-  }
-  async function clearRecentStickers(client, params = {}) {
-    return client.api.messages.clearRecentStickers({
-      attached: params.attached
-    });
-  }
-  async function getFavedStickers(client) {
-    return client.api.messages.getFavedStickers({ hash: big_integer_1.default.zero });
-  }
-  async function faveSticker(client, document, params = {}) {
-    return client.invoke(new tl_1.Api.messages.FaveSticker({
-      id: utils.getInputDocument(document),
-      unfave: params.unfave ?? false
-    }));
-  }
-  async function getCustomEmojiDocuments(client, documentIds) {
-    return client.api.messages.getCustomEmojiDocuments({
-      documentId: documentIds
-    });
-  }
-});
-
-// node_modules/teleproto/tl/runtime/apiProxy.js
-var require_apiProxy = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.createApiProxy = createApiProxy;
-  function upperFirst(value) {
-    return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
-  }
-  function asRequestClass(value) {
-    return typeof value === "function" && value.classType === "request" ? value : undefined;
-  }
-  function createApiProxy(api, invoke) {
-    const lookup = (name) => {
-      const parts = name.split(".");
-      if (parts.length === 1)
-        return asRequestClass(api[upperFirst(name)]);
-      if (parts.length !== 2)
-        return;
-      const ns = api[parts[0]];
-      return ns && typeof ns === "object" ? asRequestClass(ns[upperFirst(parts[1])]) : undefined;
-    };
-    const call = async (request, options) => {
-      if (request && "classType" in request && request.classType === "request") {
-        return invoke(request, options?.dcId, options);
-      }
-      const tag = request?._;
-      const Ctor = typeof tag === "string" ? lookup(tag) : undefined;
-      if (!Ctor)
-        throw new TypeError(`Unknown raw API method: ${String(tag)}`);
-      return invoke(new Ctor(request), options?.dcId, options);
-    };
-    const namespaceProxy = (ns, root = false) => {
-      const cache = new Map;
-      return new Proxy(Object.create(null), {
-        get(_target, key) {
-          if (typeof key !== "string" || key === "then")
-            return;
-          if (root && key === "call")
-            return call;
-          if (cache.has(key))
-            return cache.get(key);
-          const Ctor = asRequestClass(ns[upperFirst(key)]);
-          if (Ctor) {
-            const method = async (params, opts) => {
-              const options = Ctor.hasParameters ? opts : opts ?? params;
-              return invoke(new Ctor(Ctor.hasParameters ? params : {}), options?.dcId, options);
-            };
-            cache.set(key, method);
-            return method;
-          }
-          const value = ns[key];
-          if (root && value && typeof value === "object" && Object.values(value).some(asRequestClass)) {
-            const proxy = namespaceProxy(value);
-            cache.set(key, proxy);
-            return proxy;
-          }
-          return;
-        }
-      });
-    };
-    return namespaceProxy(api, true);
-  }
-});
-
-// node_modules/teleproto/extensions/html.js
-var require_html = __commonJS((exports2) => {
-  var __importDefault = exports2 && exports2.__importDefault || function(mod) {
-    return mod && mod.__esModule ? mod : { default: mod };
-  };
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.HTMLParser = undefined;
-  var big_integer_1 = __importDefault(require_BigInteger());
-  var tl_1 = require_tl();
-  var Helpers_1 = require_Helpers();
-
-  class HTMLParser {
-    static {
-      this._tag = /<(\/?)([a-z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
-    }
-    static {
-      this._ref = /&(#x?[0-9a-f]+;?|[a-z][a-z0-9]*;?)/gi;
-    }
-    static {
-      this._attr = /([a-z0-9-]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s/>]+))?/gi;
-    }
-    static {
-      this._esc = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#x27;"
-      };
-    }
-    static parse(html) {
-      if (!html) {
-        return [html, []];
-      }
-      const pieces = [];
-      let length = 0;
-      const entities = [];
-      const open = [];
-      const append = (chunk) => {
-        if (chunk) {
-          pieces.push(chunk);
-          length += chunk.length;
-        }
-      };
-      let cursor = 0;
-      for (const match of html.matchAll(HTMLParser._tag)) {
-        const at = match.index ?? 0;
-        append(HTMLParser._decode(html.slice(cursor, at)));
-        cursor = at + match[0].length;
-        const [, slash, rawName, rawAttrs] = match;
-        const name = rawName.toLowerCase();
-        if (slash) {
-          for (let i = open.length - 1;i >= 0; i--) {
-            if (open[i].name === name) {
-              const tag = open.splice(i, 1)[0];
-              if (tag.entity) {
-                tag.entity.length = length - tag.start;
-                entities.push(tag.entity);
-              }
-              break;
-            }
-          }
-          continue;
-        }
-        if (name === "br") {
-          append(`
-`);
-          continue;
-        }
-        if (rawAttrs.trimEnd().endsWith("/")) {
-          continue;
-        }
-        const attrs = HTMLParser._readAttributes(rawAttrs);
-        open.push({ name, start: length, entity: HTMLParser._entityFor(name, attrs, length, open) });
-      }
-      append(HTMLParser._decode(html.slice(cursor)));
-      return [(0, Helpers_1.stripText)(pieces.join(""), entities), entities];
-    }
-    static unparse(text, entities, _offset, _length) {
-      if (!text) {
-        return text;
-      }
-      if (!entities?.length) {
-        return HTMLParser._escapeHtml(text);
-      }
-      const marks = entities.flatMap((entity, order) => {
-        const markup = HTMLParser._markupFor(entity, text);
-        if (!markup) {
-          return [];
-        }
-        const end = entity.offset + entity.length;
-        return [
-          { at: entity.offset, open: true, span: entity.length, order, html: markup[0] },
-          { at: end, open: false, span: entity.length, order, html: markup[1] }
-        ];
-      });
-      marks.sort((a, b) => {
-        if (a.at !== b.at)
-          return a.at - b.at;
-        if (a.open !== b.open)
-          return a.open ? 1 : -1;
-        if (a.span !== b.span)
-          return a.open ? b.span - a.span : a.span - b.span;
-        return a.open ? a.order - b.order : b.order - a.order;
-      });
-      const out = [];
-      let last = 0;
-      for (const mark of marks) {
-        if (mark.at > last) {
-          out.push(HTMLParser._escapeHtml(text.slice(last, mark.at)));
-          last = mark.at;
-        }
-        out.push(mark.html);
-      }
-      out.push(HTMLParser._escapeHtml(text.slice(last)));
-      return out.join("");
-    }
-    static _decode(text) {
-      if (!text.includes("&")) {
-        return text;
-      }
-      return text.replace(HTMLParser._ref, (whole, ref) => {
-        if (ref[0] === "#") {
-          const code = ref[1] === "x" || ref[1] === "X" ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
-          return code <= 1114111 && (code < 55296 || code > 57343) ? String.fromCodePoint(code) : whole;
-        }
-        return ENTITIES.get(ref) ?? whole;
-      });
-    }
-    static _escapeHtml(text) {
-      return text.replace(/[&<>"']/g, (c) => HTMLParser._esc[c]);
-    }
-    static _readAttributes(source) {
-      const attrs = {};
-      for (const m of source.matchAll(HTMLParser._attr)) {
-        const raw = m[2] ?? "";
-        const value = raw[0] === '"' || raw[0] === "'" ? raw.slice(1, -1) : raw;
-        attrs[m[1].toLowerCase()] = HTMLParser._decode(value);
-      }
-      return attrs;
-    }
-    static _entityFor(name, attrs, offset, stack) {
-      switch (name) {
-        case "b":
-        case "strong":
-          return new tl_1.Api.MessageEntityBold({ offset, length: 0 });
-        case "i":
-        case "em":
-          return new tl_1.Api.MessageEntityItalic({ offset, length: 0 });
-        case "u":
-        case "ins":
-          return new tl_1.Api.MessageEntityUnderline({ offset, length: 0 });
-        case "s":
-        case "del":
-        case "strike":
-          return new tl_1.Api.MessageEntityStrike({ offset, length: 0 });
-        case "spoiler":
-        case "tg-spoiler":
-          return new tl_1.Api.MessageEntitySpoiler({ offset, length: 0 });
-        case "span":
-          return attrs.class?.split(/\s+/).includes("tg-spoiler") ? new tl_1.Api.MessageEntitySpoiler({ offset, length: 0 }) : undefined;
-        case "blockquote":
-          return new tl_1.Api.MessageEntityBlockquote(attrs.expandable !== undefined ? { offset, length: 0, collapsed: true } : { offset, length: 0 });
-        case "pre":
-          return new tl_1.Api.MessageEntityPre({ offset, length: 0, language: "" });
-        case "code": {
-          const pre = stack.find((t) => t.entity instanceof tl_1.Api.MessageEntityPre);
-          if (pre) {
-            const cls = attrs.class;
-            if (cls?.startsWith("language-")) {
-              pre.entity.language = cls.slice("language-".length);
-            }
-            return;
-          }
-          return new tl_1.Api.MessageEntityCode({ offset, length: 0 });
-        }
-        case "a": {
-          const href = attrs.href;
-          if (!href) {
-            return;
-          }
-          if (href.startsWith("mailto:")) {
-            return new tl_1.Api.MessageEntityEmail({ offset, length: 0 });
-          }
-          const mention = href.match(/^tg:\/\/user\?id=(\d+)/);
-          if (mention) {
-            return new tl_1.Api.MessageEntityMentionName({
-              offset,
-              length: 0,
-              userId: (0, big_integer_1.default)(mention[1])
-            });
-          }
-          return new tl_1.Api.MessageEntityTextUrl({ offset, length: 0, url: href });
-        }
-        case "tg-emoji":
-          return new tl_1.Api.MessageEntityCustomEmoji({
-            offset,
-            length: 0,
-            documentId: (0, big_integer_1.default)(attrs["emoji-id"] || "0")
-          });
-        case "tg-date":
-          return new tl_1.Api.MessageEntityFormattedDate({
-            offset,
-            length: 0,
-            date: parseInt(attrs.timestamp ?? "0", 10) || 0,
-            relative: attrs.relative !== undefined,
-            shortTime: attrs["short-time"] !== undefined,
-            longTime: attrs["long-time"] !== undefined,
-            shortDate: attrs["short-date"] !== undefined,
-            longDate: attrs["long-date"] !== undefined,
-            dayOfWeek: attrs["day-of-week"] !== undefined
-          });
-        default:
-          return;
-      }
-    }
-    static _markupFor(entity, text) {
-      const body = () => HTMLParser._escapeHtml(text.slice(entity.offset, entity.offset + entity.length));
-      switch (entity.className) {
-        case "MessageEntityBold":
-          return ["<strong>", "</strong>"];
-        case "MessageEntitySpoiler":
-          return ["<tg-spoiler>", "</tg-spoiler>"];
-        case "MessageEntityItalic":
-          return ["<em>", "</em>"];
-        case "MessageEntityCode":
-          return ["<code>", "</code>"];
-        case "MessageEntityUnderline":
-          return ["<u>", "</u>"];
-        case "MessageEntityStrike":
-          return ["<del>", "</del>"];
-        case "MessageEntityBlockquote":
-          return [entity.collapsed ? "<blockquote expandable>" : "<blockquote>", "</blockquote>"];
-        case "MessageEntityPre":
-          return entity.language ? [`<pre><code class="language-${HTMLParser._escapeHtml(entity.language)}">`, "</code></pre>"] : ["<pre>", "</pre>"];
-        case "MessageEntityEmail":
-          return [`<a href="mailto:${body()}">`, "</a>"];
-        case "MessageEntityUrl":
-          return [`<a href="${body()}">`, "</a>"];
-        case "MessageEntityTextUrl":
-          return [`<a href="${HTMLParser._escapeHtml(entity.url)}">`, "</a>"];
-        case "MessageEntityMentionName":
-          return [`<a href="tg://user?id=${entity.userId}">`, "</a>"];
-        case "MessageEntityCustomEmoji":
-          return [`<tg-emoji emoji-id="${entity.documentId}">`, "</tg-emoji>"];
-        case "MessageEntityFormattedDate": {
-          const flags = [
-            entity.relative && "relative",
-            entity.shortTime && "short-time",
-            entity.longTime && "long-time",
-            entity.shortDate && "short-date",
-            entity.longDate && "long-date",
-            entity.dayOfWeek && "day-of-week"
-          ].filter(Boolean).join(" ");
-          return [`<tg-date timestamp="${entity.date}"${flags ? " " + flags : ""}>`, "</tg-date>"];
-        }
-        default:
-          return null;
-      }
-    }
-  }
-  exports2.HTMLParser = HTMLParser;
-  var ENTITIES = new Map(Object.entries({
-    AElig: "Æ",
-    "AElig;": "Æ",
-    AMP: "&",
-    "AMP;": "&",
-    Aacute: "Á",
-    "Aacute;": "Á",
-    "Abreve;": "Ă",
-    Acirc: "Â",
-    "Acirc;": "Â",
-    "Acy;": "А",
-    "Afr;": "\uD835\uDD04",
-    Agrave: "À",
-    "Agrave;": "À",
-    "Alpha;": "Α",
-    "Amacr;": "Ā",
-    "And;": "⩓",
-    "Aogon;": "Ą",
-    "Aopf;": "\uD835\uDD38",
-    "ApplyFunction;": "⁡",
-    Aring: "Å",
-    "Aring;": "Å",
-    "Ascr;": "\uD835\uDC9C",
-    "Assign;": "≔",
-    Atilde: "Ã",
-    "Atilde;": "Ã",
-    Auml: "Ä",
-    "Auml;": "Ä",
-    "Backslash;": "∖",
-    "Barv;": "⫧",
-    "Barwed;": "⌆",
-    "Bcy;": "Б",
-    "Because;": "∵",
-    "Bernoullis;": "ℬ",
-    "Beta;": "Β",
-    "Bfr;": "\uD835\uDD05",
-    "Bopf;": "\uD835\uDD39",
-    "Breve;": "˘",
-    "Bscr;": "ℬ",
-    "Bumpeq;": "≎",
-    "CHcy;": "Ч",
-    COPY: "©",
-    "COPY;": "©",
-    "Cacute;": "Ć",
-    "Cap;": "⋒",
-    "CapitalDifferentialD;": "ⅅ",
-    "Cayleys;": "ℭ",
-    "Ccaron;": "Č",
-    Ccedil: "Ç",
-    "Ccedil;": "Ç",
-    "Ccirc;": "Ĉ",
-    "Cconint;": "∰",
-    "Cdot;": "Ċ",
-    "Cedilla;": "¸",
-    "CenterDot;": "·",
-    "Cfr;": "ℭ",
-    "Chi;": "Χ",
-    "CircleDot;": "⊙",
-    "CircleMinus;": "⊖",
-    "CirclePlus;": "⊕",
-    "CircleTimes;": "⊗",
-    "ClockwiseContourIntegral;": "∲",
-    "CloseCurlyDoubleQuote;": "”",
-    "CloseCurlyQuote;": "’",
-    "Colon;": "∷",
-    "Colone;": "⩴",
-    "Congruent;": "≡",
-    "Conint;": "∯",
-    "ContourIntegral;": "∮",
-    "Copf;": "ℂ",
-    "Coproduct;": "∐",
-    "CounterClockwiseContourIntegral;": "∳",
-    "Cross;": "⨯",
-    "Cscr;": "\uD835\uDC9E",
-    "Cup;": "⋓",
-    "CupCap;": "≍",
-    "DD;": "ⅅ",
-    "DDotrahd;": "⤑",
-    "DJcy;": "Ђ",
-    "DScy;": "Ѕ",
-    "DZcy;": "Џ",
-    "Dagger;": "‡",
-    "Darr;": "↡",
-    "Dashv;": "⫤",
-    "Dcaron;": "Ď",
-    "Dcy;": "Д",
-    "Del;": "∇",
-    "Delta;": "Δ",
-    "Dfr;": "\uD835\uDD07",
-    "DiacriticalAcute;": "´",
-    "DiacriticalDot;": "˙",
-    "DiacriticalDoubleAcute;": "˝",
-    "DiacriticalGrave;": "`",
-    "DiacriticalTilde;": "˜",
-    "Diamond;": "⋄",
-    "DifferentialD;": "ⅆ",
-    "Dopf;": "\uD835\uDD3B",
-    "Dot;": "¨",
-    "DotDot;": "⃜",
-    "DotEqual;": "≐",
-    "DoubleContourIntegral;": "∯",
-    "DoubleDot;": "¨",
-    "DoubleDownArrow;": "⇓",
-    "DoubleLeftArrow;": "⇐",
-    "DoubleLeftRightArrow;": "⇔",
-    "DoubleLeftTee;": "⫤",
-    "DoubleLongLeftArrow;": "⟸",
-    "DoubleLongLeftRightArrow;": "⟺",
-    "DoubleLongRightArrow;": "⟹",
-    "DoubleRightArrow;": "⇒",
-    "DoubleRightTee;": "⊨",
-    "DoubleUpArrow;": "⇑",
-    "DoubleUpDownArrow;": "⇕",
-    "DoubleVerticalBar;": "∥",
-    "DownArrow;": "↓",
-    "DownArrowBar;": "⤓",
-    "DownArrowUpArrow;": "⇵",
-    "DownBreve;": "̑",
-    "DownLeftRightVector;": "⥐",
-    "DownLeftTeeVector;": "⥞",
-    "DownLeftVector;": "↽",
-    "DownLeftVectorBar;": "⥖",
-    "DownRightTeeVector;": "⥟",
-    "DownRightVector;": "⇁",
-    "DownRightVectorBar;": "⥗",
-    "DownTee;": "⊤",
-    "DownTeeArrow;": "↧",
-    "Downarrow;": "⇓",
-    "Dscr;": "\uD835\uDC9F",
-    "Dstrok;": "Đ",
-    "ENG;": "Ŋ",
-    ETH: "Ð",
-    "ETH;": "Ð",
-    Eacute: "É",
-    "Eacute;": "É",
-    "Ecaron;": "Ě",
-    Ecirc: "Ê",
-    "Ecirc;": "Ê",
-    "Ecy;": "Э",
-    "Edot;": "Ė",
-    "Efr;": "\uD835\uDD08",
-    Egrave: "È",
-    "Egrave;": "È",
-    "Element;": "∈",
-    "Emacr;": "Ē",
-    "EmptySmallSquare;": "◻",
-    "EmptyVerySmallSquare;": "▫",
-    "Eogon;": "Ę",
-    "Eopf;": "\uD835\uDD3C",
-    "Epsilon;": "Ε",
-    "Equal;": "⩵",
-    "EqualTilde;": "≂",
-    "Equilibrium;": "⇌",
-    "Escr;": "ℰ",
-    "Esim;": "⩳",
-    "Eta;": "Η",
-    Euml: "Ë",
-    "Euml;": "Ë",
-    "Exists;": "∃",
-    "ExponentialE;": "ⅇ",
-    "Fcy;": "Ф",
-    "Ffr;": "\uD835\uDD09",
-    "FilledSmallSquare;": "◼",
-    "FilledVerySmallSquare;": "▪",
-    "Fopf;": "\uD835\uDD3D",
-    "ForAll;": "∀",
-    "Fouriertrf;": "ℱ",
-    "Fscr;": "ℱ",
-    "GJcy;": "Ѓ",
-    GT: ">",
-    "GT;": ">",
-    "Gamma;": "Γ",
-    "Gammad;": "Ϝ",
-    "Gbreve;": "Ğ",
-    "Gcedil;": "Ģ",
-    "Gcirc;": "Ĝ",
-    "Gcy;": "Г",
-    "Gdot;": "Ġ",
-    "Gfr;": "\uD835\uDD0A",
-    "Gg;": "⋙",
-    "Gopf;": "\uD835\uDD3E",
-    "GreaterEqual;": "≥",
-    "GreaterEqualLess;": "⋛",
-    "GreaterFullEqual;": "≧",
-    "GreaterGreater;": "⪢",
-    "GreaterLess;": "≷",
-    "GreaterSlantEqual;": "⩾",
-    "GreaterTilde;": "≳",
-    "Gscr;": "\uD835\uDCA2",
-    "Gt;": "≫",
-    "HARDcy;": "Ъ",
-    "Hacek;": "ˇ",
-    "Hat;": "^",
-    "Hcirc;": "Ĥ",
-    "Hfr;": "ℌ",
-    "HilbertSpace;": "ℋ",
-    "Hopf;": "ℍ",
-    "HorizontalLine;": "─",
-    "Hscr;": "ℋ",
-    "Hstrok;": "Ħ",
-    "HumpDownHump;": "≎",
-    "HumpEqual;": "≏",
-    "IEcy;": "Е",
-    "IJlig;": "Ĳ",
-    "IOcy;": "Ё",
-    Iacute: "Í",
-    "Iacute;": "Í",
-    Icirc: "Î",
-    "Icirc;": "Î",
-    "Icy;": "И",
-    "Idot;": "İ",
-    "Ifr;": "ℑ",
-    Igrave: "Ì",
-    "Igrave;": "Ì",
-    "Im;": "ℑ",
-    "Imacr;": "Ī",
-    "ImaginaryI;": "ⅈ",
-    "Implies;": "⇒",
-    "Int;": "∬",
-    "Integral;": "∫",
-    "Intersection;": "⋂",
-    "InvisibleComma;": "⁣",
-    "InvisibleTimes;": "⁢",
-    "Iogon;": "Į",
-    "Iopf;": "\uD835\uDD40",
-    "Iota;": "Ι",
-    "Iscr;": "ℐ",
-    "Itilde;": "Ĩ",
-    "Iukcy;": "І",
-    Iuml: "Ï",
-    "Iuml;": "Ï",
-    "Jcirc;": "Ĵ",
-    "Jcy;": "Й",
-    "Jfr;": "\uD835\uDD0D",
-    "Jopf;": "\uD835\uDD41",
-    "Jscr;": "\uD835\uDCA5",
-    "Jsercy;": "Ј",
-    "Jukcy;": "Є",
-    "KHcy;": "Х",
-    "KJcy;": "Ќ",
-    "Kappa;": "Κ",
-    "Kcedil;": "Ķ",
-    "Kcy;": "К",
-    "Kfr;": "\uD835\uDD0E",
-    "Kopf;": "\uD835\uDD42",
-    "Kscr;": "\uD835\uDCA6",
-    "LJcy;": "Љ",
-    LT: "<",
-    "LT;": "<",
-    "Lacute;": "Ĺ",
-    "Lambda;": "Λ",
-    "Lang;": "⟪",
-    "Laplacetrf;": "ℒ",
-    "Larr;": "↞",
-    "Lcaron;": "Ľ",
-    "Lcedil;": "Ļ",
-    "Lcy;": "Л",
-    "LeftAngleBracket;": "⟨",
-    "LeftArrow;": "←",
-    "LeftArrowBar;": "⇤",
-    "LeftArrowRightArrow;": "⇆",
-    "LeftCeiling;": "⌈",
-    "LeftDoubleBracket;": "⟦",
-    "LeftDownTeeVector;": "⥡",
-    "LeftDownVector;": "⇃",
-    "LeftDownVectorBar;": "⥙",
-    "LeftFloor;": "⌊",
-    "LeftRightArrow;": "↔",
-    "LeftRightVector;": "⥎",
-    "LeftTee;": "⊣",
-    "LeftTeeArrow;": "↤",
-    "LeftTeeVector;": "⥚",
-    "LeftTriangle;": "⊲",
-    "LeftTriangleBar;": "⧏",
-    "LeftTriangleEqual;": "⊴",
-    "LeftUpDownVector;": "⥑",
-    "LeftUpTeeVector;": "⥠",
-    "LeftUpVector;": "↿",
-    "LeftUpVectorBar;": "⥘",
-    "LeftVector;": "↼",
-    "LeftVectorBar;": "⥒",
-    "Leftarrow;": "⇐",
-    "Leftrightarrow;": "⇔",
-    "LessEqualGreater;": "⋚",
-    "LessFullEqual;": "≦",
-    "LessGreater;": "≶",
-    "LessLess;": "⪡",
-    "LessSlantEqual;": "⩽",
-    "LessTilde;": "≲",
-    "Lfr;": "\uD835\uDD0F",
-    "Ll;": "⋘",
-    "Lleftarrow;": "⇚",
-    "Lmidot;": "Ŀ",
-    "LongLeftArrow;": "⟵",
-    "LongLeftRightArrow;": "⟷",
-    "LongRightArrow;": "⟶",
-    "Longleftarrow;": "⟸",
-    "Longleftrightarrow;": "⟺",
-    "Longrightarrow;": "⟹",
-    "Lopf;": "\uD835\uDD43",
-    "LowerLeftArrow;": "↙",
-    "LowerRightArrow;": "↘",
-    "Lscr;": "ℒ",
-    "Lsh;": "↰",
-    "Lstrok;": "Ł",
-    "Lt;": "≪",
-    "Map;": "⤅",
-    "Mcy;": "М",
-    "MediumSpace;": " ",
-    "Mellintrf;": "ℳ",
-    "Mfr;": "\uD835\uDD10",
-    "MinusPlus;": "∓",
-    "Mopf;": "\uD835\uDD44",
-    "Mscr;": "ℳ",
-    "Mu;": "Μ",
-    "NJcy;": "Њ",
-    "Nacute;": "Ń",
-    "Ncaron;": "Ň",
-    "Ncedil;": "Ņ",
-    "Ncy;": "Н",
-    "NegativeMediumSpace;": "​",
-    "NegativeThickSpace;": "​",
-    "NegativeThinSpace;": "​",
-    "NegativeVeryThinSpace;": "​",
-    "NestedGreaterGreater;": "≫",
-    "NestedLessLess;": "≪",
-    "NewLine;": `
-`,
-    "Nfr;": "\uD835\uDD11",
-    "NoBreak;": "⁠",
-    "NonBreakingSpace;": " ",
-    "Nopf;": "ℕ",
-    "Not;": "⫬",
-    "NotCongruent;": "≢",
-    "NotCupCap;": "≭",
-    "NotDoubleVerticalBar;": "∦",
-    "NotElement;": "∉",
-    "NotEqual;": "≠",
-    "NotEqualTilde;": "≂̸",
-    "NotExists;": "∄",
-    "NotGreater;": "≯",
-    "NotGreaterEqual;": "≱",
-    "NotGreaterFullEqual;": "≧̸",
-    "NotGreaterGreater;": "≫̸",
-    "NotGreaterLess;": "≹",
-    "NotGreaterSlantEqual;": "⩾̸",
-    "NotGreaterTilde;": "≵",
-    "NotHumpDownHump;": "≎̸",
-    "NotHumpEqual;": "≏̸",
-    "NotLeftTriangle;": "⋪",
-    "NotLeftTriangleBar;": "⧏̸",
-    "NotLeftTriangleEqual;": "⋬",
-    "NotLess;": "≮",
-    "NotLessEqual;": "≰",
-    "NotLessGreater;": "≸",
-    "NotLessLess;": "≪̸",
-    "NotLessSlantEqual;": "⩽̸",
-    "NotLessTilde;": "≴",
-    "NotNestedGreaterGreater;": "⪢̸",
-    "NotNestedLessLess;": "⪡̸",
-    "NotPrecedes;": "⊀",
-    "NotPrecedesEqual;": "⪯̸",
-    "NotPrecedesSlantEqual;": "⋠",
-    "NotReverseElement;": "∌",
-    "NotRightTriangle;": "⋫",
-    "NotRightTriangleBar;": "⧐̸",
-    "NotRightTriangleEqual;": "⋭",
-    "NotSquareSubset;": "⊏̸",
-    "NotSquareSubsetEqual;": "⋢",
-    "NotSquareSuperset;": "⊐̸",
-    "NotSquareSupersetEqual;": "⋣",
-    "NotSubset;": "⊂⃒",
-    "NotSubsetEqual;": "⊈",
-    "NotSucceeds;": "⊁",
-    "NotSucceedsEqual;": "⪰̸",
-    "NotSucceedsSlantEqual;": "⋡",
-    "NotSucceedsTilde;": "≿̸",
-    "NotSuperset;": "⊃⃒",
-    "NotSupersetEqual;": "⊉",
-    "NotTilde;": "≁",
-    "NotTildeEqual;": "≄",
-    "NotTildeFullEqual;": "≇",
-    "NotTildeTilde;": "≉",
-    "NotVerticalBar;": "∤",
-    "Nscr;": "\uD835\uDCA9",
-    Ntilde: "Ñ",
-    "Ntilde;": "Ñ",
-    "Nu;": "Ν",
-    "OElig;": "Œ",
-    Oacute: "Ó",
-    "Oacute;": "Ó",
-    Ocirc: "Ô",
-    "Ocirc;": "Ô",
-    "Ocy;": "О",
-    "Odblac;": "Ő",
-    "Ofr;": "\uD835\uDD12",
-    Ograve: "Ò",
-    "Ograve;": "Ò",
-    "Omacr;": "Ō",
-    "Omega;": "Ω",
-    "Omicron;": "Ο",
-    "Oopf;": "\uD835\uDD46",
-    "OpenCurlyDoubleQuote;": "“",
-    "OpenCurlyQuote;": "‘",
-    "Or;": "⩔",
-    "Oscr;": "\uD835\uDCAA",
-    Oslash: "Ø",
-    "Oslash;": "Ø",
-    Otilde: "Õ",
-    "Otilde;": "Õ",
-    "Otimes;": "⨷",
-    Ouml: "Ö",
-    "Ouml;": "Ö",
-    "OverBar;": "‾",
-    "OverBrace;": "⏞",
-    "OverBracket;": "⎴",
-    "OverParenthesis;": "⏜",
-    "PartialD;": "∂",
-    "Pcy;": "П",
-    "Pfr;": "\uD835\uDD13",
-    "Phi;": "Φ",
-    "Pi;": "Π",
-    "PlusMinus;": "±",
-    "Poincareplane;": "ℌ",
-    "Popf;": "ℙ",
-    "Pr;": "⪻",
-    "Precedes;": "≺",
-    "PrecedesEqual;": "⪯",
-    "PrecedesSlantEqual;": "≼",
-    "PrecedesTilde;": "≾",
-    "Prime;": "″",
-    "Product;": "∏",
-    "Proportion;": "∷",
-    "Proportional;": "∝",
-    "Pscr;": "\uD835\uDCAB",
-    "Psi;": "Ψ",
-    QUOT: '"',
-    "QUOT;": '"',
-    "Qfr;": "\uD835\uDD14",
-    "Qopf;": "ℚ",
-    "Qscr;": "\uD835\uDCAC",
-    "RBarr;": "⤐",
-    REG: "®",
-    "REG;": "®",
-    "Racute;": "Ŕ",
-    "Rang;": "⟫",
-    "Rarr;": "↠",
-    "Rarrtl;": "⤖",
-    "Rcaron;": "Ř",
-    "Rcedil;": "Ŗ",
-    "Rcy;": "Р",
-    "Re;": "ℜ",
-    "ReverseElement;": "∋",
-    "ReverseEquilibrium;": "⇋",
-    "ReverseUpEquilibrium;": "⥯",
-    "Rfr;": "ℜ",
-    "Rho;": "Ρ",
-    "RightAngleBracket;": "⟩",
-    "RightArrow;": "→",
-    "RightArrowBar;": "⇥",
-    "RightArrowLeftArrow;": "⇄",
-    "RightCeiling;": "⌉",
-    "RightDoubleBracket;": "⟧",
-    "RightDownTeeVector;": "⥝",
-    "RightDownVector;": "⇂",
-    "RightDownVectorBar;": "⥕",
-    "RightFloor;": "⌋",
-    "RightTee;": "⊢",
-    "RightTeeArrow;": "↦",
-    "RightTeeVector;": "⥛",
-    "RightTriangle;": "⊳",
-    "RightTriangleBar;": "⧐",
-    "RightTriangleEqual;": "⊵",
-    "RightUpDownVector;": "⥏",
-    "RightUpTeeVector;": "⥜",
-    "RightUpVector;": "↾",
-    "RightUpVectorBar;": "⥔",
-    "RightVector;": "⇀",
-    "RightVectorBar;": "⥓",
-    "Rightarrow;": "⇒",
-    "Ropf;": "ℝ",
-    "RoundImplies;": "⥰",
-    "Rrightarrow;": "⇛",
-    "Rscr;": "ℛ",
-    "Rsh;": "↱",
-    "RuleDelayed;": "⧴",
-    "SHCHcy;": "Щ",
-    "SHcy;": "Ш",
-    "SOFTcy;": "Ь",
-    "Sacute;": "Ś",
-    "Sc;": "⪼",
-    "Scaron;": "Š",
-    "Scedil;": "Ş",
-    "Scirc;": "Ŝ",
-    "Scy;": "С",
-    "Sfr;": "\uD835\uDD16",
-    "ShortDownArrow;": "↓",
-    "ShortLeftArrow;": "←",
-    "ShortRightArrow;": "→",
-    "ShortUpArrow;": "↑",
-    "Sigma;": "Σ",
-    "SmallCircle;": "∘",
-    "Sopf;": "\uD835\uDD4A",
-    "Sqrt;": "√",
-    "Square;": "□",
-    "SquareIntersection;": "⊓",
-    "SquareSubset;": "⊏",
-    "SquareSubsetEqual;": "⊑",
-    "SquareSuperset;": "⊐",
-    "SquareSupersetEqual;": "⊒",
-    "SquareUnion;": "⊔",
-    "Sscr;": "\uD835\uDCAE",
-    "Star;": "⋆",
-    "Sub;": "⋐",
-    "Subset;": "⋐",
-    "SubsetEqual;": "⊆",
-    "Succeeds;": "≻",
-    "SucceedsEqual;": "⪰",
-    "SucceedsSlantEqual;": "≽",
-    "SucceedsTilde;": "≿",
-    "SuchThat;": "∋",
-    "Sum;": "∑",
-    "Sup;": "⋑",
-    "Superset;": "⊃",
-    "SupersetEqual;": "⊇",
-    "Supset;": "⋑",
-    THORN: "Þ",
-    "THORN;": "Þ",
-    "TRADE;": "™",
-    "TSHcy;": "Ћ",
-    "TScy;": "Ц",
-    "Tab;": "\t",
-    "Tau;": "Τ",
-    "Tcaron;": "Ť",
-    "Tcedil;": "Ţ",
-    "Tcy;": "Т",
-    "Tfr;": "\uD835\uDD17",
-    "Therefore;": "∴",
-    "Theta;": "Θ",
-    "ThickSpace;": "  ",
-    "ThinSpace;": " ",
-    "Tilde;": "∼",
-    "TildeEqual;": "≃",
-    "TildeFullEqual;": "≅",
-    "TildeTilde;": "≈",
-    "Topf;": "\uD835\uDD4B",
-    "TripleDot;": "⃛",
-    "Tscr;": "\uD835\uDCAF",
-    "Tstrok;": "Ŧ",
-    Uacute: "Ú",
-    "Uacute;": "Ú",
-    "Uarr;": "↟",
-    "Uarrocir;": "⥉",
-    "Ubrcy;": "Ў",
-    "Ubreve;": "Ŭ",
-    Ucirc: "Û",
-    "Ucirc;": "Û",
-    "Ucy;": "У",
-    "Udblac;": "Ű",
-    "Ufr;": "\uD835\uDD18",
-    Ugrave: "Ù",
-    "Ugrave;": "Ù",
-    "Umacr;": "Ū",
-    "UnderBar;": "_",
-    "UnderBrace;": "⏟",
-    "UnderBracket;": "⎵",
-    "UnderParenthesis;": "⏝",
-    "Union;": "⋃",
-    "UnionPlus;": "⊎",
-    "Uogon;": "Ų",
-    "Uopf;": "\uD835\uDD4C",
-    "UpArrow;": "↑",
-    "UpArrowBar;": "⤒",
-    "UpArrowDownArrow;": "⇅",
-    "UpDownArrow;": "↕",
-    "UpEquilibrium;": "⥮",
-    "UpTee;": "⊥",
-    "UpTeeArrow;": "↥",
-    "Uparrow;": "⇑",
-    "Updownarrow;": "⇕",
-    "UpperLeftArrow;": "↖",
-    "UpperRightArrow;": "↗",
-    "Upsi;": "ϒ",
-    "Upsilon;": "Υ",
-    "Uring;": "Ů",
-    "Uscr;": "\uD835\uDCB0",
-    "Utilde;": "Ũ",
-    Uuml: "Ü",
-    "Uuml;": "Ü",
-    "VDash;": "⊫",
-    "Vbar;": "⫫",
-    "Vcy;": "В",
-    "Vdash;": "⊩",
-    "Vdashl;": "⫦",
-    "Vee;": "⋁",
-    "Verbar;": "‖",
-    "Vert;": "‖",
-    "VerticalBar;": "∣",
-    "VerticalLine;": "|",
-    "VerticalSeparator;": "❘",
-    "VerticalTilde;": "≀",
-    "VeryThinSpace;": " ",
-    "Vfr;": "\uD835\uDD19",
-    "Vopf;": "\uD835\uDD4D",
-    "Vscr;": "\uD835\uDCB1",
-    "Vvdash;": "⊪",
-    "Wcirc;": "Ŵ",
-    "Wedge;": "⋀",
-    "Wfr;": "\uD835\uDD1A",
-    "Wopf;": "\uD835\uDD4E",
-    "Wscr;": "\uD835\uDCB2",
-    "Xfr;": "\uD835\uDD1B",
-    "Xi;": "Ξ",
-    "Xopf;": "\uD835\uDD4F",
-    "Xscr;": "\uD835\uDCB3",
-    "YAcy;": "Я",
-    "YIcy;": "Ї",
-    "YUcy;": "Ю",
-    Yacute: "Ý",
-    "Yacute;": "Ý",
-    "Ycirc;": "Ŷ",
-    "Ycy;": "Ы",
-    "Yfr;": "\uD835\uDD1C",
-    "Yopf;": "\uD835\uDD50",
-    "Yscr;": "\uD835\uDCB4",
-    "Yuml;": "Ÿ",
-    "ZHcy;": "Ж",
-    "Zacute;": "Ź",
-    "Zcaron;": "Ž",
-    "Zcy;": "З",
-    "Zdot;": "Ż",
-    "ZeroWidthSpace;": "​",
-    "Zeta;": "Ζ",
-    "Zfr;": "ℨ",
-    "Zopf;": "ℤ",
-    "Zscr;": "\uD835\uDCB5",
-    aacute: "á",
-    "aacute;": "á",
-    "abreve;": "ă",
-    "ac;": "∾",
-    "acE;": "∾̳",
-    "acd;": "∿",
-    acirc: "â",
-    "acirc;": "â",
-    acute: "´",
-    "acute;": "´",
-    "acy;": "а",
-    aelig: "æ",
-    "aelig;": "æ",
-    "af;": "⁡",
-    "afr;": "\uD835\uDD1E",
-    agrave: "à",
-    "agrave;": "à",
-    "alefsym;": "ℵ",
-    "aleph;": "ℵ",
-    "alpha;": "α",
-    "amacr;": "ā",
-    "amalg;": "⨿",
-    amp: "&",
-    "amp;": "&",
-    "and;": "∧",
-    "andand;": "⩕",
-    "andd;": "⩜",
-    "andslope;": "⩘",
-    "andv;": "⩚",
-    "ang;": "∠",
-    "ange;": "⦤",
-    "angle;": "∠",
-    "angmsd;": "∡",
-    "angmsdaa;": "⦨",
-    "angmsdab;": "⦩",
-    "angmsdac;": "⦪",
-    "angmsdad;": "⦫",
-    "angmsdae;": "⦬",
-    "angmsdaf;": "⦭",
-    "angmsdag;": "⦮",
-    "angmsdah;": "⦯",
-    "angrt;": "∟",
-    "angrtvb;": "⊾",
-    "angrtvbd;": "⦝",
-    "angsph;": "∢",
-    "angst;": "Å",
-    "angzarr;": "⍼",
-    "aogon;": "ą",
-    "aopf;": "\uD835\uDD52",
-    "ap;": "≈",
-    "apE;": "⩰",
-    "apacir;": "⩯",
-    "ape;": "≊",
-    "apid;": "≋",
-    "apos;": "'",
-    "approx;": "≈",
-    "approxeq;": "≊",
-    aring: "å",
-    "aring;": "å",
-    "ascr;": "\uD835\uDCB6",
-    "ast;": "*",
-    "asymp;": "≈",
-    "asympeq;": "≍",
-    atilde: "ã",
-    "atilde;": "ã",
-    auml: "ä",
-    "auml;": "ä",
-    "awconint;": "∳",
-    "awint;": "⨑",
-    "bNot;": "⫭",
-    "backcong;": "≌",
-    "backepsilon;": "϶",
-    "backprime;": "‵",
-    "backsim;": "∽",
-    "backsimeq;": "⋍",
-    "barvee;": "⊽",
-    "barwed;": "⌅",
-    "barwedge;": "⌅",
-    "bbrk;": "⎵",
-    "bbrktbrk;": "⎶",
-    "bcong;": "≌",
-    "bcy;": "б",
-    "bdquo;": "„",
-    "becaus;": "∵",
-    "because;": "∵",
-    "bemptyv;": "⦰",
-    "bepsi;": "϶",
-    "bernou;": "ℬ",
-    "beta;": "β",
-    "beth;": "ℶ",
-    "between;": "≬",
-    "bfr;": "\uD835\uDD1F",
-    "bigcap;": "⋂",
-    "bigcirc;": "◯",
-    "bigcup;": "⋃",
-    "bigodot;": "⨀",
-    "bigoplus;": "⨁",
-    "bigotimes;": "⨂",
-    "bigsqcup;": "⨆",
-    "bigstar;": "★",
-    "bigtriangledown;": "▽",
-    "bigtriangleup;": "△",
-    "biguplus;": "⨄",
-    "bigvee;": "⋁",
-    "bigwedge;": "⋀",
-    "bkarow;": "⤍",
-    "blacklozenge;": "⧫",
-    "blacksquare;": "▪",
-    "blacktriangle;": "▴",
-    "blacktriangledown;": "▾",
-    "blacktriangleleft;": "◂",
-    "blacktriangleright;": "▸",
-    "blank;": "␣",
-    "blk12;": "▒",
-    "blk14;": "░",
-    "blk34;": "▓",
-    "block;": "█",
-    "bne;": "=⃥",
-    "bnequiv;": "≡⃥",
-    "bnot;": "⌐",
-    "bopf;": "\uD835\uDD53",
-    "bot;": "⊥",
-    "bottom;": "⊥",
-    "bowtie;": "⋈",
-    "boxDL;": "╗",
-    "boxDR;": "╔",
-    "boxDl;": "╖",
-    "boxDr;": "╓",
-    "boxH;": "═",
-    "boxHD;": "╦",
-    "boxHU;": "╩",
-    "boxHd;": "╤",
-    "boxHu;": "╧",
-    "boxUL;": "╝",
-    "boxUR;": "╚",
-    "boxUl;": "╜",
-    "boxUr;": "╙",
-    "boxV;": "║",
-    "boxVH;": "╬",
-    "boxVL;": "╣",
-    "boxVR;": "╠",
-    "boxVh;": "╫",
-    "boxVl;": "╢",
-    "boxVr;": "╟",
-    "boxbox;": "⧉",
-    "boxdL;": "╕",
-    "boxdR;": "╒",
-    "boxdl;": "┐",
-    "boxdr;": "┌",
-    "boxh;": "─",
-    "boxhD;": "╥",
-    "boxhU;": "╨",
-    "boxhd;": "┬",
-    "boxhu;": "┴",
-    "boxminus;": "⊟",
-    "boxplus;": "⊞",
-    "boxtimes;": "⊠",
-    "boxuL;": "╛",
-    "boxuR;": "╘",
-    "boxul;": "┘",
-    "boxur;": "└",
-    "boxv;": "│",
-    "boxvH;": "╪",
-    "boxvL;": "╡",
-    "boxvR;": "╞",
-    "boxvh;": "┼",
-    "boxvl;": "┤",
-    "boxvr;": "├",
-    "bprime;": "‵",
-    "breve;": "˘",
-    brvbar: "¦",
-    "brvbar;": "¦",
-    "bscr;": "\uD835\uDCB7",
-    "bsemi;": "⁏",
-    "bsim;": "∽",
-    "bsime;": "⋍",
-    "bsol;": "\\",
-    "bsolb;": "⧅",
-    "bsolhsub;": "⟈",
-    "bull;": "•",
-    "bullet;": "•",
-    "bump;": "≎",
-    "bumpE;": "⪮",
-    "bumpe;": "≏",
-    "bumpeq;": "≏",
-    "cacute;": "ć",
-    "cap;": "∩",
-    "capand;": "⩄",
-    "capbrcup;": "⩉",
-    "capcap;": "⩋",
-    "capcup;": "⩇",
-    "capdot;": "⩀",
-    "caps;": "∩︀",
-    "caret;": "⁁",
-    "caron;": "ˇ",
-    "ccaps;": "⩍",
-    "ccaron;": "č",
-    ccedil: "ç",
-    "ccedil;": "ç",
-    "ccirc;": "ĉ",
-    "ccups;": "⩌",
-    "ccupssm;": "⩐",
-    "cdot;": "ċ",
-    cedil: "¸",
-    "cedil;": "¸",
-    "cemptyv;": "⦲",
-    cent: "¢",
-    "cent;": "¢",
-    "centerdot;": "·",
-    "cfr;": "\uD835\uDD20",
-    "chcy;": "ч",
-    "check;": "✓",
-    "checkmark;": "✓",
-    "chi;": "χ",
-    "cir;": "○",
-    "cirE;": "⧃",
-    "circ;": "ˆ",
-    "circeq;": "≗",
-    "circlearrowleft;": "↺",
-    "circlearrowright;": "↻",
-    "circledR;": "®",
-    "circledS;": "Ⓢ",
-    "circledast;": "⊛",
-    "circledcirc;": "⊚",
-    "circleddash;": "⊝",
-    "cire;": "≗",
-    "cirfnint;": "⨐",
-    "cirmid;": "⫯",
-    "cirscir;": "⧂",
-    "clubs;": "♣",
-    "clubsuit;": "♣",
-    "colon;": ":",
-    "colone;": "≔",
-    "coloneq;": "≔",
-    "comma;": ",",
-    "commat;": "@",
-    "comp;": "∁",
-    "compfn;": "∘",
-    "complement;": "∁",
-    "complexes;": "ℂ",
-    "cong;": "≅",
-    "congdot;": "⩭",
-    "conint;": "∮",
-    "copf;": "\uD835\uDD54",
-    "coprod;": "∐",
-    copy: "©",
-    "copy;": "©",
-    "copysr;": "℗",
-    "crarr;": "↵",
-    "cross;": "✗",
-    "cscr;": "\uD835\uDCB8",
-    "csub;": "⫏",
-    "csube;": "⫑",
-    "csup;": "⫐",
-    "csupe;": "⫒",
-    "ctdot;": "⋯",
-    "cudarrl;": "⤸",
-    "cudarrr;": "⤵",
-    "cuepr;": "⋞",
-    "cuesc;": "⋟",
-    "cularr;": "↶",
-    "cularrp;": "⤽",
-    "cup;": "∪",
-    "cupbrcap;": "⩈",
-    "cupcap;": "⩆",
-    "cupcup;": "⩊",
-    "cupdot;": "⊍",
-    "cupor;": "⩅",
-    "cups;": "∪︀",
-    "curarr;": "↷",
-    "curarrm;": "⤼",
-    "curlyeqprec;": "⋞",
-    "curlyeqsucc;": "⋟",
-    "curlyvee;": "⋎",
-    "curlywedge;": "⋏",
-    curren: "¤",
-    "curren;": "¤",
-    "curvearrowleft;": "↶",
-    "curvearrowright;": "↷",
-    "cuvee;": "⋎",
-    "cuwed;": "⋏",
-    "cwconint;": "∲",
-    "cwint;": "∱",
-    "cylcty;": "⌭",
-    "dArr;": "⇓",
-    "dHar;": "⥥",
-    "dagger;": "†",
-    "daleth;": "ℸ",
-    "darr;": "↓",
-    "dash;": "‐",
-    "dashv;": "⊣",
-    "dbkarow;": "⤏",
-    "dblac;": "˝",
-    "dcaron;": "ď",
-    "dcy;": "д",
-    "dd;": "ⅆ",
-    "ddagger;": "‡",
-    "ddarr;": "⇊",
-    "ddotseq;": "⩷",
-    deg: "°",
-    "deg;": "°",
-    "delta;": "δ",
-    "demptyv;": "⦱",
-    "dfisht;": "⥿",
-    "dfr;": "\uD835\uDD21",
-    "dharl;": "⇃",
-    "dharr;": "⇂",
-    "diam;": "⋄",
-    "diamond;": "⋄",
-    "diamondsuit;": "♦",
-    "diams;": "♦",
-    "die;": "¨",
-    "digamma;": "ϝ",
-    "disin;": "⋲",
-    "div;": "÷",
-    divide: "÷",
-    "divide;": "÷",
-    "divideontimes;": "⋇",
-    "divonx;": "⋇",
-    "djcy;": "ђ",
-    "dlcorn;": "⌞",
-    "dlcrop;": "⌍",
-    "dollar;": "$",
-    "dopf;": "\uD835\uDD55",
-    "dot;": "˙",
-    "doteq;": "≐",
-    "doteqdot;": "≑",
-    "dotminus;": "∸",
-    "dotplus;": "∔",
-    "dotsquare;": "⊡",
-    "doublebarwedge;": "⌆",
-    "downarrow;": "↓",
-    "downdownarrows;": "⇊",
-    "downharpoonleft;": "⇃",
-    "downharpoonright;": "⇂",
-    "drbkarow;": "⤐",
-    "drcorn;": "⌟",
-    "drcrop;": "⌌",
-    "dscr;": "\uD835\uDCB9",
-    "dscy;": "ѕ",
-    "dsol;": "⧶",
-    "dstrok;": "đ",
-    "dtdot;": "⋱",
-    "dtri;": "▿",
-    "dtrif;": "▾",
-    "duarr;": "⇵",
-    "duhar;": "⥯",
-    "dwangle;": "⦦",
-    "dzcy;": "џ",
-    "dzigrarr;": "⟿",
-    "eDDot;": "⩷",
-    "eDot;": "≑",
-    eacute: "é",
-    "eacute;": "é",
-    "easter;": "⩮",
-    "ecaron;": "ě",
-    "ecir;": "≖",
-    ecirc: "ê",
-    "ecirc;": "ê",
-    "ecolon;": "≕",
-    "ecy;": "э",
-    "edot;": "ė",
-    "ee;": "ⅇ",
-    "efDot;": "≒",
-    "efr;": "\uD835\uDD22",
-    "eg;": "⪚",
-    egrave: "è",
-    "egrave;": "è",
-    "egs;": "⪖",
-    "egsdot;": "⪘",
-    "el;": "⪙",
-    "elinters;": "⏧",
-    "ell;": "ℓ",
-    "els;": "⪕",
-    "elsdot;": "⪗",
-    "emacr;": "ē",
-    "empty;": "∅",
-    "emptyset;": "∅",
-    "emptyv;": "∅",
-    "emsp13;": " ",
-    "emsp14;": " ",
-    "emsp;": " ",
-    "eng;": "ŋ",
-    "ensp;": " ",
-    "eogon;": "ę",
-    "eopf;": "\uD835\uDD56",
-    "epar;": "⋕",
-    "eparsl;": "⧣",
-    "eplus;": "⩱",
-    "epsi;": "ε",
-    "epsilon;": "ε",
-    "epsiv;": "ϵ",
-    "eqcirc;": "≖",
-    "eqcolon;": "≕",
-    "eqsim;": "≂",
-    "eqslantgtr;": "⪖",
-    "eqslantless;": "⪕",
-    "equals;": "=",
-    "equest;": "≟",
-    "equiv;": "≡",
-    "equivDD;": "⩸",
-    "eqvparsl;": "⧥",
-    "erDot;": "≓",
-    "erarr;": "⥱",
-    "escr;": "ℯ",
-    "esdot;": "≐",
-    "esim;": "≂",
-    "eta;": "η",
-    eth: "ð",
-    "eth;": "ð",
-    euml: "ë",
-    "euml;": "ë",
-    "euro;": "€",
-    "excl;": "!",
-    "exist;": "∃",
-    "expectation;": "ℰ",
-    "exponentiale;": "ⅇ",
-    "fallingdotseq;": "≒",
-    "fcy;": "ф",
-    "female;": "♀",
-    "ffilig;": "ﬃ",
-    "fflig;": "ﬀ",
-    "ffllig;": "ﬄ",
-    "ffr;": "\uD835\uDD23",
-    "filig;": "ﬁ",
-    "fjlig;": "fj",
-    "flat;": "♭",
-    "fllig;": "ﬂ",
-    "fltns;": "▱",
-    "fnof;": "ƒ",
-    "fopf;": "\uD835\uDD57",
-    "forall;": "∀",
-    "fork;": "⋔",
-    "forkv;": "⫙",
-    "fpartint;": "⨍",
-    frac12: "½",
-    "frac12;": "½",
-    "frac13;": "⅓",
-    frac14: "¼",
-    "frac14;": "¼",
-    "frac15;": "⅕",
-    "frac16;": "⅙",
-    "frac18;": "⅛",
-    "frac23;": "⅔",
-    "frac25;": "⅖",
-    frac34: "¾",
-    "frac34;": "¾",
-    "frac35;": "⅗",
-    "frac38;": "⅜",
-    "frac45;": "⅘",
-    "frac56;": "⅚",
-    "frac58;": "⅝",
-    "frac78;": "⅞",
-    "frasl;": "⁄",
-    "frown;": "⌢",
-    "fscr;": "\uD835\uDCBB",
-    "gE;": "≧",
-    "gEl;": "⪌",
-    "gacute;": "ǵ",
-    "gamma;": "γ",
-    "gammad;": "ϝ",
-    "gap;": "⪆",
-    "gbreve;": "ğ",
-    "gcirc;": "ĝ",
-    "gcy;": "г",
-    "gdot;": "ġ",
-    "ge;": "≥",
-    "gel;": "⋛",
-    "geq;": "≥",
-    "geqq;": "≧",
-    "geqslant;": "⩾",
-    "ges;": "⩾",
-    "gescc;": "⪩",
-    "gesdot;": "⪀",
-    "gesdoto;": "⪂",
-    "gesdotol;": "⪄",
-    "gesl;": "⋛︀",
-    "gesles;": "⪔",
-    "gfr;": "\uD835\uDD24",
-    "gg;": "≫",
-    "ggg;": "⋙",
-    "gimel;": "ℷ",
-    "gjcy;": "ѓ",
-    "gl;": "≷",
-    "glE;": "⪒",
-    "gla;": "⪥",
-    "glj;": "⪤",
-    "gnE;": "≩",
-    "gnap;": "⪊",
-    "gnapprox;": "⪊",
-    "gne;": "⪈",
-    "gneq;": "⪈",
-    "gneqq;": "≩",
-    "gnsim;": "⋧",
-    "gopf;": "\uD835\uDD58",
-    "grave;": "`",
-    "gscr;": "ℊ",
-    "gsim;": "≳",
-    "gsime;": "⪎",
-    "gsiml;": "⪐",
-    gt: ">",
-    "gt;": ">",
-    "gtcc;": "⪧",
-    "gtcir;": "⩺",
-    "gtdot;": "⋗",
-    "gtlPar;": "⦕",
-    "gtquest;": "⩼",
-    "gtrapprox;": "⪆",
-    "gtrarr;": "⥸",
-    "gtrdot;": "⋗",
-    "gtreqless;": "⋛",
-    "gtreqqless;": "⪌",
-    "gtrless;": "≷",
-    "gtrsim;": "≳",
-    "gvertneqq;": "≩︀",
-    "gvnE;": "≩︀",
-    "hArr;": "⇔",
-    "hairsp;": " ",
-    "half;": "½",
-    "hamilt;": "ℋ",
-    "hardcy;": "ъ",
-    "harr;": "↔",
-    "harrcir;": "⥈",
-    "harrw;": "↭",
-    "hbar;": "ℏ",
-    "hcirc;": "ĥ",
-    "hearts;": "♥",
-    "heartsuit;": "♥",
-    "hellip;": "…",
-    "hercon;": "⊹",
-    "hfr;": "\uD835\uDD25",
-    "hksearow;": "⤥",
-    "hkswarow;": "⤦",
-    "hoarr;": "⇿",
-    "homtht;": "∻",
-    "hookleftarrow;": "↩",
-    "hookrightarrow;": "↪",
-    "hopf;": "\uD835\uDD59",
-    "horbar;": "―",
-    "hscr;": "\uD835\uDCBD",
-    "hslash;": "ℏ",
-    "hstrok;": "ħ",
-    "hybull;": "⁃",
-    "hyphen;": "‐",
-    iacute: "í",
-    "iacute;": "í",
-    "ic;": "⁣",
-    icirc: "î",
-    "icirc;": "î",
-    "icy;": "и",
-    "iecy;": "е",
-    iexcl: "¡",
-    "iexcl;": "¡",
-    "iff;": "⇔",
-    "ifr;": "\uD835\uDD26",
-    igrave: "ì",
-    "igrave;": "ì",
-    "ii;": "ⅈ",
-    "iiiint;": "⨌",
-    "iiint;": "∭",
-    "iinfin;": "⧜",
-    "iiota;": "℩",
-    "ijlig;": "ĳ",
-    "imacr;": "ī",
-    "image;": "ℑ",
-    "imagline;": "ℐ",
-    "imagpart;": "ℑ",
-    "imath;": "ı",
-    "imof;": "⊷",
-    "imped;": "Ƶ",
-    "in;": "∈",
-    "incare;": "℅",
-    "infin;": "∞",
-    "infintie;": "⧝",
-    "inodot;": "ı",
-    "int;": "∫",
-    "intcal;": "⊺",
-    "integers;": "ℤ",
-    "intercal;": "⊺",
-    "intlarhk;": "⨗",
-    "intprod;": "⨼",
-    "iocy;": "ё",
-    "iogon;": "į",
-    "iopf;": "\uD835\uDD5A",
-    "iota;": "ι",
-    "iprod;": "⨼",
-    iquest: "¿",
-    "iquest;": "¿",
-    "iscr;": "\uD835\uDCBE",
-    "isin;": "∈",
-    "isinE;": "⋹",
-    "isindot;": "⋵",
-    "isins;": "⋴",
-    "isinsv;": "⋳",
-    "isinv;": "∈",
-    "it;": "⁢",
-    "itilde;": "ĩ",
-    "iukcy;": "і",
-    iuml: "ï",
-    "iuml;": "ï",
-    "jcirc;": "ĵ",
-    "jcy;": "й",
-    "jfr;": "\uD835\uDD27",
-    "jmath;": "ȷ",
-    "jopf;": "\uD835\uDD5B",
-    "jscr;": "\uD835\uDCBF",
-    "jsercy;": "ј",
-    "jukcy;": "є",
-    "kappa;": "κ",
-    "kappav;": "ϰ",
-    "kcedil;": "ķ",
-    "kcy;": "к",
-    "kfr;": "\uD835\uDD28",
-    "kgreen;": "ĸ",
-    "khcy;": "х",
-    "kjcy;": "ќ",
-    "kopf;": "\uD835\uDD5C",
-    "kscr;": "\uD835\uDCC0",
-    "lAarr;": "⇚",
-    "lArr;": "⇐",
-    "lAtail;": "⤛",
-    "lBarr;": "⤎",
-    "lE;": "≦",
-    "lEg;": "⪋",
-    "lHar;": "⥢",
-    "lacute;": "ĺ",
-    "laemptyv;": "⦴",
-    "lagran;": "ℒ",
-    "lambda;": "λ",
-    "lang;": "⟨",
-    "langd;": "⦑",
-    "langle;": "⟨",
-    "lap;": "⪅",
-    laquo: "«",
-    "laquo;": "«",
-    "larr;": "←",
-    "larrb;": "⇤",
-    "larrbfs;": "⤟",
-    "larrfs;": "⤝",
-    "larrhk;": "↩",
-    "larrlp;": "↫",
-    "larrpl;": "⤹",
-    "larrsim;": "⥳",
-    "larrtl;": "↢",
-    "lat;": "⪫",
-    "latail;": "⤙",
-    "late;": "⪭",
-    "lates;": "⪭︀",
-    "lbarr;": "⤌",
-    "lbbrk;": "❲",
-    "lbrace;": "{",
-    "lbrack;": "[",
-    "lbrke;": "⦋",
-    "lbrksld;": "⦏",
-    "lbrkslu;": "⦍",
-    "lcaron;": "ľ",
-    "lcedil;": "ļ",
-    "lceil;": "⌈",
-    "lcub;": "{",
-    "lcy;": "л",
-    "ldca;": "⤶",
-    "ldquo;": "“",
-    "ldquor;": "„",
-    "ldrdhar;": "⥧",
-    "ldrushar;": "⥋",
-    "ldsh;": "↲",
-    "le;": "≤",
-    "leftarrow;": "←",
-    "leftarrowtail;": "↢",
-    "leftharpoondown;": "↽",
-    "leftharpoonup;": "↼",
-    "leftleftarrows;": "⇇",
-    "leftrightarrow;": "↔",
-    "leftrightarrows;": "⇆",
-    "leftrightharpoons;": "⇋",
-    "leftrightsquigarrow;": "↭",
-    "leftthreetimes;": "⋋",
-    "leg;": "⋚",
-    "leq;": "≤",
-    "leqq;": "≦",
-    "leqslant;": "⩽",
-    "les;": "⩽",
-    "lescc;": "⪨",
-    "lesdot;": "⩿",
-    "lesdoto;": "⪁",
-    "lesdotor;": "⪃",
-    "lesg;": "⋚︀",
-    "lesges;": "⪓",
-    "lessapprox;": "⪅",
-    "lessdot;": "⋖",
-    "lesseqgtr;": "⋚",
-    "lesseqqgtr;": "⪋",
-    "lessgtr;": "≶",
-    "lesssim;": "≲",
-    "lfisht;": "⥼",
-    "lfloor;": "⌊",
-    "lfr;": "\uD835\uDD29",
-    "lg;": "≶",
-    "lgE;": "⪑",
-    "lhard;": "↽",
-    "lharu;": "↼",
-    "lharul;": "⥪",
-    "lhblk;": "▄",
-    "ljcy;": "љ",
-    "ll;": "≪",
-    "llarr;": "⇇",
-    "llcorner;": "⌞",
-    "llhard;": "⥫",
-    "lltri;": "◺",
-    "lmidot;": "ŀ",
-    "lmoust;": "⎰",
-    "lmoustache;": "⎰",
-    "lnE;": "≨",
-    "lnap;": "⪉",
-    "lnapprox;": "⪉",
-    "lne;": "⪇",
-    "lneq;": "⪇",
-    "lneqq;": "≨",
-    "lnsim;": "⋦",
-    "loang;": "⟬",
-    "loarr;": "⇽",
-    "lobrk;": "⟦",
-    "longleftarrow;": "⟵",
-    "longleftrightarrow;": "⟷",
-    "longmapsto;": "⟼",
-    "longrightarrow;": "⟶",
-    "looparrowleft;": "↫",
-    "looparrowright;": "↬",
-    "lopar;": "⦅",
-    "lopf;": "\uD835\uDD5D",
-    "loplus;": "⨭",
-    "lotimes;": "⨴",
-    "lowast;": "∗",
-    "lowbar;": "_",
-    "loz;": "◊",
-    "lozenge;": "◊",
-    "lozf;": "⧫",
-    "lpar;": "(",
-    "lparlt;": "⦓",
-    "lrarr;": "⇆",
-    "lrcorner;": "⌟",
-    "lrhar;": "⇋",
-    "lrhard;": "⥭",
-    "lrm;": "‎",
-    "lrtri;": "⊿",
-    "lsaquo;": "‹",
-    "lscr;": "\uD835\uDCC1",
-    "lsh;": "↰",
-    "lsim;": "≲",
-    "lsime;": "⪍",
-    "lsimg;": "⪏",
-    "lsqb;": "[",
-    "lsquo;": "‘",
-    "lsquor;": "‚",
-    "lstrok;": "ł",
-    lt: "<",
-    "lt;": "<",
-    "ltcc;": "⪦",
-    "ltcir;": "⩹",
-    "ltdot;": "⋖",
-    "lthree;": "⋋",
-    "ltimes;": "⋉",
-    "ltlarr;": "⥶",
-    "ltquest;": "⩻",
-    "ltrPar;": "⦖",
-    "ltri;": "◃",
-    "ltrie;": "⊴",
-    "ltrif;": "◂",
-    "lurdshar;": "⥊",
-    "luruhar;": "⥦",
-    "lvertneqq;": "≨︀",
-    "lvnE;": "≨︀",
-    "mDDot;": "∺",
-    macr: "¯",
-    "macr;": "¯",
-    "male;": "♂",
-    "malt;": "✠",
-    "maltese;": "✠",
-    "map;": "↦",
-    "mapsto;": "↦",
-    "mapstodown;": "↧",
-    "mapstoleft;": "↤",
-    "mapstoup;": "↥",
-    "marker;": "▮",
-    "mcomma;": "⨩",
-    "mcy;": "м",
-    "mdash;": "—",
-    "measuredangle;": "∡",
-    "mfr;": "\uD835\uDD2A",
-    "mho;": "℧",
-    micro: "µ",
-    "micro;": "µ",
-    "mid;": "∣",
-    "midast;": "*",
-    "midcir;": "⫰",
-    middot: "·",
-    "middot;": "·",
-    "minus;": "−",
-    "minusb;": "⊟",
-    "minusd;": "∸",
-    "minusdu;": "⨪",
-    "mlcp;": "⫛",
-    "mldr;": "…",
-    "mnplus;": "∓",
-    "models;": "⊧",
-    "mopf;": "\uD835\uDD5E",
-    "mp;": "∓",
-    "mscr;": "\uD835\uDCC2",
-    "mstpos;": "∾",
-    "mu;": "μ",
-    "multimap;": "⊸",
-    "mumap;": "⊸",
-    "nGg;": "⋙̸",
-    "nGt;": "≫⃒",
-    "nGtv;": "≫̸",
-    "nLeftarrow;": "⇍",
-    "nLeftrightarrow;": "⇎",
-    "nLl;": "⋘̸",
-    "nLt;": "≪⃒",
-    "nLtv;": "≪̸",
-    "nRightarrow;": "⇏",
-    "nVDash;": "⊯",
-    "nVdash;": "⊮",
-    "nabla;": "∇",
-    "nacute;": "ń",
-    "nang;": "∠⃒",
-    "nap;": "≉",
-    "napE;": "⩰̸",
-    "napid;": "≋̸",
-    "napos;": "ŉ",
-    "napprox;": "≉",
-    "natur;": "♮",
-    "natural;": "♮",
-    "naturals;": "ℕ",
-    nbsp: " ",
-    "nbsp;": " ",
-    "nbump;": "≎̸",
-    "nbumpe;": "≏̸",
-    "ncap;": "⩃",
-    "ncaron;": "ň",
-    "ncedil;": "ņ",
-    "ncong;": "≇",
-    "ncongdot;": "⩭̸",
-    "ncup;": "⩂",
-    "ncy;": "н",
-    "ndash;": "–",
-    "ne;": "≠",
-    "neArr;": "⇗",
-    "nearhk;": "⤤",
-    "nearr;": "↗",
-    "nearrow;": "↗",
-    "nedot;": "≐̸",
-    "nequiv;": "≢",
-    "nesear;": "⤨",
-    "nesim;": "≂̸",
-    "nexist;": "∄",
-    "nexists;": "∄",
-    "nfr;": "\uD835\uDD2B",
-    "ngE;": "≧̸",
-    "nge;": "≱",
-    "ngeq;": "≱",
-    "ngeqq;": "≧̸",
-    "ngeqslant;": "⩾̸",
-    "nges;": "⩾̸",
-    "ngsim;": "≵",
-    "ngt;": "≯",
-    "ngtr;": "≯",
-    "nhArr;": "⇎",
-    "nharr;": "↮",
-    "nhpar;": "⫲",
-    "ni;": "∋",
-    "nis;": "⋼",
-    "nisd;": "⋺",
-    "niv;": "∋",
-    "njcy;": "њ",
-    "nlArr;": "⇍",
-    "nlE;": "≦̸",
-    "nlarr;": "↚",
-    "nldr;": "‥",
-    "nle;": "≰",
-    "nleftarrow;": "↚",
-    "nleftrightarrow;": "↮",
-    "nleq;": "≰",
-    "nleqq;": "≦̸",
-    "nleqslant;": "⩽̸",
-    "nles;": "⩽̸",
-    "nless;": "≮",
-    "nlsim;": "≴",
-    "nlt;": "≮",
-    "nltri;": "⋪",
-    "nltrie;": "⋬",
-    "nmid;": "∤",
-    "nopf;": "\uD835\uDD5F",
-    not: "¬",
-    "not;": "¬",
-    "notin;": "∉",
-    "notinE;": "⋹̸",
-    "notindot;": "⋵̸",
-    "notinva;": "∉",
-    "notinvb;": "⋷",
-    "notinvc;": "⋶",
-    "notni;": "∌",
-    "notniva;": "∌",
-    "notnivb;": "⋾",
-    "notnivc;": "⋽",
-    "npar;": "∦",
-    "nparallel;": "∦",
-    "nparsl;": "⫽⃥",
-    "npart;": "∂̸",
-    "npolint;": "⨔",
-    "npr;": "⊀",
-    "nprcue;": "⋠",
-    "npre;": "⪯̸",
-    "nprec;": "⊀",
-    "npreceq;": "⪯̸",
-    "nrArr;": "⇏",
-    "nrarr;": "↛",
-    "nrarrc;": "⤳̸",
-    "nrarrw;": "↝̸",
-    "nrightarrow;": "↛",
-    "nrtri;": "⋫",
-    "nrtrie;": "⋭",
-    "nsc;": "⊁",
-    "nsccue;": "⋡",
-    "nsce;": "⪰̸",
-    "nscr;": "\uD835\uDCC3",
-    "nshortmid;": "∤",
-    "nshortparallel;": "∦",
-    "nsim;": "≁",
-    "nsime;": "≄",
-    "nsimeq;": "≄",
-    "nsmid;": "∤",
-    "nspar;": "∦",
-    "nsqsube;": "⋢",
-    "nsqsupe;": "⋣",
-    "nsub;": "⊄",
-    "nsubE;": "⫅̸",
-    "nsube;": "⊈",
-    "nsubset;": "⊂⃒",
-    "nsubseteq;": "⊈",
-    "nsubseteqq;": "⫅̸",
-    "nsucc;": "⊁",
-    "nsucceq;": "⪰̸",
-    "nsup;": "⊅",
-    "nsupE;": "⫆̸",
-    "nsupe;": "⊉",
-    "nsupset;": "⊃⃒",
-    "nsupseteq;": "⊉",
-    "nsupseteqq;": "⫆̸",
-    "ntgl;": "≹",
-    ntilde: "ñ",
-    "ntilde;": "ñ",
-    "ntlg;": "≸",
-    "ntriangleleft;": "⋪",
-    "ntrianglelefteq;": "⋬",
-    "ntriangleright;": "⋫",
-    "ntrianglerighteq;": "⋭",
-    "nu;": "ν",
-    "num;": "#",
-    "numero;": "№",
-    "numsp;": " ",
-    "nvDash;": "⊭",
-    "nvHarr;": "⤄",
-    "nvap;": "≍⃒",
-    "nvdash;": "⊬",
-    "nvge;": "≥⃒",
-    "nvgt;": ">⃒",
-    "nvinfin;": "⧞",
-    "nvlArr;": "⤂",
-    "nvle;": "≤⃒",
-    "nvlt;": "<⃒",
-    "nvltrie;": "⊴⃒",
-    "nvrArr;": "⤃",
-    "nvrtrie;": "⊵⃒",
-    "nvsim;": "∼⃒",
-    "nwArr;": "⇖",
-    "nwarhk;": "⤣",
-    "nwarr;": "↖",
-    "nwarrow;": "↖",
-    "nwnear;": "⤧",
-    "oS;": "Ⓢ",
-    oacute: "ó",
-    "oacute;": "ó",
-    "oast;": "⊛",
-    "ocir;": "⊚",
-    ocirc: "ô",
-    "ocirc;": "ô",
-    "ocy;": "о",
-    "odash;": "⊝",
-    "odblac;": "ő",
-    "odiv;": "⨸",
-    "odot;": "⊙",
-    "odsold;": "⦼",
-    "oelig;": "œ",
-    "ofcir;": "⦿",
-    "ofr;": "\uD835\uDD2C",
-    "ogon;": "˛",
-    ograve: "ò",
-    "ograve;": "ò",
-    "ogt;": "⧁",
-    "ohbar;": "⦵",
-    "ohm;": "Ω",
-    "oint;": "∮",
-    "olarr;": "↺",
-    "olcir;": "⦾",
-    "olcross;": "⦻",
-    "oline;": "‾",
-    "olt;": "⧀",
-    "omacr;": "ō",
-    "omega;": "ω",
-    "omicron;": "ο",
-    "omid;": "⦶",
-    "ominus;": "⊖",
-    "oopf;": "\uD835\uDD60",
-    "opar;": "⦷",
-    "operp;": "⦹",
-    "oplus;": "⊕",
-    "or;": "∨",
-    "orarr;": "↻",
-    "ord;": "⩝",
-    "order;": "ℴ",
-    "orderof;": "ℴ",
-    ordf: "ª",
-    "ordf;": "ª",
-    ordm: "º",
-    "ordm;": "º",
-    "origof;": "⊶",
-    "oror;": "⩖",
-    "orslope;": "⩗",
-    "orv;": "⩛",
-    "oscr;": "ℴ",
-    oslash: "ø",
-    "oslash;": "ø",
-    "osol;": "⊘",
-    otilde: "õ",
-    "otilde;": "õ",
-    "otimes;": "⊗",
-    "otimesas;": "⨶",
-    ouml: "ö",
-    "ouml;": "ö",
-    "ovbar;": "⌽",
-    "par;": "∥",
-    para: "¶",
-    "para;": "¶",
-    "parallel;": "∥",
-    "parsim;": "⫳",
-    "parsl;": "⫽",
-    "part;": "∂",
-    "pcy;": "п",
-    "percnt;": "%",
-    "period;": ".",
-    "permil;": "‰",
-    "perp;": "⊥",
-    "pertenk;": "‱",
-    "pfr;": "\uD835\uDD2D",
-    "phi;": "φ",
-    "phiv;": "ϕ",
-    "phmmat;": "ℳ",
-    "phone;": "☎",
-    "pi;": "π",
-    "pitchfork;": "⋔",
-    "piv;": "ϖ",
-    "planck;": "ℏ",
-    "planckh;": "ℎ",
-    "plankv;": "ℏ",
-    "plus;": "+",
-    "plusacir;": "⨣",
-    "plusb;": "⊞",
-    "pluscir;": "⨢",
-    "plusdo;": "∔",
-    "plusdu;": "⨥",
-    "pluse;": "⩲",
-    plusmn: "±",
-    "plusmn;": "±",
-    "plussim;": "⨦",
-    "plustwo;": "⨧",
-    "pm;": "±",
-    "pointint;": "⨕",
-    "popf;": "\uD835\uDD61",
-    pound: "£",
-    "pound;": "£",
-    "pr;": "≺",
-    "prE;": "⪳",
-    "prap;": "⪷",
-    "prcue;": "≼",
-    "pre;": "⪯",
-    "prec;": "≺",
-    "precapprox;": "⪷",
-    "preccurlyeq;": "≼",
-    "preceq;": "⪯",
-    "precnapprox;": "⪹",
-    "precneqq;": "⪵",
-    "precnsim;": "⋨",
-    "precsim;": "≾",
-    "prime;": "′",
-    "primes;": "ℙ",
-    "prnE;": "⪵",
-    "prnap;": "⪹",
-    "prnsim;": "⋨",
-    "prod;": "∏",
-    "profalar;": "⌮",
-    "profline;": "⌒",
-    "profsurf;": "⌓",
-    "prop;": "∝",
-    "propto;": "∝",
-    "prsim;": "≾",
-    "prurel;": "⊰",
-    "pscr;": "\uD835\uDCC5",
-    "psi;": "ψ",
-    "puncsp;": " ",
-    "qfr;": "\uD835\uDD2E",
-    "qint;": "⨌",
-    "qopf;": "\uD835\uDD62",
-    "qprime;": "⁗",
-    "qscr;": "\uD835\uDCC6",
-    "quaternions;": "ℍ",
-    "quatint;": "⨖",
-    "quest;": "?",
-    "questeq;": "≟",
-    quot: '"',
-    "quot;": '"',
-    "rAarr;": "⇛",
-    "rArr;": "⇒",
-    "rAtail;": "⤜",
-    "rBarr;": "⤏",
-    "rHar;": "⥤",
-    "race;": "∽̱",
-    "racute;": "ŕ",
-    "radic;": "√",
-    "raemptyv;": "⦳",
-    "rang;": "⟩",
-    "rangd;": "⦒",
-    "range;": "⦥",
-    "rangle;": "⟩",
-    raquo: "»",
-    "raquo;": "»",
-    "rarr;": "→",
-    "rarrap;": "⥵",
-    "rarrb;": "⇥",
-    "rarrbfs;": "⤠",
-    "rarrc;": "⤳",
-    "rarrfs;": "⤞",
-    "rarrhk;": "↪",
-    "rarrlp;": "↬",
-    "rarrpl;": "⥅",
-    "rarrsim;": "⥴",
-    "rarrtl;": "↣",
-    "rarrw;": "↝",
-    "ratail;": "⤚",
-    "ratio;": "∶",
-    "rationals;": "ℚ",
-    "rbarr;": "⤍",
-    "rbbrk;": "❳",
-    "rbrace;": "}",
-    "rbrack;": "]",
-    "rbrke;": "⦌",
-    "rbrksld;": "⦎",
-    "rbrkslu;": "⦐",
-    "rcaron;": "ř",
-    "rcedil;": "ŗ",
-    "rceil;": "⌉",
-    "rcub;": "}",
-    "rcy;": "р",
-    "rdca;": "⤷",
-    "rdldhar;": "⥩",
-    "rdquo;": "”",
-    "rdquor;": "”",
-    "rdsh;": "↳",
-    "real;": "ℜ",
-    "realine;": "ℛ",
-    "realpart;": "ℜ",
-    "reals;": "ℝ",
-    "rect;": "▭",
-    reg: "®",
-    "reg;": "®",
-    "rfisht;": "⥽",
-    "rfloor;": "⌋",
-    "rfr;": "\uD835\uDD2F",
-    "rhard;": "⇁",
-    "rharu;": "⇀",
-    "rharul;": "⥬",
-    "rho;": "ρ",
-    "rhov;": "ϱ",
-    "rightarrow;": "→",
-    "rightarrowtail;": "↣",
-    "rightharpoondown;": "⇁",
-    "rightharpoonup;": "⇀",
-    "rightleftarrows;": "⇄",
-    "rightleftharpoons;": "⇌",
-    "rightrightarrows;": "⇉",
-    "rightsquigarrow;": "↝",
-    "rightthreetimes;": "⋌",
-    "ring;": "˚",
-    "risingdotseq;": "≓",
-    "rlarr;": "⇄",
-    "rlhar;": "⇌",
-    "rlm;": "‏",
-    "rmoust;": "⎱",
-    "rmoustache;": "⎱",
-    "rnmid;": "⫮",
-    "roang;": "⟭",
-    "roarr;": "⇾",
-    "robrk;": "⟧",
-    "ropar;": "⦆",
-    "ropf;": "\uD835\uDD63",
-    "roplus;": "⨮",
-    "rotimes;": "⨵",
-    "rpar;": ")",
-    "rpargt;": "⦔",
-    "rppolint;": "⨒",
-    "rrarr;": "⇉",
-    "rsaquo;": "›",
-    "rscr;": "\uD835\uDCC7",
-    "rsh;": "↱",
-    "rsqb;": "]",
-    "rsquo;": "’",
-    "rsquor;": "’",
-    "rthree;": "⋌",
-    "rtimes;": "⋊",
-    "rtri;": "▹",
-    "rtrie;": "⊵",
-    "rtrif;": "▸",
-    "rtriltri;": "⧎",
-    "ruluhar;": "⥨",
-    "rx;": "℞",
-    "sacute;": "ś",
-    "sbquo;": "‚",
-    "sc;": "≻",
-    "scE;": "⪴",
-    "scap;": "⪸",
-    "scaron;": "š",
-    "sccue;": "≽",
-    "sce;": "⪰",
-    "scedil;": "ş",
-    "scirc;": "ŝ",
-    "scnE;": "⪶",
-    "scnap;": "⪺",
-    "scnsim;": "⋩",
-    "scpolint;": "⨓",
-    "scsim;": "≿",
-    "scy;": "с",
-    "sdot;": "⋅",
-    "sdotb;": "⊡",
-    "sdote;": "⩦",
-    "seArr;": "⇘",
-    "searhk;": "⤥",
-    "searr;": "↘",
-    "searrow;": "↘",
-    sect: "§",
-    "sect;": "§",
-    "semi;": ";",
-    "seswar;": "⤩",
-    "setminus;": "∖",
-    "setmn;": "∖",
-    "sext;": "✶",
-    "sfr;": "\uD835\uDD30",
-    "sfrown;": "⌢",
-    "sharp;": "♯",
-    "shchcy;": "щ",
-    "shcy;": "ш",
-    "shortmid;": "∣",
-    "shortparallel;": "∥",
-    shy: "­",
-    "shy;": "­",
-    "sigma;": "σ",
-    "sigmaf;": "ς",
-    "sigmav;": "ς",
-    "sim;": "∼",
-    "simdot;": "⩪",
-    "sime;": "≃",
-    "simeq;": "≃",
-    "simg;": "⪞",
-    "simgE;": "⪠",
-    "siml;": "⪝",
-    "simlE;": "⪟",
-    "simne;": "≆",
-    "simplus;": "⨤",
-    "simrarr;": "⥲",
-    "slarr;": "←",
-    "smallsetminus;": "∖",
-    "smashp;": "⨳",
-    "smeparsl;": "⧤",
-    "smid;": "∣",
-    "smile;": "⌣",
-    "smt;": "⪪",
-    "smte;": "⪬",
-    "smtes;": "⪬︀",
-    "softcy;": "ь",
-    "sol;": "/",
-    "solb;": "⧄",
-    "solbar;": "⌿",
-    "sopf;": "\uD835\uDD64",
-    "spades;": "♠",
-    "spadesuit;": "♠",
-    "spar;": "∥",
-    "sqcap;": "⊓",
-    "sqcaps;": "⊓︀",
-    "sqcup;": "⊔",
-    "sqcups;": "⊔︀",
-    "sqsub;": "⊏",
-    "sqsube;": "⊑",
-    "sqsubset;": "⊏",
-    "sqsubseteq;": "⊑",
-    "sqsup;": "⊐",
-    "sqsupe;": "⊒",
-    "sqsupset;": "⊐",
-    "sqsupseteq;": "⊒",
-    "squ;": "□",
-    "square;": "□",
-    "squarf;": "▪",
-    "squf;": "▪",
-    "srarr;": "→",
-    "sscr;": "\uD835\uDCC8",
-    "ssetmn;": "∖",
-    "ssmile;": "⌣",
-    "sstarf;": "⋆",
-    "star;": "☆",
-    "starf;": "★",
-    "straightepsilon;": "ϵ",
-    "straightphi;": "ϕ",
-    "strns;": "¯",
-    "sub;": "⊂",
-    "subE;": "⫅",
-    "subdot;": "⪽",
-    "sube;": "⊆",
-    "subedot;": "⫃",
-    "submult;": "⫁",
-    "subnE;": "⫋",
-    "subne;": "⊊",
-    "subplus;": "⪿",
-    "subrarr;": "⥹",
-    "subset;": "⊂",
-    "subseteq;": "⊆",
-    "subseteqq;": "⫅",
-    "subsetneq;": "⊊",
-    "subsetneqq;": "⫋",
-    "subsim;": "⫇",
-    "subsub;": "⫕",
-    "subsup;": "⫓",
-    "succ;": "≻",
-    "succapprox;": "⪸",
-    "succcurlyeq;": "≽",
-    "succeq;": "⪰",
-    "succnapprox;": "⪺",
-    "succneqq;": "⪶",
-    "succnsim;": "⋩",
-    "succsim;": "≿",
-    "sum;": "∑",
-    "sung;": "♪",
-    sup1: "¹",
-    "sup1;": "¹",
-    sup2: "²",
-    "sup2;": "²",
-    sup3: "³",
-    "sup3;": "³",
-    "sup;": "⊃",
-    "supE;": "⫆",
-    "supdot;": "⪾",
-    "supdsub;": "⫘",
-    "supe;": "⊇",
-    "supedot;": "⫄",
-    "suphsol;": "⟉",
-    "suphsub;": "⫗",
-    "suplarr;": "⥻",
-    "supmult;": "⫂",
-    "supnE;": "⫌",
-    "supne;": "⊋",
-    "supplus;": "⫀",
-    "supset;": "⊃",
-    "supseteq;": "⊇",
-    "supseteqq;": "⫆",
-    "supsetneq;": "⊋",
-    "supsetneqq;": "⫌",
-    "supsim;": "⫈",
-    "supsub;": "⫔",
-    "supsup;": "⫖",
-    "swArr;": "⇙",
-    "swarhk;": "⤦",
-    "swarr;": "↙",
-    "swarrow;": "↙",
-    "swnwar;": "⤪",
-    szlig: "ß",
-    "szlig;": "ß",
-    "target;": "⌖",
-    "tau;": "τ",
-    "tbrk;": "⎴",
-    "tcaron;": "ť",
-    "tcedil;": "ţ",
-    "tcy;": "т",
-    "tdot;": "⃛",
-    "telrec;": "⌕",
-    "tfr;": "\uD835\uDD31",
-    "there4;": "∴",
-    "therefore;": "∴",
-    "theta;": "θ",
-    "thetasym;": "ϑ",
-    "thetav;": "ϑ",
-    "thickapprox;": "≈",
-    "thicksim;": "∼",
-    "thinsp;": " ",
-    "thkap;": "≈",
-    "thksim;": "∼",
-    thorn: "þ",
-    "thorn;": "þ",
-    "tilde;": "˜",
-    times: "×",
-    "times;": "×",
-    "timesb;": "⊠",
-    "timesbar;": "⨱",
-    "timesd;": "⨰",
-    "tint;": "∭",
-    "toea;": "⤨",
-    "top;": "⊤",
-    "topbot;": "⌶",
-    "topcir;": "⫱",
-    "topf;": "\uD835\uDD65",
-    "topfork;": "⫚",
-    "tosa;": "⤩",
-    "tprime;": "‴",
-    "trade;": "™",
-    "triangle;": "▵",
-    "triangledown;": "▿",
-    "triangleleft;": "◃",
-    "trianglelefteq;": "⊴",
-    "triangleq;": "≜",
-    "triangleright;": "▹",
-    "trianglerighteq;": "⊵",
-    "tridot;": "◬",
-    "trie;": "≜",
-    "triminus;": "⨺",
-    "triplus;": "⨹",
-    "trisb;": "⧍",
-    "tritime;": "⨻",
-    "trpezium;": "⏢",
-    "tscr;": "\uD835\uDCC9",
-    "tscy;": "ц",
-    "tshcy;": "ћ",
-    "tstrok;": "ŧ",
-    "twixt;": "≬",
-    "twoheadleftarrow;": "↞",
-    "twoheadrightarrow;": "↠",
-    "uArr;": "⇑",
-    "uHar;": "⥣",
-    uacute: "ú",
-    "uacute;": "ú",
-    "uarr;": "↑",
-    "ubrcy;": "ў",
-    "ubreve;": "ŭ",
-    ucirc: "û",
-    "ucirc;": "û",
-    "ucy;": "у",
-    "udarr;": "⇅",
-    "udblac;": "ű",
-    "udhar;": "⥮",
-    "ufisht;": "⥾",
-    "ufr;": "\uD835\uDD32",
-    ugrave: "ù",
-    "ugrave;": "ù",
-    "uharl;": "↿",
-    "uharr;": "↾",
-    "uhblk;": "▀",
-    "ulcorn;": "⌜",
-    "ulcorner;": "⌜",
-    "ulcrop;": "⌏",
-    "ultri;": "◸",
-    "umacr;": "ū",
-    uml: "¨",
-    "uml;": "¨",
-    "uogon;": "ų",
-    "uopf;": "\uD835\uDD66",
-    "uparrow;": "↑",
-    "updownarrow;": "↕",
-    "upharpoonleft;": "↿",
-    "upharpoonright;": "↾",
-    "uplus;": "⊎",
-    "upsi;": "υ",
-    "upsih;": "ϒ",
-    "upsilon;": "υ",
-    "upuparrows;": "⇈",
-    "urcorn;": "⌝",
-    "urcorner;": "⌝",
-    "urcrop;": "⌎",
-    "uring;": "ů",
-    "urtri;": "◹",
-    "uscr;": "\uD835\uDCCA",
-    "utdot;": "⋰",
-    "utilde;": "ũ",
-    "utri;": "▵",
-    "utrif;": "▴",
-    "uuarr;": "⇈",
-    uuml: "ü",
-    "uuml;": "ü",
-    "uwangle;": "⦧",
-    "vArr;": "⇕",
-    "vBar;": "⫨",
-    "vBarv;": "⫩",
-    "vDash;": "⊨",
-    "vangrt;": "⦜",
-    "varepsilon;": "ϵ",
-    "varkappa;": "ϰ",
-    "varnothing;": "∅",
-    "varphi;": "ϕ",
-    "varpi;": "ϖ",
-    "varpropto;": "∝",
-    "varr;": "↕",
-    "varrho;": "ϱ",
-    "varsigma;": "ς",
-    "varsubsetneq;": "⊊︀",
-    "varsubsetneqq;": "⫋︀",
-    "varsupsetneq;": "⊋︀",
-    "varsupsetneqq;": "⫌︀",
-    "vartheta;": "ϑ",
-    "vartriangleleft;": "⊲",
-    "vartriangleright;": "⊳",
-    "vcy;": "в",
-    "vdash;": "⊢",
-    "vee;": "∨",
-    "veebar;": "⊻",
-    "veeeq;": "≚",
-    "vellip;": "⋮",
-    "verbar;": "|",
-    "vert;": "|",
-    "vfr;": "\uD835\uDD33",
-    "vltri;": "⊲",
-    "vnsub;": "⊂⃒",
-    "vnsup;": "⊃⃒",
-    "vopf;": "\uD835\uDD67",
-    "vprop;": "∝",
-    "vrtri;": "⊳",
-    "vscr;": "\uD835\uDCCB",
-    "vsubnE;": "⫋︀",
-    "vsubne;": "⊊︀",
-    "vsupnE;": "⫌︀",
-    "vsupne;": "⊋︀",
-    "vzigzag;": "⦚",
-    "wcirc;": "ŵ",
-    "wedbar;": "⩟",
-    "wedge;": "∧",
-    "wedgeq;": "≙",
-    "weierp;": "℘",
-    "wfr;": "\uD835\uDD34",
-    "wopf;": "\uD835\uDD68",
-    "wp;": "℘",
-    "wr;": "≀",
-    "wreath;": "≀",
-    "wscr;": "\uD835\uDCCC",
-    "xcap;": "⋂",
-    "xcirc;": "◯",
-    "xcup;": "⋃",
-    "xdtri;": "▽",
-    "xfr;": "\uD835\uDD35",
-    "xhArr;": "⟺",
-    "xharr;": "⟷",
-    "xi;": "ξ",
-    "xlArr;": "⟸",
-    "xlarr;": "⟵",
-    "xmap;": "⟼",
-    "xnis;": "⋻",
-    "xodot;": "⨀",
-    "xopf;": "\uD835\uDD69",
-    "xoplus;": "⨁",
-    "xotime;": "⨂",
-    "xrArr;": "⟹",
-    "xrarr;": "⟶",
-    "xscr;": "\uD835\uDCCD",
-    "xsqcup;": "⨆",
-    "xuplus;": "⨄",
-    "xutri;": "△",
-    "xvee;": "⋁",
-    "xwedge;": "⋀",
-    yacute: "ý",
-    "yacute;": "ý",
-    "yacy;": "я",
-    "ycirc;": "ŷ",
-    "ycy;": "ы",
-    yen: "¥",
-    "yen;": "¥",
-    "yfr;": "\uD835\uDD36",
-    "yicy;": "ї",
-    "yopf;": "\uD835\uDD6A",
-    "yscr;": "\uD835\uDCCE",
-    "yucy;": "ю",
-    yuml: "ÿ",
-    "yuml;": "ÿ",
-    "zacute;": "ź",
-    "zcaron;": "ž",
-    "zcy;": "з",
-    "zdot;": "ż",
-    "zeetrf;": "ℨ",
-    "zeta;": "ζ",
-    "zfr;": "\uD835\uDD37",
-    "zhcy;": "ж",
-    "zigrarr;": "⇝",
-    "zopf;": "\uD835\uDD6B",
-    "zscr;": "\uD835\uDCCF",
-    "zwj;": "‍",
-    "zwnj;": "‌"
-  }));
-});
-
-// node_modules/teleproto/extensions/markdownv2.js
-var require_markdownv2 = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.MarkdownV2Parser = undefined;
-  var tl_1 = require_tl();
-  var html_1 = require_html();
-  var delimiters = {
-    "*": "b",
-    _: "i",
-    __: "u",
-    "~": "s",
-    "||": "tg-spoiler"
-  };
-  function readUntil(source, start, end, escapes) {
-    let value = "";
-    for (let i = start;i < source.length; i++) {
-      if (!escapes && source[i] === "`") {
-        const marker = source.startsWith("```", i) ? "```" : "`";
-        const code = readUntil(source, i + marker.length, marker, "\\`");
-        if (code) {
-          value += source.slice(i, code.end);
-          i = code.end - 1;
-          continue;
-        }
-      }
-      if (source[i] === "\\" && i + 1 < source.length) {
-        const next = source[i + 1];
-        if (!escapes) {
-          value += source.slice(i, i + 2);
-          i++;
-          continue;
-        }
-        if (escapes.includes(next)) {
-          value += next;
-          i++;
-          continue;
-        }
-      }
-      if (source.startsWith(end, i))
-        return { value, end: i + end.length };
-      value += source[i];
-    }
-    return;
-  }
-  function toHtml(source, links = true, quotes = true) {
-    const parts = [];
-    const opened = new Map;
-    const escape = html_1.HTMLParser._escapeHtml;
-    let i = 0;
-    while (i < source.length) {
-      const char = source[i];
-      if (char === "\\" && source.charCodeAt(i + 1) >= 1 && source.charCodeAt(i + 1) <= 126) {
-        parts.push(escape(source[i + 1]));
-        i += 2;
-        continue;
-      }
-      if (char === "\r") {
-        i++;
-        continue;
-      }
-      if (char === "`") {
-        const marker2 = source.startsWith("```", i) ? "```" : "`";
-        const code = readUntil(source, i + marker2.length, marker2, "\\`");
-        if (code) {
-          let body = code.value;
-          let language = "";
-          if (marker2 === "```") {
-            const header = /^([\w.+-]*)\r?\n/.exec(body);
-            if (header) {
-              language = header[1];
-              body = body.slice(header[0].length);
-            }
-          }
-          parts.push(marker2 === "`" ? `<code>${escape(body)}</code>` : `<pre><code class="language-${escape(language)}">${escape(body)}</code></pre>`);
-          i = code.end;
-          continue;
-        }
-      }
-      if (quotes && (i === 0 || source[i - 1] === `
-`) && (char === ">" || source.startsWith("**>", i))) {
-        const lines = [];
-        let cursor = i + (char === ">" ? 0 : 2);
-        while (source[cursor] === ">") {
-          const newline = source.indexOf(`
-`, cursor);
-          const end = newline < 0 ? source.length : newline;
-          lines.push(source.slice(cursor + 1, end));
-          cursor = end;
-          if (newline < 0 || source[newline + 1] !== ">")
-            break;
-          cursor++;
-        }
-        let body = lines.join(`
-`);
-        const suffix2 = /(\\*)\|\|$/.exec(body);
-        let html = toHtml(body, links, false);
-        const collapsed = !!suffix2 && suffix2[1].length % 2 === 0 && html.endsWith("||");
-        if (collapsed)
-          body = body.slice(0, -2);
-        if (collapsed)
-          html = toHtml(body, links, false);
-        parts.push(`<blockquote${collapsed ? " expandable" : ""}>${html}</blockquote>`);
-        i = cursor;
-        continue;
-      }
-      const emoji = source.startsWith("![", i);
-      if (links && (char === "[" || emoji)) {
-        const label = readUntil(source, i + (emoji ? 2 : 1), "]");
-        const url = label && source[label.end] === "(" ? readUntil(source, label.end + 1, ")", "\\)") : undefined;
-        if (label && url) {
-          const body = toHtml(label.value, false, false);
-          const id = /^tg:\/\/emoji\?id=(\d+)$/.exec(url.value);
-          if (emoji && id) {
-            parts.push(`<tg-emoji emoji-id="${id[1]}">${body}</tg-emoji>`);
-          } else {
-            parts.push(`${emoji ? "!" : ""}<a href="${escape(url.value)}">${body}</a>`);
-          }
-          i = url.end;
-          continue;
-        }
-      }
-      const marker = source.startsWith("__", i) ? "__" : source.startsWith("||", i) ? "||" : char;
-      if (source.startsWith("**", i) && source[i - 1] === "_" && source[i + 2] === "_") {
-        i += 2;
-        continue;
-      }
-      const tag = delimiters[marker];
-      if (tag) {
-        const at = opened.get(marker);
-        if (at === undefined) {
-          opened.set(marker, parts.length);
-          parts.push(marker);
-        } else {
-          parts[at] = `<${tag}>`;
-          parts.push(`</${tag}>`);
-          opened.delete(marker);
-        }
-        i += marker.length;
-        continue;
-      }
-      parts.push(escape(char));
-      i++;
-    }
-    return parts.join("");
-  }
-  function escapeText(text) {
-    return text.replace(/[_*\[\]()~`>#+\-=|{}.!\\]/g, "\\$&");
-  }
-  function escapeCode(text) {
-    return text.replace(/[\\`]/g, "\\$&");
-  }
-  function escapeUrl(url) {
-    return url.replace(/[\\)]/g, "\\$&");
-  }
-  function joinMarkup(left, right) {
-    return left + (left.endsWith("_") && right.startsWith("_") ? "**" : "") + right;
-  }
-  function render(text, start, end, nodes) {
-    let output = "";
-    let cursor = start;
-    for (const { entity, children } of nodes) {
-      output = joinMarkup(output, escapeText(text.slice(cursor, entity.offset)));
-      const raw = text.slice(entity.offset, entity.offset + entity.length);
-      const body = render(text, entity.offset, entity.offset + entity.length, children);
-      let value;
-      const wrap = (marker) => joinMarkup(joinMarkup(marker, body), marker);
-      switch (entity.className) {
-        case "MessageEntityBold":
-          value = wrap("*");
-          break;
-        case "MessageEntityItalic":
-          value = wrap("_");
-          break;
-        case "MessageEntityUnderline":
-          value = wrap("__");
-          break;
-        case "MessageEntityStrike":
-          value = wrap("~");
-          break;
-        case "MessageEntitySpoiler":
-          value = wrap("||");
-          break;
-        case "MessageEntityCode":
-          value = "`" + escapeCode(raw) + "`";
-          break;
-        case "MessageEntityPre":
-          value = "```" + (entity.language || "") + `
-` + escapeCode(raw) + "```";
-          break;
-        case "MessageEntityBlockquote":
-          value = "**>" + body.replace(/\n/g, `
->`) + (entity.collapsed ? "||" : "");
-          break;
-        case "MessageEntityTextUrl":
-          value = `[${body}](${escapeUrl(entity.url)})`;
-          break;
-        case "MessageEntityUrl":
-          value = `[${body}](${escapeUrl(raw)})`;
-          break;
-        case "MessageEntityEmail":
-          value = `[${body}](${escapeUrl("mailto:" + raw)})`;
-          break;
-        case "MessageEntityMentionName":
-          value = `[${body}](tg://user?id=${entity.userId})`;
-          break;
-        case "MessageEntityCustomEmoji":
-          value = `![${body}](tg://emoji?id=${entity.documentId})`;
-          break;
-        default:
-          value = body;
-      }
-      output = joinMarkup(output, value);
-      cursor = entity.offset + entity.length;
-    }
-    return joinMarkup(output, escapeText(text.slice(cursor, end)));
-  }
-
-  class MarkdownV2Parser {
-    static parse(message) {
-      const [text, entities] = html_1.HTMLParser.parse(toHtml(message));
-      return [text, entities.filter((entity) => entity.length > 0)];
-    }
-    static unparse(text, entities) {
-      const roots = [];
-      const stack = [];
-      const sorted = [...entities ?? []].sort((a, b) => a.offset - b.offset || b.length - a.length || Number(b instanceof tl_1.Api.MessageEntityBlockquote) - Number(a instanceof tl_1.Api.MessageEntityBlockquote));
-      for (const entity of sorted) {
-        if (entity.length <= 0 || entity.offset < 0 || entity.offset + entity.length > text.length)
-          continue;
-        while (stack.length && entity.offset >= stack[stack.length - 1].entity.offset + stack[stack.length - 1].entity.length) {
-          stack.pop();
-        }
-        const parent = stack[stack.length - 1];
-        if (parent && entity.offset + entity.length > parent.entity.offset + parent.entity.length)
-          continue;
-        const node = { entity, children: [] };
-        (parent ? parent.children : roots).push(node);
-        stack.push(node);
-      }
-      return render(text, 0, text.length, roots);
-    }
-  }
-  exports2.MarkdownV2Parser = MarkdownV2Parser;
-});
-
-// node_modules/teleproto/client/updates/context.js
-var require_context = __commonJS((exports2) => {
-  var __importDefault = exports2 && exports2.__importDefault || function(mod) {
-    return mod && mod.__esModule ? mod : { default: mod };
-  };
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.UpdateContext = undefined;
-  var common_1 = require_common();
-  var Utils_1 = require_Utils();
-  var big_integer_1 = __importDefault(require_BigInteger());
-
-  class UpdateContext extends common_1.EventCommon {
-    constructor(client, peerId, entities) {
-      super({ chatPeer: peerId === undefined ? undefined : (0, Utils_1.getPeer)((0, big_integer_1.default)(peerId)) });
-      this._entities = entities ?? new Map;
-      this._setClient(client);
-    }
-    get peers() {
-      return this._entities;
-    }
-    async getChat() {
-      if (!this.pendingChat) {
-        this.pendingChat = super.getChat();
-      }
-      const pending = this.pendingChat;
-      try {
-        return await pending;
-      } finally {
-        if (this.pendingChat === pending)
-          this.pendingChat = undefined;
-      }
-    }
-  }
-  exports2.UpdateContext = UpdateContext;
-});
-
-// node_modules/teleproto/client/updates/composer.js
-var require_composer = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.ClientUpdates = undefined;
-  var events_1 = require("events");
-  var tl_1 = require_tl();
-  var common_1 = require_common();
-  var Utils_1 = require_Utils();
-  var Helpers_1 = require_Helpers();
-  var network_1 = require_network();
-  var context_1 = require_context();
-  var dispatch_1 = require_dispatch();
-  var fieldsOf = (update) => update ?? {};
-  function nameOf(update) {
-    const className = fieldsOf(update).className;
-    if (!className) {
-      return update instanceof network_1.UpdateConnectionState ? "connectionState" : undefined;
-    }
-    const bare = className.startsWith("Update") ? className.slice("Update".length) : className;
-    return bare.charAt(0).toLowerCase() + bare.slice(1);
-  }
-  function expandShortMessage(update, selfId) {
-    const short = update instanceof tl_1.Api.UpdateShortMessage || update instanceof tl_1.Api.UpdateShortChatMessage;
-    if (!short)
-      return;
-    const peerId = update instanceof tl_1.Api.UpdateShortMessage ? new tl_1.Api.PeerUser({ userId: update.userId }) : new tl_1.Api.PeerChat({ chatId: update.chatId });
-    const fromUser = update instanceof tl_1.Api.UpdateShortMessage ? update.userId : update.fromId;
-    return new tl_1.Api.UpdateNewMessage({
-      message: new tl_1.Api.Message({
-        out: update.out,
-        mentioned: update.mentioned,
-        mediaUnread: update.mediaUnread,
-        silent: update.silent,
-        id: update.id,
-        peerId,
-        fromId: new tl_1.Api.PeerUser({
-          userId: update.out && selfId ? selfId : fromUser
-        }),
-        message: update.message,
-        date: update.date,
-        fwdFrom: update.fwdFrom,
-        viaBotId: update.viaBotId,
-        replyTo: update.replyTo,
-        entities: update.entities,
-        ttlPeriod: update.ttlPeriod
-      }),
-      pts: update.pts,
-      ptsCount: update.ptsCount
-    });
-  }
-  function peerOf(update) {
-    const fields = fieldsOf(update);
-    if (fields.peer instanceof tl_1.Api.DialogPeerCommunity || fields.peer instanceof tl_1.Api.NotifyCommunity) {
-      return (0, Utils_1.getPeerId)(new tl_1.Api.PeerChannel({ channelId: fields.peer.communityId }));
-    }
-    const peer = fields.message?.peerId ?? (fields.peer instanceof tl_1.Api.DialogPeer || fields.peer instanceof tl_1.Api.NotifyPeer ? fields.peer.peer : undefined) ?? (fields.peer instanceof tl_1.Api.PeerUser || fields.peer instanceof tl_1.Api.PeerChat || fields.peer instanceof tl_1.Api.PeerChannel ? fields.peer : undefined);
-    if (peer)
-      return (0, Utils_1.getPeerId)(peer);
-    if (fields.channelId) {
-      return (0, Utils_1.getPeerId)(new tl_1.Api.PeerChannel({ channelId: fields.channelId }));
-    }
-    if (fields.chatId) {
-      return (0, Utils_1.getPeerId)(new tl_1.Api.PeerChat({ chatId: fields.chatId }));
-    }
-    if (fields.userId) {
-      return (0, Utils_1.getPeerId)(new tl_1.Api.PeerUser({ userId: fields.userId }));
-    }
-    return;
-  }
-
-  class ClientUpdates {
-    constructor(client) {
-      this.chain = [];
-      this.independent = new Set;
-      this.registrations = new Map;
-      this.watches = new Set;
-      this.client = client;
-    }
-    use(middleware) {
-      if (this.client._destroyed)
-        throw new Error("Cannot subscribe to a destroyed client");
-      if (typeof middleware !== "function") {
-        throw new TypeError("Update middleware must be a function");
-      }
-      this.chain.push(middleware);
-      return () => this.remove(middleware);
-    }
-    on(target, handler, options = {}) {
-      const run = compose(handler);
-      if (typeof target !== "string" && !Array.isArray(target)) {
-        return this.register(this.builderMiddleware(target, run, options), handler, options.independent);
-      }
-      const names = new Set((Array.isArray(target) ? target : [target]).map((name) => name.charAt(0).toLowerCase() + name.slice(1)));
-      const matchesChat = this.chatMatcher(options);
-      return this.register(async (update, next) => {
-        const name = nameOf(update);
-        if (!name || !names.has(name))
-          return next();
-        if (!await matchesChat(update))
-          return next();
-        if (options.func && !await options.func(update))
-          return next();
-        await run(update, next);
-      }, handler, options.independent);
-    }
-    watch(chats, handler, options = {}) {
-      if (this.client._destroyed)
-        throw new Error("Cannot subscribe to a destroyed client");
-      const wanted = (0, Helpers_1.isArrayLike)(chats) ? chats : [chats];
-      let offHandler;
-      if (handler) {
-        const events = options.events ?? ["newMessage", "newChannelMessage"];
-        offHandler = typeof events === "string" || Array.isArray(events) ? this.on(events, handler, {
-          chats: wanted,
-          func: options.func,
-          independent: options.independent
-        }) : this.on(events, handler, {
-          chats: wanted,
-          func: options.func,
-          independent: options.independent
-        });
-      }
-      const entry = {
-        chats: wanted,
-        channels: new Set,
-        stopped: false,
-        controller: watchController(),
-        retryDelay: 1000
-      };
-      this.watches.add(entry);
-      this.arm(entry);
-      return () => {
-        if (entry.stopped)
-          return;
-        entry.stopped = true;
-        this.watches.delete(entry);
-        offHandler?.();
-        entry.controller.abort();
-        if (entry.retryTimer)
-          clearTimeout(entry.retryTimer);
-        entry.channels.clear();
-      };
-    }
-    async arm(entry) {
-      if (entry.stopped || entry.arming || this.blockedAuthorization || !this.client.updateManager.isRunning)
-        return;
-      const controller = entry.controller;
-      const active = () => !controller.signal.aborted && !entry.stopped;
-      const task = (async () => {
-        await this.client._connectedDeferred.promise;
-        if (!active() || !this.client.updateManager.isRunning)
-          return;
-        let retry = false;
-        const pending = [];
-        const pendingChannels = new Set;
-        const failed = async (error) => {
-          if (!active())
-            return;
-          if (this._suspendAuthorization(error))
-            return;
-          const code = error.errorMessage;
-          retry ||= !(error instanceof TypeError || error instanceof RangeError) && !["CHANNEL_PRIVATE", "CHANNEL_INVALID", "USERNAME_INVALID", "USERNAME_NOT_OCCUPIED", "PEER_ID_INVALID"].includes(code ?? "");
-          await this.reportError(error, undefined);
-        };
-        for (const chat of entry.chats) {
-          if (!active())
-            return;
-          try {
-            const input = await this.client.getInputEntity(chat);
-            if (!active())
-              return;
-            if (!(input instanceof tl_1.Api.InputPeerChannel))
-              continue;
-            const channelId = input.channelId.toString();
-            if (entry.channels.has(channelId) || pendingChannels.has(channelId))
-              continue;
-            pendingChannels.add(channelId);
-            const subscription = this.client.updateManager.watchChannel(channelId, new tl_1.Api.InputChannel({
-              channelId: input.channelId,
-              accessHash: input.accessHash
-            }), controller.signal);
-            pending.push(subscription.then(() => {
-              if (active())
-                entry.channels.add(channelId);
-            }).catch(failed));
-          } catch (error) {
-            await failed(error);
-          }
-        }
-        await Promise.all(pending);
-        if (retry && active()) {
-          entry.retryTimer = setTimeout(() => {
-            entry.retryTimer = undefined;
-            this.arm(entry);
-          }, entry.retryDelay);
-          entry.retryTimer.unref?.();
-          entry.retryDelay = Math.min(entry.retryDelay * 2, 64000);
-        } else {
-          entry.retryDelay = 1000;
-        }
-      })();
-      entry.arming = task;
-      try {
-        await task;
-      } catch (error) {
-        this.client._log.error(`Error arming channel watch: ${error}`);
-      } finally {
-        if (entry.arming === task)
-          entry.arming = undefined;
-      }
-    }
-    _pause() {
-      for (const entry of this.watches) {
-        entry.controller.abort();
-        entry.controller = watchController();
-        entry.channels.clear();
-        entry.arming = undefined;
-        if (entry.retryTimer)
-          clearTimeout(entry.retryTimer);
-        entry.retryTimer = undefined;
-      }
-    }
-    _resume() {
-      if (this.blockedAuthorization)
-        return;
-      const alive = new Set(this.client.updateManager.watchedChannelIds());
-      for (const entry of this.watches) {
-        if (entry.stopped)
-          continue;
-        for (const channelId of [...entry.channels]) {
-          if (!alive.has(channelId))
-            entry.channels.delete(channelId);
-        }
-        if (entry.retryTimer)
-          clearTimeout(entry.retryTimer);
-        entry.retryTimer = undefined;
-        if (entry.channels.size < entry.chats.length)
-          this.arm(entry);
-      }
-    }
-    get authorizationError() {
-      return this.blockedAuthorization;
-    }
-    _suspendAuthorization(error) {
-      const code = error?.errorMessage;
-      if (![
-        "AUTH_KEY_UNREGISTERED",
-        "AUTH_KEY_INVALID",
-        "AUTH_KEY_DUPLICATED",
-        "SESSION_REVOKED",
-        "SESSION_EXPIRED",
-        "USER_DEACTIVATED",
-        "USER_DEACTIVATED_BAN"
-      ].includes(code ?? ""))
-        return false;
-      if (!this.blockedAuthorization) {
-        this.blockedAuthorization = error;
-        this._pause();
-        this.reportError(error);
-      }
-      return true;
-    }
-    _resumeAuthorization() {
-      if (this.client._destroyed)
-        return;
-      this.blockedAuthorization = undefined;
-      this._resume();
-      this.client.updateManager.catchUp();
-    }
-    get watched() {
-      return this.client.updateManager.watchedChannelIds();
-    }
-    get polling() {
-      return this.client.updateManager.polling;
-    }
-    off(middleware) {
-      this.remove(middleware);
-      for (const [registered, handlers] of this.registrations) {
-        if (handlers.includes(middleware))
-          this.remove(registered);
-      }
-    }
-    catch(handler) {
-      this.onError = handler;
-      return this;
-    }
-    get handlers() {
-      return [...this.chain, ...this.independent];
-    }
-    _destroy() {
-      for (const entry of this.watches) {
-        entry.stopped = true;
-        entry.controller.abort();
-        if (entry.retryTimer)
-          clearTimeout(entry.retryTimer);
-        entry.channels.clear();
-      }
-      this.watches.clear();
-      this.chain.length = 0;
-      this.independent.clear();
-      this.registrations.clear();
-      this.onError = undefined;
-      this.blockedAuthorization = undefined;
-    }
-    get state() {
-      const state = this.client.updateManager.state;
-      return state ? { ...state } : undefined;
-    }
-    async catchUp() {
-      await this.client.updateManager.catchUp();
-    }
-    async dispatch(update, peers) {
-      if (this.client._destroyed)
-        throw new Error("Cannot dispatch through a destroyed client");
-      if (peers)
-        fieldsOf(update)._entities = new Map(peers);
-      await (0, dispatch_1._dispatchUpdate)(this.client, { update });
-    }
-    async _dispatch(update) {
-      if (update instanceof network_1.UpdateConnectionState && update.state === network_1.UpdateConnectionState.connected) {
-        this._resume();
-      }
-      if (!this.chain.length && !this.independent.size)
-        return;
-      const expanded = expandShortMessage(update, this.client._selfInputPeer?.userId);
-      if (expanded) {
-        fieldsOf(expanded)._entities = fieldsOf(update)._entities;
-        update = expanded;
-      }
-      const message = fieldsOf(update).message;
-      if ((message instanceof tl_1.Api.Message || message instanceof tl_1.Api.MessageService) && message._client !== this.client) {
-        message._finishInit(this.client, fieldsOf(update)._entities ?? new Map);
-      }
-      if (update && typeof update === "object" && !("state" in update)) {
-        Object.defineProperty(update, "state", {
-          value: {},
-          enumerable: false,
-          writable: true
-        });
-      }
-      this.attachContext(update);
-      const chain = [...this.chain];
-      const branches = [...this.independent];
-      const deliver = async (handlers) => {
-        try {
-          await runChain(handlers, update, async () => {});
-        } catch (e) {
-          await this.reportError(e, update);
-        }
-      };
-      await Promise.all([deliver(chain), ...branches.map((handler) => deliver([handler]))]);
-    }
-    attachContext(event, update = event) {
-      if ("context" in event)
-        return;
-      let context;
-      Object.defineProperty(event, "context", {
-        get: () => context ??= new context_1.UpdateContext(this.client, peerOf(update), fieldsOf(update)._entities),
-        enumerable: false
-      });
-    }
-    register(middleware, handler, independent = false) {
-      if (this.client._destroyed)
-        throw new Error("Cannot subscribe to a destroyed client");
-      this.registrations.set(middleware, Array.isArray(handler) ? handler.slice() : [handler]);
-      if (independent) {
-        this.independent.add(middleware);
-        return () => this.remove(middleware);
-      }
-      return this.use(middleware);
-    }
-    remove(middleware) {
-      this.registrations.delete(middleware);
-      this.independent.delete(middleware);
-      const index = this.chain.indexOf(middleware);
-      if (index >= 0)
-        this.chain.splice(index, 1);
-    }
-    async reportError(error, update) {
-      if (this.onError) {
-        try {
-          await this.onError(error, update);
-          return;
-        } catch (e) {
-          error = e;
-        }
-      }
-      if (this.client._errorHandler) {
-        try {
-          await this.client._errorHandler(error);
-          return;
-        } catch (handlerError) {
-          error = handlerError;
-        }
-      }
-      this.client._log.error(`Error in the update chain: ${error}`);
-    }
-    chatMatcher(options) {
-      if (options.chats === undefined)
-        return async () => true;
-      let ids;
-      const wanted = (0, Helpers_1.isArrayLike)(options.chats) ? options.chats : [options.chats];
-      return async (update) => {
-        if (!ids) {
-          ids = new Set(await (0, common_1._intoIdSet)(this.client, wanted) ?? []);
-        }
-        const peer = peerOf(update);
-        const listed = peer !== undefined && ids.has(peer);
-        return options.blacklistChats ? !listed : listed;
-      };
-    }
-    builderMiddleware(builder, run, options) {
-      const matchesChat = this.chatMatcher(options);
-      builder.client = this.client;
-      return async (update, next) => {
-        if (!builder.resolved)
-          await builder.resolve(this.client);
-        let event = builder.build(update, undefined, this.client._selfInputPeer ? this.client._selfInputPeer.userId : undefined);
-        if (!event)
-          return next();
-        event._client = this.client;
-        if ("_eventName" in event) {
-          event.originalUpdate = update;
-          event._entities = update._entities ?? new Map;
-          event._setClient(this.client);
-        }
-        this.attachContext(event, update);
-        if (!await builder.filter(event))
-          return next();
-        if (!await matchesChat(update))
-          return next();
-        if (options.func && !await options.func(update))
-          return next();
-        await run(event, next);
-      };
-    }
-  }
-  exports2.ClientUpdates = ClientUpdates;
-  function compose(handler) {
-    if (!Array.isArray(handler)) {
-      if (typeof handler !== "function") {
-        throw new TypeError("Update handler must be a function");
-      }
-      return handler;
-    }
-    const handlers = handler.slice();
-    for (const item of handlers) {
-      if (typeof item !== "function") {
-        throw new TypeError("Update handler must be a function");
-      }
-    }
-    return (update, next) => runChain(handlers, update, next);
-  }
-  async function runChain(handlers, update, next) {
-    let last = -1;
-    const run = async (index) => {
-      if (index <= last)
-        throw new Error("next() called multiple times");
-      last = index;
-      if (index >= handlers.length)
-        return next();
-      await handlers[index](update, () => run(index + 1));
-    };
-    await run(0);
-  }
-  function watchController() {
-    const controller = new AbortController;
-    (0, events_1.setMaxListeners)(0, controller.signal);
-    return controller;
-  }
-});
-
-// node_modules/teleproto/events/NewMessage.js
-var require_NewMessage = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.NewMessageEvent = exports2.NewMessage = undefined;
-  var common_1 = require_common();
-  var tl_1 = require_tl();
-
-  class NewMessage extends common_1.EventBuilder {
-    constructor(newMessageParams = {}) {
-      let { chats, func, incoming, outgoing, fromUsers, forwards, pattern, blacklistChats = false } = newMessageParams;
-      if (incoming && outgoing) {
-        incoming = outgoing = undefined;
-      } else if (incoming != null && outgoing == undefined) {
-        outgoing = !incoming;
-      } else if (outgoing != null && incoming == undefined) {
-        incoming = !outgoing;
-      } else if (outgoing == false && incoming == false) {
-        throw new Error("Don't create an event handler if you don't want neither incoming nor outgoing!");
-      }
-      super({ chats, blacklistChats, func });
-      this.incoming = incoming;
-      this.outgoing = outgoing;
-      this.fromUsers = fromUsers;
-      this.forwards = forwards;
-      this.pattern = pattern;
-      this._noCheck = [
-        incoming,
-        outgoing,
-        chats,
-        pattern,
-        fromUsers,
-        forwards,
-        func
-      ].every((v) => v == undefined);
-    }
-    async _resolve(client) {
-      await super._resolve(client);
-      this.fromUsers = await (0, common_1._intoIdSet)(client, this.fromUsers);
-    }
-    build(update, callback, selfId) {
-      if (update instanceof tl_1.Api.UpdateNewMessage || update instanceof tl_1.Api.UpdateNewChannelMessage) {
-        if (!(update.message instanceof tl_1.Api.Message)) {
-          return;
-        }
-        const event = new NewMessageEvent(update.message, update);
-        this.addAttributes(event);
-        return event;
-      } else if (update instanceof tl_1.Api.UpdateShortMessage) {
-        return new NewMessageEvent(new tl_1.Api.Message({
-          out: update.out,
-          mentioned: update.mentioned,
-          mediaUnread: update.mediaUnread,
-          silent: update.silent,
-          id: update.id,
-          peerId: new tl_1.Api.PeerUser({ userId: update.userId }),
-          fromId: new tl_1.Api.PeerUser({
-            userId: update.out ? selfId : update.userId
-          }),
-          message: update.message,
-          date: update.date,
-          fwdFrom: update.fwdFrom,
-          viaBotId: update.viaBotId,
-          replyTo: update.replyTo,
-          entities: update.entities,
-          ttlPeriod: update.ttlPeriod
-        }), update);
-      } else if (update instanceof tl_1.Api.UpdateShortChatMessage) {
-        return new NewMessageEvent(new tl_1.Api.Message({
-          out: update.out,
-          mentioned: update.mentioned,
-          mediaUnread: update.mediaUnread,
-          silent: update.silent,
-          id: update.id,
-          peerId: new tl_1.Api.PeerChat({ chatId: update.chatId }),
-          fromId: new tl_1.Api.PeerUser({
-            userId: update.out ? selfId : update.fromId
-          }),
-          message: update.message,
-          date: update.date,
-          fwdFrom: update.fwdFrom,
-          viaBotId: update.viaBotId,
-          replyTo: update.replyTo,
-          entities: update.entities,
-          ttlPeriod: update.ttlPeriod
-        }), update);
-      }
-    }
-    filter(event) {
-      if (this._noCheck) {
-        return event;
-      }
-      if (this.incoming && event.message.out) {
-        return;
-      }
-      if (this.outgoing && !event.message.out) {
-        return;
-      }
-      if (this.forwards != null) {
-        if (this.forwards != !!event.message.fwdFrom) {
-          return;
-        }
-      }
-      if (this.fromUsers != null) {
-        if (!event.message.senderId || !this.fromUsers.includes(event.message.senderId.toString())) {
-          return;
-        }
-      }
-      if (this.pattern) {
-        const match = event.message.message?.match(this.pattern);
-        if (!match) {
-          return;
-        }
-        event.message.patternMatch = match;
-      }
-      return super.filter(event);
-    }
-    addAttributes(update) {}
-  }
-  exports2.NewMessage = NewMessage;
-
-  class NewMessageEvent extends common_1.EventCommon {
-    constructor(message, originalUpdate) {
-      super({
-        msgId: message.id,
-        chatPeer: message.peerId,
-        broadcast: message.post
-      });
-      this.originalUpdate = originalUpdate;
-      this.message = message;
-    }
-    _setClient(client) {
-      super._setClient(client);
-      const m = this.message;
-      try {
-        m._finishInit(client, this.originalUpdate._entities || new Map, undefined);
-      } catch (e) {
-        client._log.error("Got error while trying to finish init message with id " + m.id, e);
-        if (client._errorHandler) {
-          client._errorHandler(e);
-        }
-      }
-    }
-    get patternMatch() {
-      return this.message.patternMatch;
-    }
-    async reply(params) {
-      if (!this._client)
-        return;
-      return this._client.sendMessage(this.message.peerId, {
-        message: params.message,
-        parseMode: params.parseMode,
-        formattingEntities: params.formattingEntities,
-        file: params.file,
-        linkPreview: params.linkPreview,
-        silent: params.silent,
-        replyTo: this.message.id
-      });
-    }
-    async respond(params) {
-      if (!this._client)
-        return;
-      return this._client.sendMessage(this.message.peerId, {
-        message: params.message,
-        parseMode: params.parseMode,
-        formattingEntities: params.formattingEntities,
-        file: params.file,
-        linkPreview: params.linkPreview,
-        silent: params.silent
-      });
-    }
-    async delete(params = {}) {
-      if (!this._client)
-        return;
-      return this._client.deleteMessages(this.message.peerId, [this.message.id], params);
-    }
-    async forward(chat) {
-      if (!this._client)
-        return;
-      return this._client.forwardMessages(chat, {
-        messages: [this.message.id],
-        fromPeer: this.message.peerId
-      });
-    }
-    async edit(params) {
-      if (!this._client)
-        return;
-      return this._client.editMessage(this.message.peerId, {
-        message: this.message.id,
-        text: params.message,
-        parseMode: params.parseMode,
-        formattingEntities: params.formattingEntities,
-        file: params.file
-      });
-    }
-    async markRead() {
-      if (!this._client)
-        return;
-      return this._client.markAsRead(this.message.peerId, this.message.id);
-    }
-    async pin(params) {
-      if (!this._client)
-        return;
-      return this._client.pinMessage(this.message.peerId, this.message.id, params);
-    }
-    async unpin() {
-      if (!this._client)
-        return;
-      await this._client.unpinMessage(this.message.peerId, this.message.id);
-    }
-  }
-  exports2.NewMessageEvent = NewMessageEvent;
-});
-
-// node_modules/teleproto/events/EditedMessage.js
-var require_EditedMessage = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.EditedMessageEvent = exports2.EditedMessage = undefined;
-  var tl_1 = require_tl();
-  var NewMessage_1 = require_NewMessage();
-
-  class EditedMessage extends NewMessage_1.NewMessage {
-    constructor(editedMessageParams) {
-      super(editedMessageParams);
-    }
-    build(update, callback, selfId) {
-      if (update instanceof tl_1.Api.UpdateEditChannelMessage || update instanceof tl_1.Api.UpdateEditMessage) {
-        if (!(update.message instanceof tl_1.Api.Message)) {
-          return;
-        }
-        const event = new EditedMessageEvent(update.message, update);
-        this.addAttributes(event);
-        return event;
-      }
-    }
-  }
-  exports2.EditedMessage = EditedMessage;
-
-  class EditedMessageEvent extends NewMessage_1.NewMessageEvent {
-    constructor(message, originalUpdate) {
-      super(message, originalUpdate);
-    }
-  }
-  exports2.EditedMessageEvent = EditedMessageEvent;
-});
-
-// node_modules/teleproto/events/UserUpdate.js
-var require_UserUpdate = __commonJS((exports2) => {
-  var __importDefault = exports2 && exports2.__importDefault || function(mod) {
-    return mod && mod.__esModule ? mod : { default: mod };
-  };
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.UserUpdateEvent = exports2.UserUpdate = undefined;
-  var tl_1 = require_tl();
-  var common_1 = require_common();
-  var big_integer_1 = __importDefault(require_BigInteger());
-
-  class UserUpdate extends common_1.EventBuilder {
-    constructor(params = {}) {
-      super({
-        chats: params.chats,
-        blacklistChats: params.blacklistChats,
-        func: params.func
-      });
-    }
-    async _resolve(client) {
-      this.chats = await (0, common_1._intoIdSet)(client, this.chats);
-    }
-    build(update) {
-      if (update instanceof tl_1.Api.UpdateUserStatus) {
-        return new UserUpdateEvent(update);
-      }
-      if (update instanceof tl_1.Api.UpdateUserTyping || update instanceof tl_1.Api.UpdateChatUserTyping || update instanceof tl_1.Api.UpdateChannelUserTyping) {
-        return new UserUpdateEvent(update);
-      }
-      return;
-    }
-    filter(event) {
-      if (this.chats != null) {
-        const userId = event.userId?.toString();
-        if (!userId || !this.chats.includes(userId)) {
-          if (!this.blacklistChats) {
-            return;
-          }
-        } else if (this.blacklistChats) {
-          return;
-        }
-      }
-      if (this.func && !this.func(event)) {
-        return;
-      }
-      return event;
-    }
-  }
-  exports2.UserUpdate = UserUpdate;
-
-  class UserUpdateEvent extends common_1.EventCommonSender {
-    constructor(update) {
-      let chatPeer;
-      let userId;
-      if (update instanceof tl_1.Api.UpdateUserStatus) {
-        userId = update.userId;
-        chatPeer = new tl_1.Api.PeerUser({ userId: update.userId });
-      } else if (update instanceof tl_1.Api.UpdateUserTyping) {
-        userId = update.userId;
-        chatPeer = new tl_1.Api.PeerUser({ userId: update.userId });
-      } else if (update instanceof tl_1.Api.UpdateChatUserTyping) {
-        userId = update.fromId instanceof tl_1.Api.PeerUser ? update.fromId.userId : big_integer_1.default.zero;
-        chatPeer = new tl_1.Api.PeerChat({ chatId: update.chatId });
-      } else {
-        userId = update.fromId instanceof tl_1.Api.PeerUser ? update.fromId.userId : big_integer_1.default.zero;
-        chatPeer = new tl_1.Api.PeerChannel({ channelId: update.channelId });
-      }
-      super({ chatPeer });
-      this._eventName = "UserUpdate";
-      this.originalUpdate = update;
-      this._userId = userId;
-      if (update instanceof tl_1.Api.UpdateUserStatus) {
-        this._status = update.status;
-      } else {
-        this._action = update.action;
-        if (update instanceof tl_1.Api.UpdateChatUserTyping) {
-          this._chatId = update.chatId;
-        } else if (update instanceof tl_1.Api.UpdateChannelUserTyping) {
-          this._chatId = update.channelId;
-        }
-      }
-    }
-    get userId() {
-      return this._userId;
-    }
-    get status() {
-      return this._status;
-    }
-    get action() {
-      return this._action;
-    }
-    get online() {
-      if (!this._status)
-        return;
-      return this._status instanceof tl_1.Api.UserStatusOnline;
-    }
-    get offline() {
-      if (!this._status)
-        return;
-      return this._status instanceof tl_1.Api.UserStatusOffline;
-    }
-    get until() {
-      if (this._status instanceof tl_1.Api.UserStatusOnline) {
-        return new Date(this._status.expires * 1000);
-      }
-      return;
-    }
-    get lastSeen() {
-      if (this._status instanceof tl_1.Api.UserStatusOffline) {
-        return new Date(this._status.wasOnline * 1000);
-      }
-      return;
-    }
-    get recently() {
-      if (!this._status)
-        return;
-      return this._status instanceof tl_1.Api.UserStatusRecently;
-    }
-    get withinWeeks() {
-      if (!this._status)
-        return;
-      return this._status instanceof tl_1.Api.UserStatusLastWeek;
-    }
-    get withinMonths() {
-      if (!this._status)
-        return;
-      return this._status instanceof tl_1.Api.UserStatusLastMonth;
-    }
-    get typing() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageTypingAction;
-    }
-    get cancel() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageCancelAction;
-    }
-    get recording() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageRecordVideoAction || this._action instanceof tl_1.Api.SendMessageRecordAudioAction || this._action instanceof tl_1.Api.SendMessageRecordRoundAction;
-    }
-    get uploading() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageUploadVideoAction || this._action instanceof tl_1.Api.SendMessageUploadAudioAction || this._action instanceof tl_1.Api.SendMessageUploadPhotoAction || this._action instanceof tl_1.Api.SendMessageUploadDocumentAction || this._action instanceof tl_1.Api.SendMessageUploadRoundAction;
-    }
-    get audio() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageRecordAudioAction || this._action instanceof tl_1.Api.SendMessageUploadAudioAction;
-    }
-    get video() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageRecordVideoAction || this._action instanceof tl_1.Api.SendMessageUploadVideoAction;
-    }
-    get round() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageRecordRoundAction || this._action instanceof tl_1.Api.SendMessageUploadRoundAction;
-    }
-    get photo() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageUploadPhotoAction;
-    }
-    get document() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageUploadDocumentAction;
-    }
-    get geo() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageGeoLocationAction;
-    }
-    get contact() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageChooseContactAction;
-    }
-    get playing() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageGamePlayAction;
-    }
-    get sticker() {
-      if (!this._action)
-        return;
-      return this._action instanceof tl_1.Api.SendMessageChooseStickerAction;
-    }
-    get uploadProgress() {
-      if (this._action instanceof tl_1.Api.SendMessageUploadVideoAction || this._action instanceof tl_1.Api.SendMessageUploadAudioAction || this._action instanceof tl_1.Api.SendMessageUploadPhotoAction || this._action instanceof tl_1.Api.SendMessageUploadDocumentAction || this._action instanceof tl_1.Api.SendMessageUploadRoundAction) {
-        return this._action.progress;
-      }
-      return;
-    }
-    async getUser() {
-      if (!this._client)
-        return;
-      try {
-        const result = await this._client.getEntity(new tl_1.Api.PeerUser({ userId: this._userId }));
-        if (result instanceof tl_1.Api.User) {
-          return result;
-        }
-      } catch {
-        return;
-      }
-      return;
-    }
-    async getInputUser() {
-      if (!this._client)
-        return;
-      try {
-        return await this._client.getInputEntity(new tl_1.Api.PeerUser({ userId: this._userId }));
-      } catch {
-        return;
-      }
-    }
-  }
-  exports2.UserUpdateEvent = UserUpdateEvent;
-});
-
-// node_modules/teleproto/events/MessageRead.js
-var require_MessageRead = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.MessageReadEvent = exports2.MessageRead = undefined;
-  var tl_1 = require_tl();
-  var common_1 = require_common();
-
-  class MessageRead extends common_1.EventBuilder {
-    constructor(params = {}) {
-      super({
-        chats: params.chats,
-        blacklistChats: params.blacklistChats,
-        func: params.func
-      });
-      this._inbox = params.inbox;
-    }
-    async _resolve(client) {
-      await super._resolve(client);
-    }
-    build(update) {
-      if (update instanceof tl_1.Api.UpdateReadHistoryInbox || update instanceof tl_1.Api.UpdateReadHistoryOutbox || update instanceof tl_1.Api.UpdateReadChannelInbox || update instanceof tl_1.Api.UpdateReadChannelOutbox || update instanceof tl_1.Api.UpdateReadMessagesContents || update instanceof tl_1.Api.UpdateChannelReadMessagesContents) {
-        return new MessageReadEvent(update);
-      }
-      return;
-    }
-    filter(event) {
-      if (this._inbox !== undefined) {
-        if (this._inbox !== event.inbox) {
-          return;
-        }
-      }
-      if (this.chats !== undefined && event.chatId) {
-        const chatIdStr = event.chatId.toString();
-        const inside = this.chats.includes(chatIdStr);
-        if (inside === this.blacklistChats) {
-          return;
-        }
-      }
-      if (this.func && !this.func(event)) {
-        return;
-      }
-      return event;
-    }
-  }
-  exports2.MessageRead = MessageRead;
-
-  class MessageReadEvent extends common_1.EventCommon {
-    constructor(update) {
-      let chatPeer;
-      let isOutbox = false;
-      let isContents = false;
-      let maxId = 0;
-      let messageIds = [];
-      if (update instanceof tl_1.Api.UpdateReadHistoryInbox) {
-        chatPeer = update.peer;
-        isOutbox = false;
-        maxId = update.maxId;
-      } else if (update instanceof tl_1.Api.UpdateReadHistoryOutbox) {
-        chatPeer = update.peer;
-        isOutbox = true;
-        maxId = update.maxId;
-      } else if (update instanceof tl_1.Api.UpdateReadChannelInbox) {
-        chatPeer = new tl_1.Api.PeerChannel({ channelId: update.channelId });
-        isOutbox = false;
-        maxId = update.maxId;
-      } else if (update instanceof tl_1.Api.UpdateReadChannelOutbox) {
-        chatPeer = new tl_1.Api.PeerChannel({ channelId: update.channelId });
-        isOutbox = true;
-        maxId = update.maxId;
-      } else if (update instanceof tl_1.Api.UpdateReadMessagesContents) {
-        isContents = true;
-        messageIds = update.messages;
-        maxId = messageIds.length > 0 ? Math.max(...messageIds) : 0;
-      } else if (update instanceof tl_1.Api.UpdateChannelReadMessagesContents) {
-        chatPeer = new tl_1.Api.PeerChannel({ channelId: update.channelId });
-        isContents = true;
-        messageIds = update.messages;
-        maxId = messageIds.length > 0 ? Math.max(...messageIds) : 0;
-      }
-      super({ chatPeer });
-      this._eventName = "MessageRead";
-      this.originalUpdate = update;
-      this._outbox = isOutbox;
-      this._contents = isContents;
-      this._maxId = maxId;
-      this._messageIds = messageIds;
-    }
-    get maxId() {
-      return this._maxId;
-    }
-    get outbox() {
-      return this._outbox;
-    }
-    get inbox() {
-      return !this._outbox;
-    }
-    get contents() {
-      return this._contents;
-    }
-    get messageIds() {
-      return this._messageIds;
-    }
-    get isRead() {
-      return this._maxId > 0 || this._messageIds.length > 0;
-    }
-    async getMessages() {
-      if (!this._client || this._messageIds.length === 0) {
-        return;
-      }
-      if (!this.chatId) {
-        return;
-      }
-      try {
-        return await this._client.getMessages(this.chatId, {
-          ids: this._messageIds
-        });
-      } catch {
-        return;
-      }
-    }
-  }
-  exports2.MessageReadEvent = MessageReadEvent;
-});
-
-// node_modules/teleproto/events/DeletedMessage.js
-var require_DeletedMessage = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.DeletedMessageEvent = exports2.DeletedMessage = undefined;
-  var tl_1 = require_tl();
-  var common_1 = require_common();
-
-  class DeletedMessage extends common_1.EventBuilder {
-    constructor(eventParams = {}) {
-      super(eventParams);
-    }
-    build(update) {
-      if (update instanceof tl_1.Api.UpdateDeleteChannelMessages) {
-        return new DeletedMessageEvent(update.messages, update, new tl_1.Api.PeerChannel({ channelId: update.channelId }));
-      } else if (update instanceof tl_1.Api.UpdateDeleteMessages) {
-        return new DeletedMessageEvent(update.messages, update);
-      }
-      return;
-    }
-  }
-  exports2.DeletedMessage = DeletedMessage;
-
-  class DeletedMessageEvent extends common_1.EventCommon {
-    constructor(deletedIds, originalUpdate, peer) {
-      super({
-        chatPeer: peer,
-        msgId: Array.isArray(deletedIds) && deletedIds.length > 0 ? deletedIds[0] : undefined
-      });
-      this.originalUpdate = originalUpdate;
-      this.deletedIds = deletedIds;
-      this.peer = peer;
-    }
-    get deletedId() {
-      return this.deletedIds.length > 0 ? this.deletedIds[0] : undefined;
-    }
-    get isChannel() {
-      return this.originalUpdate instanceof tl_1.Api.UpdateDeleteChannelMessages;
-    }
-  }
-  exports2.DeletedMessageEvent = DeletedMessageEvent;
-});
-
-// node_modules/teleproto/events/ChatAction.js
-var require_ChatAction = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.ChatActionEvent = exports2.ChatAction = undefined;
-  var tl_1 = require_tl();
-  var common_1 = require_common();
-
-  class ChatAction extends common_1.EventBuilder {
-    constructor(params = {}) {
-      super({
-        chats: params.chats,
-        blacklistChats: params.blacklistChats,
-        func: params.func
-      });
-    }
-    build(update) {
-      if (update instanceof tl_1.Api.UpdateChatParticipantAdd || update instanceof tl_1.Api.UpdateChatParticipantDelete || update instanceof tl_1.Api.UpdateChatParticipant || update instanceof tl_1.Api.UpdateChannelParticipant) {
-        return new ChatActionEvent(update);
-      }
-      if (update instanceof tl_1.Api.UpdatePinnedMessages || update instanceof tl_1.Api.UpdatePinnedChannelMessages) {
-        return new ChatActionEvent(update);
-      }
-      if (update instanceof tl_1.Api.UpdateNewMessage || update instanceof tl_1.Api.UpdateNewChannelMessage) {
-        const msg = update.message;
-        if (msg instanceof tl_1.Api.MessageService && msg.action) {
-          if (msg.action instanceof tl_1.Api.MessageActionChatCreate || msg.action instanceof tl_1.Api.MessageActionChannelCreate || msg.action instanceof tl_1.Api.MessageActionChatEditTitle || msg.action instanceof tl_1.Api.MessageActionChatEditPhoto || msg.action instanceof tl_1.Api.MessageActionChatDeletePhoto || msg.action instanceof tl_1.Api.MessageActionChatAddUser || msg.action instanceof tl_1.Api.MessageActionChatDeleteUser || msg.action instanceof tl_1.Api.MessageActionChatJoinedByLink || msg.action instanceof tl_1.Api.MessageActionPinMessage || msg.action instanceof tl_1.Api.MessageActionChatJoinedByRequest) {
-            return new ChatActionEvent(update, msg);
-          }
-        }
-      }
-      return;
-    }
-  }
-  exports2.ChatAction = ChatAction;
-
-  class ChatActionEvent extends common_1.EventCommon {
-    constructor(update, actionMessage) {
-      let chatPeer;
-      if (update instanceof tl_1.Api.UpdateChatParticipantAdd) {
-        chatPeer = new tl_1.Api.PeerChat({ chatId: update.chatId });
-      } else if (update instanceof tl_1.Api.UpdateChatParticipantDelete) {
-        chatPeer = new tl_1.Api.PeerChat({ chatId: update.chatId });
-      } else if (update instanceof tl_1.Api.UpdateChatParticipant) {
-        chatPeer = new tl_1.Api.PeerChat({ chatId: update.chatId });
-      } else if (update instanceof tl_1.Api.UpdateChannelParticipant) {
-        chatPeer = new tl_1.Api.PeerChannel({ channelId: update.channelId });
-      } else if (update instanceof tl_1.Api.UpdatePinnedMessages) {
-        chatPeer = update.peer;
-      } else if (update instanceof tl_1.Api.UpdatePinnedChannelMessages) {
-        chatPeer = new tl_1.Api.PeerChannel({ channelId: update.channelId });
-      } else if (actionMessage) {
-        chatPeer = actionMessage.peerId;
-      }
-      super({ chatPeer });
-      this._eventName = "ChatAction";
-      this.originalUpdate = update;
-      this._actionMessage = actionMessage;
-      this._userIds = [];
-      this._pinnedIds = [];
-      this._pinned = false;
-      this._created = false;
-      this._parseUpdate(update, actionMessage);
-    }
-    _parseUpdate(update, actionMessage) {
-      if (update instanceof tl_1.Api.UpdateChatParticipantAdd) {
-        this._userIds = [update.userId];
-        this._addedBy = update.inviterId;
-      } else if (update instanceof tl_1.Api.UpdateChatParticipantDelete) {
-        this._userIds = [update.userId];
-      } else if (update instanceof tl_1.Api.UpdateChatParticipant) {
-        this._userIds = [update.userId];
-        if (update.newParticipant && !update.prevParticipant) {
-          this._addedBy = update.actorId;
-        } else if (!update.newParticipant && update.prevParticipant) {
-          this._kickedBy = update.actorId;
-        }
-      } else if (update instanceof tl_1.Api.UpdateChannelParticipant) {
-        this._userIds = [update.userId];
-        if (update.newParticipant && !update.prevParticipant) {
-          this._addedBy = update.actorId;
-        } else if (!update.newParticipant && update.prevParticipant) {
-          this._kickedBy = update.actorId;
-        }
-      }
-      if (update instanceof tl_1.Api.UpdatePinnedMessages) {
-        this._pinnedIds = update.messages;
-        this._pinned = update.pinned ?? true;
-      } else if (update instanceof tl_1.Api.UpdatePinnedChannelMessages) {
-        this._pinnedIds = update.messages;
-        this._pinned = update.pinned ?? true;
-      }
-      if (actionMessage?.action) {
-        const action = actionMessage.action;
-        if (action instanceof tl_1.Api.MessageActionChatCreate) {
-          this._created = true;
-          this._newTitle = action.title;
-          this._userIds = action.users;
-        } else if (action instanceof tl_1.Api.MessageActionChannelCreate) {
-          this._created = true;
-          this._newTitle = action.title;
-        } else if (action instanceof tl_1.Api.MessageActionChatEditTitle) {
-          this._newTitle = action.title;
-        } else if (action instanceof tl_1.Api.MessageActionChatEditPhoto) {
-          this._newPhoto = action.photo;
-        } else if (action instanceof tl_1.Api.MessageActionChatAddUser) {
-          this._userIds = action.users;
-          if (actionMessage.fromId instanceof tl_1.Api.PeerUser) {
-            this._addedBy = actionMessage.fromId.userId;
-          }
-        } else if (action instanceof tl_1.Api.MessageActionChatDeleteUser) {
-          this._userIds = [action.userId];
-          if (actionMessage.fromId instanceof tl_1.Api.PeerUser) {
-            if (!action.userId.eq(actionMessage.fromId.userId)) {
-              this._kickedBy = actionMessage.fromId.userId;
-            }
-          }
-        } else if (action instanceof tl_1.Api.MessageActionChatJoinedByLink) {
-          if (actionMessage.fromId instanceof tl_1.Api.PeerUser) {
-            this._userIds = [actionMessage.fromId.userId];
-          }
-          this._addedBy = action.inviterId;
-        } else if (action instanceof tl_1.Api.MessageActionChatJoinedByRequest) {
-          if (actionMessage.fromId instanceof tl_1.Api.PeerUser) {
-            this._userIds = [actionMessage.fromId.userId];
-          }
-        } else if (action instanceof tl_1.Api.MessageActionPinMessage) {
-          if (actionMessage.replyTo instanceof tl_1.Api.MessageReplyHeader && actionMessage.replyTo.replyToMsgId !== undefined) {
-            this._pinnedIds = [actionMessage.replyTo.replyToMsgId];
-          }
-          this._pinned = true;
-        }
-      }
-    }
-    get actionMessage() {
-      return this._actionMessage;
-    }
-    get userJoined() {
-      const action = this._actionMessage?.action;
-      return action instanceof tl_1.Api.MessageActionChatJoinedByLink || action instanceof tl_1.Api.MessageActionChatJoinedByRequest || this.originalUpdate instanceof tl_1.Api.UpdateChatParticipant && !!this.originalUpdate.newParticipant && !this.originalUpdate.prevParticipant || this.originalUpdate instanceof tl_1.Api.UpdateChannelParticipant && !!this.originalUpdate.newParticipant && !this.originalUpdate.prevParticipant;
-    }
-    get userAdded() {
-      return this._actionMessage?.action instanceof tl_1.Api.MessageActionChatAddUser || this.originalUpdate instanceof tl_1.Api.UpdateChatParticipantAdd;
-    }
-    get userLeft() {
-      const action = this._actionMessage?.action;
-      if (action instanceof tl_1.Api.MessageActionChatDeleteUser) {
-        if (this._actionMessage?.fromId instanceof tl_1.Api.PeerUser) {
-          return action.userId.eq(this._actionMessage.fromId.userId);
-        }
-      }
-      if (this.originalUpdate instanceof tl_1.Api.UpdateChatParticipant || this.originalUpdate instanceof tl_1.Api.UpdateChannelParticipant) {
-        return !this.originalUpdate.newParticipant && !!this.originalUpdate.prevParticipant && this.originalUpdate.userId.eq(this.originalUpdate.actorId);
-      }
-      return false;
-    }
-    get userKicked() {
-      const action = this._actionMessage?.action;
-      if (action instanceof tl_1.Api.MessageActionChatDeleteUser) {
-        if (this._actionMessage?.fromId instanceof tl_1.Api.PeerUser) {
-          return !action.userId.eq(this._actionMessage.fromId.userId);
-        }
-      }
-      if (this.originalUpdate instanceof tl_1.Api.UpdateChatParticipant || this.originalUpdate instanceof tl_1.Api.UpdateChannelParticipant) {
-        return !this.originalUpdate.newParticipant && !!this.originalUpdate.prevParticipant && !this.originalUpdate.userId.eq(this.originalUpdate.actorId);
-      }
-      return this.originalUpdate instanceof tl_1.Api.UpdateChatParticipantDelete;
-    }
-    get userIds() {
-      return this._userIds;
-    }
-    get userId() {
-      return this._userIds.length > 0 ? this._userIds[0] : undefined;
-    }
-    get addedBy() {
-      return this._addedBy;
-    }
-    get kickedBy() {
-      return this._kickedBy;
-    }
-    get created() {
-      return this._created;
-    }
-    get newTitle() {
-      return this._newTitle;
-    }
-    get newPhoto() {
-      return this._newPhoto !== undefined || this._actionMessage?.action instanceof tl_1.Api.MessageActionChatEditPhoto;
-    }
-    get photoDeleted() {
-      return this._actionMessage?.action instanceof tl_1.Api.MessageActionChatDeletePhoto;
-    }
-    get photo() {
-      return this._newPhoto;
-    }
-    get newPin() {
-      return this._pinned && this._pinnedIds.length > 0;
-    }
-    get unpin() {
-      return !this._pinned && this._pinnedIds.length > 0;
-    }
-    get pinnedMessageIds() {
-      return this._pinnedIds;
-    }
-    get pinnedMessageId() {
-      return this._pinnedIds.length > 0 ? this._pinnedIds[0] : undefined;
-    }
-    async getPinnedMessages() {
-      if (!this._client || this._pinnedIds.length === 0 || !this.chatId) {
-        return;
-      }
-      try {
-        return await this._client.getMessages(this.chatId, {
-          ids: this._pinnedIds
-        });
-      } catch {
-        return;
-      }
-    }
-    async getPinnedMessage() {
-      const messages = await this.getPinnedMessages();
-      return messages && messages.length > 0 ? messages[0] : undefined;
-    }
-    async getUsers() {
-      if (!this._client || this._userIds.length === 0) {
-        return;
-      }
-      try {
-        const users = [];
-        for (const userId of this._userIds) {
-          const entity = await this._client.getEntity(new tl_1.Api.PeerUser({ userId }));
-          if (entity instanceof tl_1.Api.User) {
-            users.push(entity);
-          }
-        }
-        return users.length > 0 ? users : undefined;
-      } catch {
-        return;
-      }
-    }
-    async getUser() {
-      const users = await this.getUsers();
-      return users && users.length > 0 ? users[0] : undefined;
-    }
-    async respond(params) {
-      if (!this._client || !this.chatId)
-        return;
-      return this._client.sendMessage(this.chatId, params);
-    }
-  }
-  exports2.ChatActionEvent = ChatActionEvent;
-});
-
-// node_modules/teleproto/events/InlineQuery.js
-var require_InlineQuery = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.InlineQueryEvent = exports2.InlineBuilder = exports2.InlineQuery = undefined;
-  var tl_1 = require_tl();
-  var common_1 = require_common();
-
-  class InlineQuery extends common_1.EventBuilder {
-    constructor(params = {}) {
-      super({
-        chats: params.users,
-        blacklistChats: params.blacklistUsers,
-        func: params.func
-      });
-      this._blacklistUsers = params.blacklistUsers ?? false;
-      if (params.pattern) {
-        this._pattern = typeof params.pattern === "string" ? new RegExp(params.pattern) : params.pattern;
-      }
-    }
-    async _resolve(client) {
-      await super._resolve(client);
-      this._users = this.chats;
-    }
-    build(update) {
-      if (update instanceof tl_1.Api.UpdateBotInlineQuery) {
-        return new InlineQueryEvent(update);
-      }
-      if (update instanceof tl_1.Api.UpdateBotInlineSend) {
-        return new InlineQueryEvent(update);
-      }
-      return;
-    }
-    filter(event) {
-      if (this._users !== undefined) {
-        const userIdStr = event.userId?.toString();
-        if (!userIdStr)
-          return;
-        const inside = this._users.includes(userIdStr);
-        if (inside === this._blacklistUsers) {
-          return;
-        }
-      }
-      if (this._pattern && event.text) {
-        const match = event.text.match(this._pattern);
-        if (!match) {
-          return;
-        }
-        event._patternMatch = match;
-      }
-      if (this.func && !this.func(event)) {
-        return;
-      }
-      return event;
-    }
-  }
-  exports2.InlineQuery = InlineQuery;
-
-  class InlineBuilder {
-    constructor() {
-      this._resultId = 0;
-    }
-    _nextId() {
-      return String(this._resultId++);
-    }
-    article(title, params = {}) {
-      const sendMessage = new tl_1.Api.InputBotInlineMessageText({
-        message: params.text ?? "",
-        entities: params.entities,
-        noWebpage: params.linkPreview === false,
-        replyMarkup: params.replyMarkup
-      });
-      return new tl_1.Api.InputBotInlineResult({
-        id: params.id ?? this._nextId(),
-        type: "article",
-        title,
-        description: params.description,
-        url: params.url,
-        thumb: params.thumb,
-        content: params.content,
-        sendMessage
-      });
-    }
-    photo(photo, params = {}) {
-      const sendMessage = new tl_1.Api.InputBotInlineMessageMediaAuto({
-        message: params.text ?? "",
-        entities: params.entities,
-        replyMarkup: params.replyMarkup
-      });
-      return new tl_1.Api.InputBotInlineResultPhoto({
-        id: params.id ?? this._nextId(),
-        type: "photo",
-        photo,
-        sendMessage
-      });
-    }
-    document(document, params = {}) {
-      const sendMessage = new tl_1.Api.InputBotInlineMessageMediaAuto({
-        message: params.text ?? "",
-        entities: params.entities,
-        replyMarkup: params.replyMarkup
-      });
-      return new tl_1.Api.InputBotInlineResultDocument({
-        id: params.id ?? this._nextId(),
-        type: params.type ?? "file",
-        title: params.title,
-        description: params.description,
-        document,
-        sendMessage
-      });
-    }
-    game(shortName, params = {}) {
-      const sendMessage = new tl_1.Api.InputBotInlineMessageGame({
-        replyMarkup: params.replyMarkup
-      });
-      return new tl_1.Api.InputBotInlineResultGame({
-        id: params.id ?? this._nextId(),
-        shortName,
-        sendMessage
-      });
-    }
-    geo(geoPoint, params = {}) {
-      const sendMessage = new tl_1.Api.InputBotInlineMessageMediaGeo({
-        geoPoint,
-        heading: params.heading,
-        period: params.period,
-        proximityNotificationRadius: params.proximityNotificationRadius,
-        replyMarkup: params.replyMarkup
-      });
-      return new tl_1.Api.InputBotInlineResult({
-        id: params.id ?? this._nextId(),
-        type: "geo",
-        title: params.title,
-        description: params.description,
-        sendMessage
-      });
-    }
-    venue(geoPoint, title, address, params = {}) {
-      const sendMessage = new tl_1.Api.InputBotInlineMessageMediaVenue({
-        geoPoint,
-        title,
-        address,
-        provider: params.provider ?? "",
-        venueId: params.venueId ?? "",
-        venueType: params.venueType ?? "",
-        replyMarkup: params.replyMarkup
-      });
-      return new tl_1.Api.InputBotInlineResult({
-        id: params.id ?? this._nextId(),
-        type: "venue",
-        title,
-        description: params.description,
-        sendMessage
-      });
-    }
-    contact(phoneNumber, firstName, params = {}) {
-      const sendMessage = new tl_1.Api.InputBotInlineMessageMediaContact({
-        phoneNumber,
-        firstName,
-        lastName: params.lastName ?? "",
-        vcard: params.vcard ?? "",
-        replyMarkup: params.replyMarkup
-      });
-      return new tl_1.Api.InputBotInlineResult({
-        id: params.id ?? this._nextId(),
-        type: "contact",
-        title: firstName,
-        description: params.description,
-        sendMessage
-      });
-    }
-  }
-  exports2.InlineBuilder = InlineBuilder;
-
-  class InlineQueryEvent extends common_1.EventCommonSender {
-    constructor(update) {
-      super({});
-      this._eventName = "InlineQuery";
-      this._answered = false;
-      this.originalUpdate = update;
-      this._isChosen = update instanceof tl_1.Api.UpdateBotInlineSend;
-      if (update instanceof tl_1.Api.UpdateBotInlineQuery) {
-        this._userId = update.userId;
-        this._queryId = update.queryId;
-        this._text = update.query;
-        this._offset = update.offset;
-        this._geo = update.geo;
-        this._peerType = update.peerType;
-      } else {
-        this._userId = update.userId;
-        this._text = update.query;
-        this._offset = "";
-        this._geo = update.geo;
-        this._resultId = update.id;
-        this._msgId = update.msgId;
-      }
-    }
-    get id() {
-      return this._queryId;
-    }
-    get text() {
-      return this._text;
-    }
-    get query() {
-      return this._text;
-    }
-    get offset() {
-      return this._offset;
-    }
-    get userId() {
-      return this._userId;
-    }
-    get geo() {
-      return this._geo;
-    }
-    get peerType() {
-      return this._peerType;
-    }
-    get isChosen() {
-      return this._isChosen;
-    }
-    get resultId() {
-      return this._resultId;
-    }
-    get msgId() {
-      return this._msgId;
-    }
-    get patternMatch() {
-      return this._patternMatch;
-    }
-    get builder() {
-      if (!this._builder) {
-        this._builder = new InlineBuilder;
-      }
-      return this._builder;
-    }
-    get answered() {
-      return this._answered;
-    }
-    async answer(results = [], params = {}) {
-      if (!this._client || !this._queryId) {
-        return false;
-      }
-      if (this._answered) {
-        return false;
-      }
-      if (results.length > 50) {
-        throw new Error("Cannot send more than 50 inline results");
-      }
-      let switchPm;
-      if (params.switchPm) {
-        switchPm = new tl_1.Api.InlineBotSwitchPM({
-          text: params.switchPm.text,
-          startParam: params.switchPm.startParam
-        });
-      }
-      let switchWebview;
-      if (params.switchWebview) {
-        switchWebview = new tl_1.Api.InlineBotWebView({
-          text: params.switchWebview.text,
-          url: params.switchWebview.url
-        });
-      }
-      try {
-        await this._client.invoke(new tl_1.Api.messages.SetInlineBotResults({
-          queryId: this._queryId,
-          results,
-          cacheTime: params.cacheTime ?? 0,
-          gallery: params.gallery,
-          private: params.private,
-          nextOffset: params.nextOffset,
-          switchPm,
-          switchWebview
-        }));
-        this._answered = true;
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    async getUser() {
-      if (!this._client)
-        return;
-      try {
-        const entity = await this._client.getEntity(new tl_1.Api.PeerUser({ userId: this._userId }));
-        if (entity instanceof tl_1.Api.User) {
-          return entity;
-        }
-      } catch {
-        return;
-      }
-      return;
-    }
-  }
-  exports2.InlineQueryEvent = InlineQueryEvent;
-});
-
-// node_modules/teleproto/events/Album.js
-var require_Album = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.AlbumEvent = exports2.Album = undefined;
-  var common_1 = require_common();
-  var tl_1 = require_tl();
-  var _ALBUM_DELAY = 500;
-
-  class Album extends common_1.EventBuilder {
-    constructor(albumParams) {
-      let { chats, func, blacklistChats = false } = albumParams;
-      super({ chats, blacklistChats, func });
-    }
-    build(update, dispatch) {
-      if (!(("message" in update) && update.message instanceof tl_1.Api.Message)) {
-        return;
-      }
-      const groupedId = update.message.groupedId;
-      if (!groupedId) {
-        return;
-      }
-      const albums = this.client._ALBUMS;
-      const oldTimeout = albums.get(groupedId.toString());
-      let oldValues = [];
-      if (oldTimeout) {
-        clearTimeout(oldTimeout[0]);
-        oldValues.push(...oldTimeout[1]);
-      }
-      albums.set(groupedId.toString(), [
-        setTimeout(() => {
-          const values = albums.get(groupedId.toString());
-          albums.delete(groupedId.toString());
-          if (!values) {
-            return;
-          }
-          const updates = values[1];
-          if (!updates) {
-            return;
-          }
-          const messages = [];
-          for (const update2 of updates) {
-            if ("message" in update2 && update2.message instanceof tl_1.Api.Message) {
-              messages.push(update2.message);
-            }
-          }
-          const event = new AlbumEvent(messages, values[1]);
-          event._setClient(this.client);
-          event._entities = messages[0]._entities;
-          dispatch(event);
-        }, _ALBUM_DELAY),
-        [...oldValues, update]
-      ]);
-    }
-  }
-  exports2.Album = Album;
-
-  class AlbumEvent extends common_1.EventCommon {
-    constructor(messages, originalUpdates) {
-      super({
-        msgId: messages[0].id,
-        chatPeer: messages[0].peerId,
-        broadcast: messages[0].post
-      });
-      this.originalUpdates = originalUpdates;
-      this.messages = messages;
-    }
-    _setClient(client) {
-      super._setClient(client);
-      for (let i = 0;i < this.messages.length; i++) {
-        try {
-          this.messages[i]._finishInit(client, this.originalUpdates[i]._entities || new Map, undefined);
-        } catch (e) {
-          client._log.error("Got error while trying to finish init message with id " + this.messages[i].id, e);
-          if (client._errorHandler) {
-            client._errorHandler(e);
-          }
-        }
-      }
-    }
-  }
-  exports2.AlbumEvent = AlbumEvent;
-});
-
-// node_modules/teleproto/events/CallbackQuery.js
-var require_CallbackQuery = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.CallbackQueryEvent = exports2.CallbackQuery = exports2.NewCallbackQueryDefaults = undefined;
-  var common_1 = require_common();
-  var tl_1 = require_tl();
-  var Helpers_1 = require_Helpers();
-  var Utils_1 = require_Utils();
-  exports2.NewCallbackQueryDefaults = {
-    chats: [],
-    fromUsers: [],
-    blacklistUsers: []
-  };
-
-  class CallbackQuery extends common_1.EventBuilder {
-    constructor(inlineQueryParams = {}) {
-      const { chats, func, pattern } = inlineQueryParams;
-      super({ chats, func, blacklistChats: false });
-      this.match = pattern;
-      this._noCheck = [this.chats, this.func, this.match].every((i) => i === null || i === undefined);
-    }
-    build(update, callback, selfId = undefined) {
-      if (update instanceof tl_1.Api.UpdateBotCallbackQuery) {
-        return new CallbackQueryEvent(update, update.peer, update.msgId);
-      } else if (update instanceof tl_1.Api.UpdateInlineBotCallbackQuery) {
-        const b = (0, Helpers_1.toSignedLittleBuffer)(update.msgId.id, 8);
-        const msgId = b.readInt32LE(0);
-        const peerId = b.readInt32LE(4);
-        const peer = peerId < 0 ? new tl_1.Api.PeerChannel({ channelId: (0, Helpers_1.returnBigInt)(-peerId) }) : new tl_1.Api.PeerUser({ userId: (0, Helpers_1.returnBigInt)(peerId) });
-        return new CallbackQueryEvent(update, peer, msgId);
-      }
-    }
-    filter(event) {
-      if (this._noCheck)
-        return event;
-      if (this.chats) {
-        let inside = this.chats.includes(event.query.chatInstance.toString());
-        if (event.chatId) {
-          inside = inside || this.chats.includes(event.chatId.toString());
-        }
-        if (inside === this.blacklistChats) {
-          return;
-        }
-      }
-      if (this.match) {
-        const data = new TextDecoder().decode(event.query.data);
-        const result = this.match.exec(data);
-        this.match.lastIndex = 0;
-        if (result) {
-          event.patternMatch = result;
-        } else {
-          return;
-        }
-      }
-      if (this.func) {
-        return this.func(event);
-      }
-      return true;
-    }
-  }
-  exports2.CallbackQuery = CallbackQuery;
-
-  class CallbackQueryEvent extends common_1.EventCommonSender {
-    constructor(query, peer, msgId) {
-      super({
-        msgId,
-        chatPeer: peer,
-        broadcast: false
-      });
-      this.query = query;
-      this.patternMatch = undefined;
-      this._senderId = (0, Helpers_1.returnBigInt)(query.userId);
-      this._message = undefined;
-      this._answered = false;
-    }
-    _setClient(client) {
-      super._setClient(client);
-      const [sender, inputSender] = (0, Utils_1._getEntityPair)(this._senderId.toString(), this._entities, client._entityCache);
-      this._sender = sender;
-      this._inputSender = inputSender;
-    }
-    get id() {
-      return this.query.queryId;
-    }
-    get messageId() {
-      return this._messageId;
-    }
-    get data() {
-      return this.query.data;
-    }
-    get chatInstance() {
-      return this.query.chatInstance;
-    }
-    async getMessage() {
-      if (this._message) {
-        return this._message;
-      }
-      const chat = this.isChannel ? await this.getInputChat() : undefined;
-      const messages = await this._client.getMessages(chat, {
-        ids: this._messageId
-      });
-      this._message = messages[0];
-      return this._message;
-    }
-    async _refetchSender() {
-      if (this._entities.has(this.senderId.toString())) {
-        this._sender = this._entities.get(this.senderId.toString());
-      }
-      if (!this._sender)
-        return;
-      this._inputSender = (0, Utils_1.getInputPeer)(this._chat);
-      if (!this._inputSender.hasOwnProperty("accessHash")) {
-        try {
-          this._inputSender = this._client._entityCache.get(this._senderId);
-        } catch (e) {
-          const m = await this.getMessage();
-          if (m) {
-            this._sender = m._sender;
-            this._inputSender = m._inputSender;
-          }
-        }
-      }
-    }
-    async answer({ message, cacheTime, url, alert } = {}) {
-      if (this._answered)
-        return;
-      return await this._client.invoke(new tl_1.Api.messages.SetBotCallbackAnswer({
-        queryId: this.query.queryId,
-        cacheTime: cacheTime ?? 0,
-        alert,
-        message,
-        url
-      })).then((res) => {
-        this._answered = true;
-        return res;
-      });
-    }
-    get viaInline() {
-      return this.query instanceof tl_1.Api.UpdateInlineBotCallbackQuery;
-    }
-    async respond(params = {}) {
-      await this.answer();
-      const inputChat = await this.getInputChat();
-      await this._client.sendMessage(inputChat, params);
-    }
-    async reply(params = {}) {
-      await this.answer();
-      params.replyTo = this.messageId;
-      const inputChat = await this.getInputChat();
-      await this._client.sendMessage(inputChat, params);
-    }
-    async edit(params) {
-      if (this.query.msgId instanceof tl_1.Api.InputBotInlineMessageID) {
-        return await this._client.editMessage(this.messageId, params).then(async (res) => {
-          await this.answer();
-          return res;
-        });
-      } else {
-        const inputChat = await this.getInputChat();
-        return await this._client.editMessage(inputChat, params).then(async (res) => {
-          await this.answer();
-          return res;
-        });
-      }
-    }
-    async delete({ revoke = true } = {}) {
-      if (this._client) {
-        return this._client.deleteMessages(await this.getInputChat(), [this.messageId], { revoke });
-      }
-    }
-    get sender() {
-      return this._sender;
-    }
-  }
-  exports2.CallbackQueryEvent = CallbackQueryEvent;
-});
-
-// node_modules/teleproto/events/index.js
-var require_events = __commonJS((exports2) => {
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.CallbackQueryEvent = exports2.CallbackQuery = exports2.AlbumEvent = exports2.Album = exports2.InlineBuilder = exports2.InlineQueryEvent = exports2.InlineQuery = exports2.ChatActionEvent = exports2.ChatAction = exports2.DeletedMessageEvent = exports2.DeletedMessage = exports2.MessageReadEvent = exports2.MessageRead = exports2.UserUpdateEvent = exports2.UserUpdate = exports2.EditedMessageEvent = exports2.EditedMessage = exports2.NewMessageEvent = exports2.NewMessage = exports2.Raw = undefined;
-  var Raw_1 = require_Raw();
-  Object.defineProperty(exports2, "Raw", { enumerable: true, get: function() {
-    return Raw_1.Raw;
+  exports2.tlobjects = exports2.LAYER = exports2.serializeDate = exports2.serializeBytes = exports2.Api = undefined;
+  var api_1 = require_api();
+  Object.defineProperty(exports2, "Api", { enumerable: true, get: function() {
+    return api_1.Api;
   } });
-  var NewMessage_1 = require_NewMessage();
-  Object.defineProperty(exports2, "NewMessage", { enumerable: true, get: function() {
-    return NewMessage_1.NewMessage;
+  var helpers_1 = require_helpers();
+  Object.defineProperty(exports2, "serializeBytes", { enumerable: true, get: function() {
+    return helpers_1.serializeBytes;
   } });
-  Object.defineProperty(exports2, "NewMessageEvent", { enumerable: true, get: function() {
-    return NewMessage_1.NewMessageEvent;
+  Object.defineProperty(exports2, "serializeDate", { enumerable: true, get: function() {
+    return helpers_1.serializeDate;
   } });
-  var EditedMessage_1 = require_EditedMessage();
-  Object.defineProperty(exports2, "EditedMessage", { enumerable: true, get: function() {
-    return EditedMessage_1.EditedMessage;
-  } });
-  Object.defineProperty(exports2, "EditedMessageEvent", { enumerable: true, get: function() {
-    return EditedMessage_1.EditedMessageEvent;
-  } });
-  var UserUpdate_1 = require_UserUpdate();
-  Object.defineProperty(exports2, "UserUpdate", { enumerable: true, get: function() {
-    return UserUpdate_1.UserUpdate;
-  } });
-  Object.defineProperty(exports2, "UserUpdateEvent", { enumerable: true, get: function() {
-    return UserUpdate_1.UserUpdateEvent;
-  } });
-  var MessageRead_1 = require_MessageRead();
-  Object.defineProperty(exports2, "MessageRead", { enumerable: true, get: function() {
-    return MessageRead_1.MessageRead;
-  } });
-  Object.defineProperty(exports2, "MessageReadEvent", { enumerable: true, get: function() {
-    return MessageRead_1.MessageReadEvent;
-  } });
-  var DeletedMessage_1 = require_DeletedMessage();
-  Object.defineProperty(exports2, "DeletedMessage", { enumerable: true, get: function() {
-    return DeletedMessage_1.DeletedMessage;
-  } });
-  Object.defineProperty(exports2, "DeletedMessageEvent", { enumerable: true, get: function() {
-    return DeletedMessage_1.DeletedMessageEvent;
-  } });
-  var ChatAction_1 = require_ChatAction();
-  Object.defineProperty(exports2, "ChatAction", { enumerable: true, get: function() {
-    return ChatAction_1.ChatAction;
-  } });
-  Object.defineProperty(exports2, "ChatActionEvent", { enumerable: true, get: function() {
-    return ChatAction_1.ChatActionEvent;
-  } });
-  var InlineQuery_1 = require_InlineQuery();
-  Object.defineProperty(exports2, "InlineQuery", { enumerable: true, get: function() {
-    return InlineQuery_1.InlineQuery;
-  } });
-  Object.defineProperty(exports2, "InlineQueryEvent", { enumerable: true, get: function() {
-    return InlineQuery_1.InlineQueryEvent;
-  } });
-  Object.defineProperty(exports2, "InlineBuilder", { enumerable: true, get: function() {
-    return InlineQuery_1.InlineBuilder;
-  } });
-  var Album_1 = require_Album();
-  Object.defineProperty(exports2, "Album", { enumerable: true, get: function() {
-    return Album_1.Album;
-  } });
-  Object.defineProperty(exports2, "AlbumEvent", { enumerable: true, get: function() {
-    return Album_1.AlbumEvent;
-  } });
-  var CallbackQuery_1 = require_CallbackQuery();
-  Object.defineProperty(exports2, "CallbackQuery", { enumerable: true, get: function() {
-    return CallbackQuery_1.CallbackQuery;
-  } });
-  Object.defineProperty(exports2, "CallbackQueryEvent", { enumerable: true, get: function() {
-    return CallbackQuery_1.CallbackQueryEvent;
-  } });
-});
-
-// node_modules/teleproto/client/TelegramClient.js
-var require_TelegramClient = __commonJS((exports2) => {
-  var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() {
-        return m[k];
-      } };
-    }
-    Object.defineProperty(o, k2, desc);
-  } : function(o, m, k, k2) {
-    if (k2 === undefined)
-      k2 = k;
-    o[k2] = m[k];
-  });
-  var __setModuleDefault = exports2 && exports2.__setModuleDefault || (Object.create ? function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-  } : function(o, v) {
-    o["default"] = v;
-  });
-  var __importStar = exports2 && exports2.__importStar || function() {
-    var ownKeys = function(o) {
-      ownKeys = Object.getOwnPropertyNames || function(o2) {
-        var ar = [];
-        for (var k in o2)
-          if (Object.prototype.hasOwnProperty.call(o2, k))
-            ar[ar.length] = k;
-        return ar;
-      };
-      return ownKeys(o);
-    };
-    return function(mod) {
-      if (mod && mod.__esModule)
-        return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k = ownKeys(mod), i = 0;i < k.length; i++)
-          if (k[i] !== "default")
-            __createBinding(result, mod, k[i]);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-  }();
-  Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.TelegramClient = undefined;
-  var telegramBaseClient_1 = require_telegramBaseClient();
-  var authMethods = __importStar(require_auth());
-  var botMethods = __importStar(require_bots());
-  var buttonsMethods = __importStar(require_buttons());
-  var downloadMethods = __importStar(require_downloads());
-  var parseMethods = __importStar(require_messageParse());
-  var messageMethods = __importStar(require_messages2());
-  var updateMethods = __importStar(require_dispatch());
-  var uploadMethods = __importStar(require_uploads());
-  var userMethods = __importStar(require_users());
-  var chatMethods = __importStar(require_chats());
-  var communityMethods = __importStar(require_communities());
-  var inviteLinkMethods = __importStar(require_inviteLinks());
-  var accountMethods = __importStar(require_account());
-  var contactMethods = __importStar(require_contacts());
-  var dialogMethods = __importStar(require_dialogs());
-  var twoFA = __importStar(require_2fa());
-  var forumMethods = __importStar(require_forums());
-  var storyMethods = __importStar(require_stories());
-  var folderMethods = __importStar(require_folders());
-  var stickerMethods = __importStar(require_stickers());
-  var tl_1 = require_tl();
-  var apiProxy_1 = require_apiProxy();
-  var html_1 = require_html();
-  var markdown_1 = require_markdown();
-  var markdownv2_1 = require_markdownv2();
-  var network_1 = require_network();
   var registry_1 = require_registry();
-  var dispatch_1 = require_dispatch();
-  var composer_1 = require_composer();
+  Object.defineProperty(exports2, "LAYER", { enumerable: true, get: function() {
+    return registry_1.LAYER;
+  } });
+  Object.defineProperty(exports2, "tlobjects", { enumerable: true, get: function() {
+    return registry_1.tlobjects;
+  } });
+});
 
-  class TelegramClient extends telegramBaseClient_1.TelegramBaseClient {
-    get updates() {
-      if (!this._updates)
-        this._updates = new composer_1.ClientUpdates(this);
-      return this._updates;
+// node_modules/teleproto/richMessage.js
+var require_richMessage = __commonJS((exports2) => {
+  Object.defineProperty(exports2, "__esModule", { value: true });
+  exports2.html = html;
+  exports2.markdown = markdown;
+  exports2.blocks = blocks;
+  exports2.renderRichText = renderRichText;
+  exports2.renderBlocks = renderBlocks;
+  exports2.toPlainText = toPlainText;
+  exports2.toMarkdown = toMarkdown;
+  exports2.toHtml = toHtml;
+  var api_1 = require_api2();
+  var Helpers_1 = require_Helpers();
+  function _toRichFiles(files) {
+    if (!files) {
+      return;
     }
-    constructor(session, apiId, apiHash, clientParams) {
-      super(session, apiId, apiHash, clientParams);
-    }
-    start(authParams) {
-      return authMethods.start(this, authParams);
-    }
-    checkAuthorization() {
-      return authMethods.checkAuthorization(this);
-    }
-    logOut() {
-      return authMethods.logOut(this);
-    }
-    signInUser(apiCredentials, authParams) {
-      return authMethods.signInUser(this, apiCredentials, authParams);
-    }
-    signInUserWithQrCode(apiCredentials, authParams) {
-      return authMethods.signInUserWithQrCode(this, apiCredentials, authParams);
-    }
-    sendCode(apiCredentials, phoneNumber, forceSMS = false, reCaptchaCallback) {
-      return authMethods.sendCode(this, apiCredentials, phoneNumber, forceSMS, reCaptchaCallback);
-    }
-    sendVerifyEmailCode(phoneNumber, phoneCodeHash, email) {
-      return authMethods.sendVerifyEmailCode(this, phoneNumber, phoneCodeHash, email);
-    }
-    verifyEmail(phoneNumber, phoneCodeHash, verification) {
-      return authMethods.verifyEmail(this, phoneNumber, phoneCodeHash, verification);
-    }
-    resetLoginEmail(phoneNumber, phoneCodeHash) {
-      return authMethods.resetLoginEmail(this, phoneNumber, phoneCodeHash);
-    }
-    signInWithPassword(apiCredentials, authParams) {
-      return authMethods.signInWithPassword(this, apiCredentials, authParams);
-    }
-    signInBot(apiCredentials, authParams) {
-      return authMethods.signInBot(this, apiCredentials, authParams);
-    }
-    signInWithWebToken(apiCredentials, webAuthToken) {
-      return authMethods.signInWithWebToken(this, apiCredentials, webAuthToken);
-    }
-    async updateTwoFaSettings({ isCheckPassword, currentPassword, newPassword, hint = "", email, emailCodeCallback, onEmailCodeError }) {
-      return twoFA.updateTwoFaSettings(this, {
-        isCheckPassword,
-        currentPassword,
-        newPassword,
-        hint,
-        email,
-        emailCodeCallback,
-        onEmailCodeError
-      });
-    }
-    inlineQuery(bot, query, entity, offset, geoPoint) {
-      return botMethods.inlineQuery(this, bot, query, entity, offset, geoPoint);
-    }
-    buildReplyMarkup(buttons, inlineOnly = false) {
-      return buttonsMethods.buildReplyMarkup(buttons, inlineOnly);
-    }
-    downloadFile(inputLocation, fileParams = {}) {
-      return downloadMethods.downloadFile(this, inputLocation, fileParams);
-    }
-    downloadProfilePhoto(entity, downloadProfilePhotoParams = {
-      isBig: false
-    }) {
-      if (typeof downloadProfilePhotoParams === "string") {
-        downloadProfilePhotoParams = {
-          outputFile: downloadProfilePhotoParams
-        };
-      }
-      return downloadMethods.downloadProfilePhoto(this, entity, downloadProfilePhotoParams);
-    }
-    downloadMedia(messageOrMedia, downloadParams) {
-      if (typeof downloadParams === "string") {
-        downloadParams = { outputFile: downloadParams };
-      }
-      return downloadMethods.downloadMedia(this, messageOrMedia, downloadParams?.outputFile, downloadParams?.thumb, downloadParams?.progressCallback, {
-        signal: downloadParams?.signal,
-        requestTimeout: downloadParams?.requestTimeout
-      });
-    }
-    get parseMode() {
-      return this._parseMode;
-    }
-    setParseMode(mode) {
-      if (mode) {
-        this._parseMode = this._sanitizeParseMode(mode);
+    const result = [];
+    for (const [id, media] of Object.entries(files)) {
+      if (media.SUBCLASS_OF_ID === (0, Helpers_1.unionId)("InputPhoto")) {
+        result.push(new api_1.Api.InputRichFilePhoto({
+          id,
+          photo: media
+        }));
       } else {
-        this._parseMode = undefined;
+        result.push(new api_1.Api.InputRichFileDocument({
+          id,
+          document: media
+        }));
       }
     }
-    _sanitizeParseMode(mode) {
-      if (mode === "md" || mode === "markdown") {
-        return markdown_1.MarkdownParser;
+    return result.length ? result : undefined;
+  }
+  function html(content, options = {}) {
+    return new api_1.Api.InputRichMessageHTML({
+      html: content,
+      rtl: options.rtl,
+      noautolink: options.noAutolink,
+      files: _toRichFiles(options.files)
+    });
+  }
+  function markdown(content, options = {}) {
+    return new api_1.Api.InputRichMessageMarkdown({
+      markdown: content,
+      rtl: options.rtl,
+      noautolink: options.noAutolink,
+      files: _toRichFiles(options.files)
+    });
+  }
+  function blocks(pageBlocks, options = {}) {
+    return new api_1.Api.InputRichMessage({
+      blocks: pageBlocks,
+      rtl: options.rtl,
+      noautolink: options.noAutolink,
+      photos: options.photos,
+      documents: options.documents,
+      users: options.users
+    });
+  }
+  function _escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function _escapeMd(text) {
+    return text.replace(/([\\`*_[\]|~])/g, "\\$1");
+  }
+  function _plain(text, mode) {
+    if (mode === "html") {
+      return _escapeHtml(text);
+    }
+    if (mode === "md") {
+      return _escapeMd(text);
+    }
+    return text;
+  }
+  function _tag(inner, mode, htmlTag, md) {
+    if (mode === "html") {
+      return `<${htmlTag}>${inner}</${htmlTag}>`;
+    }
+    if (mode === "md") {
+      return `${md}${inner}${md}`;
+    }
+    return inner;
+  }
+  function _buttonUrl(type) {
+    if (type instanceof api_1.Api.InlineButtonTypeUrl || type instanceof api_1.Api.InlineButtonTypeUrlAuth || type instanceof api_1.Api.InputInlineButtonTypeUrlAuth || type instanceof api_1.Api.InlineButtonTypeWebView) {
+      return type.url;
+    }
+    return;
+  }
+  function _renderButton(text, type, mode) {
+    const inner = renderRichText(text, mode);
+    const url = _buttonUrl(type);
+    if (mode === "html") {
+      return url ? `<a class="button" href="${_escapeHtml(url)}">${inner}</a>` : `<button>${inner}</button>`;
+    }
+    if (mode === "md" && url) {
+      return `[${inner}](${url})`;
+    }
+    return inner;
+  }
+  function renderRichText(text, mode = "text") {
+    if (!text || text instanceof api_1.Api.TextEmpty) {
+      return "";
+    }
+    if (text instanceof api_1.Api.TextPlain) {
+      return _plain(text.text, mode);
+    }
+    if (text instanceof api_1.Api.TextConcat) {
+      return text.texts.map((t) => renderRichText(t, mode)).join("");
+    }
+    if (text instanceof api_1.Api.TextBold) {
+      return _tag(renderRichText(text.text, mode), mode, "b", "**");
+    }
+    if (text instanceof api_1.Api.TextItalic) {
+      return _tag(renderRichText(text.text, mode), mode, "i", "_");
+    }
+    if (text instanceof api_1.Api.TextUnderline) {
+      return mode === "html" ? `<u>${renderRichText(text.text, mode)}</u>` : renderRichText(text.text, mode);
+    }
+    if (text instanceof api_1.Api.TextStrike) {
+      return _tag(renderRichText(text.text, mode), mode, "s", "~~");
+    }
+    if (text instanceof api_1.Api.TextFixed) {
+      return _tag(renderRichText(text.text, mode), mode, "code", "`");
+    }
+    if (text instanceof api_1.Api.TextMarked) {
+      return mode === "html" ? `<mark>${renderRichText(text.text, mode)}</mark>` : renderRichText(text.text, mode);
+    }
+    if (text instanceof api_1.Api.TextSpoiler) {
+      const inner = renderRichText(text.text, mode);
+      if (mode === "html") {
+        return `<span class="spoiler">${inner}</span>`;
       }
-      if (mode === "md2" || mode === "markdownv2") {
-        return markdownv2_1.MarkdownV2Parser;
+      if (mode === "md") {
+        return `||${inner}||`;
       }
-      if (mode == "html") {
-        return html_1.HTMLParser;
+      return inner;
+    }
+    if (text instanceof api_1.Api.TextSubscript) {
+      return mode === "html" ? `<sub>${renderRichText(text.text, mode)}</sub>` : renderRichText(text.text, mode);
+    }
+    if (text instanceof api_1.Api.TextSuperscript) {
+      return mode === "html" ? `<sup>${renderRichText(text.text, mode)}</sup>` : renderRichText(text.text, mode);
+    }
+    if (text instanceof api_1.Api.TextUrl) {
+      const inner = renderRichText(text.text, mode);
+      if (mode === "html") {
+        return `<a href="${_escapeHtml(text.url)}">${inner}</a>`;
       }
-      if (typeof mode == "object" && "parse" in mode && "unparse" in mode) {
-        return mode;
+      if (mode === "md") {
+        return `[${inner}](${text.url})`;
       }
-      throw new Error(`Invalid parse mode type ${mode}`);
+      return inner;
     }
-    iterMessages(entity, iterParams = {}) {
-      return messageMethods.iterMessages(this, entity, iterParams);
+    if (text instanceof api_1.Api.TextEmail) {
+      const inner = renderRichText(text.text, mode);
+      if (mode === "html") {
+        return `<a href="mailto:${_escapeHtml(text.email)}">${inner}</a>`;
+      }
+      return inner;
     }
-    getMessages(entity, getMessagesParams = {}) {
-      return messageMethods.getMessages(this, entity, getMessagesParams);
+    if (text instanceof api_1.Api.TextPhone) {
+      return renderRichText(text.text, mode);
     }
-    getCommentData(entity, message) {
-      return messageMethods.getCommentData(this, entity, message);
+    if (text instanceof api_1.Api.TextAnchor) {
+      const inner = renderRichText(text.text, mode);
+      return mode === "html" ? `<a id="${_escapeHtml(text.name)}">${inner}</a>` : inner;
     }
-    sendMessage(entity, sendMessageParams = {}) {
-      return messageMethods.sendMessage(this, entity, sendMessageParams);
+    if (text instanceof api_1.Api.TextMentionName) {
+      const inner = renderRichText(text.text, mode);
+      if (mode === "html") {
+        return `<a href="tg://user?id=${text.userId}">${inner}</a>`;
+      }
+      return inner;
     }
-    forwardMessages(entity, forwardMessagesParams) {
-      return messageMethods.forwardMessages(this, entity, forwardMessagesParams);
+    if (text instanceof api_1.Api.TextCustomEmoji) {
+      return _plain(text.alt, mode);
     }
-    editMessage(entity, editMessageParams) {
-      return messageMethods.editMessage(this, entity, editMessageParams);
+    if (text instanceof api_1.Api.TextImage) {
+      return mode === "html" ? `<img data-document-id="${text.documentId}">` : "";
     }
-    deleteMessages(entity, messageIds, { revoke = true }) {
-      return messageMethods.deleteMessages(this, entity, messageIds, {
-        revoke
+    if (text instanceof api_1.Api.TextMath) {
+      return _tag(_plain(text.source, mode), mode, "code", "`");
+    }
+    if (text instanceof api_1.Api.TextDiff) {
+      return renderRichText(text.text, mode);
+    }
+    if (text instanceof api_1.Api.TextButton) {
+      return _renderButton(text.text, text.type, mode);
+    }
+    const nested = text.text;
+    if (nested && typeof nested === "object") {
+      return renderRichText(nested, mode);
+    }
+    return "";
+  }
+  function _renderCaption(caption, mode) {
+    if (!caption || !(caption instanceof api_1.Api.PageCaption)) {
+      return "";
+    }
+    const parts = [
+      renderRichText(caption.text, mode),
+      renderRichText(caption.credit, mode)
+    ].filter(Boolean);
+    return parts.join(mode === "html" ? " — " : " — ");
+  }
+  function _checkbox(item) {
+    if (!item.checkbox) {
+      return "";
+    }
+    return item.checked ? "[x] " : "[ ] ";
+  }
+  function _renderBlock(block, mode) {
+    if (block instanceof api_1.Api.PageBlockTitle) {
+      const inner = renderRichText(block.text, mode);
+      if (mode === "html")
+        return `<h1>${inner}</h1>`;
+      if (mode === "md")
+        return `# ${inner}`;
+      return inner;
+    }
+    if (block instanceof api_1.Api.PageBlockSubtitle) {
+      const inner = renderRichText(block.text, mode);
+      if (mode === "html")
+        return `<h2>${inner}</h2>`;
+      if (mode === "md")
+        return `## ${inner}`;
+      return inner;
+    }
+    if (block instanceof api_1.Api.PageBlockHeader) {
+      const inner = renderRichText(block.text, mode);
+      if (mode === "html")
+        return `<h3>${inner}</h3>`;
+      if (mode === "md")
+        return `### ${inner}`;
+      return inner;
+    }
+    if (block instanceof api_1.Api.PageBlockSubheader) {
+      const inner = renderRichText(block.text, mode);
+      if (mode === "html")
+        return `<h4>${inner}</h4>`;
+      if (mode === "md")
+        return `#### ${inner}`;
+      return inner;
+    }
+    for (const [cls, level] of [
+      [api_1.Api.PageBlockHeading1, 1],
+      [api_1.Api.PageBlockHeading2, 2],
+      [api_1.Api.PageBlockHeading3, 3],
+      [api_1.Api.PageBlockHeading4, 4],
+      [api_1.Api.PageBlockHeading5, 5],
+      [api_1.Api.PageBlockHeading6, 6]
+    ]) {
+      if (block instanceof cls) {
+        const inner = renderRichText(block.text, mode);
+        if (mode === "html")
+          return `<h${level}>${inner}</h${level}>`;
+        if (mode === "md")
+          return `${"#".repeat(level)} ${inner}`;
+        return inner;
+      }
+    }
+    if (block instanceof api_1.Api.PageBlockParagraph) {
+      const inner = renderRichText(block.text, mode);
+      return mode === "html" ? `<p>${inner}</p>` : inner;
+    }
+    if (block instanceof api_1.Api.PageBlockKicker) {
+      const inner = renderRichText(block.text, mode);
+      return mode === "html" ? `<p>${inner}</p>` : inner;
+    }
+    if (block instanceof api_1.Api.PageBlockFooter) {
+      const inner = renderRichText(block.text, mode);
+      return mode === "html" ? `<footer>${inner}</footer>` : inner;
+    }
+    if (block instanceof api_1.Api.PageBlockPreformatted) {
+      if (mode === "html") {
+        return `<pre>${renderRichText(block.text, "html")}</pre>`;
+      }
+      const raw = renderRichText(block.text, "text");
+      if (mode === "md") {
+        return "```" + (block.language || "") + `
+` + raw + "\n```";
+      }
+      return raw;
+    }
+    if (block instanceof api_1.Api.PageBlockBlockquote || block instanceof api_1.Api.PageBlockPullquote) {
+      const inner = renderRichText(block.text, mode);
+      const caption = renderRichText(block.caption, mode);
+      if (mode === "html") {
+        return `<blockquote>${inner}${caption ? `<footer>${caption}</footer>` : ""}</blockquote>`;
+      }
+      if (mode === "md") {
+        const quoted = inner.split(`
+`).map((line) => `> ${line}`).join(`
+`);
+        return caption ? `${quoted}
+> — ${caption}` : quoted;
+      }
+      return caption ? `${inner} — ${caption}` : inner;
+    }
+    if (block instanceof api_1.Api.PageBlockBlockquoteBlocks) {
+      const inner = renderBlocks(block.blocks, mode);
+      const caption = renderRichText(block.caption, mode);
+      if (mode === "html") {
+        return `<blockquote>${inner}${caption ? `<footer>${caption}</footer>` : ""}</blockquote>`;
+      }
+      if (mode === "md") {
+        const quoted = inner.split(`
+`).map((line) => `> ${line}`).join(`
+`);
+        return caption ? `${quoted}
+> — ${caption}` : quoted;
+      }
+      return caption ? `${inner} — ${caption}` : inner;
+    }
+    if (block instanceof api_1.Api.PageBlockDivider) {
+      if (mode === "html")
+        return "<hr>";
+      if (mode === "md")
+        return "---";
+      return "———";
+    }
+    if (block instanceof api_1.Api.PageBlockAnchor) {
+      return mode === "html" ? `<a id="${_escapeHtml(block.name)}"></a>` : "";
+    }
+    if (block instanceof api_1.Api.PageBlockList) {
+      const items = block.items.map((item) => {
+        let inner = "";
+        let check = "";
+        if (item instanceof api_1.Api.PageListItemText) {
+          inner = renderRichText(item.text, mode);
+          check = _checkbox(item);
+        } else if (item instanceof api_1.Api.PageListItemBlocks) {
+          inner = renderBlocks(item.blocks, mode);
+          check = _checkbox(item);
+        }
+        if (mode === "html")
+          return `<li>${check}${inner}</li>`;
+        return `- ${check}${inner}`;
       });
-    }
-    pinMessage(entity, message, pinMessageParams) {
-      return messageMethods.pinMessage(this, entity, message, pinMessageParams);
-    }
-    unpinMessage(entity, message, unpinMessageParams) {
-      return messageMethods.unpinMessage(this, entity, message, unpinMessageParams);
-    }
-    markAsRead(entity, message, markAsReadParams) {
-      return messageMethods.markAsRead(this, entity, message, markAsReadParams);
-    }
-    sendReaction(entity, messageId, reaction, big, addToRecent) {
-      return messageMethods.sendReaction(this, entity, messageId, reaction, big, addToRecent);
-    }
-    getReactionUsers(entity, messageId, params) {
-      return messageMethods.getReactionUsers(this, entity, messageId, params);
-    }
-    sendPoll(entity, poll, params) {
-      return messageMethods.sendPoll(this, entity, poll, params);
-    }
-    vote(entity, message, options) {
-      return messageMethods.vote(this, entity, message, options);
-    }
-    closePoll(entity, message) {
-      return messageMethods.closePoll(this, entity, message);
-    }
-    getScheduledMessages(entity, ids) {
-      return messageMethods.getScheduledMessages(this, entity, ids);
-    }
-    sendScheduledMessages(entity, ids) {
-      return messageMethods.sendScheduledMessages(this, entity, ids);
-    }
-    deleteScheduledMessages(entity, ids) {
-      return messageMethods.deleteScheduledMessages(this, entity, ids);
-    }
-    copyMessages(entity, copyMessagesParams) {
-      return messageMethods.copyMessages(this, entity, copyMessagesParams);
-    }
-    saveDraft(entity, params) {
-      return messageMethods.saveDraft(this, entity, params);
-    }
-    clearDraft(entity) {
-      return messageMethods.clearDraft(this, entity);
-    }
-    clearAllDrafts() {
-      return messageMethods.clearAllDrafts(this);
-    }
-    getMessageByLink(link) {
-      return messageMethods.getMessageByLink(this, link);
-    }
-    getDiscussionMessage(entity, message) {
-      return messageMethods.getDiscussionMessage(this, entity, message);
-    }
-    getRichMessage(entity, message) {
-      return messageMethods.getRichMessage(this, entity, message);
-    }
-    iterDialogs(iterDialogsParams = {}) {
-      return dialogMethods.iterDialogs(this, iterDialogsParams);
-    }
-    getDialogs(params = {}) {
-      return dialogMethods.getDialogs(this, params);
-    }
-    iterParticipants(entity, params = {}) {
-      return chatMethods.iterParticipants(this, entity, params);
-    }
-    getParticipants(entity, params = {}) {
-      return chatMethods.getParticipants(this, entity, params);
-    }
-    kickParticipant(entity, participant) {
-      return chatMethods.kickParticipant(this, entity, participant);
-    }
-    getParticipant(entity, participant) {
-      return chatMethods.getParticipant(this, entity, participant);
-    }
-    editBanned(entity, participant, params) {
-      return chatMethods.editBanned(this, entity, participant, params);
-    }
-    editAdmin(entity, participant, params) {
-      return chatMethods.editAdmin(this, entity, participant, params);
-    }
-    editChatDefaultBannedRights(entity, params) {
-      return chatMethods.editChatDefaultBannedRights(this, entity, params);
-    }
-    editTitle(entity, title) {
-      return chatMethods.editTitle(this, entity, title);
-    }
-    editPhoto(entity, photo) {
-      return chatMethods.editPhoto(this, entity, photo);
-    }
-    editChatAbout(entity, about) {
-      return chatMethods.editChatAbout(this, entity, about);
-    }
-    toggleSlowMode(entity, seconds) {
-      return chatMethods.toggleSlowMode(this, entity, seconds);
-    }
-    createChannel(params) {
-      return chatMethods.createChannel(this, params);
-    }
-    createChat(params) {
-      return chatMethods.createChat(this, params);
-    }
-    joinChannel(entity) {
-      return chatMethods.joinChannel(this, entity);
-    }
-    importChatInvite(link) {
-      return chatMethods.importChatInvite(this, link);
-    }
-    leaveChannel(entity) {
-      return chatMethods.leaveChannel(this, entity);
-    }
-    deleteHistory(entity, params) {
-      return chatMethods.deleteHistory(this, entity, params);
-    }
-    editPeerFolders(entity, folderId) {
-      return chatMethods.editPeerFolders(this, entity, folderId);
-    }
-    iterAdminLog(entity, params) {
-      return chatMethods.iterAdminLog(this, entity, params);
-    }
-    getAdminLog(entity, params) {
-      return chatMethods.getAdminLog(this, entity, params);
-    }
-    setTyping(entity, action, params) {
-      return chatMethods.setTyping(this, entity, action, params);
-    }
-    getCommonChats(entity, params) {
-      return userMethods.getCommonChats(this, entity, params);
-    }
-    exportChatInvite(entity, params) {
-      return inviteLinkMethods.exportChatInvite(this, entity, params);
-    }
-    editExportedChatInvite(entity, link, params) {
-      return inviteLinkMethods.editExportedChatInvite(this, entity, link, params);
-    }
-    getExportedChatInvite(entity, link) {
-      return inviteLinkMethods.getExportedChatInvite(this, entity, link);
-    }
-    deleteExportedChatInvite(entity, link) {
-      return inviteLinkMethods.deleteExportedChatInvite(this, entity, link);
-    }
-    deleteRevokedExportedChatInvites(entity, admin) {
-      return inviteLinkMethods.deleteRevokedExportedChatInvites(this, entity, admin);
-    }
-    getAdminsWithInvites(entity) {
-      return inviteLinkMethods.getAdminsWithInvites(this, entity);
-    }
-    iterExportedChatInvites(entity, params) {
-      return inviteLinkMethods.iterExportedChatInvites(this, entity, params);
-    }
-    getExportedChatInvites(entity, params) {
-      return inviteLinkMethods.getExportedChatInvites(this, entity, params);
-    }
-    iterChatInviteImporters(entity, params) {
-      return inviteLinkMethods.iterChatInviteImporters(this, entity, params);
-    }
-    getChatInviteImporters(entity, params) {
-      return inviteLinkMethods.getChatInviteImporters(this, entity, params);
-    }
-    hideChatJoinRequest(entity, user, params) {
-      return inviteLinkMethods.hideChatJoinRequest(this, entity, user, params);
-    }
-    hideAllChatJoinRequests(entity, params) {
-      return inviteLinkMethods.hideAllChatJoinRequests(this, entity, params);
-    }
-    checkChatInvite(link) {
-      return inviteLinkMethods.checkChatInvite(this, link);
-    }
-    updateProfile(params) {
-      return accountMethods.updateProfile(this, params);
-    }
-    updateUsername(username) {
-      return accountMethods.updateUsername(this, username);
-    }
-    updateStatus(online) {
-      return accountMethods.updateStatus(this, online);
-    }
-    uploadProfilePhoto(params) {
-      return accountMethods.uploadProfilePhoto(this, params);
-    }
-    updateProfilePhoto(photo, params) {
-      return accountMethods.updateProfilePhoto(this, photo, params);
-    }
-    deleteProfilePhotos(photos) {
-      return accountMethods.deleteProfilePhotos(this, photos);
-    }
-    getUserPhotos(entity, params) {
-      return accountMethods.getUserPhotos(this, entity, params);
-    }
-    getContacts() {
-      return contactMethods.getContacts(this);
-    }
-    addContact(entity, params) {
-      return contactMethods.addContact(this, entity, params);
-    }
-    deleteContacts(users) {
-      return contactMethods.deleteContacts(this, users);
-    }
-    importContacts(contacts) {
-      return contactMethods.importContacts(this, contacts);
-    }
-    block(entity, params) {
-      return contactMethods.block(this, entity, params);
-    }
-    unblock(entity, params) {
-      return contactMethods.unblock(this, entity, params);
-    }
-    getBlocked(params) {
-      return contactMethods.getBlocked(this, params);
-    }
-    resetAuthorization(hash) {
-      return accountMethods.resetAuthorization(this, hash);
-    }
-    getAuthorizations() {
-      return accountMethods.getAuthorizations(this);
-    }
-    getPrivacy(key) {
-      return accountMethods.getPrivacy(this, key);
-    }
-    setPrivacy(key, rules) {
-      return accountMethods.setPrivacy(this, key, rules);
-    }
-    getNotifySettings(entity) {
-      return accountMethods.getNotifySettings(this, entity);
-    }
-    updateNotifySettings(entity, params) {
-      return accountMethods.updateNotifySettings(this, entity, params);
-    }
-    getAccountTTL() {
-      return accountMethods.getAccountTTL(this);
-    }
-    setAccountTTL(days) {
-      return accountMethods.setAccountTTL(this, days);
-    }
-    getGlobalPrivacySettings() {
-      return accountMethods.getGlobalPrivacySettings(this);
-    }
-    setGlobalPrivacySettings(settings) {
-      return accountMethods.setGlobalPrivacySettings(this, settings);
-    }
-    createCommunity(params) {
-      return communityMethods.createCommunity(this, params);
-    }
-    getCommunity(community) {
-      return communityMethods.getCommunity(this, community);
-    }
-    getJoinedCommunities() {
-      return communityMethods.getJoinedCommunities(this);
-    }
-    getCommunityPeers(community) {
-      return communityMethods.getCommunityPeers(this, community);
-    }
-    setCommunityPeerLink(community, peer, action) {
-      return communityMethods.setCommunityPeerLink(this, community, peer, action);
-    }
-    setCommunityCollapsed(community, collapsed) {
-      return communityMethods.setCommunityCollapsed(this, community, collapsed);
-    }
-    iterCommunityPeerLinkRequests(community, params = {}) {
-      return communityMethods.iterCommunityPeerLinkRequests(this, community, params);
-    }
-    getCommunityPeerLinkRequests(community, params = {}) {
-      return communityMethods.getCommunityPeerLinkRequests(this, community, params);
-    }
-    setCommunityPeerLinkRequestApproval(community, peer, approved) {
-      return communityMethods.setCommunityPeerLinkRequestApproval(this, community, peer, approved);
-    }
-    setAllCommunityPeerLinkRequestsApproval(community, approved) {
-      return communityMethods.setAllCommunityPeerLinkRequestsApproval(this, community, approved);
-    }
-    setCommunityParticipantBanned(community, participant, banned) {
-      return communityMethods.setCommunityParticipantBanned(this, community, participant, banned);
-    }
-    getCommunityParticipantJoinedChats(community, participant) {
-      return communityMethods.getCommunityParticipantJoinedChats(this, community, participant);
-    }
-    pinCommunity(community, pinned = true) {
-      return communityMethods.pinCommunity(this, community, pinned);
-    }
-    getCommunityNotifySettings(community) {
-      return communityMethods.getCommunityNotifySettings(this, community);
-    }
-    updateCommunityNotifySettings(community, params) {
-      return communityMethods.updateCommunityNotifySettings(this, community, params);
-    }
-    createForumTopic(entity, params) {
-      return forumMethods.createForumTopic(this, entity, params);
-    }
-    editForumTopic(entity, topicId, params) {
-      return forumMethods.editForumTopic(this, entity, topicId, params);
-    }
-    updatePinnedForumTopic(entity, topicId, pinned) {
-      return forumMethods.updatePinnedForumTopic(this, entity, topicId, pinned);
-    }
-    reorderPinnedForumTopics(entity, order, params) {
-      return forumMethods.reorderPinnedForumTopics(this, entity, order, params);
-    }
-    getForumTopics(entity, params) {
-      return forumMethods.getForumTopics(this, entity, params);
-    }
-    getForumTopicsByID(entity, topicIds) {
-      return forumMethods.getForumTopicsByID(this, entity, topicIds);
-    }
-    toggleForum(entity, enabled, tabs) {
-      return forumMethods.toggleForum(this, entity, enabled, tabs);
-    }
-    toggleViewForumAsMessages(entity, enabled) {
-      return forumMethods.toggleViewForumAsMessages(this, entity, enabled);
-    }
-    sendStory(entity, params) {
-      return storyMethods.sendStory(this, entity, params);
-    }
-    editStory(entity, storyId, params) {
-      return storyMethods.editStory(this, entity, storyId, params);
-    }
-    deleteStories(entity, ids) {
-      return storyMethods.deleteStories(this, entity, ids);
-    }
-    toggleStoriesPinned(entity, ids, pinned) {
-      return storyMethods.toggleStoriesPinned(this, entity, ids, pinned);
-    }
-    canSendStory(entity) {
-      return storyMethods.canSendStory(this, entity);
-    }
-    getAllStories(params) {
-      return storyMethods.getAllStories(this, params);
-    }
-    getPeerStories(entity) {
-      return storyMethods.getPeerStories(this, entity);
-    }
-    getStoriesByID(entity, ids) {
-      return storyMethods.getStoriesByID(this, entity, ids);
-    }
-    getPinnedStories(entity, params) {
-      return storyMethods.getPinnedStories(this, entity, params);
-    }
-    getStoriesArchive(entity, params) {
-      return storyMethods.getStoriesArchive(this, entity, params);
-    }
-    readStories(entity, maxId) {
-      return storyMethods.readStories(this, entity, maxId);
-    }
-    incrementStoryViews(entity, ids) {
-      return storyMethods.incrementStoryViews(this, entity, ids);
-    }
-    getStoryViewsList(entity, storyId, params) {
-      return storyMethods.getStoryViewsList(this, entity, storyId, params);
-    }
-    exportStoryLink(entity, storyId) {
-      return storyMethods.exportStoryLink(this, entity, storyId);
-    }
-    sendStoryReaction(entity, storyId, reaction, params) {
-      return storyMethods.sendStoryReaction(this, entity, storyId, reaction, params);
-    }
-    getDialogFilters() {
-      return folderMethods.getDialogFilters(this);
-    }
-    updateDialogFilter(id, filter) {
-      return folderMethods.updateDialogFilter(this, id, filter);
-    }
-    updateDialogFiltersOrder(order) {
-      return folderMethods.updateDialogFiltersOrder(this, order);
-    }
-    getStickerSet(set) {
-      return stickerMethods.getStickerSet(this, set);
-    }
-    getAllStickers() {
-      return stickerMethods.getAllStickers(this);
-    }
-    installStickerSet(set, params) {
-      return stickerMethods.installStickerSet(this, set, params);
-    }
-    uninstallStickerSet(set) {
-      return stickerMethods.uninstallStickerSet(this, set);
-    }
-    getRecentStickers(params) {
-      return stickerMethods.getRecentStickers(this, params);
-    }
-    saveRecentSticker(document, params) {
-      return stickerMethods.saveRecentSticker(this, document, params);
-    }
-    clearRecentStickers(params) {
-      return stickerMethods.clearRecentStickers(this, params);
-    }
-    getFavedStickers() {
-      return stickerMethods.getFavedStickers(this);
-    }
-    faveSticker(document, params) {
-      return stickerMethods.faveSticker(this, document, params);
-    }
-    getCustomEmojiDocuments(documentIds) {
-      return stickerMethods.getCustomEmojiDocuments(this, documentIds);
-    }
-    setBotCommands(commands, params) {
-      return botMethods.setBotCommands(this, commands, params);
-    }
-    getBotCommands(params) {
-      return botMethods.getBotCommands(this, params);
-    }
-    resetBotCommands(params) {
-      return botMethods.resetBotCommands(this, params);
-    }
-    setBotInfo(params) {
-      return botMethods.setBotInfo(this, params);
-    }
-    getBotInfo(params) {
-      return botMethods.getBotInfo(this, params);
-    }
-    setBotMenuButton(user, button) {
-      return botMethods.setBotMenuButton(this, user, button);
-    }
-    getBotMenuButton(user) {
-      return botMethods.getBotMenuButton(this, user);
-    }
-    translateText(params) {
-      return messageMethods.translateText(this, params);
-    }
-    getMessagesViews(entity, ids, increment) {
-      return messageMethods.getMessagesViews(this, entity, ids, increment);
-    }
-    getOutboxReadDate(entity, message) {
-      return messageMethods.getOutboxReadDate(this, entity, message);
-    }
-    getMessageReadParticipants(entity, message) {
-      return messageMethods.getMessageReadParticipants(this, entity, message);
-    }
-    iterDownload(file, params) {
-      return downloadMethods.iterDownload(this, file, params);
-    }
-    on(event) {
-      return updateMethods.on(this, event);
-    }
-    addEventHandler(callback, event) {
-      return updateMethods.addEventHandler(this, callback, event);
-    }
-    removeEventHandler(callback, event) {
-      return updateMethods.removeEventHandler(this, callback, event);
-    }
-    listEventHandlers() {
-      return updateMethods.listEventHandlers(this);
-    }
-    async catchUp() {
-      return (0, dispatch_1.catchUp)(this);
-    }
-    uploadFile(fileParams) {
-      return uploadMethods.uploadFile(this, fileParams);
-    }
-    sendFile(entity, sendFileParams) {
-      return uploadMethods.sendFile(this, entity, sendFileParams);
-    }
-    invoke(request, dcId, options) {
-      return userMethods.invoke(this, request, dcId ?? options?.dcId, undefined, options);
-    }
-    invokeWithSender(request, sender) {
-      return userMethods.invoke(this, request, undefined, sender);
-    }
-    get api() {
-      if (!this._apiProxy) {
-        this._apiProxy = (0, apiProxy_1.createApiProxy)(tl_1.Api, (request, dcId, options) => this.invoke(request, dcId, options));
+      if (mode === "html")
+        return `<ul>${items.join("")}</ul>`;
+      return items.join(`
+`);
+    }
+    if (block instanceof api_1.Api.PageBlockOrderedList) {
+      const items = block.items.map((item, index) => {
+        let inner = "";
+        let check = "";
+        let num;
+        if (item instanceof api_1.Api.PageListOrderedItemText) {
+          inner = renderRichText(item.text, mode);
+          check = _checkbox(item);
+          num = item.num;
+        } else if (item instanceof api_1.Api.PageListOrderedItemBlocks) {
+          inner = renderBlocks(item.blocks, mode);
+          check = _checkbox(item);
+          num = item.num;
+        }
+        if (mode === "html")
+          return `<li>${check}${inner}</li>`;
+        return `${num ?? index + 1}. ${check}${inner}`;
+      });
+      if (mode === "html") {
+        const start = block.start != null ? ` start="${block.start}"` : "";
+        return `<ol${start}>${items.join("")}</ol>`;
       }
-      return this._apiProxy;
+      return items.join(`
+`);
     }
-    getMe(inputPeer = false) {
-      return userMethods.getMe(this, inputPeer);
+    if (block instanceof api_1.Api.PageBlockTable) {
+      const title = renderRichText(block.title, mode);
+      const rows = block.rows.map((row) => row.cells.map((cell) => cell.text ? renderRichText(cell.text, mode) : ""));
+      if (mode === "html") {
+        const body = block.rows.map((row, i) => {
+          const cells = row.cells.map((cell) => {
+            const tag = cell.header ? "th" : "td";
+            const attrs = [
+              cell.colspan ? ` colspan="${cell.colspan}"` : "",
+              cell.rowspan ? ` rowspan="${cell.rowspan}"` : ""
+            ].join("");
+            const inner = cell.text ? renderRichText(cell.text, "html") : "";
+            return `<${tag}${attrs}>${inner}</${tag}>`;
+          }).join("");
+          return `<tr>${cells}</tr>`;
+        }).join("");
+        return `${title ? `<p>${title}</p>` : ""}<table>${body}</table>`;
+      }
+      if (mode === "md" && rows.length) {
+        const header = rows[0];
+        const lines = [
+          `| ${header.join(" | ")} |`,
+          `| ${header.map(() => "---").join(" | ")} |`,
+          ...rows.slice(1).map((cells) => `| ${cells.join(" | ")} |`)
+        ];
+        return (title ? `${title}
+` : "") + lines.join(`
+`);
+      }
+      return [title, ...rows.map((cells) => cells.join(" | "))].filter(Boolean).join(`
+`);
     }
-    isBot() {
+    if (block instanceof api_1.Api.PageBlockPhoto) {
+      const caption = _renderCaption(block.caption, mode);
+      if (mode === "html") {
+        return `<figure><img data-photo-id="${block.photoId}">${caption ? `<figcaption>${caption}</figcaption>` : ""}</figure>`;
+      }
+      return caption ? `[photo: ${caption}]` : "[photo]";
+    }
+    if (block instanceof api_1.Api.PageBlockVideo) {
+      const caption = _renderCaption(block.caption, mode);
+      if (mode === "html") {
+        return `<figure><video data-document-id="${block.videoId}"></video>${caption ? `<figcaption>${caption}</figcaption>` : ""}</figure>`;
+      }
+      return caption ? `[video: ${caption}]` : "[video]";
+    }
+    if (block instanceof api_1.Api.PageBlockAudio) {
+      const caption = _renderCaption(block.caption, mode);
+      if (mode === "html") {
+        return `<audio data-document-id="${block.audioId}"></audio>`;
+      }
+      return caption ? `[audio: ${caption}]` : "[audio]";
+    }
+    if (block instanceof api_1.Api.PageBlockDocument) {
+      const caption = _renderCaption(block.caption, mode);
+      if (mode === "html") {
+        return `<figure><a data-document-id="${block.documentId}"></a>${caption ? `<figcaption>${caption}</figcaption>` : ""}</figure>`;
+      }
+      return caption ? `[document: ${caption}]` : "[document]";
+    }
+    if (block instanceof api_1.Api.PageBlockCollage || block instanceof api_1.Api.PageBlockSlideshow) {
+      const inner = renderBlocks(block.items, mode);
+      const caption = _renderCaption(block.caption, mode);
+      if (mode === "html") {
+        return `<div>${inner}${caption ? `<figcaption>${caption}</figcaption>` : ""}</div>`;
+      }
+      return [inner, caption].filter(Boolean).join(`
+`);
+    }
+    if (block instanceof api_1.Api.PageBlockCover) {
+      return _renderBlock(block.cover, mode);
+    }
+    if (block instanceof api_1.Api.PageBlockDetails) {
+      const title = renderRichText(block.title, mode);
+      const inner = renderBlocks(block.blocks, mode);
+      if (mode === "html") {
+        return `<details${block.open ? " open" : ""}><summary>${title}</summary>${inner}</details>`;
+      }
+      return [title, inner].filter(Boolean).join(`
+`);
+    }
+    if (block instanceof api_1.Api.PageBlockMath) {
+      if (mode === "html")
+        return `<code>${_escapeHtml(block.source)}</code>`;
+      if (mode === "md")
+        return "```\n" + block.source + "\n```";
+      return block.source;
+    }
+    if (block instanceof api_1.Api.PageBlockThinking) {
+      return renderRichText(block.text, mode);
+    }
+    if (block instanceof api_1.Api.PageBlockAuthorDate) {
+      return renderRichText(block.author, mode);
+    }
+    if (block instanceof api_1.Api.PageBlockButtonRow) {
+      const buttons = block.buttons.map((button) => button instanceof api_1.Api.PageButton ? _renderButton(button.text, button.type, mode) : "").filter(Boolean);
+      if (mode === "html") {
+        return `<div class="buttons">${buttons.join("")}</div>`;
+      }
+      return buttons.join(" ");
+    }
+    if (block instanceof api_1.Api.PageBlockUnsupported) {
+      return "";
+    }
+    const anyBlock = block;
+    if (anyBlock.text && typeof anyBlock.text === "object") {
+      return renderRichText(anyBlock.text, mode);
+    }
+    if (Array.isArray(anyBlock.blocks)) {
+      return renderBlocks(anyBlock.blocks, mode);
+    }
+    if (Array.isArray(anyBlock.items)) {
+      return renderBlocks(anyBlock.items, mode);
+    }
+    return "";
+  }
+  function renderBlocks(pageBlocks, mode) {
+    const parts = pageBlocks.map((block) => _renderBlock(block, mode)).filter((part) => part !== "");
+    if (mode === "html") {
+      return parts.join("");
+    }
+    return parts.join(`
+
+`);
+  }
+  function _blocksOf(source) {
+    return Array.isArray(source) ? source : source.blocks;
+  }
+  function toPlainText(source) {
+    return renderBlocks(_blocksOf(source), "text");
+  }
+  function toMarkdown(source) {
+    return renderBlocks(_blocksOf(source), "md");
+  }
+  function toHtml(source) {
+    return renderBlocks(_blocksOf(source), "html");
+  }
+});
+
+// node_modules/teleproto/Version.js
+var require_Version = __commonJS((exports2) => {
+  Object.defineProperty(exports2, "__esModule", { value: true });
+  exports2.version = undefined;
+  exports2.version = "1.229.3";
+});
+
+// node_modules/teleproto/network/connection/Connection.js
+var require_Connection = __commonJS((exports2) => {
+  Object.defineProperty(exports2, "__esModule", { value: true });
+  exports2.ObfuscatedConnection = exports2.PacketCodec = exports2.Connection = undefined;
+
+  class Connection {
+    constructor({ ip, port, dcId, loggers, proxy, socket, keepAliveInterval, testServers }) {
+      this._ip = ip;
+      this._port = port;
+      this._dcId = dcId;
+      this._log = loggers;
+      this._proxy = proxy;
+      this._keepAliveInterval = keepAliveInterval;
+      this._testServers = testServers;
+      this._connected = false;
+      this._codec = undefined;
+      this._obfuscation = undefined;
+      this.socket = new socket(proxy, keepAliveInterval);
+    }
+    async connect() {
+      this._log.debug("Connecting");
+      this._codec = new this.PacketCodecClass(this);
+      await this.socket.connect(this._port, this._ip, this._testServers);
+      this._log.debug("Finished connecting");
+      await this._initConn();
+      this._connected = true;
+    }
+    async disconnect() {
+      if (!this._connected) {
+        return;
+      }
+      this._connected = false;
+      await this.socket.close();
+    }
+    async send(data) {
+      if (!this._connected) {
+        throw new Error("Not connected");
+      }
+      await this._send(data);
+    }
+    async recv() {
+      if (!this._connected) {
+        throw new Error("Not connected");
+      }
+      const data = await this._recv();
+      if (!data || !data.length) {
+        throw new Error("No data received");
+      }
+      return data;
+    }
+    isConnected() {
+      return this._connected;
+    }
+    async _initConn() {
+      if (this._codec.tag) {
+        await this.socket.write(this._codec.tag);
+      }
+    }
+    async _send(data) {
+      const encodedPacket = this._codec.encodePacket(data);
+      this.socket.write(encodedPacket);
+    }
+    async _recv() {
+      return await this._codec.readPacket(this.socket);
+    }
+    toString() {
+      return `${this._ip}:${this._port}/${this.constructor.name.replace("Connection", "")}`;
+    }
+  }
+  exports2.Connection = Connection;
+
+  class ObfuscatedConnection extends Connection {
+    constructor() {
+      super(...arguments);
+      this.ObfuscatedIO = undefined;
+    }
+    async _initConn() {
+      this._obfuscation = new this.ObfuscatedIO(this);
+      await this._obfuscation.initHeader();
+      this.socket.write(this._obfuscation.header);
+    }
+    async _send(data) {
+      this._obfuscation.write(this._codec.encodePacket(data));
+    }
+    async _recv() {
+      return await this._codec.readPacket(this._obfuscation);
+    }
+  }
+  exports2.ObfuscatedConnection = ObfuscatedConnection;
+
+  class PacketCodec {
+    constructor(connection) {
+      this._conn = connection;
+    }
+    encodePacket(data) {
+      throw new Error("Not Implemented");
+    }
+    async readPacket(reader) {
+      throw new Error("Not Implemented");
+    }
+  }
+  exports2.PacketCodec = PacketCodec;
+});
+
+// node_modules/teleproto/errors/RPCBaseErrors.js
+var require_RPCBaseErrors = __commonJS((exports2) => {
+  Object.defineProperty(exports2, "__esModule", { value: true });
+  exports2.TimedOutError = exports2.ServerError = exports2.FloodError = exports2.AuthKeyError = exports2.NotFoundError = exports2.ForbiddenError = exports2.UnauthorizedError = exports2.BadRequestError = exports2.InvalidDCError = exports2.RPCError = undefined;
+
+  class RPCError extends Error {
+    constructor(message, request, code) {
+      super("{0}: {1}{2}".replace("{0}", code?.toString() || "").replace("{1}", message || "").replace("{2}", RPCError._fmtRequest(request)));
+      this.name = this.constructor.name;
+      this.code = code;
+      this.errorMessage = message;
+    }
+    static _fmtRequest(request) {
+      if (request) {
+        return ` (caused by ${request.className})`;
+      } else {
+        return "";
+      }
+    }
+  }
+  exports2.RPCError = RPCError;
+
+  class InvalidDCError extends RPCError {
+    constructor(message, request, code) {
+      super(message, request, code);
+      this.code = code || 303;
+      this.errorMessage = message || "ERROR_SEE_OTHER";
+    }
+  }
+  exports2.InvalidDCError = InvalidDCError;
+
+  class BadRequestError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 400;
+      this.errorMessage = "BAD_REQUEST";
+    }
+  }
+  exports2.BadRequestError = BadRequestError;
+
+  class UnauthorizedError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 401;
+      this.errorMessage = "UNAUTHORIZED";
+    }
+  }
+  exports2.UnauthorizedError = UnauthorizedError;
+
+  class ForbiddenError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 403;
+      this.errorMessage = "FORBIDDEN";
+    }
+  }
+  exports2.ForbiddenError = ForbiddenError;
+
+  class NotFoundError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 404;
+      this.errorMessage = "NOT_FOUND";
+    }
+  }
+  exports2.NotFoundError = NotFoundError;
+
+  class AuthKeyError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 406;
+      this.errorMessage = "AUTH_KEY";
+    }
+  }
+  exports2.AuthKeyError = AuthKeyError;
+
+  class FloodError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 420;
+      this.errorMessage = "FLOOD";
+    }
+  }
+  exports2.FloodError = FloodError;
+
+  class ServerError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 500;
+      this.errorMessage = "INTERNAL";
+    }
+  }
+  exports2.ServerError = ServerError;
+
+  class TimedOutError extends RPCError {
+    constructor() {
+      super(...arguments);
+      this.code = 503;
+      this.errorMessage = "Timeout";
+    }
+  }
+  exports2.TimedOutError = TimedOutError;
+});
+
+// node_modules/teleproto/errors/RPCErrorList.js
+var require_RPCErrorList = __commonJS((exports2) => {
+  Object.defineProperty(exports2, "__esModule", { value: true });
+  exports2.BotDomainInvalidError = exports2.BotCreateLimitExceededError = exports2.BotCommandInvalidError = exports2.BotCommandDescriptionInvalidError = exports2.BotChannelsNaError = exports2.BotBusinessMissingError = exports2.BotAppShortnameInvalidError = exports2.BotAppInvalidError = exports2.BotAppBotInvalidError = exports2.BotAlreadyDisabledError = exports2.BoostsRequiredError = exports2.BoostsEmptyError = exports2.BoostPeerInvalidError = exports2.BoostNotModifiedError = exports2.BirthdayInvalidError = exports2.BirthdayAlreadyError = exports2.BannedRightsInvalidError = exports2.BankCardNumberInvalidError = exports2.BalanceTooLowError = exports2.AutoarchiveNotAvailableError = exports2.AuthTokenInvalidxError = exports2.AuthTokenInvalidError = exports2.AuthTokenExpiredError = exports2.AuthTokenExceptionError = exports2.AuthTokenAlreadyAcceptedError = exports2.AuthBytesInvalidError = exports2.AudioTitleEmptyError = exports2.AudioContentUrlEmptyError = exports2.ArticleTitleEmptyError = exports2.ApiIdPublishedFloodError = exports2.ApiIdInvalidError = exports2.AlbumPhotosTooManyError = exports2.AicomposeToneTitleInvalidError = exports2.AicomposeToneInvalidError = exports2.AicomposeFloodPremiumError = exports2.AiComposeTaskMissingError = exports2.AdminsTooMuchError = exports2.AdminRightsEmptyError = exports2.AdminRankInvalidError = exports2.AdminRankEmojiNotAllowedError = exports2.AdminIdInvalidError = exports2.AddressInvalidError = exports2.AdExpiredError = exports2.AccessTokenInvalidError = exports2.AccessTokenExpiredError = exports2.AboutTooLongError = exports2.UserMigrateError = exports2.StatsMigrateError = exports2.PhoneMigrateError = exports2.NetworkMigrateError = undefined;
+  exports2.ChannelTooLargeError = exports2.ChannelTooBigError = exports2.ChannelPrivateError = exports2.ChannelParicipantMissingError = exports2.ChannelMonoforumUnsupportedError = exports2.ChannelInvalidError = exports2.ChannelIdInvalidError = exports2.ChannelForumMissingError = exports2.CdnMethodInvalidError = exports2.CallProtocolLayerInvalidError = exports2.CallProtocolFlagsInvalidError = exports2.CallPeerInvalidError = exports2.CallOccupyFailedError = exports2.CallNotActiveError = exports2.CallAlreadyDeclinedError = exports2.CallAlreadyAcceptedError = exports2.ButtonUserPrivacyRestrictedError = exports2.ButtonUserInvalidError = exports2.ButtonUrlInvalidError = exports2.ButtonTypeInvalidError = exports2.ButtonTextInvalidError = exports2.ButtonPosInvalidError = exports2.ButtonInvalidError = exports2.ButtonIdInvalidError = exports2.ButtonDataInvalidError = exports2.ButtonCopyTextInvalidError = exports2.BusinessWorkHoursPeriodInvalidError = exports2.BusinessWorkHoursEmptyError = exports2.BusinessRecipientsEmptyError = exports2.BusinessPeerUsageMissingError = exports2.BusinessPeerInvalidError = exports2.BusinessConnectionNotAllowedError = exports2.BusinessConnectionInvalidError = exports2.BroadcastRequiredError = exports2.BroadcastPublicVotersForbiddenError = exports2.BroadcastIdInvalidError = exports2.BotsTooMuchError = exports2.BotWebviewDisabledError = exports2.BotScoreNotModifiedError = exports2.BotResponseTimeoutError = exports2.BotPaymentsDisabledError = exports2.BotOnesideNotAvailError = exports2.BotNotConnectedYetError = exports2.BotInvoiceInvalidError = exports2.BotInvalidError = exports2.BotInlineDisabledError = exports2.BotIdInvalidError = exports2.BotGroupsBlockedError = exports2.BotGamesDisabledError = exports2.BotFallbackUnsupportedError = undefined;
+  exports2.CustomReactionsTooManyError = exports2.CurrencyTotalAmountInvalidError = exports2.CredentialInvalidError = exports2.CreateCallFailedError = exports2.ContactReqMissingError = exports2.ContactNameEmptyError = exports2.ContactMissingError = exports2.ContactIdInvalidError = exports2.ContactAddMissingError = exports2.ConnectionLayerInvalidError = exports2.ConnectionIdInvalidError = exports2.ConnectionAppVersionEmptyError = exports2.ConnectionApiIdInvalidError = exports2.ColorInvalidError = exports2.CollectionIdInvalidError = exports2.CollectibleNotFoundError = exports2.CollectibleInvalidError = exports2.CodeInvalidError = exports2.CodeHashInvalidError = exports2.CodeEmptyError = exports2.ChatlistsTooMuchError = exports2.ChatlistExcludeInvalidError = exports2.ChatlinksTooMuchError = exports2.ChatlinkSlugExpiredError = exports2.ChatlinkSlugEmptyError = exports2.ChatWriteForbiddenError = exports2.ChatTooBigError = exports2.ChatTitleEmptyError = exports2.ChatSendInlineForbiddenError = exports2.ChatRevokeDateUnsupportedError = exports2.ChatRestrictedError = exports2.ChatPublicRequiredError = exports2.ChatNotModifiedError = exports2.ChatMemberAddFailedError = exports2.ChatLinkExistsError = exports2.ChatInvitePermanentError = exports2.ChatInvalidError = exports2.ChatIdInvalidError = exports2.ChatIdEmptyError = exports2.ChatForwardsRestrictedError = exports2.ChatDiscussionUnallowedError = exports2.ChatAdminRequiredError = exports2.ChatAboutTooLongError = exports2.ChatAboutNotModifiedError = exports2.ChargeIdInvalidError = exports2.ChargeIdEmptyError = exports2.ChargeAlreadyRefundedError = exports2.ChannelsTooMuchError = exports2.ChannelsAdminPublicTooMuchError = exports2.ChannelsAdminLocatedTooMuchError = undefined;
+  exports2.FilePartSizeChangedError = exports2.FilePartLengthInvalidError = exports2.FilePartInvalidError = exports2.FilePartEmptyError = exports2.FileIdInvalidError = exports2.FileEmtpyError = exports2.FileContentTypeInvalidError = exports2.ExternalUrlInvalidError = exports2.ExtendedMediaPeerInvalidError = exports2.ExtendedMediaInvalidError = exports2.ExtendedMediaEmptyError = exports2.ExtendedMediaAmountInvalidError = exports2.ExportCardInvalidError = exports2.ExpiresAtInvalidError = exports2.ExpireDateInvalidError = exports2.ErrorTextEmptyError = exports2.EntityMentionUserInvalidError = exports2.EntityDateTooLongError = exports2.EntityDateInvalidError = exports2.EntityDateFormatInvalidError = exports2.EntityBoundsInvalidError = exports2.EntitiesTooLongError = exports2.EncryptionIdInvalidError = exports2.EncryptionDeclinedError = exports2.EncryptionAlreadyDeclinedError = exports2.EncryptionAlreadyAcceptedError = exports2.EncryptedMessageInvalidError = exports2.EmoticonStickerpackMissingError = exports2.EmoticonInvalidError = exports2.EmoticonEmptyError = exports2.EmojiNotModifiedError = exports2.EmojiMarkupInvalidError = exports2.EmojiInvalidError = exports2.EmailVerifyExpiredError = exports2.EmailUnconfirmedError = exports2.EmailNotSetupError = exports2.EmailNotAllowedError = exports2.EmailInvalidError = exports2.EmailInstallMissingError = exports2.EmailHashExpiredError = exports2.EffectIdInvalidError = exports2.EffectChatInvalidError = exports2.DocumentInvalidError = exports2.DhGAInvalidError = exports2.DcIdInvalidError = exports2.DateEmptyError = exports2.DataTooLongError = exports2.DataJsonInvalidError = exports2.DataInvalidError = exports2.DataHashSizeInvalidError = undefined;
+  exports2.IdInvalidError = exports2.IdExpiredError = exports2.HideRequesterMissingError = exports2.HashtagInvalidError = exports2.HashSizeInvalidError = exports2.HashInvalidError = exports2.GroupedMediaInvalidError = exports2.GroupcallSsrcDuplicateMuchError = exports2.GroupcallNotModifiedError = exports2.GroupcallJoinMissingError = exports2.GroupcallInvalidError = exports2.GroupcallForbiddenError = exports2.GroupcallAlreadyDiscardedError = exports2.GraphOutdatedReloadError = exports2.GraphInvalidReloadError = exports2.GraphExpiredReloadError = exports2.GiftStarsInvalidError = exports2.GiftSlugInvalidError = exports2.GiftSlugExpiredError = exports2.GiftMonthsInvalidError = exports2.GifIdInvalidError = exports2.GifContentTypeInvalidError = exports2.GeoPointInvalidError = exports2.GeneralModifyIconForbiddenError = exports2.GameBotInvalidError = exports2.FrozenParticipantMissingError = exports2.FromPeerInvalidError = exports2.FromMessageBotDisabledError = exports2.FreshChangeAdminsForbiddenError = exports2.ForumEnabledError = exports2.FormUnsupportedError = exports2.FormSubmitDuplicateError = exports2.FormIdEmptyError = exports2.FormExpiredError = exports2.FolderIdInvalidError = exports2.FolderIdEmptyError = exports2.FirstnameInvalidError = exports2.FilterTitleEmptyError = exports2.FilterNotSupportedError = exports2.FilterIncludeEmptyError = exports2.FilterIdInvalidError = exports2.FileTokenInvalidError = exports2.FileTitleEmptyError = exports2.FileReferenceInvalidError = exports2.FileReferenceExpiredError = exports2.FileReferenceEmptyError = exports2.FilePartsInvalidError = exports2.FilePartTooSmallError = exports2.FilePartTooBigError = exports2.FilePartSizeInvalidError = undefined;
+  exports2.MediaGroupedInvalidError = exports2.MediaFileInvalidError = exports2.MediaEmptyError = exports2.MediaCaptionTooLongError = exports2.MediaAlreadyPaidError = exports2.Md5ChecksumInvalidError = exports2.MaxQtsInvalidError = exports2.MaxIdInvalidError = exports2.MaxDateInvalidError = exports2.ManagerPermissionMissingError = exports2.ManagerInvalidError = exports2.LocationInvalidError = exports2.LinkNotModifiedError = exports2.LimitPerPostInvalidError = exports2.LimitInvalidError = exports2.LastnameInvalidError = exports2.LanguageInvalidError = exports2.LangPackInvalidError = exports2.LangCodeNotSupportedError = exports2.LangCodeInvalidError = exports2.JoinAsPeerInvalidError = exports2.InvoicePayloadInvalidError = exports2.InvoiceInvalidError = exports2.InvitesTooMuchError = exports2.InviteSlugInvalidError = exports2.InviteSlugExpiredError = exports2.InviteSlugEmptyError = exports2.InviteRevokedMissingError = exports2.InviteRequestSentError = exports2.InviteHashInvalidError = exports2.InviteHashExpiredError = exports2.InviteHashEmptyError = exports2.InviteForbiddenWithJoinasError = exports2.InputUserDeactivatedError = exports2.InputTextTooLongError = exports2.InputTextEmptyError = exports2.InputStarsNanosInvalidError = exports2.InputStarsAmountInvalidError = exports2.InputPurposeInvalidError = exports2.InputPeersEmptyError = exports2.InputFilterInvalidError = exports2.InputFileInvalidError = exports2.InputChatlistInvalidError = exports2.InlineResultExpiredError = exports2.ImportTokenInvalidError = exports2.ImportIdInvalidError = exports2.ImportFormatUnrecognizedError = exports2.ImportFormatDateInvalidError = exports2.ImportFileInvalidError = exports2.ImageProcessFailedError = undefined;
+  exports2.ParticipantIdInvalidError = exports2.ParentPeerInvalidError = exports2.PackTypeInvalidError = exports2.PackTitleInvalidError = exports2.PackShortNameOccupiedError = exports2.PackShortNameInvalidError = exports2.OrderInvalidError = exports2.OptionsTooMuchError = exports2.OptionInvalidError = exports2.OffsetPeerIdInvalidError = exports2.OffsetInvalidError = exports2.NotJoinedError = exports2.NotEligibleError = exports2.NogeneralHideForbiddenError = exports2.NoPaymentNeededError = exports2.NextOffsetInvalidError = exports2.NewSettingsInvalidError = exports2.NewSettingsEmptyError = exports2.NewSaltInvalidError = exports2.NeedActionMissingError = exports2.NameInvalidError = exports2.MultiMediaTooLongError = exports2.MsgWaitError = exports2.MsgVoiceTooLongError = exports2.MsgVoiceMissingError = exports2.MsgTooOldError = exports2.MsgIdInvalidError = exports2.MonthInvalidError = exports2.MinDateInvalidError = exports2.MethodInvalidError = exports2.MessageTooOldError = exports2.MessageTooLongError = exports2.MessageRequiredError = exports2.MessagePollClosedError = exports2.MessageNotReadYetError = exports2.MessageNotModifiedError = exports2.MessageIdsEmptyError = exports2.MessageIdInvalidError = exports2.MessageEmptyError = exports2.MessageEditTimeExpiredError = exports2.MegagroupRequiredError = exports2.MegagroupPrehistoryHiddenError = exports2.MegagroupIdInvalidError = exports2.MegagroupGeoRequiredError = exports2.MediaVideoStoryMissingError = exports2.MediaTypeInvalidError = exports2.MediaTtlInvalidError = exports2.MediaPrevInvalidError = exports2.MediaNewInvalidError = exports2.MediaInvalidError = undefined;
+  exports2.PollAnswerInvalidError = exports2.PinnedTopicNotModifiedError = exports2.PinnedTooMuchError = exports2.PinnedDialogsTooMuchError = exports2.PinRestrictedError = exports2.PhotoThumbUrlEmptyError = exports2.PhotoSaveFileInvalidError = exports2.PhotoInvalidDimensionsError = exports2.PhotoInvalidError = exports2.PhotoIdInvalidError = exports2.PhotoFileMissingError = exports2.PhotoExtInvalidError = exports2.PhotoCropSizeSmallError = exports2.PhotoCropFileMissingError = exports2.PhotoContentUrlEmptyError = exports2.PhotoContentTypeInvalidError = exports2.PhonePasswordProtectedError = exports2.PhoneNumberUnoccupiedError = exports2.PhoneNumberOccupiedError = exports2.PhoneNumberInvalidError = exports2.PhoneNumberFloodError = exports2.PhoneNumberBannedError = exports2.PhoneNumberAppSignupForbiddenError = exports2.PhoneNotOccupiedError = exports2.PhoneHashExpiredError = exports2.PhoneCodeInvalidError = exports2.PhoneCodeHashEmptyError = exports2.PhoneCodeExpiredError = exports2.PhoneCodeEmptyError = exports2.PersistentTimestampInvalidError = exports2.PersistentTimestampEmptyError = exports2.PeersListEmptyError = exports2.PeerTypesInvalidError = exports2.PeerIdNotSupportedError = exports2.PeerIdInvalidError = exports2.PeerHistoryEmptyError = exports2.PaymentRequiredError = exports2.PaymentProviderInvalidError = exports2.PaymentCredentialsInvalidError = exports2.PasswordTooFreshError = exports2.PasswordRequiredError = exports2.PasswordRecoveryNaError = exports2.PasswordRecoveryExpiredError = exports2.PasswordMissingError = exports2.PasswordHashInvalidError = exports2.PasswordEmptyError = exports2.PasskeyOriginMismatchError = exports2.ParticipantsTooFewError = exports2.ParticipantVersionOutdatedError = exports2.ParticipantJoinMissingError = undefined;
+  exports2.ResellStarsTooMuchError = exports2.ResellStarsTooFewError = exports2.RequestTokenInvalidError = exports2.RequestMsgExpiredError = exports2.ReplyToUserInvalidError = exports2.ReplyToMonoforumPeerInvalidError = exports2.ReplyToInvalidError = exports2.ReplyMessagesTooMuchError = exports2.ReplyMessageIdInvalidError = exports2.ReplyMarkupTooLongError = exports2.ReplyMarkupInvalidError = exports2.ReplyMarkupGameEmptyError = exports2.ReplyMarkupBuyEmptyError = exports2.ReceiptEmptyError = exports2.ReactionsTooManyError = exports2.ReactionsCountInvalidError = exports2.ReactionInvalidError = exports2.ReactionEmptyError = exports2.RangesInvalidError = exports2.RandomLengthInvalidError = exports2.RandomIdInvalidError = exports2.RandomIdExpiredError = exports2.RandomIdEmptyError = exports2.RandomIdDuplicateError = exports2.RaiseHandForbiddenError = exports2.QuoteTextInvalidError = exports2.QuizMultipleInvalidError = exports2.QuizCorrectAnswersTooMuchError = exports2.QuizCorrectAnswersEmptyError = exports2.QuizCorrectAnswerInvalidError = exports2.QuizAnswerMissingError = exports2.QuickRepliesTooMuchError = exports2.QuickRepliesBotNotAllowedError = exports2.QueryTooShortError = exports2.QueryIdInvalidError = exports2.QueryIdEmptyError = exports2.PurposeInvalidError = exports2.PublicKeyRequiredError = exports2.PublicKeyInvalidError = exports2.PublicBroadcastExpectedError = exports2.PrivacyValueInvalidError = exports2.PrivacyTooLongError = exports2.PrivacyKeyInvalidError = exports2.PricingChatInvalidError = exports2.PremiumPurposeInvalidError = exports2.PremiumAccountRequiredError = exports2.PollQuestionInvalidError = exports2.PollOptionInvalidError = exports2.PollOptionDuplicateError = exports2.PollAnswersInvalidError = undefined;
+  exports2.StargiftNotUniqueError = exports2.StargiftNotOwnerError = exports2.StargiftNotFoundError = exports2.StargiftMessageInvalidError = exports2.StargiftInvalidError = exports2.StargiftAttributeInvalidError = exports2.StargiftAlreadyUpgradedError = exports2.StargiftAlreadyRefundedError = exports2.StargiftAlreadyConvertedError = exports2.SrpPasswordChangedError = exports2.SrpIdInvalidError = exports2.SrpAInvalidError = exports2.SmsjobIdInvalidError = exports2.SmsCodeCreateFailedError = exports2.SlugInvalidError = exports2.SlowmodeMultiMsgsDisabledError = exports2.SlotsEmptyError = exports2.ShortcutInvalidError = exports2.ShortNameOccupiedError = exports2.ShortNameInvalidError = exports2.Sha256HashInvalidError = exports2.SettingsInvalidError = exports2.SessionTooFreshError = exports2.SendMessageTypeInvalidError = exports2.SendMessageMediaInvalidError = exports2.SendMessageGameInvalidError = exports2.SendAsPeerInvalidError = exports2.SelfDeleteRestrictedError = exports2.SecureSecretRequiredError = exports2.SecondsInvalidError = exports2.SearchWithLinkNotSupportedError = exports2.SearchQueryEmptyError = exports2.ScoreInvalidError = exports2.ScheduleTooMuchError = exports2.ScheduleStatusPrivateError = exports2.ScheduleDateTooLateError = exports2.ScheduleDateInvalidError = exports2.ScheduleBotNotAllowedError = exports2.SavedIdEmptyError = exports2.RsaDecryptFailedError = exports2.RingtoneMimeInvalidError = exports2.RingtoneInvalidError = exports2.RightsNotModifiedError = exports2.RevoteNotAllowedError = exports2.ResultsTooMuchError = exports2.ResultTypeInvalidError = exports2.ResultIdInvalidError = exports2.ResultIdEmptyError = exports2.ResultIdDuplicateError = exports2.ResetRequestMissingError = undefined;
+  exports2.StoryPeriodInvalidError = exports2.StoryNotModifiedError = exports2.StoryLiveAlreadyError = exports2.StoryIdInvalidError = exports2.StoryIdEmptyError = exports2.StoriesTooMuchError = exports2.StoriesNeverCreatedError = exports2.StickersetInvalidError = exports2.StickersTooMuchError = exports2.StickersEmptyError = exports2.StickerpackStickersTooMuchError = exports2.StickerVideoNowebmError = exports2.StickerVideoNodocError = exports2.StickerVideoBigError = exports2.StickerThumbTgsNotgsError = exports2.StickerThumbPngNopngError = exports2.StickerTgsNotgsError = exports2.StickerTgsNodocError = exports2.StickerPngNopngError = exports2.StickerPngDimensionsError = exports2.StickerMimeInvalidError = exports2.StickerInvalidError = exports2.StickerIdInvalidError = exports2.StickerGifDimensionsError = exports2.StickerFileInvalidError = exports2.StickerEmojiInvalidError = exports2.StickerDocumentInvalidError = exports2.StartParamTooLongError = exports2.StartParamInvalidError = exports2.StartParamEmptyError = exports2.StarsPaymentRequiredError = exports2.StarsInvoiceInvalidError = exports2.StarsAmountInvalidError = exports2.StarrefPermilleTooLowError = exports2.StarrefPermilleInvalidError = exports2.StarrefHashRevokedError = exports2.StarrefExpiredError = exports2.StarrefAwaitingEndError = exports2.StargiftUserUsageLimitedError = exports2.StargiftUsageLimitedError = exports2.StargiftUpgradeUnavailableError = exports2.StargiftTransferTooEarlyError = exports2.StargiftSlugInvalidError = exports2.StargiftResellTooEarlyError = exports2.StargiftResellCurrencyNotAllowedError = exports2.StargiftPeerInvalidError = exports2.StargiftOwnerInvalidError = exports2.StargiftOfferNotAllowedError = exports2.StargiftOfferInvalidError = exports2.StargiftObjectInvalidError = undefined;
+  exports2.TtlPeriodInvalidError = exports2.TtlMediaInvalidError = exports2.TtlDaysInvalidError = exports2.TranslateReqQuotaExceededError = exports2.TranscriptionFailedError = exports2.TransactionIdInvalidError = exports2.TopicsEmptyError = exports2.TopicTitleEmptyError = exports2.TopicNotModifiedError = exports2.TopicIdInvalidError = exports2.TopicHideSeparatelyError = exports2.TopicDeletedError = exports2.TopicClosedError = exports2.TopicCloseSeparatelyError = exports2.TokenTypeInvalidError = exports2.TokenInvalidError = exports2.TokenEmptyError = exports2.TodoNotModifiedError = exports2.TodoItemsTooMuchError = exports2.TodoItemsEmptyError = exports2.TodoItemDuplicateError = exports2.ToLangInvalidError = exports2.ToIdInvalidError = exports2.TmpPasswordInvalidError = exports2.TmpPasswordDisabledError = exports2.TitleInvalidError = exports2.TimezoneInvalidError = exports2.ThemeTitleInvalidError = exports2.ThemeSlugInvalidError = exports2.ThemeParamsInvalidError = exports2.ThemeMimeInvalidError = exports2.ThemeInvalidError = exports2.ThemeFormatInvalidError = exports2.ThemeFileInvalidError = exports2.TextdraftPeerInvalidError = exports2.TermsUrlInvalidError = exports2.TempAuthKeyEmptyError = exports2.TempAuthKeyAlreadyBoundError = exports2.TaskAlreadyExistsError = exports2.TakeoutRequiredError = exports2.TakeoutInvalidError = exports2.SwitchWebviewUrlInvalidError = exports2.SwitchPmTextEmptyError = exports2.SuggestedPostPeerInvalidError = exports2.SuggestedPostAmountInvalidError = exports2.SubscriptionPeriodInvalidError = exports2.SubscriptionIdInvalidError = exports2.SubscriptionExportMissingError = exports2.StorySendFloodWeeklyError = exports2.StorySendFloodMonthlyError = undefined;
+  exports2.WcConvertUrlInvalidError = exports2.WallpaperNotFoundError = exports2.WallpaperMimeInvalidError = exports2.WallpaperInvalidError = exports2.WallpaperFileInvalidError = exports2.VoiceMessagesForbiddenError = exports2.VideoTitleEmptyError = exports2.VideoStopForbiddenError = exports2.VideoPauseForbiddenError = exports2.VideoFileInvalidError = exports2.VideoDurationInvalidError = exports2.VideoContentTypeInvalidError = exports2.VenueIdInvalidError = exports2.UsersTooMuchError = exports2.UsersTooFewError = exports2.UserpicUploadRequiredError = exports2.UsernamesActiveTooMuchError = exports2.UsernameSuffixMissingError = exports2.UsernamePurchaseAvailableError = exports2.UsernameOccupiedError = exports2.UsernameNotOccupiedError = exports2.UsernameNotModifiedError = exports2.UsernameInvalidError = exports2.UserVolumeInvalidError = exports2.UserPublicMissingError = exports2.UserNotParticipantError = exports2.UserNotMutualContactError = exports2.UserKickedError = exports2.UserIsBotError = exports2.UserIsBlockedError = exports2.UserInvalidError = exports2.UserIdInvalidError = exports2.UserGiftUnavailableError = exports2.UserCreatorError = exports2.UserChannelsTooMuchError = exports2.UserBotToBotDisabledError = exports2.UserBotRequiredError = exports2.UserBotInvalidError = exports2.UserBotError = exports2.UserBlockedError = exports2.UserBannedInChannelError = exports2.UserAlreadyParticipantError = exports2.UserAlreadyInvitedError = exports2.UserAdminInvalidError = exports2.UsageLimitInvalidError = exports2.UrlInvalidError = exports2.UrlExpiredError = exports2.UntilDateInvalidError = exports2.UnsupportedError = exports2.TypesEmptyError = undefined;
+  exports2.ChatGuestSendForbiddenError = exports2.ChatAdminInviteRequiredError = exports2.ChatActionForbiddenError = exports2.ChannelPublicGroupNaError = exports2.BroadcastForbiddenError = exports2.BotVerifierForbiddenError = exports2.BotGuardNotSupportedError = exports2.BotForumCreateForbiddenError = exports2.BotAccessForbiddenError = exports2.AllowPaymentRequiredError = exports2.AccessDeniedError = exports2.UserDeactivatedBanError = exports2.UserDeactivatedError = exports2.SessionRevokedError = exports2.SessionPasswordNeededError = exports2.SessionExpiredError = exports2.AuthKeyPermEmptyError = exports2.AuthKeyInvalidError = exports2.AuthKeyUnregisteredError = exports2.StickersetNotModifiedError = exports2.PeerFloodError = exports2.InputRequestTooLongError = exports2.InputMethodInvalidError = exports2.InputLayerInvalidError = exports2.InputFetchFailError = exports2.InputFetchErrorError = exports2.InputConstructorInvalidError = exports2.FilePartMissingError = exports2.FileMigrateError = exports2.ConnectionSystemLangCodeEmptyError = exports2.ConnectionSystemEmptyError = exports2.ConnectionNotInitedError = exports2.ConnectionLangPackInvalidError = exports2.ConnectionDeviceModelEmptyError = exports2.BotMethodInvalidError = exports2.YouBlockedUserError = exports2.WebpushTokenInvalidError = exports2.WebpushKeyInvalidError = exports2.WebpushAuthInvalidError = exports2.WebpageUrlInvalidError = exports2.WebpageNotFoundError = exports2.WebpageMediaEmptyError = exports2.WebpageCurlFailedError = exports2.WebdocumentUrlInvalidError = exports2.WebdocumentUrlEmptyError = exports2.WebdocumentSizeTooBigError = exports2.WebdocumentMimeInvalidError = exports2.WebdocumentInvalidError = exports2.WebauthTokenExpiredError = exports2.WebappReqIdInvalidError = undefined;
+  exports2.StickersetOwnerAnonymousError = exports2.StarsFormAmountMismatchError = exports2.StargiftExportInProgressError = exports2.SendCodeUnavailableError = exports2.PreviousChatImportActiveWaitMinError = exports2.PremiumCurrentlyUnavailableError = exports2.PrecheckoutFailedError = exports2.PollMemberRestrictedError = exports2.PollCountryRestrictedError = exports2.PhonePasswordFloodError = exports2.PaymentUnsupportedError = exports2.FreshResetAuthorisationForbiddenError = exports2.FreshChangePhoneForbiddenError = exports2.FilerefUpgradeNeededError = exports2.EditMessageTempRestrictedError = exports2.CallProtocolCompatLayerInvalidError = exports2.BusinessAddressActiveError = exports2.ApiGiftRestrictedUpdateAppError = exports2.ChatForbiddenError = exports2.YourPrivacyRestrictedError = exports2.UserRestrictedError = exports2.UserPrivacyRestrictedError = exports2.UserPermissionDeniedError = exports2.UserDisallowedStargiftsError = exports2.UserDeletedError = exports2.SensitiveChangeForbiddenError = exports2.RightForbiddenError = exports2.PublicChannelMissingError = exports2.PrivacyPremiumRequiredError = exports2.PollVoteRequiredError = exports2.MessageDeleteForbiddenError = exports2.MessageAuthorRequiredError = exports2.InlineBotRequiredError = exports2.GroupcallChangeForbiddenError = exports2.GroupcallAlreadyStartedError = exports2.EditBotInviteForbiddenError = exports2.ChatTypeInvalidError = exports2.ChatSendWebpageForbiddenError = exports2.ChatSendVoicesForbiddenError = exports2.ChatSendVideosForbiddenError = exports2.ChatSendStickersForbiddenError = exports2.ChatSendRoundvideosForbiddenError = exports2.ChatSendPollForbiddenError = exports2.ChatSendPlainForbiddenError = exports2.ChatSendPhotosForbiddenError = exports2.ChatSendMediaForbiddenError = exports2.ChatSendGifsForbiddenError = exports2.ChatSendGameForbiddenError = exports2.ChatSendDocsForbiddenError = exports2.ChatSendAudiosForbiddenError = undefined;
+  exports2.baseErrors = exports2.rpcErrorRe = exports2.rpcErrorsRe = exports2.rpcErrorsDict = exports2.FloodTestPhoneWaitError = exports2.AnonymousReactionsDisabledError = exports2.MsgWaitTimeoutError = exports2.TimeoutError = exports2.TranslationTimeoutError = exports2.TranslateReqFailedError = exports2.SignInFailedError = exports2.SendMediaInvalidError = exports2.PersistentTimestampOutdatedError = exports2.OauthRequestInvalidError = exports2.ChatIdGenerateFailedError = exports2.CdnUploadTimeoutError = exports2.AuthRestartError = exports2.AuthKeyUnsynchronizedError = exports2.AicomposeTimeoutError = exports2.TakeoutInitDelayError = exports2.SlowModeWaitError = exports2.PremiumSubActiveUntilError = exports2.FrozenMethodInvalidError = exports2.FloodWaitError = exports2.TwoFaConfirmWaitError = exports2.AuthKeyDuplicatedError = exports2.UserpicPrivacyRequiredError = exports2.UpdateAppToLoginError = exports2.TranslationsDisabledError = undefined;
+  var RPCBaseErrors_1 = require_RPCBaseErrors();
+
+  class NetworkMigrateError extends RPCBaseErrors_1.InvalidDCError {
+    constructor(args) {
+      const newDc = Number(args.capture || 0);
+      const message = "Your IP address is associated to DC " + newDc + ", please re-send the query to that DC." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.newDc = newDc;
+    }
+  }
+  exports2.NetworkMigrateError = NetworkMigrateError;
+
+  class PhoneMigrateError extends RPCBaseErrors_1.InvalidDCError {
+    constructor(args) {
+      const newDc = Number(args.capture || 0);
+      const message = "Your phone number is associated to DC " + newDc + ", please re-send the query to that DC." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.newDc = newDc;
+    }
+  }
+  exports2.PhoneMigrateError = PhoneMigrateError;
+
+  class StatsMigrateError extends RPCBaseErrors_1.InvalidDCError {
+    constructor(args) {
+      const newDc = Number(args.capture || 0);
+      const message = "Channel statistics for the specified channel are stored on DC " + newDc + ", please re-send the query to that DC." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.newDc = newDc;
+    }
+  }
+  exports2.StatsMigrateError = StatsMigrateError;
+
+  class UserMigrateError extends RPCBaseErrors_1.InvalidDCError {
+    constructor(args) {
+      const newDc = Number(args.capture || 0);
+      const message = "Your account is associated to DC " + newDc + ", please re-send the query to that DC." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.newDc = newDc;
+    }
+  }
+  exports2.UserMigrateError = UserMigrateError;
+
+  class AboutTooLongError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "About string too long." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ABOUT_TOO_LONG";
+    }
+  }
+  exports2.AboutTooLongError = AboutTooLongError;
+
+  class AccessTokenExpiredError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Access token expired." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ACCESS_TOKEN_EXPIRED";
+    }
+  }
+  exports2.AccessTokenExpiredError = AccessTokenExpiredError;
+
+  class AccessTokenInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Access token invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ACCESS_TOKEN_INVALID";
+    }
+  }
+  exports2.AccessTokenInvalidError = AccessTokenInvalidError;
+
+  class AdExpiredError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The ad has expired (too old or not found)." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AD_EXPIRED";
+    }
+  }
+  exports2.AdExpiredError = AdExpiredError;
+
+  class AddressInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified geopoint address is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ADDRESS_INVALID";
+    }
+  }
+  exports2.AddressInvalidError = AddressInvalidError;
+
+  class AdminIdInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified admin ID is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ADMIN_ID_INVALID";
+    }
+  }
+  exports2.AdminIdInvalidError = AdminIdInvalidError;
+
+  class AdminRankEmojiNotAllowedError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "An admin rank cannot contain emojis." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ADMIN_RANK_EMOJI_NOT_ALLOWED";
+    }
+  }
+  exports2.AdminRankEmojiNotAllowedError = AdminRankEmojiNotAllowedError;
+
+  class AdminRankInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified admin rank is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ADMIN_RANK_INVALID";
+    }
+  }
+  exports2.AdminRankInvalidError = AdminRankInvalidError;
+
+  class AdminRightsEmptyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The chatAdminRights constructor passed in keyboardButtonRequestPeer.peer_type.user_admin_rights has no rights set (i.e. flags is 0)." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ADMIN_RIGHTS_EMPTY";
+    }
+  }
+  exports2.AdminRightsEmptyError = AdminRightsEmptyError;
+
+  class AdminsTooMuchError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "There are too many admins." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ADMINS_TOO_MUCH";
+    }
+  }
+  exports2.AdminsTooMuchError = AdminsTooMuchError;
+
+  class AiComposeTaskMissingError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "No AI task was specified. The caller must provide at least one of: proofread, translate (with a target language), tone, or emojify." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AI_COMPOSE_TASK_MISSING";
+    }
+  }
+  exports2.AiComposeTaskMissingError = AiComposeTaskMissingError;
+
+  class AicomposeFloodPremiumError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "You've reached the daily limit of AI text transformations, upgrade to [Telegram Premium](https://core.telegram.org/api/premium) to get **50x** times more AI text transformations per day!" + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AICOMPOSE_FLOOD_PREMIUM";
+    }
+  }
+  exports2.AicomposeFloodPremiumError = AicomposeFloodPremiumError;
+
+  class AicomposeToneInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified tone is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AICOMPOSE_TONE_INVALID";
+    }
+  }
+  exports2.AicomposeToneInvalidError = AicomposeToneInvalidError;
+
+  class AicomposeToneTitleInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified tone title is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AICOMPOSE_TONE_TITLE_INVALID";
+    }
+  }
+  exports2.AicomposeToneTitleInvalidError = AicomposeToneTitleInvalidError;
+
+  class AlbumPhotosTooManyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "You have uploaded too many profile photos, delete some before retrying." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ALBUM_PHOTOS_TOO_MANY";
+    }
+  }
+  exports2.AlbumPhotosTooManyError = AlbumPhotosTooManyError;
+
+  class ApiIdInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "API ID invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "API_ID_INVALID";
+    }
+  }
+  exports2.ApiIdInvalidError = ApiIdInvalidError;
+
+  class ApiIdPublishedFloodError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "This API id was published somewhere, you can't use it now." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "API_ID_PUBLISHED_FLOOD";
+    }
+  }
+  exports2.ApiIdPublishedFloodError = ApiIdPublishedFloodError;
+
+  class ArticleTitleEmptyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The title of the article is empty." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "ARTICLE_TITLE_EMPTY";
+    }
+  }
+  exports2.ArticleTitleEmptyError = ArticleTitleEmptyError;
+
+  class AudioContentUrlEmptyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The remote URL specified in the content field is empty." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUDIO_CONTENT_URL_EMPTY";
+    }
+  }
+  exports2.AudioContentUrlEmptyError = AudioContentUrlEmptyError;
+
+  class AudioTitleEmptyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "An empty audio title was provided." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUDIO_TITLE_EMPTY";
+    }
+  }
+  exports2.AudioTitleEmptyError = AudioTitleEmptyError;
+
+  class AuthBytesInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The provided authorization is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUTH_BYTES_INVALID";
+    }
+  }
+  exports2.AuthBytesInvalidError = AuthBytesInvalidError;
+
+  class AuthTokenAlreadyAcceptedError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified auth token was already accepted." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUTH_TOKEN_ALREADY_ACCEPTED";
+    }
+  }
+  exports2.AuthTokenAlreadyAcceptedError = AuthTokenAlreadyAcceptedError;
+
+  class AuthTokenExceptionError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "An error occurred while importing the auth token." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUTH_TOKEN_EXCEPTION";
+    }
+  }
+  exports2.AuthTokenExceptionError = AuthTokenExceptionError;
+
+  class AuthTokenExpiredError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The authorization token has expired." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUTH_TOKEN_EXPIRED";
+    }
+  }
+  exports2.AuthTokenExpiredError = AuthTokenExpiredError;
+
+  class AuthTokenInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified auth token is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUTH_TOKEN_INVALID";
+    }
+  }
+  exports2.AuthTokenInvalidError = AuthTokenInvalidError;
+
+  class AuthTokenInvalidxError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified auth token is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUTH_TOKEN_INVALIDX";
+    }
+  }
+  exports2.AuthTokenInvalidxError = AuthTokenInvalidxError;
+
+  class AutoarchiveNotAvailableError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The autoarchive setting is not available at this time: please check the value of the [autoarchive_setting_available field in client config &raquo;](https://core.telegram.org/api/config#client-configuration) before calling this method." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "AUTOARCHIVE_NOT_AVAILABLE";
+    }
+  }
+  exports2.AutoarchiveNotAvailableError = AutoarchiveNotAvailableError;
+
+  class BalanceTooLowError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The transaction cannot be completed because the current [Telegram Stars balance](https://core.telegram.org/api/stars) is too low." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BALANCE_TOO_LOW";
+    }
+  }
+  exports2.BalanceTooLowError = BalanceTooLowError;
+
+  class BankCardNumberInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified card number is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BANK_CARD_NUMBER_INVALID";
+    }
+  }
+  exports2.BankCardNumberInvalidError = BankCardNumberInvalidError;
+
+  class BannedRightsInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "You provided some invalid flags in the banned rights." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BANNED_RIGHTS_INVALID";
+    }
+  }
+  exports2.BannedRightsInvalidError = BannedRightsInvalidError;
+
+  class BirthdayAlreadyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The target user already has a birthday set." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BIRTHDAY_ALREADY";
+    }
+  }
+  exports2.BirthdayAlreadyError = BirthdayAlreadyError;
+
+  class BirthdayInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "An invalid age was specified, must be between 0 and 150 years." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BIRTHDAY_INVALID";
+    }
+  }
+  exports2.BirthdayInvalidError = BirthdayInvalidError;
+
+  class BoostNotModifiedError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "You're already [boosting](https://core.telegram.org/api/boost) the specified channel." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOOST_NOT_MODIFIED";
+    }
+  }
+  exports2.BoostNotModifiedError = BoostNotModifiedError;
+
+  class BoostPeerInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified `boost_peer` is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOOST_PEER_INVALID";
+    }
+  }
+  exports2.BoostPeerInvalidError = BoostPeerInvalidError;
+
+  class BoostsEmptyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "No boost slots were specified." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOOSTS_EMPTY";
+    }
+  }
+  exports2.BoostsEmptyError = BoostsEmptyError;
+
+  class BoostsRequiredError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified channel must first be [boosted by its users](https://core.telegram.org/api/boost) in order to perform this action." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOOSTS_REQUIRED";
+    }
+  }
+  exports2.BoostsRequiredError = BoostsRequiredError;
+
+  class BotAlreadyDisabledError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The connected business bot was already disabled for the specified peer." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_ALREADY_DISABLED";
+    }
+  }
+  exports2.BotAlreadyDisabledError = BotAlreadyDisabledError;
+
+  class BotAppBotInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The bot_id passed in the inputBotAppShortName constructor is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_APP_BOT_INVALID";
+    }
+  }
+  exports2.BotAppBotInvalidError = BotAppBotInvalidError;
+
+  class BotAppInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified bot app is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_APP_INVALID";
+    }
+  }
+  exports2.BotAppInvalidError = BotAppInvalidError;
+
+  class BotAppShortnameInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified bot app short name is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_APP_SHORTNAME_INVALID";
+    }
+  }
+  exports2.BotAppShortnameInvalidError = BotAppShortnameInvalidError;
+
+  class BotBusinessMissingError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified bot is not a business bot (the [user](https://core.telegram.org/constructor/user).`bot_business` flag is not set)." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_BUSINESS_MISSING";
+    }
+  }
+  exports2.BotBusinessMissingError = BotBusinessMissingError;
+
+  class BotChannelsNaError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Bots can't edit admin privileges." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_CHANNELS_NA";
+    }
+  }
+  exports2.BotChannelsNaError = BotChannelsNaError;
+
+  class BotCommandDescriptionInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified command description is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_COMMAND_DESCRIPTION_INVALID";
+    }
+  }
+  exports2.BotCommandDescriptionInvalidError = BotCommandDescriptionInvalidError;
+
+  class BotCommandInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified command is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_COMMAND_INVALID";
+    }
+  }
+  exports2.BotCommandInvalidError = BotCommandInvalidError;
+
+  class BotCreateLimitExceededError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The current user already owns the maximum allowed number of owned bots, as specified by [`bots_create_limit_default` &raquo;](https://core.telegram.org/api/config#bots-create-limit-default) and [`bots_create_limit_premium` &raquo;](https://core.telegram.org/api/config#bots-create-limit-premium); if the current user doesn't have Telegram Premium, upgrading to Premium will allow them to create more bots." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_CREATE_LIMIT_EXCEEDED";
+    }
+  }
+  exports2.BotCreateLimitExceededError = BotCreateLimitExceededError;
+
+  class BotDomainInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Bot domain invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_DOMAIN_INVALID";
+    }
+  }
+  exports2.BotDomainInvalidError = BotDomainInvalidError;
+
+  class BotFallbackUnsupportedError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The fallback flag can't be set for bots." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_FALLBACK_UNSUPPORTED";
+    }
+  }
+  exports2.BotFallbackUnsupportedError = BotFallbackUnsupportedError;
+
+  class BotGamesDisabledError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Games can't be sent to channels." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_GAMES_DISABLED";
+    }
+  }
+  exports2.BotGamesDisabledError = BotGamesDisabledError;
+
+  class BotGroupsBlockedError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "This bot can't be added to groups." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_GROUPS_BLOCKED";
+    }
+  }
+  exports2.BotGroupsBlockedError = BotGroupsBlockedError;
+
+  class BotIdInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified bot ID is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_ID_INVALID";
+    }
+  }
+  exports2.BotIdInvalidError = BotIdInvalidError;
+
+  class BotInlineDisabledError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "This bot can't be used in inline mode." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_INLINE_DISABLED";
+    }
+  }
+  exports2.BotInlineDisabledError = BotInlineDisabledError;
+
+  class BotInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "This is not a valid bot." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_INVALID";
+    }
+  }
+  exports2.BotInvalidError = BotInvalidError;
+
+  class BotInvoiceInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified invoice is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_INVOICE_INVALID";
+    }
+  }
+  exports2.BotInvoiceInvalidError = BotInvoiceInvalidError;
+
+  class BotNotConnectedYetError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "No [business bot](https://core.telegram.org/api/business#connected-bots) is connected to the currently logged in user." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_NOT_CONNECTED_YET";
+    }
+  }
+  exports2.BotNotConnectedYetError = BotNotConnectedYetError;
+
+  class BotOnesideNotAvailError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Bots can't pin messages in PM just for themselves." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_ONESIDE_NOT_AVAIL";
+    }
+  }
+  exports2.BotOnesideNotAvailError = BotOnesideNotAvailError;
+
+  class BotPaymentsDisabledError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Please enable bot payments in botfather before calling this method." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_PAYMENTS_DISABLED";
+    }
+  }
+  exports2.BotPaymentsDisabledError = BotPaymentsDisabledError;
+
+  class BotResponseTimeoutError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "A timeout occurred while fetching data from the bot." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_RESPONSE_TIMEOUT";
+    }
+  }
+  exports2.BotResponseTimeoutError = BotResponseTimeoutError;
+
+  class BotScoreNotModifiedError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The score wasn't modified." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_SCORE_NOT_MODIFIED";
+    }
+  }
+  exports2.BotScoreNotModifiedError = BotScoreNotModifiedError;
+
+  class BotWebviewDisabledError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "A webview cannot be opened in the specified conditions: emitted for example if `from_bot_menu` or `url` are set and `peer` is not the chat with the bot." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOT_WEBVIEW_DISABLED";
+    }
+  }
+  exports2.BotWebviewDisabledError = BotWebviewDisabledError;
+
+  class BotsTooMuchError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "There are too many bots in this chat/channel." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BOTS_TOO_MUCH";
+    }
+  }
+  exports2.BotsTooMuchError = BotsTooMuchError;
+
+  class BroadcastIdInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Broadcast ID invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BROADCAST_ID_INVALID";
+    }
+  }
+  exports2.BroadcastIdInvalidError = BroadcastIdInvalidError;
+
+  class BroadcastPublicVotersForbiddenError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "You can't forward polls with public voters." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BROADCAST_PUBLIC_VOTERS_FORBIDDEN";
+    }
+  }
+  exports2.BroadcastPublicVotersForbiddenError = BroadcastPublicVotersForbiddenError;
+
+  class BroadcastRequiredError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "This method can only be called on a channel, please use stats.getMegagroupStats for supergroups." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BROADCAST_REQUIRED";
+    }
+  }
+  exports2.BroadcastRequiredError = BroadcastRequiredError;
+
+  class BusinessConnectionInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The `connection_id` passed to the wrapping [invokeWithBusinessConnection](https://core.telegram.org/api/business) call is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUSINESS_CONNECTION_INVALID";
+    }
+  }
+  exports2.BusinessConnectionInvalidError = BusinessConnectionInvalidError;
+
+  class BusinessConnectionNotAllowedError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "This method was invoked over a business connection using [invokeWithBusinessConnection](https://core.telegram.org/api/business#connected-bots), but either (1) we're a user, and users cannot invoke methods over a business connection; (2) we're a bot, but business mode was disabled in @botfather or (3); we're a bot, but this method cannot be invoked over a business connection." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUSINESS_CONNECTION_NOT_ALLOWED";
+    }
+  }
+  exports2.BusinessConnectionNotAllowedError = BusinessConnectionNotAllowedError;
+
+  class BusinessPeerInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "Messages can't be set to the specified peer through the current [business connection](https://core.telegram.org/api/business#connected-bots)." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUSINESS_PEER_INVALID";
+    }
+  }
+  exports2.BusinessPeerInvalidError = BusinessPeerInvalidError;
+
+  class BusinessPeerUsageMissingError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "You cannot send a message to a user through a [business connection](https://core.telegram.org/api/business#connected-bots) if the user hasn't recently contacted us." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUSINESS_PEER_USAGE_MISSING";
+    }
+  }
+  exports2.BusinessPeerUsageMissingError = BusinessPeerUsageMissingError;
+
+  class BusinessRecipientsEmptyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "You didn't set any flag in inputBusinessBotRecipients, thus the bot cannot work with *any* peer." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUSINESS_RECIPIENTS_EMPTY";
+    }
+  }
+  exports2.BusinessRecipientsEmptyError = BusinessRecipientsEmptyError;
+
+  class BusinessWorkHoursEmptyError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "No work hours were specified." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUSINESS_WORK_HOURS_EMPTY";
+    }
+  }
+  exports2.BusinessWorkHoursEmptyError = BusinessWorkHoursEmptyError;
+
+  class BusinessWorkHoursPeriodInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified work hours are invalid, see [here &raquo;](https://core.telegram.org/api/business#opening-hours) for the exact requirements." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUSINESS_WORK_HOURS_PERIOD_INVALID";
+    }
+  }
+  exports2.BusinessWorkHoursPeriodInvalidError = BusinessWorkHoursPeriodInvalidError;
+
+  class ButtonCopyTextInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified [keyboardButtonCopy](https://core.telegram.org/constructor/keyboardButtonCopy).`copy_text` is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUTTON_COPY_TEXT_INVALID";
+    }
+  }
+  exports2.ButtonCopyTextInvalidError = ButtonCopyTextInvalidError;
+
+  class ButtonDataInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The data of one or more of the buttons you provided is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUTTON_DATA_INVALID";
+    }
+  }
+  exports2.ButtonDataInvalidError = ButtonDataInvalidError;
+
+  class ButtonIdInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified button ID is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUTTON_ID_INVALID";
+    }
+  }
+  exports2.ButtonIdInvalidError = ButtonIdInvalidError;
+
+  class ButtonInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The specified button is invalid." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUTTON_INVALID";
+    }
+  }
+  exports2.ButtonInvalidError = ButtonInvalidError;
+
+  class ButtonPosInvalidError extends RPCBaseErrors_1.BadRequestError {
+    constructor(args) {
+      const message = "The position of one of the keyboard buttons is invalid (i.e. a Game or Pay button not in the first position, and so on...)." + RPCBaseErrors_1.RPCError._fmtRequest(args.request);
+      super(message, args.request);
+      this.message = message;
+      this.errorMessage = "BUTTON_POS_INVALID";
+    }
+  }
+  exports2.ButtonPosInvalidError = ButtonPosInvalidError;
+

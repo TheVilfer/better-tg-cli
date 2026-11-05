@@ -116,7 +116,13 @@ Claude manifest runs `node ${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs mcp`: `plug
 readable (not minified) bundle of the CLI cut into parts under the directory's 256 KiB per file, built
 by `npm run bundle:plugin` (`bun scripts/bundle.mjs plugin`). `release.sh` rebuilds it with each
 version bump, and a test fails if its `--version` differs from `package.json`. Between releases it
-stays the last release's build, so don't rebuild it in feature PRs. The Codex and Cursor manifests
+stays the last release's build, so don't rebuild it in feature PRs (unless the PR changes that build).
+The directory's scanner reads it, so the plugin build differs from `dist/`: teleproto's own schema
+(one definition per line) and error classes instead of the compact encodings, cifrante without its
+WebAssembly (`scripts/strip-wasm.mjs`; every cipher falls back to node:crypto or JS, and a test proves
+the bytes match), and `src/plugin-build/` in place of `src/update.ts`, `src/commands/update.ts` and
+`src/skill-files.ts` (no installer runs: Claude Code updates the plugin; the skill is read from the
+plugin's `skills/`). The Codex and Cursor manifests
 still run the pinned `npx better-tg-cli@<version>` (the directory blocks `@latest`).
 
 Grok Build reads `.claude-plugin/plugin.json` as is, but refuses a marketplace entry that points at

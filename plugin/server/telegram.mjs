@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const file = fileURLToPath(import.meta.url);
 const dir = dirname(file);
-const parts = ["01.js","02.js","03.js","04.js","05.js","06.js","07.js","08.js","09.js","10.js","11.js","12.js","13.js"];
+const parts = ["01.js","02.js","03.js","04.js","05.js","06.js","07.js","08.js","09.js","10.js","11.js","12.js","13.js","14.js","15.js","16.js","17.js","18.js"];
 const code = parts.map(p => readFileSync(join(dir, 'cli', p), 'utf8')).join('');
 const module = { exports: {} };
 new Function('exports', 'require', 'module', '__filename', '__dirname', code)(module.exports, createRequire(file), module, file, dir);
