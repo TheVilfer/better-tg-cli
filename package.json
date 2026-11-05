@@ -1,6 +1,6 @@
 {
   "name": "better-tg-cli",
-  "version": "0.39.1",
+  "version": "0.39.2",
   "description": "Telegram for your terminal and your AI agents: read, search, send and press bot buttons on your own account. MCP server included.",
   "mcpName": "io.github.TheVilfer/better-tg-cli",
   "keywords": [
@@ -59,6 +59,7 @@
     "provenance": true
   },
   "scripts": {
+    "bundle:plugin": "node scripts/gen-version.mjs && bun scripts/bundle.mjs plugin",
     "build": "node scripts/gen-version.mjs && tsc --noEmit && node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && bun scripts/bundle.mjs node",
     "prepublishOnly": "npm run build",
     "dev": "scripts/tg-dev",

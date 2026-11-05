@@ -2,7 +2,9 @@
 
 An unofficial, open-source Telegram client for your own account, packaged for Claude. The plugin
 adds the `better-tg-cli` skill, which teaches Claude to use the `telegram` command-line tool, and a
-local MCP server (`telegram mcp`, started with `npx better-tg-cli@<pinned version>`). With it Claude
+local MCP server (`telegram mcp`). The server ships inside the plugin, in `server/`: a readable,
+unminified build of this release that Node runs from `${CLAUDE_PLUGIN_ROOT}`, so nothing is
+downloaded at install or start time. With it Claude
 can read and search your chats, open threads and forum topics, press bot buttons, and, only if you
 allow it, send, edit, react and forward.
 
@@ -22,9 +24,27 @@ the macOS Keychain, the Linux Secret Service, Windows DPAPI or 1Password.
 
 ## Safety
 
-- Writing is off by default. `telegram write-access on` has to be confirmed by a person, in a
-  terminal prompt or an OS dialog, and can expire (`--for 1h`). Every write is logged locally.
+- After `telegram onboard` the account is in mode `ask`: before every send, edit or delete, Claude
+  shows you the exact action and runs it only after your yes. Writing without asking
+  (`telegram write-access on`) has to be confirmed by a person, in a terminal prompt or an OS
+  dialog, and can expire (`--for 1h`). Every write is logged locally.
 - The MCP server never exposes login, logout, account transfer or self-update.
+
+## Credentials the plugin reads, and where each one goes
+
+The MCP server reads these from your machine. Each one goes only to the service it belongs to, and
+none is sent anywhere else:
+
+| Credential | Read from | Sent to |
+|---|---|---|
+| Telegram session and the app's API hash | macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password (without any of them, the 0600 config file) | Telegram's own servers (MTProto), to act as your Telegram client |
+| Write mode and the signing key for approvals | the same secret store | nowhere: checked locally before each write |
+| 1Password service-account token (`OP_SERVICE_ACCOUNT_TOKEN`, only if you set up 1Password) | the environment | the local `op` CLI, which talks to 1Password |
+| Login key (only while you log in with one) | what you paste on the local login page | the project's login service, which returns the app's API keys |
+
+The plugin's server runs over stdio and has no bearer token. `telegram mcp --http` (remote MCP for
+Grok Bot and similar) has one, but it only checks incoming requests against it on your machine and
+never sends it out. The plugin never asks Claude for these values, and Claude never sees them.
 
 ## Where data goes
 

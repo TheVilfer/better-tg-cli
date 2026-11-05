@@ -78,6 +78,8 @@ version="$(node -p "require('./package.json').version")"
 git checkout -q -b "release/v${version}"
 node scripts/gen-version.mjs
 npm run build >/dev/null
+# The Claude plugin runs its own readable copy of this release (plugin/server/)
+npm run bundle:plugin >/dev/null
 npm test
 
 git add package.json package-lock.json src/version.ts src/skill-files.ts plugin .claude-plugin/plugin.json server.json gemini-extension.json
