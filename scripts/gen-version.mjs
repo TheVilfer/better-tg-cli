@@ -47,7 +47,7 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
   root.mcpServers.telegram.args = ['-y', `better-tg-cli@${version}`, 'mcp'];
   // Unofficial client: no brand name in the display name
   root.displayName = 'Better-TG-CLI';
-  root.description = 'Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. Writes stay off until you allow them.';
+  root.description = 'Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. The agent asks you before every send.';
   const files = {
     '.claude-plugin/plugin.json': JSON.stringify(root, null, 2) + '\n',
     'LICENSE': readFileSync(new URL('../LICENSE', import.meta.url), 'utf8'),
