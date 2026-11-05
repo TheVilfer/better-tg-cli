@@ -1,4 +1,3 @@
-    auditLog({ timestamp: new Date().toISOString(), command: "mark-unread", target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
     spinner2.fail("Failed to mark the chat");
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
