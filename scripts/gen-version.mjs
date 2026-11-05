@@ -44,7 +44,10 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
 // into the repo), the MCP server pinned to this exact version, the skill and LICENSE copied in
 {
   const root = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
-  root.mcpServers.telegram.args = ['-y', `better-tg-cli@${version}`, 'mcp'];
+  // Codex and Cursor start the pinned npm package; Claude Code runs the copy in plugin/server/
+  // (bun scripts/bundle.mjs plugin, rebuilt by release.sh), so nothing is downloaded at install time
+  const npxServers = { telegram: { command: 'npx', args: ['-y', `better-tg-cli@${version}`, 'mcp'] } };
+  root.mcpServers = { telegram: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs', 'mcp'] } };
   // Unofficial client: no brand name in the display name
   root.displayName = 'Better-TG-CLI';
   root.description = 'Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. The agent asks you before every send.';
@@ -69,7 +72,7 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
       mcpServers: './.codex-plugin/mcp.json',
       interface: { displayName: root.displayName },
     }, null, 2) + '\n',
-    '.codex-plugin/mcp.json': JSON.stringify({ mcpServers: root.mcpServers }, null, 2) + '\n',
+    '.codex-plugin/mcp.json': JSON.stringify({ mcpServers: npxServers }, null, 2) + '\n',
     // The same folder is the Cursor Marketplace plugin (Cursor reads .cursor-plugin/plugin.json)
     '.cursor-plugin/plugin.json': JSON.stringify({
       name: root.name,
@@ -82,7 +85,7 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
       license: root.license,
       keywords: root.keywords,
       logo: 'https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/assets/icon-512.png',
-      mcpServers: root.mcpServers,
+      mcpServers: npxServers,
     }, null, 2) + '\n',
   };
   const { mkdirSync } = await import('node:fs');

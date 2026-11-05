@@ -116,7 +116,8 @@ scoop install better-tg-cli
 /plugin install better-tg-cli@better-tg-cli
 ```
 
-MCP-сервер запускается через `npx`, так что хватит Node 20+. Один раз войдите в терминале:
+Плагин запускает собственную копию MCP-сервера, которая лежит в нём самом, так что хватит Node 20+,
+и при установке ничего не скачивается. Один раз войдите в терминале:
 `telegram auth --qr` (или `npx better-tg-cli auth --qr`).
 
 ### Плагин для Codex
@@ -246,8 +247,7 @@ claude mcp add telegram -- telegram mcp          # Claude Code (или плаг�
 
 JSON-вариант подходит для Claude Desktop (`claude_desktop_config.json`) и Cursor
 (`.cursor/mcp.json`). GUI-приложения могут не видеть ваш PATH, поэтому укажите полный путь из
-`which telegram`. Без глобальной установки сервер запускается через npx, как и в плагине
-Claude Code:
+`which telegram`. Без глобальной установки сервер запускается через npx:
 
 ```json
 { "mcpServers": { "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] } } }

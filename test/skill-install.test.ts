@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { SKILL_FILES } from '../src/skill-files.js';
@@ -125,10 +127,28 @@ describe('plugin/ (Anthropic plugin directory)', () => {
     const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
     const manifest = JSON.parse(readFileSync(new URL('plugin/.claude-plugin/plugin.json', root), 'utf8'));
     expect(manifest.version).toBe(version);
-    expect(manifest.mcpServers.telegram.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
+    // Claude Code runs the copy in plugin/server/; Codex and Cursor the pinned npm package
+    expect(manifest.mcpServers.telegram).toEqual({ command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/server/telegram.mjs', 'mcp'] });
+    const codex = JSON.parse(readFileSync(new URL('plugin/.codex-plugin/mcp.json', root), 'utf8'));
+    expect(codex.mcpServers.telegram.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
     for (const [file, content] of Object.entries(SKILL_FILES)) {
       expect(readFileSync(new URL(`plugin/skills/better-tg-cli/${file}`, root), 'utf8')).toBe(content);
     }
     expect(readFileSync(new URL('plugin/LICENSE', root), 'utf8')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
+  });
+
+  it('ships a readable server of this version, in files the directory reads (under 256 KiB, under 512 files)', () => {
+    const root = new URL('../', import.meta.url);
+    const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
+    const out = execFileSync(process.execPath, [fileURLToPath(new URL('plugin/server/telegram.mjs', root)), '--version'], {
+      encoding: 'utf8', env: { ...process.env, TG_NO_UPDATE_CHECK: '1' },
+    }).trim();
+    // release.sh rebuilds it with the version bump (npm run bundle:plugin)
+    expect(out, 'plugin/server is stale: run npm run bundle:plugin').toBe(version);
+    const files = (function walk(dir: string): string[] {
+      return readdirSync(dir, { withFileTypes: true }).flatMap(e => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
+    })(fileURLToPath(new URL('plugin', root)));
+    expect(files.length).toBeLessThan(512);
+    for (const f of files) expect(statSync(f).size, f).toBeLessThan(256 * 1024);
   });
 });

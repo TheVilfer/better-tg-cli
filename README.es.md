@@ -119,7 +119,8 @@ La skill y el servidor MCP juntos, en una sola instalación:
 /plugin install better-tg-cli@better-tg-cli
 ```
 
-Ejecuta el servidor MCP mediante `npx`, así que basta con Node 20+. Inicia sesión una vez con
+Ejecuta su propia copia del servidor MCP, incluida en el plugin, así que basta con Node 20+ y no se
+descarga nada al instalar. Inicia sesión una vez con
 `telegram auth --qr` (o `npx better-tg-cli auth --qr`) en un terminal.
 
 ### Plugin para Codex
@@ -256,8 +257,7 @@ claude mcp add telegram -- telegram mcp          # Claude Code (o usa el plugin 
 
 Usa la forma JSON para Claude Desktop (`claude_desktop_config.json`) o Cursor (`.cursor/mcp.json`).
 Puede que las apps con interfaz gráfica no vean el PATH de tu shell, así que indica la ruta completa
-que devuelve `which telegram`. Sin una instalación global, ejecútalo mediante npx, que es también lo
-que hace el plugin de Claude Code:
+que devuelve `which telegram`. Sin una instalación global, ejecútalo mediante npx:
 
 ```json
 { "mcpServers": { "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] } } }

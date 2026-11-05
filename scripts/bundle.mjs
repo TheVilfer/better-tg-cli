@@ -2,6 +2,7 @@
 // Build the shipped artifacts with Bun, shrinking teleproto on the way:
 //   bun scripts/bundle.mjs node            → dist/telegram.mjs (single file for npm, no deps)
 //   bun scripts/bundle.mjs <bun-target> <outfile>   → standalone binary (bun-darwin-arm64, …)
+//   bun scripts/bundle.mjs plugin          → plugin/server/ (readable build for the Claude plugin)
 import { compactModuleSource, loadOriginalDefinitions } from './tl-compact.mjs';
 import { compactErrorsSource } from './errors-compact.mjs';
 import { mimeStubSource } from './mime-stub.mjs';
@@ -44,8 +45,8 @@ exports.StoreSession=StoreSession;`)
 };
 
 const [mode, outfile] = process.argv.slice(2);
-if (!mode || (mode !== 'node' && !outfile)) {
-  console.error('Usage: bun scripts/bundle.mjs node | <bun-target> <outfile>');
+if (!mode || (mode !== 'node' && mode !== 'plugin' && !outfile)) {
+  console.error('Usage: bun scripts/bundle.mjs node | plugin | <bun-target> <outfile>');
   process.exit(1);
 }
 
@@ -54,7 +55,8 @@ const result = await Bun.build({
   entrypoints: ['src/index.ts'],
   target: 'node',
   format: 'cjs',
-  minify: true,
+  // The plugin directory reads the code it ships, so the plugin build stays readable
+  minify: mode !== 'plugin',
   plugins: [shrink],
   metafile: !!process.env.BUNDLE_META,
 });
@@ -64,6 +66,11 @@ if (!result.success) {
 }
 if (process.env.BUNDLE_META) await Bun.write(process.env.BUNDLE_META, JSON.stringify(result.metafile));
 const code = (await result.outputs[0].text()).replace(/^#!.*\n/, '');
+
+if (mode === 'plugin') {
+  await writePluginServer(code);
+  process.exit(0);
+}
 
 // 2. Brotli it (max quality) and wrap it in a tiny loader that inflates and runs it
 const { brotliCompressSync, constants } = await import('node:zlib');
@@ -124,4 +131,59 @@ if (mode === 'node') {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * The Claude plugin runs the MCP server from inside the plugin (no download at install time). The
+ * plugin directory reads files up to 256 KiB, so the readable bundle is cut into parts under that,
+ * at line ends where possible, and a small loader joins them in order and runs the result.
+ */
+async function writePluginServer(code) {
+  const { mkdirSync, rmSync, writeFileSync, readFileSync } = await import('node:fs');
+  // Bun writes the builder's absolute path into \`__filename\`/\`__dirname\` of modules that use them,
+  // and source comments relative to where it ran; keep both machine-independent in a committed build
+  code = code
+    .replace(/(__(?:file|dir)name = ")[^"\n]*?\/node_modules\//g, '$1node_modules/')
+    .replace(/^(\/\/ )(?:\.\.\/)+node_modules\//gm, '$1node_modules/');
+  const LIMIT = 240 * 1024; // bytes per part, below the directory's 256 KiB
+  const parts = [];
+  let current = '';
+  const flush = () => { if (current) { parts.push(current); current = ''; } };
+  for (const line of code.split(/(?<=\n)/)) {
+    if (Buffer.byteLength(current + line) <= LIMIT) { current += line; continue; }
+    flush();
+    // A line longer than a part (the compact TL schema is one string) is cut inside the line
+    let rest = line;
+    while (Buffer.byteLength(rest) > LIMIT) {
+      let cut = LIMIT;
+      while (Buffer.byteLength(rest.slice(0, cut)) > LIMIT) cut -= 1024;
+      parts.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    current = rest;
+  }
+  flush();
+
+  const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+  const names = parts.map((_, i) => `${String(i + 1).padStart(2, '0')}.js`);
+  rmSync('plugin/server', { recursive: true, force: true });
+  mkdirSync('plugin/server/cli', { recursive: true });
+  parts.forEach((part, i) => writeFileSync(`plugin/server/cli/${names[i]}`, part));
+  writeFileSync('plugin/server/telegram.mjs', `#!/usr/bin/env node
+// Better-TG-CLI ${version}: the telegram CLI and its MCP server, run by the Claude plugin.
+// cli/*.js is one readable (not minified) CommonJS bundle of https://github.com/TheVilfer/better-tg-cli
+// at v${version}, built by \`bun scripts/bundle.mjs plugin\` and cut into parts under 256 KiB. The parts
+// are not separate modules: this file joins them in order and runs the result, like dist/telegram.mjs.
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+const file = fileURLToPath(import.meta.url);
+const dir = dirname(file);
+const parts = ${JSON.stringify(names)};
+const code = parts.map(p => readFileSync(join(dir, 'cli', p), 'utf8')).join('');
+const module = { exports: {} };
+new Function('exports', 'require', 'module', '__filename', '__dirname', code)(module.exports, createRequire(file), module, file, dir);
+`);
+  console.log(`plugin/server: ${parts.length} parts, ${(code.length / 1048576).toFixed(2)} MB`);
 }
