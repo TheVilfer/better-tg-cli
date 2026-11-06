@@ -2,7 +2,7 @@
 
 import { escape, GUIDE_CSS, GUIDE_JS, guideHtml } from './guide';
 import { DICT, LANGS, type Dict, type Lang } from './i18n';
-import { pageUrl, SITE } from './seo';
+import { localPath, pageUrl, SITE } from './seo';
 
 /**
  * `telegram onboard` sends people here with ?return=<its loopback callback>. Only that exact shape
@@ -42,7 +42,7 @@ export function pageResponse({ open, siteKey, returnTo = null, lang = 'en', quer
   return new Response(page(nonce, open, siteKey ?? '', returnTo, lang, query), {
     headers: {
       'content-language': lang,
-      vary: 'Accept-Language',
+      vary: 'Accept-Language, Cookie',
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'content-security-policy': csp,
@@ -130,7 +130,7 @@ const NAV_PAGES = [['/cases', 'cases'], ['/mcp', 'mcp'], ['/faq', 'faq'], ['/com
  */
 export function header(lang: Lang, query: URLSearchParams, path: string, bare = false): string {
   const n = DICT[lang].page.nav;
-  const href = (p: string) => (lang === 'en' ? p : `${p}?lang=${lang}`);
+  const href = (p: string) => localPath(p, lang);
   const logo = bare || path === '/' ? BRAND : `<a href="${href('/')}" aria-label="Better-TG-CLI">${BRAND}</a>`;
   const link = (p: string, label: string, cls = '') => p === path
     ? `<b${cls} aria-current="page">${escape(label)}</b>`
@@ -143,18 +143,23 @@ export function header(lang: Lang, query: URLSearchParams, path: string, bare = 
 /** The footer, the same on every page: the language switch, the page links and the source. */
 export const footer = (lang: Lang, query: URLSearchParams, path: string) => {
   const x = DICT[lang].page;
-  return `<footer>${langLinks(lang, query, DICT[lang], path)}<nav class="pages">${(['mcp', 'cases', 'faq', 'compare'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
+  return `<footer>${langLinks(lang, query, DICT[lang], path)}<nav class="pages">${(['mcp', 'cases', 'faq', 'compare'] as const).map(k => `<a href="${localPath(`/${k}`, lang)}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
 };
 
-/** Links to the same page in the other languages, keeping the rest of the query intact. */
+/**
+ * Links to the same page in the other languages, keeping the rest of the query intact. Each carries
+ * ?lang=, which the worker turns into a remembered choice and a redirect to the clean URL, so a
+ * browser that prefers another language is not sent back to it from the bare English pages.
+ */
 export function langLinks(current: Lang, query: URLSearchParams, t: Dict, path: string): string {
   const links = LANGS.map(l => {
     const q = new URLSearchParams(query);
+    q.delete('lang');
     q.set('lang', l);
     const name = escape(DICT[l].langName);
     return l === current
       ? `<b aria-current="true">${name}</b>`
-      : `<a href="${path}?${escape(q.toString())}" hreflang="${l}" lang="${l}">${name}</a>`;
+      : `<a href="${localPath(path, l)}?${escape(q.toString())}" hreflang="${l}" lang="${l}">${name}</a>`;
   });
   return `<nav class="langs" aria-label="${escape(t.page.language)}">${links.join('')}</nav>`;
 }

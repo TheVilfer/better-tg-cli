@@ -3,7 +3,7 @@ import { LANGS, type Lang } from './i18n';
 
 export const SITE = 'https://better-tg-cli.com';
 const REPO = 'https://github.com/TheVilfer/better-tg-cli';
-/** The indexable pages; each exists in every language at ?lang= (English at the bare URL) */
+/** The indexable pages; each exists in every language under /es/ and /ru/ (English at the bare path) */
 const PAGES = ['/', '/mcp', '/cases', '/faq', '/compare', '/login'];
 
 /**
@@ -12,7 +12,15 @@ const PAGES = ['/', '/mcp', '/cases', '/faq', '/compare', '/login'];
  */
 export const INDEXNOW_KEY = '6236b353d57727a820b99d9950bb2abe';
 
-export const pageUrl = (path: string, lang: Lang) => (lang === 'en' ? `${SITE}${path}` : `${SITE}${path}?lang=${lang}`);
+/** Where `path` lives in `lang`: English at the bare path, the others under /<lang> ('/' becomes '/ru/'). */
+export const localPath = (path: string, lang: Lang) => (lang === 'en' ? path : `/${lang}${path === '/' ? '/' : path}`);
+/** Splits /ru/cases into ru and /cases; a path without a language prefix has lang null. */
+export function splitLangPath(pathname: string): { lang: Lang | null; path: string } {
+  const m = /^\/([a-z]{2})(\/.*)?$/.exec(pathname);
+  if (!m || m[1] === 'en' || !(LANGS as readonly string[]).includes(m[1])) return { lang: null, path: pathname };
+  return { lang: m[1] as Lang, path: m[2] ?? '/' };
+}
+export const pageUrl = (path: string, lang: Lang) => `${SITE}${localPath(path, lang)}`;
 export const PAGE_URLS = PAGES.flatMap(path => LANGS.map(lang => pageUrl(path, lang)));
 
 export function robotsTxt(): string {

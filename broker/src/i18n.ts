@@ -7,9 +7,9 @@
 export const LANGS = ['en', 'es', 'ru'] as const;
 export type Lang = (typeof LANGS)[number];
 
-const isLang = (x: string): x is Lang => (LANGS as readonly string[]).includes(x);
+export const isLang = (x: string): x is Lang => (LANGS as readonly string[]).includes(x);
 
-/** ?lang= wins, then the first Accept-Language tag we support, then English. */
+/** An explicit choice wins, then the first Accept-Language tag we support, then English. */
 export function pickLang(query: string | null, acceptLanguage: string | null): Lang {
   if (query && isLang(query.toLowerCase())) return query.toLowerCase() as Lang;
   const tags = (acceptLanguage ?? '')

@@ -25,8 +25,12 @@ speak that wire format.
 ## Signup page
 
 The page, the install guide and the code email come in English (default), Spanish and Russian
-(`src/i18n.ts`): `?lang=en|es|ru` wins; without it a browser whose `Accept-Language` prefers Spanish or Russian is redirected to that `?lang=` URL. The language links keep the rest
-of the query, so `?return=` from `telegram onboard` survives a switch.
+(`src/i18n.ts`), English at the bare path and the others under `/es/` and `/ru/` (`/ru/login`). A
+bare path sends a browser that chose, or whose `Accept-Language` prefers, Spanish or Russian to that
+path (302). `?lang=en|es|ru` is the old form and the language links' way of choosing: it redirects
+(301) to the same page at that language's path, keeping the rest of the query, and remembers the
+choice in a `lang` cookie. Released CLIs open `/login?return=…&lang=ru`, so it must keep working;
+`?return=` from `telegram onboard` also survives a switch.
 
 `GET /` serves a page where people trade a verified email for a self-serve invite: `POST /v1/invites`
 (email + Turnstile) mails a six-digit code, and `POST /v1/invites/verify` (email + code) returns
@@ -111,9 +115,9 @@ changes (write modes above all).
 `src/seo.ts` holds what crawlers read besides the pages: `robots.txt` (with the sitemap),
 `/sitemap.xml` (every page in every language, with hreflang alternates), `/llms.txt`, the
 landing page's JSON-LD (`SoftwareApplication`, `SoftwareSourceCode`, author) and the public
-IndexNow key served at `/<key>.txt`. A page's language comes from its URL alone (`?lang=es|ru`,
-English at the bare URL), so each URL has one language and one canonical; a browser that prefers
-another language is redirected (302) to its `?lang=` URL. `HEAD` is answered like `GET`, plain HTTP
+IndexNow key served at `/<key>.txt`. A page's language comes from its path alone (`/es/…`, `/ru/…`,
+English at the bare path), so each URL has one language and one canonical; a browser that prefers
+another language is redirected (302) to its path, and the old `?lang=` URLs redirect (301) there. `HEAD` is answered like `GET`, plain HTTP
 and `www` redirect to `https://better-tg-cli.com`, and `/favicon.ico` redirects to the SVG.
 
 ## Incident response
