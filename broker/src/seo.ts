@@ -39,7 +39,7 @@ export const LLMS_TXT = `# Better-TG-CLI
 
 > Better-TG-CLI is an open-source (MIT) Telegram client for your own account, made for AI agents and the command line. It is a CLI (\`telegram\`), an MCP server (\`telegram mcp\`) and an agent skill for Claude Code, Codex, Cursor, Claude Desktop, Gemini CLI and Grok. It talks to Telegram directly over MTProto (current API layer), so agents can read, search and send messages, read comments, threads and forum topics, and press bot buttons.
 
-- The account starts read-only. In mode "ask" the agent shows the exact action and sends only after the user says yes; writing without asking needs a person to confirm it in a terminal or a system dialog.
+- After login the account is in mode "ask": the agent shows the exact action and sends only after the user says yes. Read-only is one command away (\`telegram write-access off\`), and writing without asking needs a person to confirm it in a terminal or a system dialog. The modes guard against an agent's mistakes, not against an agent that runs commands on the computer as the user.
 - The session is kept in the macOS Keychain, the Linux Secret Service, Windows DPAPI or 1Password. Messages go only to Telegram.
 - One file, zero runtime dependencies. Install: \`brew install thevilfer/tap/better-tg-cli\`, \`scoop install better-tg-cli\` or \`npm install -g better-tg-cli\`; the skill: \`npx skills add TheVilfer/better-tg-cli\`.
 - Not affiliated with Telegram.

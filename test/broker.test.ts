@@ -335,7 +335,7 @@ describe('self-serve signup', () => {
       const res = await page();
       const html = await res.text();
       expect(res.status).toBe(200);
-      expect(html).toContain('Telegram for your terminal and your AI agents');
+      expect(html).toContain('<h1>Telegram CLI and MCP server for AI agents</h1>');
       expect(html).toContain('npm install -g better-tg-cli');
       expect(html).toContain('npx skills add TheVilfer/better-tg-cli');
       expect(html.match(/<button type="button" role="tab"/g)).toHaveLength(2);

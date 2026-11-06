@@ -64,8 +64,9 @@ function install(t: Dict): string {
 ${panels}`;
 }
 
-const tile = (cls: string, f: { title: string; text: string }, extra = '', lead = '') =>
-  `<div class="tile${cls ? ` ${cls}` : ''}">${lead}<h3>${escape(f.title)}</h3><p>${escape(f.text)}</p>${extra}</div>`;
+/** `stat` is a number shown big above the title, inside the heading, so the heading reads "60+ commands" */
+const tile = (cls: string, f: { title: string; text: string }, extra = '', stat = '') =>
+  `<div class="tile${cls ? ` ${cls}` : ''}">${stat ? `<h3 class="stat"><span class="num">${stat}</span> ${escape(f.title)}</h3>` : `<h3>${escape(f.title)}</h3>`}<p>${escape(f.text)}</p>${extra}</div>`;
 
 /** The few things that set the tool apart, as a bento grid. */
 function bento(x: Dict['landing']): string {
@@ -73,9 +74,9 @@ function bento(x: Dict['landing']): string {
   const chip = (html: string) => `<div class="chip" aria-hidden="true">${html}</div>`;
   return `<h2>${escape(x.featuresTitle)}</h2>
 <div class="bento">
-${tile('wide', f.safe, chip('<span>$</span> telegram write-access on <b>--for 1h</b>'))}
-${tile('narrow', f.commands, '', '<div class="num">60+</div>')}
-${tile('narrow', f.deps, '', '<div class="num">0</div>')}
+${tile('wide', f.safe, chip('<span>$</span> telegram write-access <b>ask</b>'))}
+${tile('narrow', f.commands, '', '60+')}
+${tile('narrow', f.deps, '', '0')}
 ${tile('wide', f.tokens, chip('<b>1234567890</b> user unread=2 Alice @alice <span>|</span> see you at 7?'))}
 ${tile('', f.bots, chip('<span>$</span> telegram click @bot 812 <b>"Confirm"</b>'))}
 ${tile('', f.agents, `<div class="agents">${AGENTS.map(n => `<span>${n}</span>`).join('')}</div>`)}
@@ -150,8 +151,8 @@ h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:8
 .tile.narrow{grid-column:span 2}
 .tile h3{font-size:16px;font-weight:600;margin:0}
 .tile p{font-size:14px;line-height:1.5;color:var(--dim);margin:0}
-.tile .num{font-size:52px;line-height:1;letter-spacing:-2px;font-weight:600}
-.tile .num+h3{font-weight:500;color:var(--dim);font-size:14px;margin-bottom:6px}
+.tile h3.stat{font-weight:500;color:var(--dim);font-size:14px;margin-bottom:6px}
+.tile h3.stat .num{display:block;font-size:52px;line-height:1;letter-spacing:-2px;font-weight:600;color:var(--fg);margin-bottom:6px}
 .chip{margin-top:auto;padding-top:14px;font:12.5px/1.6 'Geist Mono',ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chip span{color:var(--dim)}
 .chip b{font-weight:400;color:var(--accent)}
