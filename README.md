@@ -11,7 +11,7 @@
   [![install size](https://img.shields.io/npm/unpacked-size/better-tg-cli?label=size&style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
   [![dependencies](https://img.shields.io/badge/dependencies-0-000000?style=flat&colorA=000000&colorB=000000)](package.json)
   [![MCP](https://img.shields.io/badge/MCP-server-000000?style=flat&colorA=000000&colorB=000000)](#mcp-server)
-  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux-000000?style=flat&colorA=000000&colorB=000000&logo=apple)](#install)
+  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#install)
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
@@ -21,10 +21,14 @@
 
 https://github.com/user-attachments/assets/d143f7c7-7d50-439c-b373-cbcbff5a6675
 
-An unofficial, agent-friendly command-line client for Telegram that runs **on your own account**
-(MTProto via [`teleproto`](https://www.npmjs.com/package/teleproto), TL layer 229). The command is
-`telegram`: about 60 commands for reading, searching, writing, bots, groups and exports, built so
-that AI agents (Claude Code, Codex, …) can drive it cheaply and safely.
+**Better-TG-CLI is a Telegram CLI and MCP server for AI agents** (Claude Code, Codex, Cursor,
+Claude Desktop, Gemini CLI) that works on your own Telegram account: agents read, search and send
+messages and press bot buttons, and you approve every send.
+
+It is an unofficial, open-source client (MTProto via [`teleproto`](https://www.npmjs.com/package/teleproto),
+TL layer 229). The command is `telegram`: about 60 commands for reading, searching, writing, bots,
+groups and exports, built so that agents can drive it cheaply and safely. It also ships as an MCP
+server (`telegram mcp`) and an agent skill.
 
 ```console
 $ telegram inbox -n 3
@@ -43,11 +47,11 @@ $ telegram read @alice -n 1 --json
 > use Telegram yourself, keep writes off unless you need them, and read [SECURITY.md](SECURITY.md)
 > before letting an agent write. The authors are not responsible for restricted accounts.
 
-**Contents:** [Why this fork](#why-this-fork) · [Install](#install) · [Log in](#log-in) · [Usage](#usage) · [MCP server](#mcp-server) · [FAQ](#faq) · [Development](#development) · [Privacy](#privacy) · [License](#license)
+**Contents:** [Why Better-TG-CLI](#why-better-tg-cli) · [Install](#install) · [Log in](#log-in) · [Usage](#usage) · [MCP server](#mcp-server) · [FAQ](#faq) · [Development](#development) · [Privacy](#privacy) · [License](#license)
 
-## Why this fork
+## Why Better-TG-CLI
 
-A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for agents:
+Made for agents:
 
 - **Current Telegram layer.** Bot replies with rich (layer 228+) content show real text instead of
   `(no text)`. You can press bot buttons (`click`) and walk bot menus.
@@ -64,6 +68,23 @@ A fork of [skillhq/telegram](https://github.com/skillhq/telegram), reworked for 
   Linux Secret Service or 1Password.
 - **Small and self-contained.** The npm package is one 0.3 MB file with zero runtime
   dependencies. Homebrew installs a standalone binary with no Node.
+
+It started as a fork of [skillhq/telegram](https://github.com/skillhq/telegram) and has since been
+reworked throughout.
+
+### Compared with other Telegram MCP servers
+
+| | Better-TG-CLI | [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) | [chaindead/telegram-mcp](https://github.com/chaindead/telegram-mcp) | [WireCatLabs/tg-cli](https://github.com/WireCatLabs/tg-cli) |
+|---|---|---|---|---|
+| What you get | CLI, MCP server, agent skill | MCP server | MCP server | CLI, MCP server, agent skill |
+| Language | TypeScript (Node 20+ or a standalone binary) | Python | Go | TypeScript |
+| Telegram library | teleproto (GramJS fork, layer 229) | Telethon | gotd/td | mtcute |
+| Runtime dependencies | none (one file) | Python packages | one Go binary | npm packages |
+| Install | Homebrew, Scoop, npm, binaries | pip, uvx, Docker | Homebrew, npx, go install | npm, bun |
+
+Taken from each project's README and manifest in November 2026; open an issue if something here is
+out of date. What sets Better-TG-CLI apart is the write model (read-only, ask, on, with approvals
+bound to the exact text) and output made for agents.
 
 ## Install
 
