@@ -125,7 +125,7 @@ const NAV_PAGES = [['/cases', 'cases'], ['/mcp', 'mcp'], ['/faq', 'faq'], ['/com
 
 /**
  * The header of every page, one row: the logo (a link home) and the page links, with the current
- * page marked and the login key last. `bare` leaves out the links, for the login page opened by the
+ * page marked and the login key last (not on the home page, whose main button already leads there). `bare` leaves out the links, for the login page opened by the
  * CLI, where leaving would lose the way back. The language switch sits in the footer.
  */
 export function header(lang: Lang, query: URLSearchParams, path: string, bare = false): string {
@@ -137,7 +137,7 @@ export function header(lang: Lang, query: URLSearchParams, path: string, bare = 
     : `<a href="${href(p)}"${cls}>${escape(label)}</a>`;
   const links = bare
     ? ''
-    : `<nav class="site" aria-label="${escape(n.onThisSite)}">${NAV_PAGES.map(([p, k]) => link(p, n[k])).join('')}</nav>${link(LOGIN_PATH, n.login, ' class="key"')}`;
+    : `<nav class="site" aria-label="${escape(n.onThisSite)}">${NAV_PAGES.map(([p, k]) => link(p, n[k])).join('')}</nav>${path === '/' ? '' : link(LOGIN_PATH, n.login, ' class="key"')}`;
   return `<header class="top">${logo}${links}</header>`;
 }
 /** The footer, the same on every page: the language switch, the page links and the source. */

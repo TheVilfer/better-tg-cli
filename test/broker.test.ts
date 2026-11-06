@@ -342,6 +342,9 @@ describe('self-serve signup', () => {
       expect(html).toContain('npx skills add TheVilfer/better-tg-cli');
       expect(html.match(/<button type="button" role="tab"/g)).toHaveLength(2);
       expect(html).toContain('<a class="btn" href="/login">');
+      // The main button is the way to the login page; the header does not repeat it
+      expect(html).not.toContain('class="key"');
+      expect(await (await handle(new Request('https://broker.test/faq'), {} as Env)).text()).toContain('<a href="/login" class="key">');
       expect(html.match(/<div class="tile/g)).toHaveLength(6);
       expect(html).toContain('Log in on up to 3 computers');
       expect(html).toContain('<h2 id="security">About security</h2>');
