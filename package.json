@@ -1,7 +1,7 @@
 {
   "name": "better-tg-cli",
   "version": "0.39.4",
-  "description": "Telegram for your terminal and your AI agents: read, search, send and press bot buttons on your own account. MCP server included.",
+  "description": "Telegram CLI and MCP server for AI agents (Claude Code, Codex, Cursor): read, search, send and press bot buttons on your own account, and approve every send.",
   "mcpName": "io.github.TheVilfer/better-tg-cli",
   "keywords": [
     "telegram",
@@ -19,7 +19,10 @@
     "claude-code",
     "cursor",
     "codex",
-    "agent-skills"
+    "agent-skills",
+    "telegram-mcp",
+    "telegram-bot",
+    "userbot"
   ],
   "homepage": "https://github.com/TheVilfer/better-tg-cli#readme",
   "bugs": {

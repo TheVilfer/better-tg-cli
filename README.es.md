@@ -11,7 +11,7 @@
   [![install size](https://img.shields.io/npm/unpacked-size/better-tg-cli?label=size&style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
   [![dependencies](https://img.shields.io/badge/dependencies-0-000000?style=flat&colorA=000000&colorB=000000)](package.json)
   [![MCP](https://img.shields.io/badge/MCP-server-000000?style=flat&colorA=000000&colorB=000000)](#servidor-mcp)
-  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux-000000?style=flat&colorA=000000&colorB=000000&logo=apple)](#instalación)
+  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#instalación)
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
@@ -21,10 +21,14 @@
 
 https://github.com/user-attachments/assets/d143f7c7-7d50-439c-b373-cbcbff5a6675
 
-Un cliente de línea de comandos no oficial para Telegram, pensado para agentes, que funciona **con tu
-propia cuenta** (MTProto mediante [`teleproto`](https://www.npmjs.com/package/teleproto), TL layer 229).
-El comando es `telegram`: unos 60 comandos para leer, buscar, escribir, bots, grupos y exportaciones,
-diseñados para que los agentes de IA (Claude Code, Codex, …) puedan manejarlo de forma barata y segura.
+**Better-TG-CLI es un CLI y servidor MCP de Telegram para agentes de IA** (Claude Code, Codex,
+Cursor, Claude Desktop, Gemini CLI) que funciona con tu propia cuenta de Telegram: los agentes leen,
+buscan y envían mensajes y pulsan botones de bots, y tú apruebas cada envío.
+
+Es un cliente no oficial y de código abierto (MTProto mediante [`teleproto`](https://www.npmjs.com/package/teleproto),
+TL layer 229). El comando es `telegram`: unos 60 comandos para leer, buscar, escribir, bots, grupos y
+exportaciones, diseñados para que los agentes lo manejen de forma barata y segura. También viene como
+servidor MCP (`telegram mcp`) y como skill para agentes.
 
 ```console
 $ telegram inbox -n 3
@@ -44,11 +48,11 @@ $ telegram read @alice -n 1 --json
 > [SECURITY.md](SECURITY.md) antes de dejar que un agente escriba. Los autores no se hacen
 > responsables de las cuentas restringidas.
 
-**Contenido:** [Por qué este fork](#por-qué-este-fork) · [Instalación](#instalación) · [Inicio de sesión](#inicio-de-sesión) · [Uso](#uso) · [Servidor MCP](#servidor-mcp) · [FAQ](#faq) · [Desarrollo](#desarrollo) · [Privacidad](#privacidad) · [Licencia](#licencia)
+**Contenido:** [Por qué Better-TG-CLI](#por-qué-better-tg-cli) · [Instalación](#instalación) · [Inicio de sesión](#inicio-de-sesión) · [Uso](#uso) · [Servidor MCP](#servidor-mcp) · [FAQ](#faq) · [Desarrollo](#desarrollo) · [Privacidad](#privacidad) · [Licencia](#licencia)
 
-## Por qué este fork
+## Por qué Better-TG-CLI
 
-Un fork de [skillhq/telegram](https://github.com/skillhq/telegram), rehecho para agentes:
+Hecho para agentes:
 
 - **Capa de Telegram actual.** Las respuestas de bots con contenido enriquecido (layer 228+) muestran
   el texto real en lugar de `(no text)`. Puedes pulsar botones de bots (`click`) y recorrer sus menús.
@@ -65,6 +69,23 @@ Un fork de [skillhq/telegram](https://github.com/skillhq/telegram), rehecho para
   de Linux o en 1Password.
 - **Pequeño y autónomo.** El paquete de npm es un único archivo de 0,3 MB sin dependencias en tiempo
   de ejecución. Homebrew instala un binario independiente que no necesita Node.
+
+Empezó como un fork de [skillhq/telegram](https://github.com/skillhq/telegram) y desde entonces se
+ha rehecho por completo.
+
+### Comparación con otros servidores MCP de Telegram
+
+| | Better-TG-CLI | [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) | [chaindead/telegram-mcp](https://github.com/chaindead/telegram-mcp) | [WireCatLabs/tg-cli](https://github.com/WireCatLabs/tg-cli) |
+|---|---|---|---|---|
+| Qué incluye | CLI, servidor MCP, skill | servidor MCP | servidor MCP | CLI, servidor MCP, skill |
+| Lenguaje | TypeScript (Node 20+ o un binario independiente) | Python | Go | TypeScript |
+| Biblioteca de Telegram | teleproto (fork de GramJS, layer 229) | Telethon | gotd/td | mtcute |
+| Dependencias en ejecución | ninguna (un archivo) | paquetes de Python | un binario de Go | paquetes de npm |
+| Instalación | Homebrew, Scoop, npm, binarios | pip, uvx, Docker | Homebrew, npx, go install | npm, bun |
+
+Datos tomados del README y el manifiesto de cada proyecto en noviembre de 2026; abre un issue si algo
+está desactualizado. Lo que distingue a Better-TG-CLI es el modelo de escritura (solo lectura, ask,
+on, con aprobaciones ligadas al texto exacto) y una salida pensada para agentes.
 
 ## Instalación
 
