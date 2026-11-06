@@ -54,7 +54,7 @@ const en = {
     footerPages: { mcp: 'MCP server setup', cases: 'Use cases', faq: 'FAQ', compare: 'Compare Telegram MCP servers' },
     footerPrivacy: 'Privacy',
     language: 'Language',
-    nav: { mcp: 'MCP server', faq: 'FAQ', compare: 'Compare', cases: 'Use cases', login: 'Login key', onThisSite: 'On this site' },
+    nav: { faq: 'FAQ', compare: 'Compare', cases: 'Use cases', login: 'Login key', onThisSite: 'On this site' },
   },
   landing: {
     title: 'Better-TG-CLI: Telegram CLI and MCP server for AI agents',
@@ -221,7 +221,7 @@ const es: Dict = {
     footerPages: { mcp: 'Configurar el servidor MCP', cases: 'Casos de uso', faq: 'Preguntas frecuentes', compare: 'Comparar servidores MCP de Telegram' },
     footerPrivacy: 'Privacidad',
     language: 'Idioma',
-    nav: { mcp: 'Servidor MCP', faq: 'Preguntas', compare: 'Comparación', cases: 'Casos de uso', login: 'Clave de acceso', onThisSite: 'En este sitio' },
+    nav: { faq: 'Preguntas', compare: 'Comparación', cases: 'Casos de uso', login: 'Clave de acceso', onThisSite: 'En este sitio' },
   },
   landing: {
     title: 'Better-TG-CLI: CLI y servidor MCP de Telegram para agentes de IA',
@@ -386,7 +386,7 @@ const ru: Dict = {
     footerPages: { mcp: 'Настройка MCP-сервера', cases: 'Сценарии', faq: 'Частые вопросы', compare: 'Сравнение MCP-серверов Telegram' },
     footerPrivacy: 'Приватность',
     language: 'Язык',
-    nav: { mcp: 'MCP-сервер', faq: 'Вопросы', compare: 'Сравнение', cases: 'Сценарии', login: 'Ключ входа', onThisSite: 'На сайте' },
+    nav: { faq: 'Вопросы', compare: 'Сравнение', cases: 'Сценарии', login: 'Ключ входа', onThisSite: 'На сайте' },
   },
   landing: {
     title: 'Better-TG-CLI: CLI и MCP-сервер Telegram для ИИ-агентов',

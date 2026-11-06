@@ -344,6 +344,9 @@ describe('self-serve signup', () => {
       expect(html).toContain('<a class="btn" href="/login">');
       // The main button is the way to the login page; the header does not repeat it
       expect(html).not.toContain('class="key"');
+      // The header links people pages; /mcp is in the footer only
+      expect(/<header.*<\/header>/s.exec(html)![0]).not.toContain('/mcp');
+      expect(html).toContain('<a href="/mcp">');
       expect(await (await handle(new Request('https://broker.test/faq'), {} as Env)).text()).toContain('<a href="/login" class="key">');
       expect(html.match(/<div class="tile/g)).toHaveLength(6);
       expect(html).toContain('Log in on up to 3 computers');
