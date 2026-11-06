@@ -116,7 +116,7 @@ h1{font-size:40px;line-height:1.08;letter-spacing:-1.1px;font-weight:600;margin:
 a{color:var(--accent)}
 footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--dim)}
 footer .pages{margin-bottom:8px}
-@media (max-width:480px){main{padding-top:28px}.site{gap:6px 14px}h1{font-size:31px;letter-spacing:-.7px}.lead{font-size:16px}}`;
+@media (max-width:480px){main{padding-top:28px}.top .langs{gap:12px}.top .langs>*{font-size:0}.top .langs>*::after{content:attr(data-short);font-size:13px;letter-spacing:.5px}.site{gap:6px 14px}h1{font-size:31px;letter-spacing:-.7px}.lead{font-size:16px}}`;
 
 /** Pages in the header, in this order. */
 const NAV_PAGES = [['/cases', 'cases'], ['/faq', 'faq'], ['/compare', 'compare']] as const;
@@ -154,8 +154,8 @@ export function langLinks(current: Lang, query: URLSearchParams, t: Dict, path: 
     q.set('lang', l);
     const name = escape(DICT[l].langName);
     return l === current
-      ? `<b aria-current="true">${name}</b>`
-      : `<a href="${localPath(path, l)}?${escape(q.toString())}" hreflang="${l}" lang="${l}">${name}</a>`;
+      ? `<b aria-current="true" data-short="${l.toUpperCase()}">${name}</b>`
+      : `<a href="${localPath(path, l)}?${escape(q.toString())}" hreflang="${l}" lang="${l}" data-short="${l.toUpperCase()}">${name}</a>`;
   });
   return `<nav class="langs" aria-label="${escape(t.page.language)}">${links.join('')}</nav>`;
 }
