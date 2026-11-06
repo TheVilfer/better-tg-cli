@@ -6,7 +6,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "better-tg-cli@0.39.5",
+        "better-tg-cli@0.39.6",
         "mcp"
       ],
       "cwd": "${PLUGIN_DATA}",
