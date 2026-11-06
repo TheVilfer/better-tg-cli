@@ -1,6 +1,6 @@
 /**
- * Answer-first pages for search engines and AI assistants: /mcp (connect an MCP client), /faq and
- * /compare. Each one answers one need, in the three languages of the site, as plain HTML with a nonce
+ * Answer-first pages for search engines and AI assistants: /mcp (connect an MCP client), /faq,
+ * /compare and /cases (what people ask an agent to do in Telegram). Each one answers one need, in the three languages of the site, as plain HTML with a nonce
  * CSP and JSON-LD. Texts follow the README; keep them in step when the behaviour changes.
  */
 
@@ -9,7 +9,7 @@ import { DICT, type Lang } from './i18n';
 import { BRAND, cardMeta, footer, langLinks, LOGIN_PATH, TOKENS_CSS } from './page';
 import { pageUrl, SITE } from './seo';
 
-export const DOC_PATHS = ['/mcp', '/faq', '/compare'] as const;
+export const DOC_PATHS = ['/mcp', '/faq', '/compare', '/cases'] as const;
 export type DocPath = (typeof DOC_PATHS)[number];
 export const isDocPath = (p: string): p is DocPath => (DOC_PATHS as readonly string[]).includes(p);
 
@@ -35,6 +35,7 @@ interface Nav {
   mcp: string;
   faq: string;
   compare: string;
+  cases: string;
   login: string;
   onThisSite: string;
 }
@@ -56,11 +57,29 @@ interface Compare {
   whenTitle: string;
   when: string[];
 }
+/** One use case: the request in the user's words, the commands the agent runs, and what to know. */
+interface Case {
+  h2: string;
+  ask: string;
+  code: string;
+  note: string;
+}
+interface Cases {
+  title: string;
+  description: string;
+  h1: string;
+  lead: string;
+  askLabel: string;
+  runsLabel: string;
+  items: Case[];
+  outro: string;
+}
 interface Texts {
   nav: Nav;
   mcp: Doc;
   faq: Faq;
   compare: Compare;
+  cases: Cases;
 }
 
 const INSTALL = `brew install thevilfer/tap/better-tg-cli   # macOS or Linux
@@ -91,9 +110,32 @@ const RIVALS = [
   { name: 'WireCatLabs/tg-cli', url: 'https://github.com/WireCatLabs/tg-cli' },
 ];
 
+/** The commands each case runs, the same in every language (checked against `telegram help-all`). */
+const CASE_CODE = [
+  `telegram inbox --unmuted -n 20
+telegram read <chat> --unread --max-text 200`,
+  `telegram search "invoice" --type document --since 30d
+telegram search "staging url" --chat "Dev team" --type url
+telegram get <chat> <id>`,
+  `telegram read @channel -n 5            # 💬N marks posts with comments
+telegram read @channel --thread <postId>
+telegram topics <forum> ; telegram read <forum> --topic <id>`,
+  `telegram send @somebot "/start"
+telegram read @somebot -n 1             # buttons are listed as [index] label
+telegram click @somebot <msgId> "Next"`,
+  `telegram reply <chat> <msgId> "Thanks, Thursday at 3 works"
+# mode ask: the exact chat and text are shown, it is sent after your yes`,
+  `telegram sync --chat "Project X" --output ./notes/project-x --resume`,
+  `telegram watch "Support" -t 600 --json   # always bounded by -t or -n
+telegram search "outage" --chat "Support" --since 1d`,
+  `telegram stats @mychannel
+telegram stats @mychannel --message <postId>
+telegram admin-log "My group" ; telegram members "My group" -q anna`,
+];
+
 const TEXTS: Record<Lang, Texts> = {
   en: {
-    nav: { home: 'Home', mcp: 'MCP server', faq: 'FAQ', compare: 'Compare', login: 'Login key', onThisSite: 'On this site' },
+    nav: { home: 'Home', mcp: 'MCP server', faq: 'FAQ', compare: 'Compare', cases: 'Use cases', login: 'Login key', onThisSite: 'On this site' },
     mcp: {
       title: 'Telegram MCP server for Claude Code and Cursor | Better-TG-CLI',
       description: 'Connect Telegram to Claude Code, Cursor, Codex, Claude Desktop or Gemini CLI with the open-source Better-TG-CLI MCP server: install, log in, add one line.',
@@ -159,9 +201,28 @@ const TEXTS: Record<Lang, Texts> = {
         'You want one file with no runtime dependencies, or a standalone binary.',
       ],
     },
+    cases: {
+      title: 'What AI agents can do in your Telegram: 8 use cases | Better-TG-CLI',
+      description: 'Use cases for Claude Code, Codex, Cursor and Claude Desktop with Telegram: unread digests, search, channel comments, bot buttons, approved replies, exports, stats.',
+      h1: 'What an AI agent can do in your Telegram',
+      lead: 'Eight things people ask Claude Code, Codex, Cursor or Claude Desktop to do with their own Telegram account through Better-TG-CLI. Each case shows the request, the commands the agent runs (the same argv over MCP) and what to know. Reads never mark chats as read; every send waits for your yes.',
+      askLabel: 'You ask',
+      runsLabel: 'The agent runs',
+      items: [
+        { h2: 'A digest of what you missed', ask: '“What did I miss in Telegram today? Skip muted chats, give me the three things I should answer.”', code: '', note: 'Starts from unread chats instead of reading everything, and truncates long messages, so it stays cheap on tokens. Chats stay unread until you open them or run `telegram mark-read`.' },
+        { h2: 'Find a message, link or file you lost', ask: '“Find the invoice PDF someone sent me last month” or “What was the staging URL in the dev chat?”', code: '', note: 'Global search across all chats, or inside one chat, filtered by type (photo, url, document, voice, mentions) and date. `telegram download` saves the file.' },
+        { h2: 'Read channel comments, threads and forum topics', ask: '“Summarise the discussion under the last post in @channel” or “What is new in the Releases topic?”', code: '', note: 'Most Telegram tools stop at the post itself. Comments, reply threads and forum topics are read the same way as a chat.' },
+        { h2: 'Talk to a bot and press its buttons', ask: '“Ask @somebot for my order status and go through its menu.”', code: '', note: 'Bot replies come with their inline and keyboard buttons; the agent presses one by index or label and reads the answer. Pressing a button counts as a write, so in mode `ask` you approve it.' },
+        { h2: 'Draft replies, send only what you approve', ask: '“Reply to Anna that Thursday at 3 works, and react 👍 to Max’s message.”', code: '', note: 'In mode `ask` every send, edit, reaction or forward is shown to you word for word and runs only after your yes. Clients with MCP elicitation ask in their own dialog, so the model never handles the approval.' },
+        { h2: 'Export a chat to Markdown', ask: '“Save the Project X chat to my notes folder and keep it up to date.”', code: '', note: 'An incremental Markdown export: `--resume` fetches only what is new since the last run. Useful for notes, search in your editor, or as context for a coding agent.' },
+        { h2: 'Watch a chat for a while', ask: '“Keep an eye on the Support chat for ten minutes and tell me if anyone reports an outage.”', code: '', note: 'A live stream of new messages as JSON, always bounded by time (`-t`) or count (`-n`), so the agent does not hang.' },
+        { h2: 'Channel stats and group admin', ask: '“How did my last post do?” or “Who changed the group settings yesterday?”', code: '', note: 'Channel and post statistics, the admin log and member search. Changing permissions, banning or pinning are writes and go through the same approval.' },
+      ],
+      outro: 'To set it up, see [MCP server setup](/mcp); for safety and login questions, the [FAQ](/faq). Please don’t use it for bulk messaging, mass joins or invites: Telegram limits accounts that behave like bots, and the skill tells agents to refuse.',
+    },
   },
   es: {
-    nav: { home: 'Inicio', mcp: 'Servidor MCP', faq: 'Preguntas', compare: 'Comparación', login: 'Clave de acceso', onThisSite: 'En este sitio' },
+    nav: { home: 'Inicio', mcp: 'Servidor MCP', faq: 'Preguntas', compare: 'Comparación', cases: 'Casos de uso', login: 'Clave de acceso', onThisSite: 'En este sitio' },
     mcp: {
       title: 'Servidor MCP de Telegram para Claude Code y Cursor | Better-TG-CLI',
       description: 'Conecta Telegram con Claude Code, Cursor, Codex o Claude Desktop con el servidor MCP de código abierto de Better-TG-CLI: instala, inicia sesión y añade una línea.',
@@ -227,9 +288,28 @@ const TEXTS: Record<Lang, Texts> = {
         'Quieres un solo archivo sin dependencias en ejecución, o un binario independiente.',
       ],
     },
+    cases: {
+      title: 'Qué puede hacer un agente de IA en tu Telegram: 8 casos | Better-TG-CLI',
+      description: 'Casos de uso de Claude Code, Codex, Cursor y Claude Desktop con Telegram: resumen de no leídos, búsqueda, comentarios, botones de bots, respuestas aprobadas, exportación.',
+      h1: 'Qué puede hacer un agente de IA en tu Telegram',
+      lead: 'Ocho cosas que la gente pide a Claude Code, Codex, Cursor o Claude Desktop con su propia cuenta de Telegram a través de Better-TG-CLI. Cada caso muestra la petición, los comandos que ejecuta el agente (los mismos argumentos por MCP) y qué conviene saber. Leer nunca marca los chats como leídos; cada envío espera tu «sí».',
+      askLabel: 'Tú pides',
+      runsLabel: 'El agente ejecuta',
+      items: [
+        { h2: 'Un resumen de lo que te perdiste', ask: '«¿Qué me perdí hoy en Telegram? Sin los chats silenciados, dime las tres cosas que debo responder.»', code: '', note: 'Empieza por los chats no leídos en lugar de leerlo todo y recorta los mensajes largos, así gasta pocos tokens. Los chats siguen sin leer hasta que los abres o ejecutas `telegram mark-read`.' },
+        { h2: 'Encontrar un mensaje, enlace o archivo perdido', ask: '«Busca la factura en PDF que me enviaron el mes pasado» o «¿Cuál era la URL de staging en el chat de desarrollo?»', code: '', note: 'Búsqueda global en todos los chats o dentro de uno, filtrada por tipo (photo, url, document, voice, mentions) y fecha. `telegram download` guarda el archivo.' },
+        { h2: 'Leer comentarios de canales, hilos y temas de foros', ask: '«Resume la discusión bajo el último post de @canal» o «¿Qué hay de nuevo en el tema Releases?»', code: '', note: 'La mayoría de las herramientas se quedan en el post. Los comentarios, los hilos de respuestas y los temas de foro se leen igual que un chat.' },
+        { h2: 'Hablar con un bot y pulsar sus botones', ask: '«Pregunta a @somebot por el estado de mi pedido y recorre su menú.»', code: '', note: 'Las respuestas del bot llegan con sus botones; el agente pulsa uno por índice o texto y lee la respuesta. Pulsar un botón cuenta como escritura, así que en el modo `ask` lo apruebas tú.' },
+        { h2: 'Borradores de respuesta: solo se envía lo que apruebas', ask: '«Responde a Anna que el jueves a las 3 me va bien y reacciona con 👍 al mensaje de Max.»', code: '', note: 'En el modo `ask` cada envío, edición, reacción o reenvío se te muestra tal cual y solo se ejecuta tras tu «sí». Los clientes con elicitation de MCP preguntan en su propio diálogo, así que el modelo nunca toca la aprobación.' },
+        { h2: 'Exportar un chat a Markdown', ask: '«Guarda el chat Project X en mi carpeta de notas y mantenlo al día.»', code: '', note: 'Exportación incremental a Markdown: `--resume` descarga solo lo nuevo desde la última vez. Sirve para notas, para buscar desde el editor o como contexto para un agente de código.' },
+        { h2: 'Vigilar un chat durante un rato', ask: '«Vigila el chat Support diez minutos y avísame si alguien informa de una caída.»', code: '', note: 'Un flujo en vivo de mensajes nuevos en JSON, siempre limitado por tiempo (`-t`) o cantidad (`-n`), para que el agente no se quede colgado.' },
+        { h2: 'Estadísticas de canales y administración de grupos', ask: '«¿Qué tal funcionó mi último post?» o «¿Quién cambió ayer la configuración del grupo?»', code: '', note: 'Estadísticas del canal y de cada post, el registro de administración y la búsqueda de miembros. Cambiar permisos, expulsar o fijar son escrituras y pasan por la misma aprobación.' },
+      ],
+      outro: 'Para configurarlo, mira [Servidor MCP](/mcp); sobre seguridad e inicio de sesión, las [Preguntas](/faq). No lo uses para envíos masivos ni para unirte o invitar en masa: Telegram limita las cuentas que se comportan como bots, y el skill indica a los agentes que se nieguen.',
+    },
   },
   ru: {
-    nav: { home: 'Главная', mcp: 'MCP-сервер', faq: 'Вопросы', compare: 'Сравнение', login: 'Ключ входа', onThisSite: 'На сайте' },
+    nav: { home: 'Главная', mcp: 'MCP-сервер', faq: 'Вопросы', compare: 'Сравнение', cases: 'Сценарии', login: 'Ключ входа', onThisSite: 'На сайте' },
     mcp: {
       title: 'MCP-сервер Telegram для Claude Code и Cursor | Better-TG-CLI',
       description: 'Подключите Telegram к Claude Code, Cursor, Codex, Claude Desktop или Gemini CLI через открытый MCP-сервер Better-TG-CLI: установите, войдите и добавьте одну строку в клиент.',
@@ -295,6 +375,25 @@ const TEXTS: Record<Lang, Texts> = {
         'Нужен один файл без зависимостей при запуске или отдельный бинарник.',
       ],
     },
+    cases: {
+      title: 'Что ИИ-агент может делать в вашем Telegram: 8 сценариев | Better-TG-CLI',
+      description: 'Сценарии для Claude Code, Codex, Cursor и Claude Desktop в Telegram: сводка непрочитанного, поиск, комментарии в каналах, кнопки ботов, ответы с подтверждением, экспорт.',
+      h1: 'Что ИИ-агент может делать в вашем Telegram',
+      lead: 'Восемь задач, которые люди дают Claude Code, Codex, Cursor или Claude Desktop в своём аккаунте Telegram через Better-TG-CLI. Для каждой показано, как звучит просьба, какие команды запускает агент (по MCP те же аргументы) и что важно знать. Чтение никогда не отмечает чаты прочитанными, а каждая отправка ждёт вашего «да».',
+      askLabel: 'Вы просите',
+      runsLabel: 'Агент запускает',
+      items: [
+        { h2: 'Сводка того, что вы пропустили', ask: '«Что я пропустил в телеге сегодня? Без чатов с выключенным звуком, назови три вещи, на которые надо ответить.»', code: '', note: 'Агент начинает с непрочитанных чатов, а не читает всё подряд, и обрезает длинные сообщения, поэтому тратит мало токенов. Чаты остаются непрочитанными, пока вы их не откроете или не запустите `telegram mark-read`.' },
+        { h2: 'Найти потерянное сообщение, ссылку или файл', ask: '«Найди PDF со счётом, который мне присылали в прошлом месяце» или «Какой был адрес стейджинга в чате разработки?»', code: '', note: 'Поиск по всем чатам или внутри одного, с фильтром по типу (photo, url, document, voice, mentions) и дате. `telegram download` сохранит файл.' },
+        { h2: 'Читать комментарии в каналах, ветки и темы форумов', ask: '«Перескажи обсуждение под последним постом в @channel» или «Что нового в теме Releases?»', code: '', note: 'Большинство инструментов видят только сам пост. Комментарии, ветки ответов и темы форумов читаются так же, как обычный чат.' },
+        { h2: 'Поговорить с ботом и нажать его кнопки', ask: '«Спроси у @somebot статус заказа и пройди по его меню.»', code: '', note: 'Ответы бота приходят вместе с кнопками; агент нажимает нужную по номеру или тексту и читает ответ. Нажатие кнопки считается записью, поэтому в режиме `ask` его подтверждаете вы.' },
+        { h2: 'Черновики ответов: отправляется только то, что вы одобрили', ask: '«Ответь Ане, что четверг в 15:00 подходит, и поставь 👍 на сообщение Макса.»', code: '', note: 'В режиме `ask` каждая отправка, правка, реакция или пересылка показывается вам дословно и выполняется только после вашего «да». Клиенты с MCP elicitation спрашивают в своём окне, так что модель вообще не касается подтверждения.' },
+        { h2: 'Выгрузить чат в Markdown', ask: '«Сохрани чат Project X в папку с заметками и обновляй его.»', code: '', note: 'Инкрементальная выгрузка в Markdown: с `--resume` скачивается только новое с прошлого запуска. Удобно для заметок, поиска в редакторе или как контекст для агента, который пишет код.' },
+        { h2: 'Последить за чатом какое-то время', ask: '«Последи за чатом Support десять минут и скажи, если кто-то сообщит о падении.»', code: '', note: 'Поток новых сообщений в JSON, всегда ограниченный временем (`-t`) или количеством (`-n`), чтобы агент не зависал.' },
+        { h2: 'Статистика канала и администрирование группы', ask: '«Как зашёл мой последний пост?» или «Кто вчера поменял настройки группы?»', code: '', note: 'Статистика канала и отдельных постов, журнал действий админов и поиск участников. Изменение прав, бан и закрепление — это записи, и они проходят то же подтверждение.' },
+      ],
+      outro: 'Как подключить — на странице [MCP-сервер](/mcp); про безопасность и вход — в [вопросах](/faq). Не используйте инструмент для массовых рассылок, массовых вступлений и приглашений: Telegram ограничивает аккаунты, которые ведут себя как боты, и скилл велит агентам отказываться.',
+    },
   },
 };
 
@@ -313,7 +412,7 @@ const localHref = (path: string, lang: Lang) => (lang === 'en' ? path : `${path}
 
 function nav(lang: Lang, current: string): string {
   const n = TEXTS[lang].nav;
-  const items: [string, string][] = [['/', n.home], ['/mcp', n.mcp], ['/faq', n.faq], ['/compare', n.compare], [LOGIN_PATH, n.login]];
+  const items: [string, string][] = [['/', n.home], ['/mcp', n.mcp], ['/cases', n.cases], ['/faq', n.faq], ['/compare', n.compare], [LOGIN_PATH, n.login]];
   return `<nav class="site" aria-label="${escape(n.onThisSite)}">${items
     .map(([p, label]) => (p === current ? `<b aria-current="page">${escape(label)}</b>` : `<a href="${localHref(p, lang)}">${escape(label)}</a>`))
     .join('')}</nav>`;
@@ -345,6 +444,25 @@ function body(path: DocPath, lang: Lang): { head: { title: string; description: 
           name: i.q,
           acceptedAnswer: { '@type': 'Answer', text: i.a.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/`/g, '') },
         })),
+      },
+    };
+  }
+  if (path === '/cases') {
+    const c = t.cases;
+    return {
+      head: c,
+      html: `<h1>${escape(c.h1)}</h1><p class="lead">${inline(c.lead, lang)}</p>${c.items
+        .map((i, n) => `<section class="case"><h2>${escape(i.h2)}</h2><p class="ask"><span>${escape(c.askLabel)}</span>${escape(i.ask)}</p><p class="runs">${escape(c.runsLabel)}</p><pre><code>${escape(CASE_CODE[n])}</code></pre><p>${inline(i.note, lang)}</p></section>`)
+        .join('')}<p class="outro">${inline(c.outro, lang)}</p>`,
+      schema: {
+        '@context': 'https://schema.org',
+        '@type': 'WebPage',
+        name: c.h1,
+        description: c.description,
+        url,
+        inLanguage: lang,
+        about,
+        mainEntity: { '@type': 'ItemList', itemListElement: c.items.map((i, n) => ({ '@type': 'ListItem', position: n + 1, name: i.h2 })) },
       },
     };
   }
@@ -430,6 +548,12 @@ tbody th{font-weight:500;color:var(--dim);min-width:8.5em}
 table{min-width:620px}
 tr:last-child th,tr:last-child td{border-bottom:0}
 .note{color:var(--dim);font-size:14px}
+.case{margin-top:40px}
+.case h2{font-size:21px;margin-top:0}
+.ask{margin:8px 0 14px;padding:12px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+.ask span,.runs{display:block;font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 0 4px}
+.runs{margin:0}
+.outro{margin-top:48px;color:var(--dim)}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
 footer .pages{margin-bottom:8px}
 @media (max-width:480px){main{padding-top:28px}h1{font-size:30px;letter-spacing:-.6px}.lead{font-size:16px}}

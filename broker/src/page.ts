@@ -95,7 +95,7 @@ export const BRAND = `<div class="brand"><svg viewBox="0 0 12 12" shape-renderin
 
 /** The footer links, the same on every page. */
 export const footer = (x: Dict['page'], lang: Lang = 'en') =>
-  `<footer><nav class="pages">${(['mcp', 'faq', 'compare'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
+  `<footer><nav class="pages">${(['mcp', 'cases', 'faq', 'compare'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
 
 /** Links to the same page in the other languages, keeping the rest of the query intact. */
 export function langLinks(current: Lang, query: URLSearchParams, t: Dict, path: string): string {

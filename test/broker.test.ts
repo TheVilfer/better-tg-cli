@@ -464,11 +464,11 @@ describe('search engines and AI crawlers', () => {
     const res = await get('/sitemap.xml');
     expect(res.headers.get('content-type')).toContain('application/xml');
     const xml = await res.text();
-    const paths = ['/', '/mcp', '/faq', '/compare', '/login'];
+    const paths = ['/', '/mcp', '/cases', '/faq', '/compare', '/login'];
     expect(PAGE_URLS).toEqual(paths.flatMap(p => ['', '?lang=es', '?lang=ru'].map(q => `https://better-tg-cli.com${p}${q}`)));
     for (const url of PAGE_URLS) expect(xml).toContain(`<loc>${url}</loc>`);
-    expect(xml.match(/<url>/g)).toHaveLength(15);
-    expect(xml.match(/hreflang="x-default"/g)).toHaveLength(15);
+    expect(xml.match(/<url>/g)).toHaveLength(18);
+    expect(xml.match(/hreflang="x-default"/g)).toHaveLength(18);
     // Every URL in the sitemap answers 200
     for (const url of PAGE_URLS) expect((await get(new URL(url).pathname + new URL(url).search)).status, url).toBe(200);
   });
@@ -506,9 +506,9 @@ describe('search engines and AI crawlers', () => {
     expect(await title('/login')).not.toBe(await title('/'));
   });
 
-  it('serves /mcp, /faq and /compare in three languages, linked from every page', async () => {
+  it('serves /mcp, /cases, /faq and /compare in three languages, linked from every page', async () => {
     const CYRILLIC = /[А-Яа-яЁё]/;
-    for (const path of ['/mcp', '/faq', '/compare']) {
+    for (const path of ['/mcp', '/cases', '/faq', '/compare']) {
       for (const lang of ['en', 'es', 'ru']) {
         const res = await get(lang === 'en' ? path : `${path}?lang=${lang}`);
         const html = await res.text();
@@ -532,11 +532,16 @@ describe('search engines and AI crawlers', () => {
     for (const q of ld.mainEntity) expect(q.acceptedAnswer.text).not.toMatch(/`|\]\(/);
     expect(await (await get('/compare')).text()).toContain('<a href="https://github.com/chigwell/telegram-mcp" rel="noopener">chigwell/telegram-mcp</a>');
     expect(await (await get('/mcp')).text()).toContain('claude mcp add telegram -- telegram mcp');
+    const cases = await (await get('/cases')).text();
+    const casesLd = JSON.parse(/<script type="application\/ld\+json" nonce="[^"]+">(.*?)<\/script>/s.exec(cases)![1]);
+    // Every case has its commands, and the list in JSON-LD matches the sections
+    expect(casesLd.mainEntity.itemListElement.length).toBe(cases.match(/<section class="case">/g)!.length);
+    expect(cases.match(/<section class="case">[\s\S]*?<pre><code>telegram /g)).toHaveLength(8);
     // The footer links every page, keeping the language
     for (const path of ['/', '/login?lang=ru', '/faq?lang=es']) {
       const html = await (await get(path)).text();
       const q = path.includes('lang=') ? `?lang=${path.split('lang=')[1]}` : '';
-      for (const p of ['/mcp', '/faq', '/compare']) expect(html, path).toContain(`<a href="${p}${q}">`);
+      for (const p of ['/mcp', '/cases', '/faq', '/compare']) expect(html, path).toContain(`<a href="${p}${q}">`);
     }
     // A Spanish browser at /faq is sent to /faq?lang=es
     expect((await get('/faq', { headers: { 'accept-language': 'es' } })).headers.get('location')).toBe('https://better-tg-cli.com/faq?lang=es');

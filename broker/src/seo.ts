@@ -4,7 +4,7 @@ import { LANGS, type Lang } from './i18n';
 export const SITE = 'https://better-tg-cli.com';
 const REPO = 'https://github.com/TheVilfer/better-tg-cli';
 /** The indexable pages; each exists in every language at ?lang= (English at the bare URL) */
-const PAGES = ['/', '/mcp', '/faq', '/compare', '/login'];
+const PAGES = ['/', '/mcp', '/cases', '/faq', '/compare', '/login'];
 
 /**
  * IndexNow (Bing, Yandex and others): the key is public by design, served at /<key>.txt, and
@@ -54,6 +54,7 @@ export const LLMS_TXT = `# Better-TG-CLI
 ## Pages
 
 - [Telegram MCP server for Claude Code, Cursor, Codex and Claude Desktop](${SITE}/mcp): install, log in, connect a client
+- [Use cases](${SITE}/cases): unread digests, search, channel comments and forum topics, bot buttons, approved replies, Markdown export, live watch, channel stats
 - [FAQ](${SITE}/faq): account safety, how sends are approved, where the session is stored
 - [Telegram MCP servers compared](${SITE}/compare): Better-TG-CLI, chigwell/telegram-mcp, chaindead/telegram-mcp, WireCatLabs/tg-cli
 
