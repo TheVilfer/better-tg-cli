@@ -348,6 +348,9 @@ describe('self-serve signup', () => {
       const faq = await (await handle(new Request('https://broker.test/faq'), {} as Env)).text();
       expect(links(faq)).toBe(links(html));
       for (const h of [html, faq]) expect(/<header.*<\/header>/s.exec(h)![0]).not.toMatch(/\/mcp|\/login/);
+      // The language switch is on top, the page links under the logo
+      for (const h of [html, faq]) expect(h).toMatch(/<header class="top"><div class="row">.*<nav class="langs".*<\/div><nav class="site"/s);
+      expect(/<footer>.*<\/footer>/s.exec(faq)![0]).not.toContain('class="langs"');
       expect(html).toContain('<a href="/mcp">');
       expect(faq).toContain('<a href="/login">Get a login key</a>');
       expect(html.match(/<div class="tile/g)).toHaveLength(6);

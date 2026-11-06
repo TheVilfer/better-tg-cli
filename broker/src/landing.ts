@@ -180,7 +180,7 @@ ${screen(t)}
 ${bento(x)}
 ${security(x)}
 ${login(x, href)}
-${footer(lang, query, '/')}
+${footer(lang)}
 </main>
 <script nonce="${nonce}">
 const T = ${JSON.stringify({ copy: t.client.copy, copied: t.client.copied, copyManual: t.client.copyManual }).replace(/</g, '\\u003c')};
