@@ -536,7 +536,7 @@ describe('search engines and AI crawlers', () => {
     const casesLd = JSON.parse(/<script type="application\/ld\+json" nonce="[^"]+">(.*?)<\/script>/s.exec(cases)![1]);
     // Every case has its commands, and the list in JSON-LD matches the sections
     expect(casesLd.mainEntity.itemListElement.length).toBe(cases.match(/<section class="case">/g)!.length);
-    expect(cases.match(/<section class="case">[\s\S]*?<pre><code>telegram /g)).toHaveLength(8);
+    expect(cases.match(/<section class="case">[\s\S]*?<pre><code>telegram /g)).toHaveLength(9);
     // The footer links every page, keeping the language
     for (const path of ['/', '/login?lang=ru', '/faq?lang=es']) {
       const html = await (await get(path)).text();

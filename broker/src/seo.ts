@@ -54,7 +54,7 @@ export const LLMS_TXT = `# Better-TG-CLI
 ## Pages
 
 - [Telegram MCP server for Claude Code, Cursor, Codex and Claude Desktop](${SITE}/mcp): install, log in, connect a client
-- [Use cases](${SITE}/cases): unread digests, search, channel comments and forum topics, bot buttons, approved replies, Markdown export, live watch, channel stats
+- [Use cases](${SITE}/cases): unread digests, search, channel comments and forum topics, bot buttons, custom emoji packs, approved replies, Markdown export, live watch, channel stats
 - [FAQ](${SITE}/faq): account safety, how sends are approved, where the session is stored
 - [Telegram MCP servers compared](${SITE}/compare): Better-TG-CLI, chigwell/telegram-mcp, chaindead/telegram-mcp, WireCatLabs/tg-cli
 
