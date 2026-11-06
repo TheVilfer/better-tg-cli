@@ -99,3 +99,50 @@ if (skillCurrent !== skillOut) writeFileSync(skillPath, skillOut);
     if (cur !== content) writeFileSync(url, content);
   }
 }
+
+// agent-plugin/ is a portable Agent Plugins v1 package (plugin.json, skills/, mcp.json in its root),
+// listed in the Hermes Agent plugin catalog. It is a folder of its own because a root mcp.json with a
+// local MCP server must stay out of plugin/ (Anthropic's directory refuses one). README.md is
+// written by hand; everything else is regenerated
+{
+  const root = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+  // Hermes hands a stdio server only PATH, HOME, USER, LANG, TERM, SHELL, TMPDIR (plus the Windows
+  // set). "${NAME}" passes one through when the user has it set. The Linux Secret Service needs the
+  // D-Bus session; credentials and approval settings are never forwarded
+  const forward = ['DBUS_SESSION_BUS_ADDRESS', 'XDG_RUNTIME_DIR', 'TG_PROFILE', 'TG_READ_ONLY', 'TG_LOG_LEVEL', 'TG_FLOOD_WAIT_MAX', 'TG_TRANSPORT', 'TG_NO_UPDATE_CHECK'];
+  const files = {
+    'plugin.json': JSON.stringify({
+      $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json',
+      name: root.name,
+      version,
+      description: 'Unofficial Telegram client for your own account: a local MCP server and a skill to read, search and send messages, read threads and press bot buttons. You approve every send.',
+      author: root.author,
+      homepage: root.homepage,
+      repository: root.repository,
+      license: root.license,
+      keywords: ['telegram', 'mtproto', 'mcp', 'cli', 'userbot', 'hermes'],
+    }, null, 2) + '\n',
+    'mcp.json': JSON.stringify({
+      $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
+      mcpServers: {
+        telegram: {
+          type: 'stdio',
+          command: 'npx',
+          args: ['-y', `better-tg-cli@${version}`, 'mcp'],
+          cwd: '${PLUGIN_DATA}',
+          env: Object.fromEntries(forward.map(n => [n, `\${${n}}`])),
+        },
+      },
+    }, null, 2) + '\n',
+    'LICENSE': readFileSync(new URL('../LICENSE', import.meta.url), 'utf8'),
+    ...Object.fromEntries(Object.entries(skillFiles).map(([f, c]) => [`skills/better-tg-cli/${f}`, c])),
+  };
+  const { mkdirSync } = await import('node:fs');
+  for (const [file, content] of Object.entries(files)) {
+    const url = new URL(`../agent-plugin/${file}`, import.meta.url);
+    mkdirSync(new URL('.', url), { recursive: true });
+    let cur = '';
+    try { cur = readFileSync(url, 'utf8'); } catch {}
+    if (cur !== content) writeFileSync(url, content);
+  }
+}

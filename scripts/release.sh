@@ -80,7 +80,7 @@ node scripts/gen-version.mjs
 npm run build >/dev/null
 npm test
 
-git add package.json package-lock.json src/version.ts src/skill-files.ts plugin .claude-plugin/plugin.json server.json gemini-extension.json
+git add package.json package-lock.json src/version.ts src/skill-files.ts plugin agent-plugin .claude-plugin/plugin.json server.json gemini-extension.json
 git commit -m "Release v${version}"
 git push -q -u origin "release/v${version}"
 gh pr create -R "$REPO" --base main --head "release/v${version}" --title "Release v${version}" \
