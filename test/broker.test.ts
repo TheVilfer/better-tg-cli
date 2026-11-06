@@ -4,6 +4,7 @@ import { handle, sha256Hex, type Env, type Invite } from '../broker/src/handler.
 import { handleSignup, handleVerify, normalizeEmail, SIGNUPS_KEY } from '../broker/src/signup.js';
 import { loopbackReturn } from '../broker/src/page.js';
 import { pickLang } from '../broker/src/i18n.js';
+import { INDEXNOW_KEY, PAGE_URLS } from '../broker/src/seo.js';
 
 const TOKEN = 'tok_' + 'x'.repeat(40);
 
@@ -26,6 +27,15 @@ async function env(invite?: Partial<Invite>, over: Partial<Env> = {}) {
 
 const post = (body: unknown) =>
   new Request('https://broker.test/v1/credentials', { method: 'POST', body: JSON.stringify(body) });
+
+
+/** A browser that prefers another language is sent to that page's ?lang= URL: follow that one hop. */
+async function followLang(request: Request, e: Env): Promise<Response> {
+  const res = await handle(request, e);
+  const to = res.status === 302 ? res.headers.get('location') : null;
+  if (!to || new URL(to).pathname !== new URL(request.url).pathname || !new URL(to).searchParams.has('lang')) return res;
+  return handle(new Request(to, { headers: request.headers }), e);
+}
 
 describe('credential broker', () => {
   it('returns credentials for a valid invite and counts the use', async () => {
@@ -319,7 +329,7 @@ describe('self-serve signup', () => {
 
   describe('landing page', () => {
     const page = (q = '', accept?: string) =>
-      handle(new Request(`https://broker.test/${q}`, { headers: accept ? { 'accept-language': accept } : {} }), {} as Env);
+      followLang(new Request(`https://broker.test/${q}`, { headers: accept ? { 'accept-language': accept } : {} }), {} as Env);
 
     it('serves / without a form, Turnstile or any storage, under a nonce CSP', async () => {
       const res = await page();
@@ -353,7 +363,7 @@ describe('self-serve signup', () => {
       expect(ru).toContain('Войти без API-ключей');
       expect(ru).toContain('Как работает вход');
       expect(ru).not.toMatch(/инвайт/i);
-      expect(ru).toContain('<a class="btn" href="/login">');
+      expect(ru).toContain('<a class="btn" href="/login?lang=ru">');
       expect(ru).toContain('<a href="/?lang=en" hreflang="en"');
     });
 
@@ -378,7 +388,7 @@ describe('self-serve signup', () => {
   describe('languages', () => {
     const CYRILLIC = /[А-Яа-яЁё]/;
     const get = async (e: Env, q = '', accept?: string) =>
-      handle(new Request(`https://broker.test/login${q}`, { headers: accept ? { 'accept-language': accept } : {} }), e);
+      followLang(new Request(`https://broker.test/login${q}`, { headers: accept ? { 'accept-language': accept } : {} }), e);
 
     it('picks ?lang=, then Accept-Language, then English', () => {
       expect(pickLang(null, null)).toBe('en');
@@ -444,3 +454,56 @@ describe('self-serve signup', () => {
     }
   });
 });
+
+describe('search engines and AI crawlers', () => {
+  const e = { INVITES: { get: async () => null, put: async () => {}, delete: async () => {} } } as unknown as Env;
+  const get = (path: string, init?: RequestInit) => handle(new Request(`https://better-tg-cli.com${path}`, init), e);
+
+  it('points robots.txt at a sitemap that lists every page in every language with its alternates', async () => {
+    expect(await (await get('/robots.txt')).text()).toContain('Sitemap: https://better-tg-cli.com/sitemap.xml');
+    const res = await get('/sitemap.xml');
+    expect(res.headers.get('content-type')).toContain('application/xml');
+    const xml = await res.text();
+    expect(PAGE_URLS).toEqual([
+      'https://better-tg-cli.com/', 'https://better-tg-cli.com/?lang=es', 'https://better-tg-cli.com/?lang=ru',
+      'https://better-tg-cli.com/login', 'https://better-tg-cli.com/login?lang=es', 'https://better-tg-cli.com/login?lang=ru',
+    ]);
+    for (const url of PAGE_URLS) expect(xml).toContain(`<loc>${url}</loc>`);
+    expect(xml.match(/<url>/g)).toHaveLength(6);
+    expect(xml.match(/hreflang="x-default"/g)).toHaveLength(6);
+  });
+
+  it('serves llms.txt, the IndexNow key and JSON-LD that parses', async () => {
+    expect(await (await get('/llms.txt')).text()).toMatch(/^# Better-TG-CLI\n\n> Better-TG-CLI is an open-source/);
+    expect(INDEXNOW_KEY).toMatch(/^[0-9a-f]{32}$/);
+    expect(await (await get(`/${INDEXNOW_KEY}.txt`)).text()).toBe(INDEXNOW_KEY);
+    const html = await (await get('/?lang=es')).text();
+    const ld = JSON.parse(/<script type="application\/ld\+json" nonce="[^"]+">(.*?)<\/script>/s.exec(html)![1]);
+    const app = ld['@graph'].find((n: { '@type': string }) => n['@type'] === 'SoftwareApplication');
+    expect(app).toMatchObject({ name: 'Better-TG-CLI', url: 'https://better-tg-cli.com/?lang=es', inLanguage: 'es', isAccessibleForFree: true });
+  });
+
+  it('gives each URL one language: Accept-Language only redirects to the ?lang= URL', async () => {
+    const ru = await get('/login?return=x', { headers: { 'accept-language': 'ru-RU,ru;q=0.9' } });
+    expect(ru.status).toBe(302);
+    expect(ru.headers.get('location')).toBe('https://better-tg-cli.com/login?return=x&lang=ru');
+    // Crawlers send no Accept-Language: English at the bare URL, canonical to itself
+    const en = await (await get('/')).text();
+    expect(en).toContain('<html lang="en">');
+    expect(en).toContain('<link rel="canonical" href="https://better-tg-cli.com/">');
+    // An explicit ?lang= wins over the browser
+    expect((await get('/?lang=en', { headers: { 'accept-language': 'ru' } })).status).toBe(200);
+    expect((await get('/?lang=ru', { headers: { 'accept-language': 'es' } })).status).toBe(200);
+  });
+
+  it('answers HEAD like GET, redirects http and favicon.ico, and titles /login apart from /', async () => {
+    for (const path of ['/', '/login', '/sitemap.xml']) expect((await get(path, { method: 'HEAD' })).status).toBe(200);
+    const http = await handle(new Request('http://better-tg-cli.com/login?lang=es'), e);
+    expect(http.status).toBe(301);
+    expect(http.headers.get('location')).toBe('https://better-tg-cli.com/login?lang=es');
+    expect((await get('/favicon.ico')).headers.get('location')).toBe('https://better-tg-cli.com/favicon.svg');
+    const title = async (path: string) => /<title>(.*?)<\/title>/.exec(await (await get(path)).text())![1];
+    expect(await title('/login')).not.toBe(await title('/'));
+  });
+});
+

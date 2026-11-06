@@ -3,6 +3,7 @@
 import { a, b, code, d, escape, SCREEN_CSS, terminal } from './guide';
 import { DICT, type Dict, type Lang } from './i18n';
 import { BRAND, cardMeta, footer, langLinks, LOGIN_PATH, TOKENS_CSS } from './page';
+import { jsonLd } from './seo';
 
 /** The two ways in: the CLI itself, or the agent skill through skills.sh (it tells the agent to install the CLI). */
 const INSTALL = { cli: 'npm install -g better-tg-cli', skill: 'npx skills add TheVilfer/better-tg-cli' } as const;
@@ -109,6 +110,7 @@ function landing(nonce: string, lang: Lang, query: URLSearchParams): string {
 <title>${escape(x.title)}</title>
 <meta name="description" content="${escape(x.description)}">
 ${cardMeta(lang, x, '/')}
+<script type="application/ld+json" nonce="${nonce}">${jsonLd(x.description, lang)}</script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
 ${TOKENS_CSS}

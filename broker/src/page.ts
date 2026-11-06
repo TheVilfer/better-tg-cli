@@ -2,6 +2,7 @@
 
 import { escape, GUIDE_CSS, GUIDE_JS, guideHtml } from './guide';
 import { DICT, LANGS, type Dict, type Lang } from './i18n';
+import { pageUrl, SITE } from './seo';
 
 /**
  * `telegram onboard` sends people here with ?return=<its loopback callback>. Only that exact shape
@@ -51,7 +52,6 @@ export function pageResponse({ open, siteKey, returnTo = null, lang = 'en', quer
   });
 }
 
-const SITE = 'https://better-tg-cli.com';
 
 /** Where the signup page lives; / is the landing page (src/landing.ts). */
 export const LOGIN_PATH = '/login';
@@ -60,7 +60,7 @@ export const OLD_LOGIN_PATH = '/invite';
 
 /** Link-preview tags (Open Graph, X card), the favicon and the per-language alternates of the page at `path`. */
 export function cardMeta(lang: Lang, x: { title: string; description: string }, path: string): string {
-  const href = (l: Lang) => (l === 'en' ? `${SITE}${path}` : `${SITE}${path}?lang=${l}`);
+  const href = (l: Lang) => pageUrl(path, l);
   const url = href(lang);
   const image = `${SITE}/og.png`;
   return [

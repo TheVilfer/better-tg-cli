@@ -31,7 +31,7 @@ export const asLang = (x: unknown): Lang => (typeof x === 'string' && isLang(x) 
 const en = {
   langName: 'English',
   page: {
-    title: 'Better-TG-CLI: Telegram for your terminal and AI agents',
+    title: 'Get a free login key for Better-TG-CLI, the Telegram CLI for AI agents',
     description: 'Open-source Telegram client for Claude Code, Codex, Cursor and the command line. Read-only until you allow writes. Free login key, no API keys of your own needed.',
     ogLocale: 'en_US',
     h1: 'Log in to Better-TG-CLI',
@@ -195,7 +195,7 @@ export type Dict = typeof en;
 const es: Dict = {
   langName: 'Español',
   page: {
-    title: 'Better-TG-CLI: Telegram para tu terminal y tus agentes de IA',
+    title: 'Clave de acceso gratis para Better-TG-CLI, el CLI de Telegram para agentes de IA',
     description: 'Cliente de Telegram de código abierto para Claude Code, Codex, Cursor y la línea de comandos. Solo lectura hasta que permitas escribir. Clave de acceso gratis, sin claves de API propias.',
     ogLocale: 'es_ES',
     h1: 'Entrar en Better-TG-CLI',
@@ -357,7 +357,7 @@ const es: Dict = {
 const ru: Dict = {
   langName: 'Русский',
   page: {
-    title: 'Better-TG-CLI: Telegram для терминала и AI-агентов',
+    title: 'Бесплатный ключ входа для Better-TG-CLI, CLI Telegram для ИИ-агентов',
     description: 'Open-source клиент Telegram для Claude Code, Codex, Cursor и командной строки. Только чтение, пока вы не разрешите запись. Бесплатный вход без своих API-ключей.',
     ogLocale: 'ru_RU',
     h1: 'Вход в Better-TG-CLI',
