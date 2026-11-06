@@ -57,20 +57,22 @@ interface Compare {
   whenTitle: string;
   when: string[];
 }
-/** One use case: the request in the user's words, the commands the agent runs, and what to know. */
+/** One use case, for people: what it gives you, what you need, and a prompt to give your agent. */
 interface Case {
   h2: string;
-  ask: string;
-  code: string;
-  note: string;
+  story: string;
+  needs: string[];
+  prompt: string;
 }
 interface Cases {
   title: string;
   description: string;
   h1: string;
   lead: string;
-  askLabel: string;
-  runsLabel: string;
+  setupTitle: string;
+  setup: string[];
+  needLabel: string;
+  promptLabel: string;
   items: Case[];
   outro: string;
 }
@@ -108,36 +110,6 @@ const RIVALS = [
   { name: 'chigwell/telegram-mcp', url: 'https://github.com/chigwell/telegram-mcp' },
   { name: 'chaindead/telegram-mcp', url: 'https://github.com/chaindead/telegram-mcp' },
   { name: 'WireCatLabs/tg-cli', url: 'https://github.com/WireCatLabs/tg-cli' },
-];
-
-/** The commands each case runs, the same in every language (checked against `telegram help-all`). */
-const CASE_CODE = [
-  `telegram inbox --unmuted -n 20
-telegram read <chat> --unread --max-text 200`,
-  `telegram search "invoice" --type document --since 30d
-telegram search "staging url" --chat "Dev team" --type url
-telegram get <chat> <id>`,
-  `telegram read @channel -n 5            # 💬N marks posts with comments
-telegram read @channel --thread <postId>
-telegram topics <forum> ; telegram read <forum> --topic <id>`,
-  `telegram send @somebot "/start"
-telegram read @somebot -n 1             # buttons are listed as [index] label
-telegram click @somebot <msgId> "Next"`,
-  `telegram send @Stickers "/newemojipack"
-telegram read @Stickers -n 1            # the bot's question and its buttons
-telegram click @Stickers <msgId> <type>   # static, animated or video
-telegram send @Stickers "Team emoji"    # the pack's name
-telegram send-file @Stickers ./emoji/rocket.png --as-document
-telegram send @Stickers "🚀"
-telegram send @Stickers "/publish"`,
-  `telegram reply <chat> <msgId> "Thanks, Thursday at 3 works"
-# mode ask: the exact chat and text are shown, it is sent after your yes`,
-  `telegram sync --chat "Project X" --output ./notes/project-x --resume`,
-  `telegram watch "Support" -t 600 --json   # always bounded by -t or -n
-telegram search "outage" --chat "Support" --since 1d`,
-  `telegram stats @mychannel
-telegram stats @mychannel --message <postId>
-telegram admin-log "My group" ; telegram members "My group" -q anna`,
 ];
 
 const TEXTS: Record<Lang, Texts> = {
@@ -209,24 +181,26 @@ const TEXTS: Record<Lang, Texts> = {
       ],
     },
     cases: {
-      title: 'What AI agents can do in your Telegram: 9 use cases | Better-TG-CLI',
-      description: 'Use cases for Claude Code, Codex, Cursor and Claude Desktop with Telegram: unread digests, search, channel comments, bot buttons, custom emoji, approved replies, exports.',
+      title: 'What an AI agent can do in your Telegram: 9 use cases | Better-TG-CLI',
+      description: 'Real tasks for Claude, Codex or Cursor in your own Telegram: catch up on chats, find lost files, read comments, talk to bots, make an emoji pack. With prompts to copy.',
       h1: 'What an AI agent can do in your Telegram',
-      lead: 'Nine things people ask Claude Code, Codex, Cursor or Claude Desktop to do with their own Telegram account through Better-TG-CLI. Each case shows the request, the commands the agent runs (the same argv over MCP) and what to know. Reads never mark chats as read; every send waits for your yes.',
-      askLabel: 'You ask',
-      runsLabel: 'The agent runs',
+      lead: 'Nine everyday tasks you can hand to Claude Code, Codex, Cursor or Claude Desktop once Better-TG-CLI connects it to your own Telegram account. For each one: what you get, what you need, and a prompt you can copy as is. The agent reads freely, but nothing is sent until you say yes.',
+      setupTitle: 'Before you start (once, about five minutes)',
+      setup: ['Install Better-TG-CLI: `brew install thevilfer/tap/better-tg-cli` on macOS or Linux, Scoop on Windows, or npm. Details on [MCP server setup](/mcp).', 'Log in: run `telegram onboard` and scan the QR code with Telegram on your phone. You need no API keys of your own, and the agent never sees your login code or password.', 'Connect your agent: in Claude Code it is one line, `claude mcp add telegram -- telegram mcp`; for Codex, Cursor and Claude Desktop see [MCP server setup](/mcp).'],
+      needLabel: 'What you need',
+      promptLabel: 'Prompt to copy',
       items: [
-        { h2: 'A digest of what you missed', ask: '“What did I miss in Telegram today? Skip muted chats, give me the three things I should answer.”', code: '', note: 'Starts from unread chats instead of reading everything, and truncates long messages, so it stays cheap on tokens. Chats stay unread until you open them or run `telegram mark-read`.' },
-        { h2: 'Find a message, link or file you lost', ask: '“Find the invoice PDF someone sent me last month” or “What was the staging URL in the dev chat?”', code: '', note: 'Global search across all chats, or inside one chat, filtered by type (photo, url, document, voice, mentions) and date. `telegram download` saves the file.' },
-        { h2: 'Read channel comments, threads and forum topics', ask: '“Summarise the discussion under the last post in @channel” or “What is new in the Releases topic?”', code: '', note: 'Most Telegram tools stop at the post itself. Comments, reply threads and forum topics are read the same way as a chat.' },
-        { h2: 'Talk to a bot and press its buttons', ask: '“Ask @somebot for my order status and go through its menu.”', code: '', note: 'Bot replies come with their inline and keyboard buttons; the agent presses one by index or label and reads the answer. Pressing a button counts as a write, so in mode `ask` you approve it.' },
-        { h2: 'Create a custom emoji pack', ask: '“Turn the icons in ./emoji into a Telegram emoji pack called Team emoji.”', code: '', note: 'The agent goes through the official @Stickers bot step by step: it sends commands, presses the pack-type button, uploads each image as a file and gives it an emoji. It can prepare the images too: static custom emoji are 100×100 PNG or WEBP. Each message to the bot is a write, so in mode `ask` you approve every step, or allow writing for a short while with `telegram write-access on --for 15m`. Creating a pack needs no Telegram Premium; using custom emoji in messages does.' },
-        { h2: 'Draft replies, send only what you approve', ask: '“Reply to Anna that Thursday at 3 works, and react 👍 to Max’s message.”', code: '', note: 'In mode `ask` every send, edit, reaction or forward is shown to you word for word and runs only after your yes. Clients with MCP elicitation ask in their own dialog, so the model never handles the approval.' },
-        { h2: 'Export a chat to Markdown', ask: '“Save the Project X chat to my notes folder and keep it up to date.”', code: '', note: 'An incremental Markdown export: `--resume` fetches only what is new since the last run. Useful for notes, search in your editor, or as context for a coding agent.' },
-        { h2: 'Watch a chat for a while', ask: '“Keep an eye on the Support chat for ten minutes and tell me if anyone reports an outage.”', code: '', note: 'A live stream of new messages as JSON, always bounded by time (`-t`) or count (`-n`), so the agent does not hang.' },
-        { h2: 'Channel stats and group admin', ask: '“How did my last post do?” or “Who changed the group settings yesterday?”', code: '', note: 'Channel and post statistics, the admin log and member search. Changing permissions, banning or pinning are writes and go through the same approval.' },
+        { h2: 'Catch up on what you missed', story: 'You come back to dozens of unread chats. The agent goes through the unread ones, skips muted chats, and tells you who is waiting for your answer and what matters, most urgent first. It only reads: every chat stays unread, so you still see it in Telegram.', needs: ['Only the setup above.'], prompt: 'Check my Telegram: what did I miss since yesterday? Skip muted chats. List who is waiting for an answer from me and about what, most urgent first.' },
+        { h2: 'Find a lost message, link or file', story: 'You remember roughly what it was, but not which chat or when. The agent searches all your chats by words, type (file, link, photo, voice message) and date, shows you the message, and can save the file to your computer.', needs: ['Only the setup above.'], prompt: 'Find the PDF invoice someone sent me in Telegram last month and save it to my Downloads folder.' },
+        { h2: 'Read channel comments and busy forum topics', story: 'A post with hundreds of comments, or a forum topic that moved on while you were away. The agent reads the whole discussion and sums it up: the main opinions, the questions people ask, and anything addressed to you.', needs: ['A channel or group you can open in Telegram yourself.'], prompt: 'Read the comments under the latest post in @channel and sum them up: main opinions, questions people ask, and anything I should reply to.' },
+        { h2: 'Talk to a bot and go through its menus', story: 'Delivery, banking, support and booking bots often hide answers behind several menus of buttons. The agent writes to the bot, presses the buttons it needs and tells you the result.', needs: ['Every message and button press is shown to you first and runs after your yes (this is the default after login).'], prompt: 'Open @somebot, find my order status through its menu and tell me what it says. Ask me before each button you press.' },
+        { h2: 'Make a custom emoji pack', story: 'You have a logo or a set of icons and want them as Telegram emoji. The agent prepares each image in the right size (100×100 px), creates the pack through Telegram’s official @Stickers bot, gives each icon a matching emoji and sends you the link to add the pack.', needs: ['A folder with your images (PNG, SVG or similar).', 'The pack takes a dozen steps with the bot. You can approve each one, or let the agent write without asking for 15 minutes: `telegram write-access on --for 15m` (you confirm that yourself).', 'Creating a pack is free. To use custom emoji in your messages you need Telegram Premium.'], prompt: 'Make a Telegram custom emoji pack called “Team emoji” from the images in the emoji folder: resize each to 100×100 PNG, create the pack with @Stickers, choose a fitting emoji for each image, and send me the link when it is done.' },
+        { h2: 'Answer messages, sending only what you approve', story: 'The agent drafts replies in your words: confirms a meeting, answers a question, reacts to a message. Before anything is sent you see the exact chat and text, and it goes out only after your yes.', needs: ['Only the setup above: approval before each send is the default.'], prompt: 'Draft replies to everyone who is waiting for an answer from me today. Show me each one, and send only those I approve.' },
+        { h2: 'Keep a chat as notes', story: 'An important project or study chat, saved as Markdown files in your notes (Obsidian, a folder, a repository). Next time the agent adds only the new messages. A coding agent can then use the discussion as context.', needs: ['A folder for the notes.'], prompt: 'Save the “Project X” chat from Telegram to ~/notes/project-x as Markdown. When I ask again, add only the new messages.' },
+        { h2: 'Keep an eye on a chat for a while', story: 'You are waiting for news: a release, an incident, a reply in a busy group. The agent watches the chat for the time you set and tells you as soon as something relevant appears.', needs: ['Keep the agent’s session open for that time.'], prompt: 'Watch the “Support” chat in Telegram for the next 15 minutes and tell me right away if anyone reports an outage.' },
+        { h2: 'Channel stats and group admin', story: 'For channel owners: how a post did compared with earlier ones, views, reactions, forwards. For group admins: who changed the settings, finding a member, muting a spammer.', needs: ['You own or administer the channel or group. Telegram shows statistics only for larger channels and groups.', 'Muting, banning or pinning is shown to you first and runs after your yes.'], prompt: 'How did my last post in @mychannel do compared with the five before it? Views, reactions and forwards, in a short table.' },
       ],
-      outro: 'To set it up, see [MCP server setup](/mcp); for safety and login questions, the [FAQ](/faq). Please don’t use it for bulk messaging, mass joins or invites: Telegram limits accounts that behave like bots, and the skill tells agents to refuse.',
+      outro: 'Have a task that is not here? Ask your agent in your own words: it knows the whole tool. Please don’t use it for bulk messaging or mass invites: Telegram limits accounts that behave like bots, and the agent is told to refuse. Questions about safety and login are answered in the [FAQ](/faq).',
     },
   },
   es: {
@@ -298,23 +272,25 @@ const TEXTS: Record<Lang, Texts> = {
     },
     cases: {
       title: 'Qué puede hacer un agente de IA en tu Telegram: 9 casos | Better-TG-CLI',
-      description: 'Casos de uso de Claude Code, Codex, Cursor y Claude Desktop con Telegram: resumen de no leídos, búsqueda, comentarios, botones de bots, emojis propios, respuestas aprobadas.',
+      description: 'Tareas reales para Claude, Codex o Cursor en tu propio Telegram: ponerte al día, encontrar archivos, leer comentarios, hablar con bots, crear emojis. Con prompts para copiar.',
       h1: 'Qué puede hacer un agente de IA en tu Telegram',
-      lead: 'Nueve cosas que la gente pide a Claude Code, Codex, Cursor o Claude Desktop con su propia cuenta de Telegram a través de Better-TG-CLI. Cada caso muestra la petición, los comandos que ejecuta el agente (los mismos argumentos por MCP) y qué conviene saber. Leer nunca marca los chats como leídos; cada envío espera tu «sí».',
-      askLabel: 'Tú pides',
-      runsLabel: 'El agente ejecuta',
+      lead: 'Nueve tareas cotidianas que puedes dar a Claude Code, Codex, Cursor o Claude Desktop cuando Better-TG-CLI lo conecta a tu propia cuenta de Telegram. Para cada una: qué consigues, qué necesitas y un prompt que puedes copiar tal cual. El agente lee libremente, pero no se envía nada sin tu «sí».',
+      setupTitle: 'Antes de empezar (una vez, unos cinco minutos)',
+      setup: ['Instala Better-TG-CLI: `brew install thevilfer/tap/better-tg-cli` en macOS o Linux, Scoop en Windows, o npm. Detalles en [Servidor MCP](/mcp).', 'Inicia sesión: ejecuta `telegram onboard` y escanea el código QR con Telegram en el móvil. No necesitas claves de API propias, y el agente nunca ve tu código ni tu contraseña.', 'Conecta tu agente: en Claude Code es una línea, `claude mcp add telegram -- telegram mcp`; para Codex, Cursor y Claude Desktop mira [Servidor MCP](/mcp).'],
+      needLabel: 'Qué necesitas',
+      promptLabel: 'Prompt para copiar',
       items: [
-        { h2: 'Un resumen de lo que te perdiste', ask: '«¿Qué me perdí hoy en Telegram? Sin los chats silenciados, dime las tres cosas que debo responder.»', code: '', note: 'Empieza por los chats no leídos en lugar de leerlo todo y recorta los mensajes largos, así gasta pocos tokens. Los chats siguen sin leer hasta que los abres o ejecutas `telegram mark-read`.' },
-        { h2: 'Encontrar un mensaje, enlace o archivo perdido', ask: '«Busca la factura en PDF que me enviaron el mes pasado» o «¿Cuál era la URL de staging en el chat de desarrollo?»', code: '', note: 'Búsqueda global en todos los chats o dentro de uno, filtrada por tipo (photo, url, document, voice, mentions) y fecha. `telegram download` guarda el archivo.' },
-        { h2: 'Leer comentarios de canales, hilos y temas de foros', ask: '«Resume la discusión bajo el último post de @canal» o «¿Qué hay de nuevo en el tema Releases?»', code: '', note: 'La mayoría de las herramientas se quedan en el post. Los comentarios, los hilos de respuestas y los temas de foro se leen igual que un chat.' },
-        { h2: 'Hablar con un bot y pulsar sus botones', ask: '«Pregunta a @somebot por el estado de mi pedido y recorre su menú.»', code: '', note: 'Las respuestas del bot llegan con sus botones; el agente pulsa uno por índice o texto y lee la respuesta. Pulsar un botón cuenta como escritura, así que en el modo `ask` lo apruebas tú.' },
-        { h2: 'Crear un pack de emojis personalizados', ask: '«Convierte los iconos de ./emoji en un pack de emojis de Telegram llamado Team emoji.»', code: '', note: 'El agente sigue paso a paso al bot oficial @Stickers: envía comandos, pulsa el botón del tipo de pack, sube cada imagen como archivo y le asigna un emoji. También puede preparar las imágenes: los emojis estáticos son PNG o WEBP de 100×100. Cada mensaje al bot es una escritura, así que en el modo `ask` apruebas cada paso, o permites escribir un rato con `telegram write-access on --for 15m`. Crear un pack no requiere Telegram Premium; usar emojis personalizados en mensajes, sí.' },
-        { h2: 'Borradores de respuesta: solo se envía lo que apruebas', ask: '«Responde a Anna que el jueves a las 3 me va bien y reacciona con 👍 al mensaje de Max.»', code: '', note: 'En el modo `ask` cada envío, edición, reacción o reenvío se te muestra tal cual y solo se ejecuta tras tu «sí». Los clientes con elicitation de MCP preguntan en su propio diálogo, así que el modelo nunca toca la aprobación.' },
-        { h2: 'Exportar un chat a Markdown', ask: '«Guarda el chat Project X en mi carpeta de notas y mantenlo al día.»', code: '', note: 'Exportación incremental a Markdown: `--resume` descarga solo lo nuevo desde la última vez. Sirve para notas, para buscar desde el editor o como contexto para un agente de código.' },
-        { h2: 'Vigilar un chat durante un rato', ask: '«Vigila el chat Support diez minutos y avísame si alguien informa de una caída.»', code: '', note: 'Un flujo en vivo de mensajes nuevos en JSON, siempre limitado por tiempo (`-t`) o cantidad (`-n`), para que el agente no se quede colgado.' },
-        { h2: 'Estadísticas de canales y administración de grupos', ask: '«¿Qué tal funcionó mi último post?» o «¿Quién cambió ayer la configuración del grupo?»', code: '', note: 'Estadísticas del canal y de cada post, el registro de administración y la búsqueda de miembros. Cambiar permisos, expulsar o fijar son escrituras y pasan por la misma aprobación.' },
+        { h2: 'Ponerte al día con lo que te perdiste', story: 'Vuelves y tienes decenas de chats sin leer. El agente repasa los no leídos, salta los silenciados y te dice quién espera tu respuesta y qué importa, lo más urgente primero. Solo lee: los chats siguen sin leer y los ves igual en Telegram.', needs: ['Solo lo de arriba.'], prompt: 'Revisa mi Telegram: ¿qué me perdí desde ayer? Sin los chats silenciados. Dime quién espera una respuesta mía y sobre qué, lo más urgente primero.' },
+        { h2: 'Encontrar un mensaje, enlace o archivo perdido', story: 'Recuerdas más o menos qué era, pero no en qué chat ni cuándo. El agente busca en todos tus chats por palabras, tipo (archivo, enlace, foto, mensaje de voz) y fecha, te muestra el mensaje y puede guardar el archivo en tu equipo.', needs: ['Solo lo de arriba.'], prompt: 'Busca en Telegram la factura en PDF que me enviaron el mes pasado y guárdala en mi carpeta de Descargas.' },
+        { h2: 'Leer comentarios de canales y temas de foro', story: 'Un post con cientos de comentarios, o un tema de foro que avanzó mientras no estabas. El agente lee toda la discusión y la resume: las opiniones principales, las preguntas y lo que va dirigido a ti.', needs: ['Un canal o grupo que puedas abrir tú en Telegram.'], prompt: 'Lee los comentarios bajo el último post de @canal y resúmelos: opiniones principales, preguntas de la gente y lo que debería responder yo.' },
+        { h2: 'Hablar con un bot y recorrer sus menús', story: 'Los bots de reparto, bancos, soporte o reservas suelen esconder la respuesta tras varios menús de botones. El agente escribe al bot, pulsa los botones necesarios y te cuenta el resultado.', needs: ['Cada mensaje y cada botón se te muestra antes y se ejecuta tras tu «sí» (es lo predeterminado tras iniciar sesión).'], prompt: 'Abre @somebot, busca el estado de mi pedido en su menú y dime qué pone. Pregúntame antes de pulsar cada botón.' },
+        { h2: 'Crear un pack de emojis personalizados', story: 'Tienes un logo o un juego de iconos y los quieres como emojis de Telegram. El agente prepara cada imagen al tamaño correcto (100×100 px), crea el pack con el bot oficial @Stickers, asigna a cada icono un emoji adecuado y te envía el enlace para añadirlo.', needs: ['Una carpeta con tus imágenes (PNG, SVG o similar).', 'El pack lleva una docena de pasos con el bot. Puedes aprobar cada uno o dejar que el agente escriba sin preguntar durante 15 minutos: `telegram write-access on --for 15m` (lo confirmas tú).', 'Crear un pack es gratis. Para usar emojis personalizados en tus mensajes necesitas Telegram Premium.'], prompt: 'Crea un pack de emojis personalizados de Telegram llamado «Team emoji» con las imágenes de la carpeta emoji: pasa cada una a PNG de 100×100, crea el pack con @Stickers, elige un emoji adecuado para cada imagen y envíame el enlace al terminar.' },
+        { h2: 'Responder mensajes enviando solo lo que apruebas', story: 'El agente redacta respuestas con tus palabras: confirma una reunión, contesta una pregunta, reacciona a un mensaje. Antes de enviar nada ves el chat y el texto exactos, y solo sale tras tu «sí».', needs: ['Solo lo de arriba: la aprobación antes de cada envío es lo predeterminado.'], prompt: 'Redacta respuestas para todos los que esperan una respuesta mía hoy. Enséñame cada una y envía solo las que apruebe.' },
+        { h2: 'Guardar un chat como notas', story: 'Un chat importante de un proyecto o de estudio, guardado como archivos Markdown en tus notas (Obsidian, una carpeta, un repositorio). La próxima vez el agente añade solo los mensajes nuevos. Un agente de código puede usar después la conversación como contexto.', needs: ['Una carpeta para las notas.'], prompt: 'Guarda el chat «Project X» de Telegram en ~/notes/project-x como Markdown. Cuando te lo vuelva a pedir, añade solo los mensajes nuevos.' },
+        { h2: 'Vigilar un chat durante un rato', story: 'Esperas una noticia: un lanzamiento, una incidencia, una respuesta en un grupo con mucho movimiento. El agente vigila el chat el tiempo que le digas y te avisa en cuanto aparece algo relevante.', needs: ['Mantén abierta la sesión del agente durante ese tiempo.'], prompt: 'Vigila el chat «Support» de Telegram durante los próximos 15 minutos y avísame en cuanto alguien informe de una caída.' },
+        { h2: 'Estadísticas de canal y administración de grupos', story: 'Para dueños de canales: cómo funcionó un post frente a los anteriores, vistas, reacciones, reenvíos. Para administradores: quién cambió la configuración, encontrar a un miembro, silenciar a un spammer.', needs: ['Eres dueño o administrador del canal o grupo. Telegram muestra estadísticas solo de canales y grupos grandes.', 'Silenciar, expulsar o fijar se te muestra antes y se ejecuta tras tu «sí».'], prompt: '¿Qué tal funcionó mi último post en @micanal frente a los cinco anteriores? Vistas, reacciones y reenvíos, en una tabla corta.' },
       ],
-      outro: 'Para configurarlo, mira [Servidor MCP](/mcp); sobre seguridad e inicio de sesión, las [Preguntas](/faq). No lo uses para envíos masivos ni para unirte o invitar en masa: Telegram limita las cuentas que se comportan como bots, y el skill indica a los agentes que se nieguen.',
+      outro: '¿Tu tarea no está aquí? Pídesela al agente con tus palabras: conoce toda la herramienta. No lo uses para envíos masivos ni invitaciones en masa: Telegram limita las cuentas que se comportan como bots, y el agente tiene instrucciones de negarse. Las dudas sobre seguridad e inicio de sesión están en las [Preguntas](/faq).',
     },
   },
   ru: {
@@ -386,23 +362,25 @@ const TEXTS: Record<Lang, Texts> = {
     },
     cases: {
       title: 'Что ИИ-агент может делать в вашем Telegram: 9 сценариев | Better-TG-CLI',
-      description: 'Сценарии для Claude Code, Codex, Cursor и Claude Desktop в Telegram: сводка непрочитанного, поиск, комментарии в каналах, кнопки ботов, кастомные эмодзи, ответы с подтверждением.',
+      description: 'Реальные задачи для Claude, Codex или Cursor в вашем Telegram: разобрать непрочитанное, найти файл, прочитать комментарии, пройти бота, сделать эмодзи. С готовыми промптами.',
       h1: 'Что ИИ-агент может делать в вашем Telegram',
-      lead: 'Девять задач, которые люди дают Claude Code, Codex, Cursor или Claude Desktop в своём аккаунте Telegram через Better-TG-CLI. Для каждой показано, как звучит просьба, какие команды запускает агент (по MCP те же аргументы) и что важно знать. Чтение никогда не отмечает чаты прочитанными, а каждая отправка ждёт вашего «да».',
-      askLabel: 'Вы просите',
-      runsLabel: 'Агент запускает',
+      lead: 'Девять обычных задач, которые можно поручить Claude Code, Codex, Cursor или Claude Desktop, когда Better-TG-CLI подключает их к вашему аккаунту Telegram. Для каждой: что вы получите, что для этого нужно и промпт, который можно скопировать как есть. Читать агент может свободно, а отправить без вашего «да» — ничего.',
+      setupTitle: 'Перед началом (один раз, минут пять)',
+      setup: ['Установите Better-TG-CLI: `brew install thevilfer/tap/better-tg-cli` на macOS или Linux, Scoop на Windows или npm. Подробности — на странице [MCP-сервер](/mcp).', 'Войдите: запустите `telegram onboard` и отсканируйте QR-код в Telegram на телефоне. Свои API-ключи не нужны, а код входа и пароль агент не видит.', 'Подключите агента: в Claude Code это одна строка, `claude mcp add telegram -- telegram mcp`; для Codex, Cursor и Claude Desktop — на странице [MCP-сервер](/mcp).'],
+      needLabel: 'Что понадобится',
+      promptLabel: 'Промпт, который можно скопировать',
       items: [
-        { h2: 'Сводка того, что вы пропустили', ask: '«Что я пропустил в телеге сегодня? Без чатов с выключенным звуком, назови три вещи, на которые надо ответить.»', code: '', note: 'Агент начинает с непрочитанных чатов, а не читает всё подряд, и обрезает длинные сообщения, поэтому тратит мало токенов. Чаты остаются непрочитанными, пока вы их не откроете или не запустите `telegram mark-read`.' },
-        { h2: 'Найти потерянное сообщение, ссылку или файл', ask: '«Найди PDF со счётом, который мне присылали в прошлом месяце» или «Какой был адрес стейджинга в чате разработки?»', code: '', note: 'Поиск по всем чатам или внутри одного, с фильтром по типу (photo, url, document, voice, mentions) и дате. `telegram download` сохранит файл.' },
-        { h2: 'Читать комментарии в каналах, ветки и темы форумов', ask: '«Перескажи обсуждение под последним постом в @channel» или «Что нового в теме Releases?»', code: '', note: 'Большинство инструментов видят только сам пост. Комментарии, ветки ответов и темы форумов читаются так же, как обычный чат.' },
-        { h2: 'Поговорить с ботом и нажать его кнопки', ask: '«Спроси у @somebot статус заказа и пройди по его меню.»', code: '', note: 'Ответы бота приходят вместе с кнопками; агент нажимает нужную по номеру или тексту и читает ответ. Нажатие кнопки считается записью, поэтому в режиме `ask` его подтверждаете вы.' },
-        { h2: 'Создать пак кастомных эмодзи', ask: '«Сделай из иконок в ./emoji пак эмодзи в Telegram под названием Team emoji.»', code: '', note: 'Агент проходит шаги официального бота @Stickers: отправляет команды, нажимает кнопку с типом пака, загружает каждую картинку файлом и назначает ей эмодзи. Картинки он тоже может подготовить сам: статичные эмодзи — это PNG или WEBP 100×100. Каждое сообщение боту — это запись, поэтому в режиме `ask` вы подтверждаете каждый шаг или разрешаете запись ненадолго: `telegram write-access on --for 15m`. Для создания пака Telegram Premium не нужен, а чтобы ставить кастомные эмодзи в сообщения — нужен.' },
-        { h2: 'Черновики ответов: отправляется только то, что вы одобрили', ask: '«Ответь Ане, что четверг в 15:00 подходит, и поставь 👍 на сообщение Макса.»', code: '', note: 'В режиме `ask` каждая отправка, правка, реакция или пересылка показывается вам дословно и выполняется только после вашего «да». Клиенты с MCP elicitation спрашивают в своём окне, так что модель вообще не касается подтверждения.' },
-        { h2: 'Выгрузить чат в Markdown', ask: '«Сохрани чат Project X в папку с заметками и обновляй его.»', code: '', note: 'Инкрементальная выгрузка в Markdown: с `--resume` скачивается только новое с прошлого запуска. Удобно для заметок, поиска в редакторе или как контекст для агента, который пишет код.' },
-        { h2: 'Последить за чатом какое-то время', ask: '«Последи за чатом Support десять минут и скажи, если кто-то сообщит о падении.»', code: '', note: 'Поток новых сообщений в JSON, всегда ограниченный временем (`-t`) или количеством (`-n`), чтобы агент не зависал.' },
-        { h2: 'Статистика канала и администрирование группы', ask: '«Как зашёл мой последний пост?» или «Кто вчера поменял настройки группы?»', code: '', note: 'Статистика канала и отдельных постов, журнал действий админов и поиск участников. Изменение прав, бан и закрепление — это записи, и они проходят то же подтверждение.' },
+        { h2: 'Разобрать, что вы пропустили', story: 'Возвращаетесь, а там десятки непрочитанных чатов. Агент проходит по непрочитанному, пропускает чаты с выключенным звуком и говорит, кто ждёт вашего ответа и что важно, самое срочное — первым. Он только читает: чаты остаются непрочитанными, и в Telegram вы их увидите как обычно.', needs: ['Только то, что выше.'], prompt: 'Проверь мой Telegram: что я пропустил со вчерашнего дня? Чаты без звука пропусти. Перечисли, кто ждёт от меня ответа и по какому поводу, самое срочное — первым.' },
+        { h2: 'Найти потерянное сообщение, ссылку или файл', story: 'Вы примерно помните, что это было, но не помните, в каком чате и когда. Агент ищет по всем чатам по словам, типу (файл, ссылка, фото, голосовое) и дате, показывает сообщение и может сохранить файл на компьютер.', needs: ['Только то, что выше.'], prompt: 'Найди в Telegram PDF со счётом, который мне присылали в прошлом месяце, и сохрани его в папку «Загрузки».' },
+        { h2: 'Прочитать комментарии в канале и активные темы форума', story: 'Пост с сотнями комментариев или тема форума, где всё ушло вперёд, пока вас не было. Агент читает обсуждение целиком и пересказывает: основные мнения, вопросы людей и то, что адресовано вам.', needs: ['Канал или группа, которые вы сами можете открыть в Telegram.'], prompt: 'Прочитай комментарии под последним постом в @channel и перескажи: основные мнения, какие вопросы задают и на что мне стоит ответить.' },
+        { h2: 'Поговорить с ботом и пройти его меню', story: 'У ботов доставки, банков, поддержки и бронирования ответ часто спрятан за несколькими меню с кнопками. Агент пишет боту, нажимает нужные кнопки и сообщает вам результат.', needs: ['Каждое сообщение и нажатие кнопки сначала показывается вам и выполняется после вашего «да» (так настроено сразу после входа).'], prompt: 'Открой @somebot, узнай через его меню статус моего заказа и скажи, что он ответил. Перед каждой кнопкой спрашивай меня.' },
+        { h2: 'Сделать пак кастомных эмодзи', story: 'У вас есть логотип или набор иконок, и хочется, чтобы они стали эмодзи в Telegram. Агент приводит каждую картинку к нужному размеру (100×100 px), создаёт пак через официального бота @Stickers, подбирает каждой иконке эмодзи и присылает ссылку, по которой пак можно добавить.', needs: ['Папка с картинками (PNG, SVG или похожие).', 'Пак — это десяток шагов с ботом. Можно подтверждать каждый или разрешить агенту писать без вопросов на 15 минут: `telegram write-access on --for 15m` (это подтверждаете вы сами).', 'Создать пак можно бесплатно. Чтобы ставить кастомные эмодзи в свои сообщения, нужен Telegram Premium.'], prompt: 'Сделай пак кастомных эмодзи в Telegram под названием «Team emoji» из картинок в папке emoji: приведи каждую к PNG 100×100, создай пак через @Stickers, подбери каждой картинке подходящий эмодзи и пришли мне ссылку, когда закончишь.' },
+        { h2: 'Ответить на сообщения, отправив только то, что вы одобрили', story: 'Агент пишет черновики ответов вашими словами: подтвердить встречу, ответить на вопрос, поставить реакцию. Перед отправкой вы видите точный чат и текст, и уходит только то, на что вы сказали «да».', needs: ['Только то, что выше: подтверждение перед каждой отправкой включено по умолчанию.'], prompt: 'Подготовь ответы всем, кто сегодня ждёт от меня ответа. Покажи каждый и отправь только те, что я одобрю.' },
+        { h2: 'Сохранить чат в заметки', story: 'Важный рабочий или учебный чат сохраняется файлами Markdown в ваши заметки (Obsidian, папка, репозиторий). В следующий раз агент добавит только новые сообщения. Потом агент, который пишет код, может опираться на это обсуждение.', needs: ['Папка для заметок.'], prompt: 'Сохрани чат «Project X» из Telegram в ~/notes/project-x в формате Markdown. Когда попрошу снова — добавь только новые сообщения.' },
+        { h2: 'Последить за чатом какое-то время', story: 'Вы ждёте новостей: релиза, инцидента, ответа в шумной группе. Агент следит за чатом столько, сколько вы скажете, и сообщает, как только появится что-то по теме.', needs: ['Сессия агента должна быть открыта всё это время.'], prompt: 'Последи за чатом «Support» в Telegram следующие 15 минут и сразу скажи, если кто-то сообщит о падении.' },
+        { h2: 'Статистика канала и управление группой', story: 'Владельцу канала: как зашёл пост по сравнению с прошлыми, просмотры, реакции, пересылки. Админу группы: кто поменял настройки, найти участника, заглушить спамера.', needs: ['Вы владелец или админ канала или группы. Статистику Telegram показывает только для достаточно крупных каналов и групп.', 'Ограничение, бан или закрепление сначала показываются вам и выполняются после вашего «да».'], prompt: 'Как зашёл мой последний пост в @mychannel по сравнению с пятью предыдущими? Просмотры, реакции и пересылки — короткой таблицей.' },
       ],
-      outro: 'Как подключить — на странице [MCP-сервер](/mcp); про безопасность и вход — в [вопросах](/faq). Не используйте инструмент для массовых рассылок, массовых вступлений и приглашений: Telegram ограничивает аккаунты, которые ведут себя как боты, и скилл велит агентам отказываться.',
+      outro: 'Вашей задачи здесь нет? Попросите агента своими словами: он знает инструмент целиком. Не используйте его для массовых рассылок и приглашений: Telegram ограничивает аккаунты, которые ведут себя как боты, и агенту велено отказываться. Вопросы о безопасности и входе — в разделе [вопросов](/faq).',
     },
   },
 };
@@ -461,8 +439,9 @@ function body(path: DocPath, lang: Lang): { head: { title: string; description: 
     const c = t.cases;
     return {
       head: c,
-      html: `<h1>${escape(c.h1)}</h1><p class="lead">${inline(c.lead, lang)}</p>${c.items
-        .map((i, n) => `<section class="case"><h2>${escape(i.h2)}</h2><p class="ask"><span>${escape(c.askLabel)}</span>${escape(i.ask)}</p><p class="runs">${escape(c.runsLabel)}</p><pre><code>${escape(CASE_CODE[n])}</code></pre><p>${inline(i.note, lang)}</p></section>`)
+      html: `<h1>${escape(c.h1)}</h1><p class="lead">${inline(c.lead, lang)}</p>
+<div class="setup"><h2>${escape(c.setupTitle)}</h2><ol>${c.setup.map(x => `<li>${inline(x, lang)}</li>`).join('')}</ol></div>${c.items
+        .map(i => `<section class="case"><h2>${escape(i.h2)}</h2><p>${inline(i.story, lang)}</p><h3>${escape(c.needLabel)}</h3><ul>${i.needs.map(x => `<li>${inline(x, lang)}</li>`).join('')}</ul><h3>${escape(c.promptLabel)}</h3><blockquote class="prompt">${escape(i.prompt)}</blockquote></section>`)
         .join('')}<p class="outro">${inline(c.outro, lang)}</p>`,
       schema: {
         '@context': 'https://schema.org',
@@ -472,7 +451,7 @@ function body(path: DocPath, lang: Lang): { head: { title: string; description: 
         url,
         inLanguage: lang,
         about,
-        mainEntity: { '@type': 'ItemList', itemListElement: c.items.map((i, n) => ({ '@type': 'ListItem', position: n + 1, name: i.h2 })) },
+        mainEntity: { '@type': 'ItemList', itemListElement: c.items.map((i, n) => ({ '@type': 'ListItem', position: n + 1, name: i.h2, description: i.story.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/`/g, '') })) },
       },
     };
   }
@@ -558,11 +537,14 @@ tbody th{font-weight:500;color:var(--dim);min-width:8.5em}
 table{min-width:620px}
 tr:last-child th,tr:last-child td{border-bottom:0}
 .note{color:var(--dim);font-size:14px}
-.case{margin-top:40px}
-.case h2{font-size:21px;margin-top:0}
-.ask{margin:8px 0 14px;padding:12px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
-.ask span,.runs{display:block;font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);margin:0 0 4px}
-.runs{margin:0}
+.setup{margin:0 0 8px;padding:4px 20px 8px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.setup h2{font-size:17px;margin:16px 0 6px}
+.setup ol{padding-left:20px;margin:0 0 8px}
+.case{margin-top:48px}
+.case h2{font-size:22px;margin:0 0 8px}
+.case h3{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);font-weight:500;margin:18px 0 6px}
+.case ul{margin:0}
+.prompt{margin:0;padding:14px 18px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;font-size:16px}
 .outro{margin-top:48px;color:var(--dim)}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
 footer .pages{margin-bottom:8px}

@@ -534,9 +534,11 @@ describe('search engines and AI crawlers', () => {
     expect(await (await get('/mcp')).text()).toContain('claude mcp add telegram -- telegram mcp');
     const cases = await (await get('/cases')).text();
     const casesLd = JSON.parse(/<script type="application\/ld\+json" nonce="[^"]+">(.*?)<\/script>/s.exec(cases)![1]);
-    // Every case has its commands, and the list in JSON-LD matches the sections
-    expect(casesLd.mainEntity.itemListElement.length).toBe(cases.match(/<section class="case">/g)!.length);
-    expect(cases.match(/<section class="case">[\s\S]*?<pre><code>telegram /g)).toHaveLength(9);
+    // Written for people: every case has what you need and a prompt to copy, the JSON-LD list matches
+    const caseCount = cases.match(/<section class="case">/g)!.length;
+    expect(casesLd.mainEntity.itemListElement.length).toBe(caseCount);
+    expect(cases.match(/<blockquote class="prompt">/g)).toHaveLength(caseCount);
+    for (const item of casesLd.mainEntity.itemListElement) expect(item.description).not.toMatch(/`|\]\(/);
     // The footer links every page, keeping the language
     for (const path of ['/', '/login?lang=ru', '/faq?lang=es']) {
       const html = await (await get(path)).text();
