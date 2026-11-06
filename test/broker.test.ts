@@ -342,12 +342,14 @@ describe('self-serve signup', () => {
       expect(html).toContain('npx skills add TheVilfer/better-tg-cli');
       expect(html.match(/<button type="button" role="tab"/g)).toHaveLength(2);
       expect(html).toContain('<a class="btn" href="/login">');
-      // The main button is the way to the login page; the header does not repeat it
-      expect(html).not.toContain('class="key"');
-      // The header links people pages; /mcp is in the footer only
-      expect(/<header.*<\/header>/s.exec(html)![0]).not.toContain('/mcp');
+      // Every page has the same header links; /mcp and the login key are in the footer only
+      const links = (h: string) => /<nav class="site".*?<\/nav>/s.exec(h)![0]
+        .replace(/<b aria-current="page">([^<]*)<\/b>/, '<a>$1</a>').replace(/ href="[^"]*"/g, '');
+      const faq = await (await handle(new Request('https://broker.test/faq'), {} as Env)).text();
+      expect(links(faq)).toBe(links(html));
+      for (const h of [html, faq]) expect(/<header.*<\/header>/s.exec(h)![0]).not.toMatch(/\/mcp|\/login/);
       expect(html).toContain('<a href="/mcp">');
-      expect(await (await handle(new Request('https://broker.test/faq'), {} as Env)).text()).toContain('<a href="/login" class="key">');
+      expect(faq).toContain('<a href="/login">Get a login key</a>');
       expect(html.match(/<div class="tile/g)).toHaveLength(6);
       expect(html).toContain('Log in on up to 3 computers');
       expect(html).toContain('<h2 id="security">About security</h2>');
