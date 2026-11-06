@@ -513,7 +513,7 @@ tr:last-child th,tr:last-child td{border-bottom:0}
 </style></head><body><main>
 ${header(lang, query, path)}
 ${html}
-${footer(lang, query, path)}
+${footer(lang)}
 </main></body></html>`;
   return new Response(page, {
     headers: {
