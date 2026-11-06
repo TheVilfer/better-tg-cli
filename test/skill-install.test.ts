@@ -120,6 +120,38 @@ describe('MCP', () => {
   });
 });
 
+describe('agent-plugin/ (Hermes Agent plugin catalog)', () => {
+  const root = new URL('../', import.meta.url);
+  const read = (f: string) => readFileSync(new URL(`agent-plugin/${f}`, root), 'utf8');
+
+  it('is a portable package on this version: the pinned MCP server and the current skill', () => {
+    const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
+    expect(JSON.parse(read('plugin.json')).version).toBe(version);
+    const server = JSON.parse(read('mcp.json')).mcpServers.telegram;
+    expect(server.command).toBe('npx');
+    expect(server.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
+    for (const [file, content] of Object.entries(SKILL_FILES)) expect(read(`skills/better-tg-cli/${file}`)).toBe(content);
+    expect(read('LICENSE')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
+  });
+
+  it('forwards no credential or approval setting to the server', () => {
+    const env = JSON.parse(read('mcp.json')).mcpServers.telegram.env as Record<string, string>;
+    for (const [name, value] of Object.entries(env)) expect(value).toBe(`\${${name}}`);
+    for (const name of ['TG_APPROVE', 'TG_LOGIN_KEY', 'TG_INVITE', 'OP_SERVICE_ACCOUNT_TOKEN', 'TG_MOCK']) expect(env).not.toHaveProperty(name);
+  });
+
+  it('holds only regular text files', () => {
+    const dir = fileURLToPath(new URL('agent-plugin', root));
+    const files = (function walk(d: string): string[] {
+      return readdirSync(d, { withFileTypes: true }).flatMap(e => {
+        expect(e.isSymbolicLink()).toBe(false);
+        return e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)];
+      });
+    })(dir);
+    expect(files.filter(f => /\.(c|m)?js$|\.node$|\.wasm$/.test(f))).toEqual([]);
+  });
+});
+
 describe('plugin/ (Anthropic plugin directory)', () => {
   it('carries the current skill, and pins the MCP server to this version for Codex and Cursor', () => {
     const root = new URL('../', import.meta.url);

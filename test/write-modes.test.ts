@@ -33,7 +33,7 @@ import { auditLog } from '../src/audit.js';
 import { applyModeChoice } from '../src/write-mode.js';
 import { getWriteValue, isFileFallbackAllowed } from '../src/write-store.js';
 import { configDir } from '../src/paths.js';
-import { gateWrite } from '../src/mcp.js';
+import { elicitApproved, gateWrite } from '../src/mcp.js';
 
 const saved = { ...process.env };
 let dir: string;
@@ -284,6 +284,20 @@ describe('MCP in mode "ask"', () => {
     const p = plan();
     expect(await gateWrite(p, { approval: 'ABCDEF' }, async () => true)).toMatch(/not accepted here/);
     expect(p.approval).toBeUndefined();
+  });
+
+  it('reads an elicitation answer: the ticked box, or a plain Allow from a prompt-only client', () => {
+    expect(elicitApproved({ action: 'accept', content: { approve: true } })).toBe(true);
+    // Hermes Agent shows Allow Once / Deny and accepts with empty content
+    expect(elicitApproved({ action: 'accept', content: {} })).toBe(true);
+    expect(elicitApproved({ action: 'accept' })).toBe(true);
+    expect(elicitApproved({ action: 'accept', content: { approve: false } })).toBe(false);
+    expect(elicitApproved({ action: 'accept', content: { approve: 'yes' } })).toBe(false);
+    expect(elicitApproved({ action: 'accept', content: { other: true } })).toBe(false);
+    expect(elicitApproved({ action: 'accept', content: 'ok' })).toBe(false);
+    expect(elicitApproved({ action: 'decline' })).toBe(false);
+    expect(elicitApproved({ action: 'cancel', content: {} })).toBe(false);
+    expect(elicitApproved(undefined)).toBe(false);
   });
 
   it('passes the chat code on when the client has no elicitation', async () => {
