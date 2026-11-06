@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "better-tg-cli",
+  "version": "0.39.5",
+  "description": "Unofficial Telegram client for your own account: a local MCP server and a skill to read, search and send messages, read threads and press bot buttons. You approve every send.",
+  "author": {
+    "name": "Sergei Polin",
+    "url": "https://github.com/TheVilfer"
+  },
+  "homepage": "https://github.com/TheVilfer/better-tg-cli",
+  "repository": "https://github.com/TheVilfer/better-tg-cli",
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "mtproto",
+    "mcp",
+    "cli",
+    "userbot",
+    "hermes"
+  ]
+}

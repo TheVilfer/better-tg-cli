@@ -116,6 +116,17 @@ Claude plugin is the skill alone and uses the installed `telegram` CLI. The Code
 manifests run the pinned `npx better-tg-cli@<version> mcp` (the directory blocks `@latest`). The
 directory scans every new commit on `main` by itself.
 
+`agent-plugin/` is a portable Agent Plugins v1 package (root `plugin.json`, `skills/`, `mcp.json`)
+for the Hermes Agent plugin catalog (`plugin-catalog/better-tg-cli.yaml` in
+`NousResearch/hermes-agent`, `subdir: agent-plugin`, pinned to a full commit SHA on `main`; each
+release needs a SHA-bump PR there). It is a folder of its own because a root `mcp.json` with a
+local server must stay out of `plugin/`. `gen-version.mjs` regenerates everything in it except
+`agent-plugin/README.md`, which is the catalog page and holds the disclosures. Hermes hands a stdio
+server a filtered environment, so `mcp.json` forwards `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR`
+and harmless `TG_*` settings as `${NAME}`, never a credential or `TG_APPROVE`. Hermes answers an
+elicitation with an Allow/Deny prompt and empty content, which `elicitApproved()` in `src/mcp.ts`
+accepts.
+
 Grok Build reads `.claude-plugin/plugin.json` as is, but refuses a marketplace entry that points at
 the repo root (`"./"`, which Claude Code requires), so `.grok-plugin/marketplace.json` (preferred
 by Grok) points at the git URL instead.

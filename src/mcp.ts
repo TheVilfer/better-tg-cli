@@ -380,6 +380,21 @@ export async function handleMessage(msg: RpcMessage, run = runCli, options: McpO
 
 const ELICIT_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * Whether an elicitation answer approves the write. A form client sends the ticked box
+ * (`approve: true`); a client that shows the request as a plain Allow / Deny prompt instead of the
+ * form (Hermes Agent) accepts with empty content. An unticked box, a decline, a cancel or an error
+ * never approves.
+ */
+export function elicitApproved(result: unknown): boolean {
+  const r = result as { action?: unknown; content?: unknown } | undefined;
+  if (r?.action !== 'accept') return false;
+  if (r.content === undefined) return true;
+  if (typeof r.content !== 'object' || r.content === null) return false;
+  const content = r.content as Record<string, unknown>;
+  return 'approve' in content ? content.approve === true : Object.keys(content).length === 0;
+}
+
 export function startMcpServer(commands: Iterable<string>, options: { readOnly?: boolean } = {}): void {
   setKnownCommands(commands);
   let queue: Promise<void> = Promise.resolve();
@@ -393,8 +408,7 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
     const timer = setTimeout(() => { waiting.delete(id); resolve(false); }, ELICIT_TIMEOUT_MS);
     waiting.set(id, answer => {
       clearTimeout(timer);
-      const r = answer.result as { action?: string; content?: { approve?: unknown } } | undefined;
-      resolve(r?.action === 'accept' && r.content?.approve === true);
+      resolve(elicitApproved(answer.result));
     });
     send({
       jsonrpc: '2.0', id, method: 'elicitation/create',
