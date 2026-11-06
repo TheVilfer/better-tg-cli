@@ -3,9 +3,11 @@
  * Invites live in KV under sha256(token); the raw token is never stored or logged.
  */
 import { ICON_SVG, OG_PNG_BASE64 } from './assets';
+import { docResponse, isDocPath } from './docs';
 import { landingResponse } from './landing';
 import { LOGIN_PATH, loopbackReturn, OLD_LOGIN_PATH, pageResponse } from './page';
-import { pickLang } from './i18n';
+import { pickLang, type Lang } from './i18n';
+import { INDEXNOW_KEY, LLMS_TXT, robotsTxt, sitemapXml } from './seo';
 import { handleSignup, handleVerify, signupsOpen } from './signup';
 
 export interface KV {
@@ -66,37 +68,62 @@ function staticFile(body: BodyInit, type: string): Response {
   });
 }
 
+/**
+ * The language of a page comes from its URL alone, so every URL has one language and one canonical
+ * (what search engines expect from hreflang). Without a valid ?lang=, a browser that prefers Spanish
+ * or Russian is sent to that URL (302: the preference is per visitor); everyone else, crawlers
+ * included, gets English at the bare URL.
+ */
+function pageLang(url: URL, request: Request): Lang | Response {
+  const asked = url.searchParams.get('lang');
+  const lang = pickLang(asked, request.headers.get('accept-language'));
+  if (lang === 'en' || asked?.toLowerCase() === lang) return lang;
+  const to = new URL(url);
+  to.searchParams.set('lang', lang);
+  return new Response(null, { status: 302, headers: { location: to.toString(), vary: 'Accept-Language', 'cache-control': 'no-store' } });
+}
+
 export async function handle(request: Request, env: Env, now = new Date()): Promise<Response> {
   const url = new URL(request.url);
 
-  if (url.hostname === 'www.better-tg-cli.com') {
+  if (url.hostname === 'www.better-tg-cli.com' || (url.hostname === 'better-tg-cli.com' && url.protocol === 'http:')) {
     return Response.redirect(`https://better-tg-cli.com${url.pathname}${url.search}`, 301);
   }
+  // HEAD gets the same answer as GET (the runtime drops the body); crawlers and link checkers use it
+  const read = request.method === 'GET' || request.method === 'HEAD';
   if (url.pathname === '/health') return json(200, { ok: true });
   if (url.pathname === '/og.png') return staticFile(base64Bytes(OG_PNG_BASE64), 'image/png');
   if (url.pathname === '/favicon.svg') return staticFile(ICON_SVG, 'image/svg+xml');
-  if (url.pathname === '/robots.txt') {
-    return staticFile('User-agent: *\nAllow: /\nDisallow: /v1/\n', 'text/plain; charset=utf-8');
-  }
-  if (url.pathname === '/' && request.method === 'GET') {
+  if (url.pathname === '/favicon.ico') return Response.redirect(`${url.origin}/favicon.svg`, 301);
+  if (url.pathname === '/robots.txt') return staticFile(robotsTxt(), 'text/plain; charset=utf-8');
+  if (url.pathname === '/sitemap.xml') return staticFile(sitemapXml(), 'application/xml; charset=utf-8');
+  if (url.pathname === '/llms.txt') return staticFile(LLMS_TXT, 'text/plain; charset=utf-8');
+  if (url.pathname === `/${INDEXNOW_KEY}.txt`) return staticFile(INDEXNOW_KEY, 'text/plain; charset=utf-8');
+  if (url.pathname === '/' && read) {
     // The signup page used to live here: telegram onboard (?return=) and guide links (?mode=, ?agent=) still arrive at /
     if (['return', 'mode', 'agent'].some(p => url.searchParams.has(p))) {
       return Response.redirect(`${url.origin}${LOGIN_PATH}${url.search}`, 302);
     }
-    return landingResponse({
-      lang: pickLang(url.searchParams.get('lang'), request.headers.get('accept-language')),
-      query: url.searchParams,
-    });
+    const lang = pageLang(url, request);
+    if (lang instanceof Response) return lang;
+    return landingResponse({ lang, query: url.searchParams });
   }
-  if (url.pathname === OLD_LOGIN_PATH && request.method === 'GET') {
+  if (isDocPath(url.pathname) && read) {
+    const lang = pageLang(url, request);
+    if (lang instanceof Response) return lang;
+    return docResponse(url.pathname, lang, url.searchParams);
+  }
+  if (url.pathname === OLD_LOGIN_PATH && read) {
     return Response.redirect(`${url.origin}${LOGIN_PATH}${url.search}`, 302);
   }
-  if (url.pathname === LOGIN_PATH && request.method === 'GET') {
+  if (url.pathname === LOGIN_PATH && read) {
+    const lang = pageLang(url, request);
+    if (lang instanceof Response) return lang;
     return pageResponse({
       open: await signupsOpen(env),
       siteKey: env.TURNSTILE_SITE_KEY,
       returnTo: loopbackReturn(url.searchParams.get('return')),
-      lang: pickLang(url.searchParams.get('lang'), request.headers.get('accept-language')),
+      lang,
       query: url.searchParams,
     });
   }

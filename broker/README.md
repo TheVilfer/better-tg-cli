@@ -25,7 +25,7 @@ speak that wire format.
 ## Signup page
 
 The page, the install guide and the code email come in English (default), Spanish and Russian
-(`src/i18n.ts`): `?lang=en|es|ru` wins, then `Accept-Language`. The language links keep the rest
+(`src/i18n.ts`): `?lang=en|es|ru` wins; without it a browser whose `Accept-Language` prefers Spanish or Russian is redirected to that `?lang=` URL. The language links keep the rest
 of the query, so `?return=` from `telegram onboard` survives a switch.
 
 `GET /` serves a page where people trade a verified email for a self-serve invite: `POST /v1/invites`
@@ -87,7 +87,34 @@ printf '%s' "$API_ID" | npx wrangler secret put API_ID
 printf '%s' "$API_HASH" | npx wrangler secret put API_HASH
 ```
 
+After a deploy that changes the pages, tell Bing and Yandex through IndexNow:
+
+```bash
+bun scripts/indexnow.ts
+```
+
 CI never deploys this. Tests live in `../test/broker.test.ts`.
+
+## Pages for search engines and AI assistants
+
+`src/docs.ts` serves three answer-first pages in all three languages, each with its own title,
+description, canonical, hreflang and JSON-LD:
+- `/mcp`: connect an MCP client (Claude Code, Cursor, Codex, Claude Desktop, Gemini CLI); TechArticle;
+- `/faq`: the questions from the README's FAQ; FAQPage;
+- `/compare`: the comparison table from the README; WebPage.
+
+Every page's footer links them. Their texts follow the README, so update both when the behaviour
+changes (write modes above all).
+
+## Search engines and AI crawlers
+
+`src/seo.ts` holds what crawlers read besides the pages: `robots.txt` (with the sitemap),
+`/sitemap.xml` (every page in every language, with hreflang alternates), `/llms.txt`, the
+landing page's JSON-LD (`SoftwareApplication`, `SoftwareSourceCode`, author) and the public
+IndexNow key served at `/<key>.txt`. A page's language comes from its URL alone (`?lang=es|ru`,
+English at the bare URL), so each URL has one language and one canonical; a browser that prefers
+another language is redirected (302) to its `?lang=` URL. `HEAD` is answered like `GET`, plain HTTP
+and `www` redirect to `https://better-tg-cli.com`, and `/favicon.ico` redirects to the SVG.
 
 ## Incident response
 

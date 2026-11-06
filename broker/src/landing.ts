@@ -3,6 +3,7 @@
 import { a, b, code, d, escape, SCREEN_CSS, terminal } from './guide';
 import { DICT, type Dict, type Lang } from './i18n';
 import { BRAND, cardMeta, footer, langLinks, LOGIN_PATH, TOKENS_CSS } from './page';
+import { jsonLd } from './seo';
 
 /** The two ways in: the CLI itself, or the agent skill through skills.sh (it tells the agent to install the CLI). */
 const INSTALL = { cli: 'npm install -g better-tg-cli', skill: 'npx skills add TheVilfer/better-tg-cli' } as const;
@@ -63,8 +64,9 @@ function install(t: Dict): string {
 ${panels}`;
 }
 
-const tile = (cls: string, f: { title: string; text: string }, extra = '', lead = '') =>
-  `<div class="tile${cls ? ` ${cls}` : ''}">${lead}<h3>${escape(f.title)}</h3><p>${escape(f.text)}</p>${extra}</div>`;
+/** `stat` is a number shown big above the title, inside the heading, so the heading reads "60+ commands" */
+const tile = (cls: string, f: { title: string; text: string }, extra = '', stat = '') =>
+  `<div class="tile${cls ? ` ${cls}` : ''}">${stat ? `<h3 class="stat"><span class="num">${stat}</span> ${escape(f.title)}</h3>` : `<h3>${escape(f.title)}</h3>`}<p>${escape(f.text)}</p>${extra}</div>`;
 
 /** The few things that set the tool apart, as a bento grid. */
 function bento(x: Dict['landing']): string {
@@ -72,9 +74,9 @@ function bento(x: Dict['landing']): string {
   const chip = (html: string) => `<div class="chip" aria-hidden="true">${html}</div>`;
   return `<h2>${escape(x.featuresTitle)}</h2>
 <div class="bento">
-${tile('wide', f.safe, chip('<span>$</span> telegram write-access on <b>--for 1h</b>'))}
-${tile('narrow', f.commands, '', '<div class="num">60+</div>')}
-${tile('narrow', f.deps, '', '<div class="num">0</div>')}
+${tile('wide', f.safe, chip('<span>$</span> telegram write-access <b>ask</b>'))}
+${tile('narrow', f.commands, '', '60+')}
+${tile('narrow', f.deps, '', '0')}
 ${tile('wide', f.tokens, chip('<b>1234567890</b> user unread=2 Alice @alice <span>|</span> see you at 7?'))}
 ${tile('', f.bots, chip('<span>$</span> telegram click @bot 812 <b>"Confirm"</b>'))}
 ${tile('', f.agents, `<div class="agents">${AGENTS.map(n => `<span>${n}</span>`).join('')}</div>`)}
@@ -109,6 +111,7 @@ function landing(nonce: string, lang: Lang, query: URLSearchParams): string {
 <title>${escape(x.title)}</title>
 <meta name="description" content="${escape(x.description)}">
 ${cardMeta(lang, x, '/')}
+<script type="application/ld+json" nonce="${nonce}">${jsonLd(x.description, lang)}</script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
 ${TOKENS_CSS}
@@ -148,8 +151,8 @@ h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:8
 .tile.narrow{grid-column:span 2}
 .tile h3{font-size:16px;font-weight:600;margin:0}
 .tile p{font-size:14px;line-height:1.5;color:var(--dim);margin:0}
-.tile .num{font-size:52px;line-height:1;letter-spacing:-2px;font-weight:600}
-.tile .num+h3{font-weight:500;color:var(--dim);font-size:14px;margin-bottom:6px}
+.tile h3.stat{font-weight:500;color:var(--dim);font-size:14px;margin-bottom:6px}
+.tile h3.stat .num{display:block;font-size:52px;line-height:1;letter-spacing:-2px;font-weight:600;color:var(--fg);margin-bottom:6px}
 .chip{margin-top:auto;padding-top:14px;font:12.5px/1.6 'Geist Mono',ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chip span{color:var(--dim)}
 .chip b{font-weight:400;color:var(--accent)}
@@ -176,6 +179,7 @@ h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:8
 .facts{list-style:none;padding:0;margin:32px 0 0;display:flex;flex-wrap:wrap;gap:6px 24px;font-size:14px;color:var(--dim)}
 .facts li::before{content:'';display:inline-block;width:6px;height:6px;margin-right:9px;background:var(--accent);vertical-align:middle}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
+footer .pages{margin-bottom:8px}
 @media (max-width:480px){main{padding-top:32px}.top{margin-bottom:48px}h1{font-size:34px;letter-spacing:-.9px}.lead{font-size:16px}.box{flex-direction:column;align-items:flex-start}.box pre{font-size:13px;max-width:100%}}
 @media (max-width:620px){h2{margin-top:64px}.bento,.steps,.safe{grid-template-columns:1fr}.tile,.tile.wide,.tile.narrow{grid-column:auto}}
 </style></head><body><main>
@@ -191,7 +195,7 @@ ${screen(t)}
 ${bento(x)}
 ${security(x)}
 ${login(x, href)}
-${footer(t.page)}
+${footer(t.page, lang)}
 </main>
 <script nonce="${nonce}">
 const T = ${JSON.stringify({ copy: t.client.copy, copied: t.client.copied, copyManual: t.client.copyManual }).replace(/</g, '\\u003c')};

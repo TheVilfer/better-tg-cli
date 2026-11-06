@@ -11,7 +11,7 @@
   [![install size](https://img.shields.io/npm/unpacked-size/better-tg-cli?label=size&style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
   [![dependencies](https://img.shields.io/badge/dependencies-0-000000?style=flat&colorA=000000&colorB=000000)](package.json)
   [![MCP](https://img.shields.io/badge/MCP-server-000000?style=flat&colorA=000000&colorB=000000)](#mcp-сервер)
-  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux-000000?style=flat&colorA=000000&colorB=000000&logo=apple)](#установка)
+  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#установка)
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
@@ -21,10 +21,14 @@
 
 https://github.com/user-attachments/assets/d143f7c7-7d50-439c-b373-cbcbff5a6675
 
-Неофициальный консольный клиент Telegram, который работает **от вашего собственного аккаунта**
-(MTProto через [`teleproto`](https://www.npmjs.com/package/teleproto), TL layer 229). Команда
-называется `telegram`. В ней около 60 команд: чтение, поиск, отправка, боты, группы, выгрузка. Всё
-сделано так, чтобы им было дёшево и безопасно пользоваться ИИ-агентам (Claude Code, Codex и другим).
+**Better-TG-CLI — это CLI и MCP-сервер Telegram для ИИ-агентов** (Claude Code, Codex, Cursor,
+Claude Desktop, Gemini CLI), который работает от вашего собственного аккаунта: агенты читают, ищут и
+отправляют сообщения, нажимают кнопки ботов, а каждую отправку подтверждаете вы.
+
+Это неофициальный клиент с открытым кодом (MTProto через [`teleproto`](https://www.npmjs.com/package/teleproto),
+TL layer 229). Команда называется `telegram`. В ней около 60 команд: чтение, поиск, отправка, боты,
+группы, выгрузка, и всё сделано так, чтобы агентам было дёшево и безопасно ими пользоваться. Есть и
+MCP-сервер (`telegram mcp`), и скилл для агентов.
 
 ```console
 $ telegram inbox -n 3
@@ -42,11 +46,11 @@ $ telegram inbox -n 3
 > она не нужна. Прежде чем разрешать агенту писать, прочитайте [SECURITY.md](SECURITY.md). Авторы
 > не отвечают за ограниченные аккаунты.
 
-**Содержание:** [Чем этот форк лучше](#чем-этот-форк-лучше) · [Установка](#установка) · [Вход](#вход) · [Использование](#использование) · [MCP-сервер](#mcp-сервер) · [FAQ](#faq) · [Разработка](#разработка) · [Приватность](#приватность) · [Лицензия](#лицензия)
+**Содержание:** [Чем хорош Better-TG-CLI](#чем-хорош-better-tg-cli) · [Установка](#установка) · [Вход](#вход) · [Использование](#использование) · [MCP-сервер](#mcp-сервер) · [FAQ](#faq) · [Разработка](#разработка) · [Приватность](#приватность) · [Лицензия](#лицензия)
 
-## Чем этот форк лучше
+## Чем хорош Better-TG-CLI
 
-Это форк [skillhq/telegram](https://github.com/skillhq/telegram), переделанный под агентов:
+Сделан для агентов:
 
 - **Актуальный слой Telegram.** Ответы ботов с rich-контентом (layer 228+) показывают текст, а не
   `(no text)`. Можно нажимать кнопки ботов (`click`) и ходить по их меню.
@@ -63,6 +67,23 @@ $ telegram inbox -n 3
   Keychain macOS, в Secret Service на Linux или в 1Password.
 - **Маленький и самодостаточный.** npm-пакет — один файл на 0,3 МБ без runtime-зависимостей.
   Homebrew ставит отдельный бинарник, которому не нужен Node.
+
+Проект начинался как форк [skillhq/telegram](https://github.com/skillhq/telegram) и с тех пор
+переделан целиком.
+
+### Сравнение с другими MCP-серверами для Telegram
+
+| | Better-TG-CLI | [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) | [chaindead/telegram-mcp](https://github.com/chaindead/telegram-mcp) | [WireCatLabs/tg-cli](https://github.com/WireCatLabs/tg-cli) |
+|---|---|---|---|---|
+| Что внутри | CLI, MCP-сервер, скилл | MCP-сервер | MCP-сервер | CLI, MCP-сервер, скилл |
+| Язык | TypeScript (Node 20+ или отдельный бинарник) | Python | Go | TypeScript |
+| Библиотека Telegram | teleproto (форк GramJS, layer 229) | Telethon | gotd/td | mtcute |
+| Зависимости при запуске | нет (один файл) | пакеты Python | один бинарник Go | пакеты npm |
+| Установка | Homebrew, Scoop, npm, бинарники | pip, uvx, Docker | Homebrew, npx, go install | npm, bun |
+
+Данные взяты из README и манифестов проектов в ноябре 2026 года; если что-то устарело, откройте
+issue. Better-TG-CLI отличает модель записи (только чтение, ask, on, подтверждение привязано к точному
+тексту) и вывод, сделанный для агентов.
 
 ## Установка
 
