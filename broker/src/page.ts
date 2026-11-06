@@ -100,45 +100,51 @@ export const BRAND = `<div class="brand"><svg viewBox="0 0 12 12" shape-renderin
 export const SHELL_CSS = `*{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 Geist,system-ui,sans-serif}
 main{max-width:760px;margin:0 auto;padding:40px 16px 72px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px 20px;flex-wrap:wrap;margin-bottom:48px;padding-bottom:14px;border-bottom:1px solid var(--line)}
 .top>a{color:inherit;text-decoration:none}
 .brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px}
 .brand i{font-style:normal;color:var(--accent)}
 .brand svg{width:22px;height:22px}
-.langs,.site{display:flex;gap:14px;flex-wrap:wrap;font-size:14px}
+.langs,.site{display:flex;align-items:center;gap:6px 16px;flex-wrap:wrap;font-size:14px}
 .langs b,.site b{font-weight:500}
 .langs a,.site a{color:var(--dim);text-decoration:none}
 .langs a:hover,.site a:hover{color:var(--fg)}
-.site{margin-bottom:48px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.site{margin-left:auto}
+.top .key{font-size:14px;color:var(--accent);text-decoration:none}
+.top b.key{color:var(--fg);font-weight:500}
 h1{font-size:40px;line-height:1.08;letter-spacing:-1.1px;font-weight:600;margin:0 0 16px;text-wrap:balance}
 .lead{color:var(--dim);font-size:18px;margin:0 0 32px;text-wrap:pretty}
 a{color:var(--accent)}
 footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--dim)}
-footer .pages{margin-bottom:8px}
-@media (max-width:480px){main{padding-top:28px}h1{font-size:31px;letter-spacing:-.7px}.lead{font-size:16px}}`;
+footer .pages,footer .langs{margin-bottom:8px}
+footer .langs{font-size:13px;gap:12px}
+@media (max-width:480px){main{padding-top:28px}.site{order:3;width:100%;margin:0;gap:6px 14px}.top .key{margin-left:auto}h1{font-size:31px;letter-spacing:-.7px}.lead{font-size:16px}}`;
 
 /** Pages in the header, in this order. */
-const NAV_PAGES = [['/', 'home'], ['/mcp', 'mcp'], ['/cases', 'cases'], ['/faq', 'faq'], ['/compare', 'compare'], [LOGIN_PATH, 'login']] as const;
+const NAV_PAGES = [['/cases', 'cases'], ['/mcp', 'mcp'], ['/faq', 'faq'], ['/compare', 'compare']] as const;
 
 /**
- * The header of every page: the logo (a link home), the language switch and the page links, with
- * the current page marked. `bare` leaves out the links, for the login page opened by the CLI, where
- * leaving would lose the way back.
+ * The header of every page, one row: the logo (a link home) and the page links, with the current
+ * page marked and the login key last. `bare` leaves out the links, for the login page opened by the
+ * CLI, where leaving would lose the way back. The language switch sits in the footer.
  */
 export function header(lang: Lang, query: URLSearchParams, path: string, bare = false): string {
-  const t = DICT[lang];
-  const n = t.page.nav;
+  const n = DICT[lang].page.nav;
   const href = (p: string) => (lang === 'en' ? p : `${p}?lang=${lang}`);
   const logo = bare || path === '/' ? BRAND : `<a href="${href('/')}" aria-label="Better-TG-CLI">${BRAND}</a>`;
+  const link = (p: string, label: string, cls = '') => p === path
+    ? `<b${cls} aria-current="page">${escape(label)}</b>`
+    : `<a href="${href(p)}"${cls}>${escape(label)}</a>`;
   const links = bare
     ? ''
-    : `\n<nav class="site" aria-label="${escape(n.onThisSite)}">${NAV_PAGES.map(([p, k]) =>
-        p === path ? `<b aria-current="page">${escape(n[k])}</b>` : `<a href="${href(p)}">${escape(n[k])}</a>`).join('')}</nav>`;
-  return `<div class="top">${logo}${langLinks(lang, query, t, path)}</div>${links}`;
+    : `<nav class="site" aria-label="${escape(n.onThisSite)}">${NAV_PAGES.map(([p, k]) => link(p, n[k])).join('')}</nav>${link(LOGIN_PATH, n.login, ' class="key"')}`;
+  return `<header class="top">${logo}${links}</header>`;
 }
-/** The footer links, the same on every page. */
-export const footer = (x: Dict['page'], lang: Lang = 'en') =>
-  `<footer><nav class="pages">${(['mcp', 'cases', 'faq', 'compare'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
+/** The footer, the same on every page: the language switch, the page links and the source. */
+export const footer = (lang: Lang, query: URLSearchParams, path: string) => {
+  const x = DICT[lang].page;
+  return `<footer>${langLinks(lang, query, DICT[lang], path)}<nav class="pages">${(['mcp', 'cases', 'faq', 'compare'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
+};
 
 /** Links to the same page in the other languages, keeping the rest of the query intact. */
 export function langLinks(current: Lang, query: URLSearchParams, t: Dict, path: string): string {
@@ -225,7 +231,7 @@ ${returnTo ? `<p class="cli">${x.cliBannerHtml}</p>` : ''}
   <p class="done-p"><a href="#guide">${escape(x.nextInstall)}</a></p>
 </section>
 ${guideHtml(t)}
-${footer(x, lang)}
+${footer(lang, query, LOGIN_PATH)}
 </main>
 ${open ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer nonce="' + nonce + '"></script>' : ''}
 <script nonce="${nonce}">
