@@ -29,11 +29,11 @@ const post = (body: unknown) =>
   new Request('https://broker.test/v1/credentials', { method: 'POST', body: JSON.stringify(body) });
 
 
-/** A browser that prefers another language is sent to that page's ?lang= URL: follow that one hop. */
+/** ?lang= and a browser that prefers another language lead to that page's /es/ or /ru/ path: follow that hop. */
 async function followLang(request: Request, e: Env): Promise<Response> {
   const res = await handle(request, e);
-  const to = res.status === 302 ? res.headers.get('location') : null;
-  if (!to || new URL(to).pathname !== new URL(request.url).pathname || !new URL(to).searchParams.has('lang')) return res;
+  const to = res.status === 301 || res.status === 302 ? res.headers.get('location') : null;
+  if (!to || !/^\/(es|ru)\//.test(new URL(to).pathname + '/')) return res;
   return handle(new Request(to, { headers: request.headers }), e);
 }
 
@@ -312,9 +312,9 @@ describe('self-serve signup', () => {
     expect(html).toContain('<meta property="og:url" content="https://better-tg-cli.com/login">');
     expect(html).toContain('rel="icon" href="/favicon.svg"');
     expect(html).not.toContain('noindex');
-    const es = await (await handle(new Request('https://broker.test/login?lang=es'), e)).text();
+    const es = await (await handle(new Request('https://broker.test/es/login'), e)).text();
     expect(es).toContain('<meta property="og:locale" content="es_ES">');
-    expect(es).toContain('<link rel="canonical" href="https://better-tg-cli.com/login?lang=es">');
+    expect(es).toContain('<link rel="canonical" href="https://better-tg-cli.com/es/login">');
     const cli = `http://127.0.0.1:54321/s/${'a'.repeat(43)}/cb`;
     const fromCli = await (await handle(new Request(`https://broker.test/login?return=${encodeURIComponent(cli)}`), e)).text();
     expect(fromCli).toContain('noindex');
@@ -370,14 +370,15 @@ describe('self-serve signup', () => {
       expect(bare(await (await page()).text())).not.toMatch(/[А-Яа-яЁё]/);
       const es = await (await page('?lang=es')).text();
       expect(es).toContain('<html lang="es">');
-      expect(es).toContain('href="/login?lang=es"');
+      expect(es).toContain('<a class="btn" href="/es/login">');
       expect(bare(es)).not.toMatch(/[А-Яа-яЁё]/);
       const ru = await (await page('', 'ru-RU,ru;q=0.9')).text();
       expect(ru).toContain('Войти без API-ключей');
       expect(ru).toContain('Как работает вход');
       expect(ru).not.toMatch(/инвайт/i);
-      expect(ru).toContain('<a class="btn" href="/login?lang=ru">');
+      expect(ru).toContain('<a class="btn" href="/ru/login">');
       expect(ru).toContain('<a href="/?lang=en" hreflang="en"');
+      expect(ru).toContain('<a href="/es/?lang=es" hreflang="es"');
     });
 
     it('sends the old signup addresses on to /login with their query', async () => {
@@ -420,7 +421,7 @@ describe('self-serve signup', () => {
           for (const q of ['', onboard]) {
             const res = await get(e, q, accept);
             const html = await res.text();
-            expect(res.headers.get('vary')).toBe('Accept-Language');
+            expect(res.headers.get('vary')).toBe('Accept-Language, Cookie');
             expect(html).toContain(`<html lang="${lang}">`);
             // Only the language switcher names Russian
             expect(html.replace('>Русский</a>', '')).not.toMatch(CYRILLIC);
@@ -434,7 +435,7 @@ describe('self-serve signup', () => {
       const { e } = await open();
       const back = 'http://127.0.0.1:54321/s/' + 'a'.repeat(43) + '/cb';
       const html = await (await get(e, `?return=${encodeURIComponent(back)}&agent=codex`)).text();
-      const links = [...html.matchAll(/<a href="\/login\?([^"]+)" hreflang="(\w+)"/g)];
+      const links = [...html.matchAll(/<a href="(?:\/es|\/ru)?\/login\?([^"]+)" hreflang="(\w+)"/g)];
       expect(links.map(m => m[2])).toEqual(['es', 'ru']);
       for (const [, q, l] of links) {
         const params = new URLSearchParams(q.replace(/&amp;/g, '&'));
@@ -478,7 +479,7 @@ describe('search engines and AI crawlers', () => {
     expect(res.headers.get('content-type')).toContain('application/xml');
     const xml = await res.text();
     const paths = ['/', '/mcp', '/cases', '/faq', '/compare', '/login'];
-    expect(PAGE_URLS).toEqual(paths.flatMap(p => ['', '?lang=es', '?lang=ru'].map(q => `https://better-tg-cli.com${p}${q}`)));
+    expect(PAGE_URLS).toEqual(paths.flatMap(p => ['', '/es', '/ru'].map(l => `https://better-tg-cli.com${l}${p}`)));
     for (const url of PAGE_URLS) expect(xml).toContain(`<loc>${url}</loc>`);
     expect(xml.match(/<url>/g)).toHaveLength(18);
     expect(xml.match(/hreflang="x-default"/g)).toHaveLength(18);
@@ -490,23 +491,55 @@ describe('search engines and AI crawlers', () => {
     expect(await (await get('/llms.txt')).text()).toMatch(/^# Better-TG-CLI\n\n> Better-TG-CLI is an open-source/);
     expect(INDEXNOW_KEY).toMatch(/^[0-9a-f]{32}$/);
     expect(await (await get(`/${INDEXNOW_KEY}.txt`)).text()).toBe(INDEXNOW_KEY);
-    const html = await (await get('/?lang=es')).text();
+    const html = await (await get('/es/')).text();
     const ld = JSON.parse(/<script type="application\/ld\+json" nonce="[^"]+">(.*?)<\/script>/s.exec(html)![1]);
     const app = ld['@graph'].find((n: { '@type': string }) => n['@type'] === 'SoftwareApplication');
-    expect(app).toMatchObject({ name: 'Better-TG-CLI', url: 'https://better-tg-cli.com/?lang=es', inLanguage: 'es', isAccessibleForFree: true });
+    expect(app).toMatchObject({ name: 'Better-TG-CLI', url: 'https://better-tg-cli.com/es/', inLanguage: 'es', isAccessibleForFree: true });
   });
 
-  it('gives each URL one language: Accept-Language only redirects to the ?lang= URL', async () => {
+  it('gives each URL one language: Accept-Language only redirects to the /ru/ or /es/ path', async () => {
     const ru = await get('/login?return=x', { headers: { 'accept-language': 'ru-RU,ru;q=0.9' } });
     expect(ru.status).toBe(302);
-    expect(ru.headers.get('location')).toBe('https://better-tg-cli.com/login?return=x&lang=ru');
+    expect(ru.headers.get('location')).toBe('https://better-tg-cli.com/ru/login?return=x');
+    // The language path wins over the browser, and /ru is the home page's other spelling
+    expect((await get('/ru/login', { headers: { 'accept-language': 'es' } })).status).toBe(200);
+    expect((await get('/ru')).headers.get('location')).toBe('https://better-tg-cli.com/ru/');
+    expect((await get('/ru/nope')).status).toBe(404);
     // Crawlers send no Accept-Language: English at the bare URL, canonical to itself
     const en = await (await get('/')).text();
     expect(en).toContain('<html lang="en">');
     expect(en).toContain('<link rel="canonical" href="https://better-tg-cli.com/">');
-    // An explicit ?lang= wins over the browser
-    expect((await get('/?lang=en', { headers: { 'accept-language': 'ru' } })).status).toBe(200);
-    expect((await get('/?lang=ru', { headers: { 'accept-language': 'es' } })).status).toBe(200);
+    // An explicit choice (the language links' ?lang=) is remembered over the browser
+    const choose = await get('/cases?lang=en', { headers: { 'accept-language': 'ru' } });
+    expect(choose.status).toBe(301);
+    expect(choose.headers.get('location')).toBe('https://better-tg-cli.com/cases');
+    const cookie = choose.headers.get('set-cookie')!.split(';')[0];
+    expect(cookie).toBe('lang=en');
+    expect((await get('/cases', { headers: { 'accept-language': 'ru', cookie } })).status).toBe(200);
+    expect((await get('/faq', { headers: { cookie: 'lang=es' } })).headers.get('location')).toBe('https://better-tg-cli.com/es/faq');
+  });
+
+  it('keeps the old ?lang= addresses working: released CLIs, indexed pages and links send them', async () => {
+    // telegram onboard before this change opens /login?return=…&lang=ru
+    const back = encodeURIComponent('http://127.0.0.1:54321/s/' + 'a'.repeat(43) + '/cb');
+    const cli = await get(`/login?return=${back}&lang=ru`);
+    expect(cli.status).toBe(301);
+    expect(cli.headers.get('location')).toBe(`https://better-tg-cli.com/ru/login?return=${back}`);
+    // Older ones open / or /invite, which go through /login first
+    const viaRoot = await get(`/?return=${back}&lang=es`);
+    expect(viaRoot.headers.get('location')).toBe(`https://better-tg-cli.com/login?return=${back}&lang=es`);
+    const invite = await followLang(new Request('https://better-tg-cli.com/invite?lang=ru'), e);
+    expect(invite.headers.get('location')).toBe('https://better-tg-cli.com/login?lang=ru');
+    for (const [old, now] of [['/?lang=ru', '/ru/'], ['/faq?lang=es', '/es/faq'], ['/cases?lang=RU', '/ru/cases'], ['/ru/mcp?lang=es', '/es/mcp'], ['/mcp?lang=en', '/mcp']]) {
+      const res = await get(old);
+      expect(res.status, old).toBe(301);
+      expect(res.headers.get('location'), old).toBe(`https://better-tg-cli.com${now}`);
+    }
+    // A language we do not have is dropped without being remembered
+    const odd = await get('/faq?lang=xx&a=1');
+    expect(odd.status).toBe(302);
+    expect(odd.headers.get('location')).toBe('https://better-tg-cli.com/faq?a=1');
+    expect(odd.headers.get('set-cookie')).toBeNull();
   });
 
   it('answers HEAD like GET, redirects http and favicon.ico, and titles /login apart from /', async () => {
@@ -523,12 +556,12 @@ describe('search engines and AI crawlers', () => {
     const CYRILLIC = /[А-Яа-яЁё]/;
     for (const path of ['/mcp', '/cases', '/faq', '/compare']) {
       for (const lang of ['en', 'es', 'ru']) {
-        const res = await get(lang === 'en' ? path : `${path}?lang=${lang}`);
+        const res = await get(lang === 'en' ? path : `/${lang}${path}`);
         const html = await res.text();
         expect(res.status).toBe(200);
         expect(html).toContain(`<html lang="${lang}">`);
         expect(html.match(/<h1>/g)).toHaveLength(1);
-        expect(html).toContain(`<link rel="canonical" href="https://better-tg-cli.com${path}${lang === 'en' ? '' : `?lang=${lang}`}">`);
+        expect(html).toContain(`<link rel="canonical" href="https://better-tg-cli.com${lang === 'en' ? '' : `/${lang}`}${path}">`);
         const ld = JSON.parse(/<script type="application\/ld\+json" nonce="[^"]+">(.*?)<\/script>/s.exec(html)![1]);
         expect(ld.inLanguage).toBe(lang);
         // Only the language switcher names Russian on the other pages
@@ -553,12 +586,14 @@ describe('search engines and AI crawlers', () => {
     expect(cases.match(/<blockquote class="prompt">/g)).toHaveLength(caseCount);
     for (const item of casesLd.mainEntity.itemListElement) expect(item.description).not.toMatch(/`|\]\(/);
     // The footer links every page, keeping the language
-    for (const path of ['/', '/login?lang=ru', '/faq?lang=es']) {
+    for (const path of ['/', '/ru/login', '/es/faq']) {
       const html = await (await get(path)).text();
-      const q = path.includes('lang=') ? `?lang=${path.split('lang=')[1]}` : '';
-      for (const p of ['/mcp', '/cases', '/faq', '/compare']) expect(html, path).toContain(`<a href="${p}${q}">`);
+      const prefix = /^\/(es|ru)\//.exec(path)?.[0].slice(0, -1) ?? '';
+      for (const p of ['/mcp', '/cases', '/faq', '/compare']) expect(html, path).toContain(`<a href="${prefix}${p}">`);
     }
-    // A Spanish browser at /faq is sent to /faq?lang=es
-    expect((await get('/faq', { headers: { 'accept-language': 'es' } })).headers.get('location')).toBe('https://better-tg-cli.com/faq?lang=es');
+    // Local links inside the text keep the language too
+    expect(await (await get('/ru/faq')).text()).toContain('<a href="/ru/login">better-tg-cli.com/login</a>');
+    // A Spanish browser at /faq is sent to /es/faq
+    expect((await get('/faq', { headers: { 'accept-language': 'es' } })).headers.get('location')).toBe('https://better-tg-cli.com/es/faq');
   });
 });

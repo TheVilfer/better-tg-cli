@@ -7,7 +7,7 @@
 import { escape } from './guide';
 import { DICT, type Lang } from './i18n';
 import { cardMeta, footer, header, SHELL_CSS, TOKENS_CSS } from './page';
-import { pageUrl, SITE } from './seo';
+import { localPath, pageUrl, SITE } from './seo';
 
 export const DOC_PATHS = ['/mcp', '/faq', '/compare', '/cases'] as const;
 export type DocPath = (typeof DOC_PATHS)[number];
@@ -228,7 +228,7 @@ const TEXTS: Record<Lang, Texts> = {
         { q: '¿Es un bot de Telegram?', a: 'No. Inicia sesión como tú, igual que Telegram Desktop, y ve exactamente lo que ves tú. Un bot no puede leer tus chats; esto sí.' },
         { q: '¿Telegram bloqueará mi cuenta?', a: 'Usar tu propia cuenta desde un cliente de terceros está permitido por los [términos de la API de Telegram](https://core.telegram.org/api/terms). Lo que hace que se limiten cuentas es un comportamiento que parece de bot: envíos masivos, entradas o invitaciones masivas, spam y cuentas nuevas que hacen mucho de golpe. Úsalo como usarías Telegram tú mismo; el skill indica a los agentes que eviten esos patrones.' },
         { q: '¿Puede un agente enviar mensajes por su cuenta?', a: 'No por diseño. Tras iniciar sesión, el perfil está en modo `ask`: antes de cada escritura el agente te muestra la acción exacta y solo la ejecuta cuando dices que sí. `telegram write-access off` lo deja en solo lectura. Esto depende de que el agente siga sus instrucciones: un agente con shell en tu usuario podría leer la sesión y actuar como tú.' },
-        { q: '¿Necesito mis propias claves de API de Telegram?', a: 'No. Consigue una clave de acceso gratis en [better-tg-cli.com/login](/login?lang=es) (un correo, hasta 3 equipos), o crea tus propias claves en my.telegram.org y ejecuta `telegram auth`.' },
+        { q: '¿Necesito mis propias claves de API de Telegram?', a: 'No. Consigue una clave de acceso gratis en [better-tg-cli.com/login](/login) (un correo, hasta 3 equipos), o crea tus propias claves en my.telegram.org y ejecuta `telegram auth`.' },
         { q: '¿Dónde se guarda mi sesión y quién ve mis mensajes?', a: 'La sesión se guarda en el Llavero de macOS, el Secret Service de Linux, DPAPI de Windows o 1Password. La CLI habla con Telegram directamente y no tiene analítica. Todo lo que lee tu agente también lo ve la empresa que está detrás de ese agente.' },
         { q: '¿Leer marca los mensajes como leídos?', a: 'No. `read`, `inbox` y `search` dejan los chats sin leer; solo `telegram mark-read` los marca.' },
         { q: '¿Puede leer comentarios de canales, hilos y temas de foros, y pulsar botones de bots?', a: 'Sí: `telegram read --thread` abre las respuestas o comentarios de una publicación, `telegram topics` lista los temas de un foro y `telegram read --topic` lee uno, y `telegram click` pulsa botones en los mensajes de bots.' },
@@ -317,7 +317,7 @@ const TEXTS: Record<Lang, Texts> = {
         { q: 'Это бот Telegram?', a: 'Нет. Он входит от вашего имени, как Telegram Desktop, и видит ровно то же, что и вы. Бот не может читать ваши чаты, а он может.' },
         { q: 'Telegram заблокирует мой аккаунт?', a: 'Пользоваться своим аккаунтом из стороннего клиента разрешают [условия API Telegram](https://core.telegram.org/api/terms). Аккаунты ограничивают за поведение, похожее на бота: массовые рассылки, массовые вступления и приглашения, спам, новые аккаунты, которые сразу делают очень много. Пользуйтесь им так же, как пользовались бы Telegram сами; скилл учит агентов избегать таких действий.' },
         { q: 'Может ли агент отправлять сообщения сам?', a: 'Не по замыслу. После входа профиль в режиме `ask`: перед каждой записью агент показывает вам точное действие и выполняет его только после вашего «да». `telegram write-access off` включает режим только чтения. Это работает, пока агент следует инструкциям: агент с доступом к оболочке под вашим пользователем может прочитать сессию и действовать от вашего имени.' },
-        { q: 'Нужны ли свои API-ключи Telegram?', a: 'Нет. Получите бесплатный ключ входа на [better-tg-cli.com/login](/login?lang=ru) (одна почта, до 3 компьютеров) или создайте свои ключи на my.telegram.org и запустите `telegram auth`.' },
+        { q: 'Нужны ли свои API-ключи Telegram?', a: 'Нет. Получите бесплатный ключ входа на [better-tg-cli.com/login](/login) (одна почта, до 3 компьютеров) или создайте свои ключи на my.telegram.org и запустите `telegram auth`.' },
         { q: 'Где хранится сессия и кто видит мои сообщения?', a: 'Сессия хранится в «Связке ключей» macOS, Secret Service в Linux, DPAPI в Windows или в 1Password. CLI общается с Telegram напрямую и не собирает аналитику. Всё, что читает агент, видит и компания, которая стоит за этим агентом.' },
         { q: 'Чтение помечает сообщения прочитанными?', a: 'Нет. `read`, `inbox` и `search` оставляют чаты непрочитанными; помечает только `telegram mark-read`.' },
         { q: 'Можно ли читать комментарии в каналах, треды и темы форумов и нажимать кнопки ботов?', a: 'Да: `telegram read --thread` открывает ответы или комментарии под постом, `telegram topics` показывает темы форума, а `telegram read --topic` читает одну из них; `telegram click` нажимает кнопки в сообщениях ботов.' },
@@ -378,7 +378,7 @@ function inline(text: string, lang: Lang): string {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, t: string, href: string) => {
       const local = href.startsWith('/');
-      const url = local && lang !== 'en' && !href.includes('lang=') ? `${href}${href.includes('?') ? '&' : '?'}lang=${lang}` : href;
+      const url = local ? localPath(href, lang) : href;
       return `<a href="${url}"${local ? '' : ' rel="noopener"'}>${t}</a>`;
     });
 }
@@ -518,7 +518,7 @@ ${footer(lang)}
   return new Response(page, {
     headers: {
       'content-language': lang,
-      vary: 'Accept-Language',
+      vary: 'Accept-Language, Cookie',
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'content-security-policy': csp,

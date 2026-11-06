@@ -6,8 +6,8 @@ import { ICON_SVG, OG_PNG_BASE64 } from './assets';
 import { docResponse, isDocPath } from './docs';
 import { landingResponse } from './landing';
 import { LOGIN_PATH, loopbackReturn, OLD_LOGIN_PATH, pageResponse } from './page';
-import { pickLang, type Lang } from './i18n';
-import { INDEXNOW_KEY, LLMS_TXT, robotsTxt, sitemapXml } from './seo';
+import { isLang, pickLang, type Lang } from './i18n';
+import { INDEXNOW_KEY, LLMS_TXT, localPath, robotsTxt, sitemapXml, splitLangPath } from './seo';
 import { handleSignup, handleVerify, signupsOpen } from './signup';
 
 export interface KV {
@@ -68,19 +68,40 @@ function staticFile(body: BodyInit, type: string): Response {
   });
 }
 
+/** The visitor's explicit language choice, set by the language links (?lang=), a year long. */
+const LANG_COOKIE = 'lang';
+const cookieLang = (request: Request): Lang | null => {
+  const m = /(?:^|;\s*)lang=([a-z]{2})(?:;|$)/.exec(request.headers.get('cookie') ?? '');
+  return m && isLang(m[1]) ? m[1] : null;
+};
+
 /**
- * The language of a page comes from its URL alone, so every URL has one language and one canonical
- * (what search engines expect from hreflang). Without a valid ?lang=, a browser that prefers Spanish
- * or Russian is sent to that URL (302: the preference is per visitor); everyone else, crawlers
- * included, gets English at the bare URL.
+ * The language of a page comes from its path alone (/es/…, /ru/…, English at the bare path), so
+ * every URL has one language and one canonical, as hreflang expects.
+ * - ?lang= is how released CLIs, old links and the language switch ask for a language: it redirects
+ *   (301) to the same page at that language's path, keeping the rest of the query, and remembers
+ *   the choice in a cookie.
+ * - A bare path sends a browser that chose, or prefers, Spanish or Russian to that path (302: the
+ *   preference is per visitor); everyone else, crawlers included, gets English.
  */
-function pageLang(url: URL, request: Request): Lang | Response {
+function pageLang(url: URL, path: string, inPath: Lang | null, request: Request): Lang | Response {
   const asked = url.searchParams.get('lang');
-  const lang = pickLang(asked, request.headers.get('accept-language'));
-  if (lang === 'en' || asked?.toLowerCase() === lang) return lang;
-  const to = new URL(url);
-  to.searchParams.set('lang', lang);
-  return new Response(null, { status: 302, headers: { location: to.toString(), vary: 'Accept-Language', 'cache-control': 'no-store' } });
+  if (asked !== null) {
+    const q = new URLSearchParams(url.search);
+    q.delete('lang');
+    const chosen = isLang(asked.toLowerCase()) ? (asked.toLowerCase() as Lang) : null;
+    const location = `${url.origin}${localPath(path, chosen ?? inPath ?? 'en')}${q.size ? `?${q}` : ''}`;
+    const headers: Record<string, string> = { location, 'cache-control': 'no-store' };
+    if (chosen) headers['set-cookie'] = `${LANG_COOKIE}=${chosen}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`;
+    return new Response(null, { status: chosen ? 301 : 302, headers });
+  }
+  if (inPath) return inPath;
+  const lang = cookieLang(request) ?? pickLang(null, request.headers.get('accept-language'));
+  if (lang === 'en') return lang;
+  return new Response(null, {
+    status: 302,
+    headers: { location: `${url.origin}${localPath(path, lang)}${url.search}`, vary: 'Accept-Language, Cookie', 'cache-control': 'no-store' },
+  });
 }
 
 export async function handle(request: Request, env: Env, now = new Date()): Promise<Response> {
@@ -99,26 +120,21 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
   if (url.pathname === '/sitemap.xml') return staticFile(sitemapXml(), 'application/xml; charset=utf-8');
   if (url.pathname === '/llms.txt') return staticFile(LLMS_TXT, 'text/plain; charset=utf-8');
   if (url.pathname === `/${INDEXNOW_KEY}.txt`) return staticFile(INDEXNOW_KEY, 'text/plain; charset=utf-8');
-  if (url.pathname === '/' && read) {
-    // The signup page used to live here: telegram onboard (?return=) and guide links (?mode=, ?agent=) still arrive at /
-    if (['return', 'mode', 'agent'].some(p => url.searchParams.has(p))) {
-      return Response.redirect(`${url.origin}${LOGIN_PATH}${url.search}`, 302);
-    }
-    const lang = pageLang(url, request);
-    if (lang instanceof Response) return lang;
-    return landingResponse({ lang, query: url.searchParams });
-  }
-  if (isDocPath(url.pathname) && read) {
-    const lang = pageLang(url, request);
-    if (lang instanceof Response) return lang;
-    return docResponse(url.pathname, lang, url.searchParams);
-  }
   if (url.pathname === OLD_LOGIN_PATH && read) {
     return Response.redirect(`${url.origin}${LOGIN_PATH}${url.search}`, 302);
   }
-  if (url.pathname === LOGIN_PATH && read) {
-    const lang = pageLang(url, request);
+  // The signup page used to live at /: telegram onboard (?return=) and guide links (?mode=, ?agent=) still arrive there
+  if (url.pathname === '/' && read && ['return', 'mode', 'agent'].some(p => url.searchParams.has(p))) {
+    return Response.redirect(`${url.origin}${LOGIN_PATH}${url.search}`, 302);
+  }
+  const { lang: inPath, path } = splitLangPath(url.pathname);
+  // /ru is the Russian home page's other spelling
+  if (inPath && url.pathname === `/${inPath}`) return Response.redirect(`${url.origin}/${inPath}/${url.search}`, 301);
+  if ((path === '/' || isDocPath(path) || path === LOGIN_PATH) && read) {
+    const lang = pageLang(url, path, inPath, request);
     if (lang instanceof Response) return lang;
+    if (path === '/') return landingResponse({ lang, query: url.searchParams });
+    if (path !== LOGIN_PATH) return docResponse(path, lang, url.searchParams);
     return pageResponse({
       open: await signupsOpen(env),
       siteKey: env.TURNSTILE_SITE_KEY,

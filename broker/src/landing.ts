@@ -3,7 +3,7 @@
 import { a, b, code, d, escape, SCREEN_CSS, terminal } from './guide';
 import { DICT, type Dict, type Lang } from './i18n';
 import { cardMeta, footer, header, LOGIN_PATH, SHELL_CSS, TOKENS_CSS } from './page';
-import { jsonLd } from './seo';
+import { jsonLd, localPath } from './seo';
 
 /** The two ways in: the CLI itself, or the agent skill through skills.sh (it tells the agent to install the CLI). */
 const INSTALL = { cli: 'npm install -g better-tg-cli', skill: 'npx skills add TheVilfer/better-tg-cli' } as const;
@@ -12,7 +12,7 @@ const REPO = 'https://github.com/TheVilfer/better-tg-cli';
 
 export interface LandingOptions {
   lang?: Lang;
-  /** The request's query: the language links keep it, and an explicit ?lang= follows the visitor to the login page */
+  /** The request's query, which the language links keep */
   query?: URLSearchParams;
 }
 
@@ -31,7 +31,7 @@ export function landingResponse({ lang = 'en', query = new URLSearchParams() }: 
   return new Response(landing(nonce, lang, query), {
     headers: {
       'content-language': lang,
-      vary: 'Accept-Language',
+      vary: 'Accept-Language, Cookie',
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'content-security-policy': csp,
@@ -104,7 +104,7 @@ function login(x: Dict['landing'], href: string): string {
 function landing(nonce: string, lang: Lang, query: URLSearchParams): string {
   const t = DICT[lang];
   const x = t.landing;
-  const href = query.has('lang') ? `${LOGIN_PATH}?lang=${lang}` : LOGIN_PATH;
+  const href = localPath(LOGIN_PATH, lang);
 
   return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
