@@ -94,8 +94,8 @@ export const TOKENS_CSS = `:root{--bg:#fff;--fg:#0a0a0a;--dim:#6b6f73;--line:#e4
 export const BRAND = `<div class="brand"><svg viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="12" fill="currentColor"/><rect x="2" y="2" width="2" height="8" fill="var(--bg)"/><rect x="4" y="5" width="2" height="2" fill="var(--bg)"/><rect x="6" y="8" width="4" height="2" fill="var(--accent)"/></svg><span>BETTER-TG-CLI<i>.</i></span></div>`;
 
 /** The footer links, the same on every page. */
-export const footer = (x: Dict['page']) =>
-  `<footer>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
+export const footer = (x: Dict['page'], lang: Lang = 'en') =>
+  `<footer><nav class="pages">${(['mcp', 'faq', 'compare'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
 
 /** Links to the same page in the other languages, keeping the rest of the query intact. */
 export function langLinks(current: Lang, query: URLSearchParams, t: Dict, path: string): string {
@@ -181,6 +181,7 @@ code,.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:.92em}
 .done-p{color:var(--dim);margin:0 0 12px}
 ${GUIDE_CSS}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
+footer .pages{margin-bottom:8px}
 [hidden]{display:none!important}
 </style></head><body><main${returnTo ? ` data-return="${escape(returnTo)}"` : ''}>
 <div class="top">${returnTo ? BRAND : `<a class="home" href="/">${BRAND}</a>`}
@@ -197,7 +198,7 @@ ${returnTo ? `<p class="cli">${x.cliBannerHtml}</p>` : ''}
   <p class="done-p"><a href="#guide">${escape(x.nextInstall)}</a></p>
 </section>
 ${guideHtml(t)}
-${footer(x)}
+${footer(x, lang)}
 </main>
 ${open ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer nonce="' + nonce + '"></script>' : ''}
 <script nonce="${nonce}">
