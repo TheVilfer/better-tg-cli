@@ -6,7 +6,7 @@
 
 import { escape } from './guide';
 import { DICT, type Lang } from './i18n';
-import { BRAND, cardMeta, footer, langLinks, LOGIN_PATH, TOKENS_CSS } from './page';
+import { cardMeta, footer, header, SHELL_CSS, TOKENS_CSS } from './page';
 import { pageUrl, SITE } from './seo';
 
 export const DOC_PATHS = ['/mcp', '/faq', '/compare', '/cases'] as const;
@@ -29,15 +29,6 @@ interface Doc {
   h1: string;
   lead: string;
   sections: Section[];
-}
-interface Nav {
-  home: string;
-  mcp: string;
-  faq: string;
-  compare: string;
-  cases: string;
-  login: string;
-  onThisSite: string;
 }
 interface Faq {
   title: string;
@@ -77,7 +68,6 @@ interface Cases {
   outro: string;
 }
 interface Texts {
-  nav: Nav;
   mcp: Doc;
   faq: Faq;
   compare: Compare;
@@ -114,7 +104,6 @@ const RIVALS = [
 
 const TEXTS: Record<Lang, Texts> = {
   en: {
-    nav: { home: 'Home', mcp: 'MCP server', faq: 'FAQ', compare: 'Compare', cases: 'Use cases', login: 'Login key', onThisSite: 'On this site' },
     mcp: {
       title: 'Telegram MCP server for Claude Code and Cursor | Better-TG-CLI',
       description: 'Connect Telegram to Claude Code, Cursor, Codex, Claude Desktop or Gemini CLI with the open-source Better-TG-CLI MCP server: install, log in, add one line.',
@@ -204,7 +193,6 @@ const TEXTS: Record<Lang, Texts> = {
     },
   },
   es: {
-    nav: { home: 'Inicio', mcp: 'Servidor MCP', faq: 'Preguntas', compare: 'Comparación', cases: 'Casos de uso', login: 'Clave de acceso', onThisSite: 'En este sitio' },
     mcp: {
       title: 'Servidor MCP de Telegram para Claude Code y Cursor | Better-TG-CLI',
       description: 'Conecta Telegram con Claude Code, Cursor, Codex o Claude Desktop con el servidor MCP de código abierto de Better-TG-CLI: instala, inicia sesión y añade una línea.',
@@ -294,7 +282,6 @@ const TEXTS: Record<Lang, Texts> = {
     },
   },
   ru: {
-    nav: { home: 'Главная', mcp: 'MCP-сервер', faq: 'Вопросы', compare: 'Сравнение', cases: 'Сценарии', login: 'Ключ входа', onThisSite: 'На сайте' },
     mcp: {
       title: 'MCP-сервер Telegram для Claude Code и Cursor | Better-TG-CLI',
       description: 'Подключите Telegram к Claude Code, Cursor, Codex, Claude Desktop или Gemini CLI через открытый MCP-сервер Better-TG-CLI: установите, войдите и добавьте одну строку в клиент.',
@@ -396,15 +383,7 @@ function inline(text: string, lang: Lang): string {
     });
 }
 
-const localHref = (path: string, lang: Lang) => (lang === 'en' ? path : `${path}?lang=${lang}`);
 
-function nav(lang: Lang, current: string): string {
-  const n = TEXTS[lang].nav;
-  const items: [string, string][] = [['/', n.home], ['/mcp', n.mcp], ['/cases', n.cases], ['/faq', n.faq], ['/compare', n.compare], [LOGIN_PATH, n.login]];
-  return `<nav class="site" aria-label="${escape(n.onThisSite)}">${items
-    .map(([p, label]) => (p === current ? `<b aria-current="page">${escape(label)}</b>` : `<a href="${localHref(p, lang)}">${escape(label)}</a>`))
-    .join('')}</nav>`;
-}
 
 function ld(data: unknown): string {
   return JSON.stringify(data).replace(/</g, '\\u003c');
@@ -507,24 +486,9 @@ ${cardMeta(lang, head, path)}
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
 ${TOKENS_CSS}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 Geist,system-ui,sans-serif}
-main{max-width:760px;margin:0 auto;padding:40px 16px 72px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px}
-.top>a{color:inherit;text-decoration:none}
-.brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px}
-.brand i{font-style:normal;color:var(--accent)}
-.brand svg{width:22px;height:22px}
-.langs,.site{display:flex;gap:14px;flex-wrap:wrap;font-size:14px}
-.langs b,.site b{font-weight:500}
-.langs a,.site a{color:var(--dim);text-decoration:none}
-.langs a:hover,.site a:hover{color:var(--fg)}
-.site{margin-bottom:48px;padding-bottom:14px;border-bottom:1px solid var(--line)}
-h1{font-size:38px;line-height:1.1;letter-spacing:-1px;font-weight:600;margin:0 0 16px;text-wrap:balance}
-.lead{color:var(--dim);font-size:18px;margin:0 0 32px;text-wrap:pretty}
+${SHELL_CSS}
 h2{font-size:21px;letter-spacing:-.3px;font-weight:600;margin:40px 0 10px}
 section h2{font-size:18px;margin-top:28px}
-a{color:var(--accent)}
 code{font:14px 'Geist Mono',ui-monospace,monospace;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
 pre{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px 16px;overflow-x:auto;margin:12px 0}
 pre code{border:0;padding:0;background:none;font-size:13.5px;line-height:1.6;white-space:pre}
@@ -546,12 +510,8 @@ tr:last-child th,tr:last-child td{border-bottom:0}
 .case ul{margin:0}
 .prompt{margin:0;padding:14px 18px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;font-size:16px}
 .outro{margin-top:48px;color:var(--dim)}
-footer{margin-top:56px;font-size:13px;color:var(--dim)}
-footer .pages{margin-bottom:8px}
-@media (max-width:480px){main{padding-top:28px}h1{font-size:30px;letter-spacing:-.6px}.lead{font-size:16px}}
 </style></head><body><main>
-<div class="top"><a href="${localHref('/', lang)}" aria-label="Better-TG-CLI">${BRAND}</a>${langLinks(lang, query, t, path)}</div>
-${nav(lang, path)}
+${header(lang, query, path)}
 ${html}
 ${footer(t.page, lang)}
 </main></body></html>`;

@@ -2,7 +2,7 @@
 
 import { a, b, code, d, escape, SCREEN_CSS, terminal } from './guide';
 import { DICT, type Dict, type Lang } from './i18n';
-import { BRAND, cardMeta, footer, langLinks, LOGIN_PATH, TOKENS_CSS } from './page';
+import { cardMeta, footer, header, LOGIN_PATH, SHELL_CSS, TOKENS_CSS } from './page';
 import { jsonLd } from './seo';
 
 /** The two ways in: the CLI itself, or the agent skill through skills.sh (it tells the agent to install the CLI). */
@@ -115,20 +115,8 @@ ${cardMeta(lang, x, '/')}
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
 ${TOKENS_CSS}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 Geist,system-ui,sans-serif}
-main{max-width:720px;margin:0 auto;padding:56px 16px 72px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:72px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px}
-.brand i{font-style:normal;color:var(--accent)}
-.brand svg{width:22px;height:22px}
-.langs{display:flex;gap:12px;font-size:14px}
-.langs b{font-weight:500}
-.langs a{color:var(--dim);text-decoration:none}
-.langs a:hover{color:var(--fg)}
-h1{font-size:44px;line-height:1.05;letter-spacing:-1.4px;font-weight:600;margin:0 0 18px;text-wrap:balance}
-.lead{color:var(--dim);font-size:18px;margin:0 0 32px;max-width:48ch;text-wrap:pretty}
-a{color:var(--accent)}
+${SHELL_CSS}
+.lead{max-width:48ch}
 .box{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px 14px 14px 16px;display:flex;gap:12px;align-items:center;margin-bottom:16px}
 .box pre{margin:0;flex:1;min-width:0;white-space:nowrap;overflow-x:auto;font:14px/1.6 'Geist Mono',ui-monospace,monospace}
 .box pre::before{content:'$ ';color:var(--dim)}
@@ -178,13 +166,10 @@ h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:8
 .own code{font:13px 'Geist Mono',ui-monospace,monospace;color:var(--fg)}
 .facts{list-style:none;padding:0;margin:32px 0 0;display:flex;flex-wrap:wrap;gap:6px 24px;font-size:14px;color:var(--dim)}
 .facts li::before{content:'';display:inline-block;width:6px;height:6px;margin-right:9px;background:var(--accent);vertical-align:middle}
-footer{margin-top:56px;font-size:13px;color:var(--dim)}
-footer .pages{margin-bottom:8px}
-@media (max-width:480px){main{padding-top:32px}.top{margin-bottom:48px}h1{font-size:34px;letter-spacing:-.9px}.lead{font-size:16px}.box{flex-direction:column;align-items:flex-start}.box pre{font-size:13px;max-width:100%}}
+@media (max-width:480px){.box{flex-direction:column;align-items:flex-start}.box pre{font-size:13px;max-width:100%}}
 @media (max-width:620px){h2{margin-top:64px}.bento,.steps,.safe{grid-template-columns:1fr}.tile,.tile.wide,.tile.narrow{grid-column:auto}}
 </style></head><body><main>
-<div class="top">${BRAND}
-${langLinks(lang, query, t, '/')}</div>
+${header(lang, query, '/')}
 <h1>${escape(x.h1)}</h1>
 <p class="lead">${escape(x.lead)}</p>
 ${install(t)}
