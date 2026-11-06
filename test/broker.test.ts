@@ -299,6 +299,8 @@ describe('self-serve signup', () => {
     const { e } = await open();
     const html = async (q: string) => (await handle(new Request(`https://broker.test/login?return=${encodeURIComponent(q)}`), e)).text();
     expect(await html(good)).toContain(`data-return="${good}"`);
+    // Opened by the CLI: no page links to wander off from the way back
+    expect(await html(good)).not.toContain('class="site"');
     expect(await html('https://evil.example/cb')).not.toContain('data-return');
   });
 
