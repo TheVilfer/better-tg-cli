@@ -3,6 +3,7 @@
  * Invites live in KV under sha256(token); the raw token is never stored or logged.
  */
 import { ICON_SVG, OG_PNG_BASE64 } from './assets';
+import { docResponse, isDocPath } from './docs';
 import { landingResponse } from './landing';
 import { LOGIN_PATH, loopbackReturn, OLD_LOGIN_PATH, pageResponse } from './page';
 import { pickLang, type Lang } from './i18n';
@@ -106,6 +107,11 @@ export async function handle(request: Request, env: Env, now = new Date()): Prom
     const lang = pageLang(url, request);
     if (lang instanceof Response) return lang;
     return landingResponse({ lang, query: url.searchParams });
+  }
+  if (isDocPath(url.pathname) && read) {
+    const lang = pageLang(url, request);
+    if (lang instanceof Response) return lang;
+    return docResponse(url.pathname, lang, url.searchParams);
   }
   if (url.pathname === OLD_LOGIN_PATH && read) {
     return Response.redirect(`${url.origin}${LOGIN_PATH}${url.search}`, 302);

@@ -179,6 +179,7 @@ h2{font-size:26px;line-height:1.15;letter-spacing:-.6px;font-weight:600;margin:8
 .facts{list-style:none;padding:0;margin:32px 0 0;display:flex;flex-wrap:wrap;gap:6px 24px;font-size:14px;color:var(--dim)}
 .facts li::before{content:'';display:inline-block;width:6px;height:6px;margin-right:9px;background:var(--accent);vertical-align:middle}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
+footer .pages{margin-bottom:8px}
 @media (max-width:480px){main{padding-top:32px}.top{margin-bottom:48px}h1{font-size:34px;letter-spacing:-.9px}.lead{font-size:16px}.box{flex-direction:column;align-items:flex-start}.box pre{font-size:13px;max-width:100%}}
 @media (max-width:620px){h2{margin-top:64px}.bento,.steps,.safe{grid-template-columns:1fr}.tile,.tile.wide,.tile.narrow{grid-column:auto}}
 </style></head><body><main>
@@ -194,7 +195,7 @@ ${screen(t)}
 ${bento(x)}
 ${security(x)}
 ${login(x, href)}
-${footer(t.page)}
+${footer(t.page, lang)}
 </main>
 <script nonce="${nonce}">
 const T = ${JSON.stringify({ copy: t.client.copy, copied: t.client.copied, copyManual: t.client.copyManual }).replace(/</g, '\\u003c')};
