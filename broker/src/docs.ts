@@ -67,13 +67,21 @@ const INSTALL = `brew install thevilfer/tap/better-tg-cli   # macOS or Linux
 scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket
 scoop install better-tg-cli                 # Windows
 npm install -g better-tg-cli                # any OS, Node 20+`;
-const LOGIN = `telegram onboard      # a local page: a free login key or your own API keys, then a QR code`;
+const LOGIN = `telegram onboard      # free login key or your own API keys, then a QR code`;
 const CLIENTS = `claude mcp add telegram -- telegram mcp                     # Claude Code
 codex plugin marketplace add TheVilfer/better-tg-cli         # Codex (skill and server)
 codex plugin add better-tg-cli@better-tg-cli
 gemini extensions install https://github.com/TheVilfer/better-tg-cli   # Gemini CLI`;
-const JSON_CONFIG = `{ "mcpServers": { "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] } } }`;
-const NPX_CONFIG = `{ "mcpServers": { "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] } } }`;
+const JSON_CONFIG = `{
+  "mcpServers": {
+    "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] }
+  }
+}`;
+const NPX_CONFIG = `{
+  "mcpServers": {
+    "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] }
+  }
+}`;
 
 /** Projects compared on /compare, from each one's README and manifest (November 2026). */
 const RIVALS = [
@@ -418,7 +426,8 @@ ul{padding-left:20px}li+li{margin-top:6px}
 table{border-collapse:collapse;width:100%;font-size:14px}
 th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
 thead th{background:var(--panel);font-weight:600}
-tbody th{font-weight:500;color:var(--dim);white-space:nowrap}
+tbody th{font-weight:500;color:var(--dim);min-width:8.5em}
+table{min-width:620px}
 tr:last-child th,tr:last-child td{border-bottom:0}
 .note{color:var(--dim);font-size:14px}
 footer{margin-top:56px;font-size:13px;color:var(--dim)}
