@@ -93,9 +93,54 @@ export const TOKENS_CSS = `:root{--bg:#fff;--fg:#0a0a0a;--dim:#6b6f73;--line:#e4
 /** The pixel logo and the name. */
 export const BRAND = `<div class="brand"><svg viewBox="0 0 12 12" shape-rendering="crispEdges" aria-hidden="true"><rect width="12" height="12" fill="currentColor"/><rect x="2" y="2" width="2" height="8" fill="var(--bg)"/><rect x="4" y="5" width="2" height="2" fill="var(--bg)"/><rect x="6" y="8" width="4" height="2" fill="var(--accent)"/></svg><span>BETTER-TG-CLI<i>.</i></span></div>`;
 
-/** The footer links, the same on every page. */
-export const footer = (x: Dict['page'], lang: Lang = 'en') =>
-  `<footer><nav class="pages">${(['mcp', 'faq', 'compare'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
+/**
+ * The layout every page shares: width, the header (logo, languages, page links), headings, links
+ * and the footer. Pages add only the styles of their own content.
+ */
+export const SHELL_CSS = `*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 Geist,system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:40px 16px 72px}
+.top{margin-bottom:48px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.top .row{display:flex;align-items:center;justify-content:space-between;gap:10px 20px;flex-wrap:wrap}
+.top .row>a{color:inherit;text-decoration:none}
+.brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px}
+.brand i{font-style:normal;color:var(--accent)}
+.brand svg{width:22px;height:22px}
+.langs,.site{display:flex;align-items:center;gap:6px 16px;flex-wrap:wrap;font-size:14px}
+.langs b,.site b{font-weight:500}
+.langs a,.site a{color:var(--dim);text-decoration:none}
+.langs a:hover,.site a:hover{color:var(--fg)}
+.site{margin-top:16px}
+h1{font-size:40px;line-height:1.08;letter-spacing:-1.1px;font-weight:600;margin:0 0 16px;text-wrap:balance}
+.lead{color:var(--dim);font-size:18px;margin:0 0 32px;text-wrap:pretty}
+a{color:var(--accent)}
+footer{margin-top:72px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--dim)}
+footer .pages{margin-bottom:8px}
+@media (max-width:480px){main{padding-top:28px}.top .langs{gap:12px}.top .langs>*{font-size:0}.top .langs>*::after{content:attr(data-short);font-size:13px;letter-spacing:.5px}.site{gap:6px 14px}h1{font-size:31px;letter-spacing:-.7px}.lead{font-size:16px}}`;
+
+/** Pages in the header, in this order. */
+const NAV_PAGES = [['/cases', 'cases'], ['/faq', 'faq'], ['/compare', 'compare']] as const;
+
+/**
+ * The header of every page, the same everywhere: the logo (a link home) and the language switch on
+ * top, the page links under them with the current page marked. `bare` leaves out the page links, for
+ * the login page opened by the CLI, where leaving would lose the way back.
+ */
+export function header(lang: Lang, query: URLSearchParams, path: string, bare = false): string {
+  const n = DICT[lang].page.nav;
+  const href = (p: string) => (lang === 'en' ? p : `${p}?lang=${lang}`);
+  const logo = bare || path === '/' ? BRAND : `<a href="${href('/')}" aria-label="Better-TG-CLI">${BRAND}</a>`;
+  const links = bare
+    ? ''
+    : `<nav class="site" aria-label="${escape(n.onThisSite)}">${NAV_PAGES.map(([p, k]) =>
+        p === path ? `<b aria-current="page">${escape(n[k])}</b>` : `<a href="${href(p)}">${escape(n[k])}</a>`).join('')}</nav>`;
+  return `<header class="top"><div class="row">${logo}${langLinks(lang, query, DICT[lang], path)}</div>${links}</header>`;
+}
+/** The footer, the same on every page: the page links, the login key and the source. */
+export const footer = (lang: Lang) => {
+  const x = DICT[lang].page;
+  return `<footer><nav class="pages">${(['mcp', 'cases', 'faq', 'compare', 'login'] as const).map(k => `<a href="/${k}${lang === 'en' ? '' : `?lang=${lang}`}">${escape(x.footerPages[k])}</a>`).join(' · ')}</nav>${escape(x.footerSource)}: <a href="https://github.com/TheVilfer/better-tg-cli">github.com/TheVilfer/better-tg-cli</a> · <a href="https://github.com/TheVilfer/better-tg-cli/blob/main/PRIVACY.md">${escape(x.footerPrivacy)}</a> · <a href="https://github.com/TheVilfer/better-tg-cli#code-signing-policy">Code signing policy</a></footer>`;
+};
 
 /** Links to the same page in the other languages, keeping the rest of the query intact. */
 export function langLinks(current: Lang, query: URLSearchParams, t: Dict, path: string): string {
@@ -104,8 +149,8 @@ export function langLinks(current: Lang, query: URLSearchParams, t: Dict, path: 
     q.set('lang', l);
     const name = escape(DICT[l].langName);
     return l === current
-      ? `<b aria-current="true">${name}</b>`
-      : `<a href="${path}?${escape(q.toString())}" hreflang="${l}" lang="${l}">${name}</a>`;
+      ? `<b aria-current="true" data-short="${l.toUpperCase()}">${name}</b>`
+      : `<a href="${path}?${escape(q.toString())}" hreflang="${l}" lang="${l}" data-short="${l.toUpperCase()}">${name}</a>`;
   });
   return `<nav class="langs" aria-label="${escape(t.page.language)}">${links.join('')}</nav>`;
 }
@@ -143,19 +188,7 @@ ${returnTo ? '<meta name="robots" content="noindex">\n' : ''}${cardMeta(lang, x,
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
 ${TOKENS_CSS}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 Geist,system-ui,sans-serif}
-main{max-width:620px;margin:0 auto;padding:56px 16px 72px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:40px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:400;letter-spacing:1px;font-size:15px}
-.brand i{font-style:normal;color:var(--accent)}
-.brand svg{width:22px;height:22px}
-.langs{display:flex;gap:12px;font-size:14px}
-.langs b{font-weight:500}
-.langs a{color:var(--dim);text-decoration:none}
-.langs a:hover{color:var(--fg)}
-h1{font-size:34px;line-height:1.1;letter-spacing:-.8px;font-weight:600;margin:0 0 14px;text-wrap:balance}
-.lead{color:var(--dim);margin:0 0 32px;max-width:52ch}
+${SHELL_CSS}
 label{display:block;font-weight:500;font-size:14px;margin-bottom:8px}
 input{width:100%;font:inherit;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--fg);outline:none}
 input:focus{border-color:var(--accent)}
@@ -170,8 +203,6 @@ button:disabled{opacity:.5;cursor:default}
 .cli{padding:12px 14px;border:1px solid var(--accent);border-radius:10px;margin:0 0 24px;font-size:15px}
 .err{color:var(--err);font-size:14px;margin:12px 0 0}
 .closed{padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
-a{color:var(--accent)}
-.home{color:inherit;text-decoration:none}
 code,.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:.92em}
 .box{position:relative;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:14px 14px 14px 16px;display:flex;gap:12px;align-items:flex-start}
 .box pre{margin:0;flex:1;min-width:0;white-space:pre-wrap;word-break:break-all;font:14px/1.6 'Geist Mono',ui-monospace,monospace}
@@ -180,12 +211,10 @@ code,.mono{font-family:'Geist Mono',ui-monospace,monospace;font-size:.92em}
 .done-h{font-size:22px;margin:0 0 6px}
 .done-p{color:var(--dim);margin:0 0 12px}
 ${GUIDE_CSS}
-footer{margin-top:56px;font-size:13px;color:var(--dim)}
-footer .pages{margin-bottom:8px}
+#start,#done{max-width:560px}
 [hidden]{display:none!important}
 </style></head><body><main${returnTo ? ` data-return="${escape(returnTo)}"` : ''}>
-<div class="top">${returnTo ? BRAND : `<a class="home" href="/">${BRAND}</a>`}
-${langLinks(lang, query, t, LOGIN_PATH)}</div>
+${header(lang, query, LOGIN_PATH, !!returnTo)}
 <h1>${escape(x.h1)}</h1>
 <p class="lead">${x.leadHtml}</p>
 ${returnTo ? `<p class="cli">${x.cliBannerHtml}</p>` : ''}
@@ -198,7 +227,7 @@ ${returnTo ? `<p class="cli">${x.cliBannerHtml}</p>` : ''}
   <p class="done-p"><a href="#guide">${escape(x.nextInstall)}</a></p>
 </section>
 ${guideHtml(t)}
-${footer(x, lang)}
+${footer(lang)}
 </main>
 ${open ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer nonce="' + nonce + '"></script>' : ''}
 <script nonce="${nonce}">

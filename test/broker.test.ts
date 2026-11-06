@@ -299,6 +299,8 @@ describe('self-serve signup', () => {
     const { e } = await open();
     const html = async (q: string) => (await handle(new Request(`https://broker.test/login?return=${encodeURIComponent(q)}`), e)).text();
     expect(await html(good)).toContain(`data-return="${good}"`);
+    // Opened by the CLI: no page links to wander off from the way back
+    expect(await html(good)).not.toContain('class="site"');
     expect(await html('https://evil.example/cb')).not.toContain('data-return');
   });
 
@@ -340,6 +342,17 @@ describe('self-serve signup', () => {
       expect(html).toContain('npx skills add TheVilfer/better-tg-cli');
       expect(html.match(/<button type="button" role="tab"/g)).toHaveLength(2);
       expect(html).toContain('<a class="btn" href="/login">');
+      // Every page has the same header links; /mcp and the login key are in the footer only
+      const links = (h: string) => /<nav class="site".*?<\/nav>/s.exec(h)![0]
+        .replace(/<b aria-current="page">([^<]*)<\/b>/, '<a>$1</a>').replace(/ href="[^"]*"/g, '');
+      const faq = await (await handle(new Request('https://broker.test/faq'), {} as Env)).text();
+      expect(links(faq)).toBe(links(html));
+      for (const h of [html, faq]) expect(/<header.*<\/header>/s.exec(h)![0]).not.toMatch(/\/mcp|\/login/);
+      // The language switch is on top, the page links under the logo
+      for (const h of [html, faq]) expect(h).toMatch(/<header class="top"><div class="row">.*<nav class="langs".*<\/div><nav class="site"/s);
+      expect(/<footer>.*<\/footer>/s.exec(faq)![0]).not.toContain('class="langs"');
+      expect(html).toContain('<a href="/mcp">');
+      expect(faq).toContain('<a href="/login">Get a login key</a>');
       expect(html.match(/<div class="tile/g)).toHaveLength(6);
       expect(html).toContain('Log in on up to 3 computers');
       expect(html).toContain('<h2 id="security">About security</h2>');
@@ -464,11 +477,11 @@ describe('search engines and AI crawlers', () => {
     const res = await get('/sitemap.xml');
     expect(res.headers.get('content-type')).toContain('application/xml');
     const xml = await res.text();
-    const paths = ['/', '/mcp', '/faq', '/compare', '/login'];
+    const paths = ['/', '/mcp', '/cases', '/faq', '/compare', '/login'];
     expect(PAGE_URLS).toEqual(paths.flatMap(p => ['', '?lang=es', '?lang=ru'].map(q => `https://better-tg-cli.com${p}${q}`)));
     for (const url of PAGE_URLS) expect(xml).toContain(`<loc>${url}</loc>`);
-    expect(xml.match(/<url>/g)).toHaveLength(15);
-    expect(xml.match(/hreflang="x-default"/g)).toHaveLength(15);
+    expect(xml.match(/<url>/g)).toHaveLength(18);
+    expect(xml.match(/hreflang="x-default"/g)).toHaveLength(18);
     // Every URL in the sitemap answers 200
     for (const url of PAGE_URLS) expect((await get(new URL(url).pathname + new URL(url).search)).status, url).toBe(200);
   });
@@ -506,9 +519,9 @@ describe('search engines and AI crawlers', () => {
     expect(await title('/login')).not.toBe(await title('/'));
   });
 
-  it('serves /mcp, /faq and /compare in three languages, linked from every page', async () => {
+  it('serves /mcp, /cases, /faq and /compare in three languages, linked from every page', async () => {
     const CYRILLIC = /[А-Яа-яЁё]/;
-    for (const path of ['/mcp', '/faq', '/compare']) {
+    for (const path of ['/mcp', '/cases', '/faq', '/compare']) {
       for (const lang of ['en', 'es', 'ru']) {
         const res = await get(lang === 'en' ? path : `${path}?lang=${lang}`);
         const html = await res.text();
@@ -532,11 +545,18 @@ describe('search engines and AI crawlers', () => {
     for (const q of ld.mainEntity) expect(q.acceptedAnswer.text).not.toMatch(/`|\]\(/);
     expect(await (await get('/compare')).text()).toContain('<a href="https://github.com/chigwell/telegram-mcp" rel="noopener">chigwell/telegram-mcp</a>');
     expect(await (await get('/mcp')).text()).toContain('claude mcp add telegram -- telegram mcp');
+    const cases = await (await get('/cases')).text();
+    const casesLd = JSON.parse(/<script type="application\/ld\+json" nonce="[^"]+">(.*?)<\/script>/s.exec(cases)![1]);
+    // Written for people: every case has what you need and a prompt to copy, the JSON-LD list matches
+    const caseCount = cases.match(/<section class="case">/g)!.length;
+    expect(casesLd.mainEntity.itemListElement.length).toBe(caseCount);
+    expect(cases.match(/<blockquote class="prompt">/g)).toHaveLength(caseCount);
+    for (const item of casesLd.mainEntity.itemListElement) expect(item.description).not.toMatch(/`|\]\(/);
     // The footer links every page, keeping the language
     for (const path of ['/', '/login?lang=ru', '/faq?lang=es']) {
       const html = await (await get(path)).text();
       const q = path.includes('lang=') ? `?lang=${path.split('lang=')[1]}` : '';
-      for (const p of ['/mcp', '/faq', '/compare']) expect(html, path).toContain(`<a href="${p}${q}">`);
+      for (const p of ['/mcp', '/cases', '/faq', '/compare']) expect(html, path).toContain(`<a href="${p}${q}">`);
     }
     // A Spanish browser at /faq is sent to /faq?lang=es
     expect((await get('/faq', { headers: { 'accept-language': 'es' } })).headers.get('location')).toBe('https://better-tg-cli.com/faq?lang=es');
