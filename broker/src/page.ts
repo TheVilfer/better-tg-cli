@@ -121,7 +121,7 @@ footer .langs{font-size:13px;gap:12px}
 @media (max-width:480px){main{padding-top:28px}.site{order:3;width:100%;margin:0;gap:6px 14px}.top .key{margin-left:auto}h1{font-size:31px;letter-spacing:-.7px}.lead{font-size:16px}}`;
 
 /** Pages in the header, in this order. */
-const NAV_PAGES = [['/cases', 'cases'], ['/mcp', 'mcp'], ['/faq', 'faq'], ['/compare', 'compare']] as const;
+const NAV_PAGES = [['/cases', 'cases'], ['/faq', 'faq'], ['/compare', 'compare']] as const;
 
 /**
  * The header of every page, one row: the logo (a link home) and the page links, with the current
