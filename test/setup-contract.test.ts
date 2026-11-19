@@ -7,7 +7,7 @@ import { EXIT_NEEDS_APPROVAL } from '../src/approval.js';
 import type { SetupResult } from '../src/setup-contract.js';
 import {
   RUN_ALLOWLIST, SETUP_EXIT, SETUP_SCHEMA, TERMINAL_EVENTS,
-  runRefusal, setupEventErrors, setupExitCode, setupResultErrors,
+  fixOutcome, runRefusal, setupEventErrors, setupExitCode, setupResultErrors,
 } from './setup-contract-check.js';
 import { cliArgs } from './cli.js';
 
@@ -134,6 +134,49 @@ describe('setup contract, schema 1', () => {
       else for (const line of body.trim().split('\n')) expect(setupEventErrors(JSON.parse(line))).toEqual([]);
     }
   });
+
+  it('the doc tells the agent to re-run the reporting command after a fix.run, not to trust exit 0', () => {
+    const rule = doc.slice(doc.indexOf('**After a `fix.run`, check again.**'), doc.indexOf('### `fix`: the person has to do it'));
+    expect(rule).toContain('re-runs the command that reported the problem');
+    expect(rule).toContain('not the fix\'s exit code');
+    expect(rule).toContain('"action": "skipped"');
+    expect(rule).toContain('does not run the same fix');
+  });
+
+  it('judges a fix.run by the recheck: exit 0 with the problem still there is not fixed', () => {
+    const runs = fixtures.fixRuns as { name: string; problem: string; runExit: number; outcome: string; runStdout: unknown[]; recheck: SetupResult }[];
+    for (const r of runs) {
+      expect(setupResultErrors(r.recheck), r.name).toEqual([]);
+      expect(fixOutcome(r.problem, r.runExit, r.recheck), r.name).toBe(r.outcome);
+    }
+    // the case this rule exists for: the fix exits 0 and still did nothing
+    expect(runs.some(r => r.runExit === 0 && r.outcome === 'not_fixed')).toBe(true);
+  });
+
+  it('skill install exits 0 and skips a folder with someone else\'s files, so only a recheck shows it', () => {
+    const h = mkdtempSync(join(tmpdir(), 'tg-contract-skill-'));
+    try {
+      const folder = join(h, '.claude', 'skills', 'better-tg-cli');
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'README.md'), 'not ours\n');
+      // Agent homes come from these variables first; none may point at the real ones
+      const env: NodeJS.ProcessEnv = { ...baseEnv(), HOME: h, USERPROFILE: h };
+      for (const k of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GROK_HOME', 'XDG_CONFIG_HOME']) delete env[k];
+      const run = cli(['skill', 'install', '--agent', 'claude-code', '--json'], env);
+      expect(run.status, run.stderr).toBe(0);
+      const [row] = JSON.parse(run.stdout);
+      const shown = (fixtures.fixRuns as { runStdout: Record<string, unknown>[] }[])[0].runStdout[0];
+      expect(Object.keys(row)).toEqual(Object.keys(shown));
+      expect({ action: row.action, reason: row.reason }).toEqual({ action: shown.action, reason: shown.reason });
+      // the recheck: the skill is still not there
+      const status = cli(['skill', 'status', '--json'], env);
+      expect(status.status, status.stderr).toBe(0);
+      expect(JSON.parse(status.stdout).find((r: { agent: string }) => r.agent === 'claude-code').kind).toBe('foreign');
+      expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('not ours\n');
+    } finally {
+      rmSync(h, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it('the doc names exactly the commands of the allowlist', () => {
     const line = doc.slice(doc.indexOf('Allowed today:'), doc.indexOf('Later PRs add'));

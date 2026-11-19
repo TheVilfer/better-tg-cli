@@ -93,8 +93,34 @@ closed: a new field there still needs a new schema number.
   characters. Anything else is invalid, whoever produced it.
 - `profile` is the `TG_PROFILE` to run it under, or `null` for the default profile. It is always
   explicit because several clients hand a process only a filtered environment.
-- `expect` is always `{ "exit": 0 }`. A run fixed the problem only when it exited `0`; any other
-  code, `3` (write approval needed) included, means it did not.
+- `expect` is always `{ "exit": 0 }`. Any other exit code, `3` (write approval needed) included,
+  means the run did not fix the problem. Exit `0` alone does not mean it did (see below).
+
+**After a `fix.run`, check again.** Exit `0` means only that the command ran. The agent then
+re-runs the command that reported the problem, exactly as it ran it the first time, and trusts
+that result, not the fix's exit code: the problem is fixed when its `id` is gone from the new
+result. If it is
+still there, the agent stops and passes the problem's `message` on; it does not run the same fix
+again.
+
+Today's only allowed fix shows why. `skill install` leaves a skill folder that holds someone
+else's files alone, reports `"action": "skipped"` for that agent and still exits `0`
+(`skill install --agent claude-code --json`, not a contract result):
+
+```text
+[{"agent":"claude-code","path":"/home/u/.claude/skills/better-tg-cli","action":"skipped","reason":"something else lives there; not touching it"}]
+```
+
+The check that follows still reports the problem, so it is not fixed:
+
+```json
+{ "schema": 1, "ok": false, "problems": [
+  { "id": "skill_missing", "severity": "error", "message": "Claude Code has no Better-TG-CLI skill.",
+    "fix": { "run": ["skill", "install", "--agent", "claude-code"], "profile": null, "expect": { "exit": 0 } } }
+] }
+```
+
+`fixOutcome()` in the checker states this rule, and `fixRuns` in the fixtures holds the cases.
 
 Allowed today: `skill install [--agent <ids...>] [--json]`. Later PRs add their own entries (`doctor --fix`,
 `connect --refresh`). Never allowed: anything that changes write authority or credentials

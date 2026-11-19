@@ -142,3 +142,13 @@ export function setupEventErrors(value: unknown): string[] {
   if (e.event === 'error' && (typeof e.message !== 'string' || !e.message.trim())) errors.push('error needs a message');
   return errors;
 }
+
+/**
+ * What a `fix.run` achieved, judged as an agent must: a non-zero exit means it failed, and an exit
+ * `0` counts only when `recheck` (the command that reported the problem, run again) no longer
+ * reports the problem's id. Exit `0` with the problem still there is `not_fixed`.
+ */
+export function fixOutcome(problemId: string, runExit: number, recheck: SetupResult): 'fixed' | 'not_fixed' | 'failed' {
+  if (runExit !== 0) return 'failed';
+  return recheck.problems.some(p => p.id === problemId) ? 'not_fixed' : 'fixed';
+}

@@ -121,6 +121,22 @@
       "result": { "schema": 1, "ok": true, "problems": [
         { "id": "x", "severity": "info", "message": "a\nb", "fix": { "unavailable": "u" } } ] } }
   ],
+  "fixRuns": [
+    { "name": "skill install skipped a folder with someone else's files: exit 0, still missing",
+      "problem": "skill_missing", "runExit": 0, "outcome": "not_fixed",
+      "runStdout": [{ "agent": "claude-code", "path": "/home/u/.claude/skills/better-tg-cli", "action": "skipped", "reason": "something else lives there; not touching it" }],
+      "recheck": { "schema": 1, "ok": false, "problems": [
+        { "id": "skill_missing", "severity": "error", "message": "Claude Code has no Better-TG-CLI skill.",
+          "fix": { "run": ["skill", "install", "--agent", "claude-code"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "skill install installed it: exit 0, gone on the recheck",
+      "problem": "skill_missing", "runExit": 0, "outcome": "fixed",
+      "runStdout": [{ "agent": "claude-code", "path": "/home/u/.claude/skills/better-tg-cli", "action": "installed" }],
+      "recheck": { "schema": 1, "ok": true, "problems": [] } },
+    { "name": "a run that exited non-zero failed, whatever the recheck says",
+      "problem": "skill_missing", "runExit": 1, "outcome": "failed",
+      "runStdout": [],
+      "recheck": { "schema": 1, "ok": true, "problems": [] } }
+  ],
   "events": {
     "valid": [
       [
