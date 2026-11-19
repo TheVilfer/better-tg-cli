@@ -92,6 +92,10 @@ brew install thevilfer/tap/better-tg-cli   # отдельный бинарник
 npm install -g better-tg-cli               # Node >= 20, любая ОС
 ```
 
+Без Homebrew, Node и sudo (macOS, Linux): `curl -fsSL https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/install.sh | sh` кладёт бинарник релиза
+в `~/.local/bin`, сверив SHA-256, и печатает итог в JSON для агентов
+([подробности и переход со старого скрипта](docs/install.md)).
+
 На Windows (экспериментально) через [Scoop](https://scoop.sh) или npm:
 
 ```powershell

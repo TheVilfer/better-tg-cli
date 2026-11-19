@@ -93,6 +93,10 @@ brew install thevilfer/tap/better-tg-cli   # standalone binary, macOS and Linux
 npm install -g better-tg-cli               # Node >= 20, any OS
 ```
 
+No Homebrew, Node or sudo (macOS, Linux): `curl -fsSL https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/install.sh | sh` puts the release binary
+in `~/.local/bin` after checking its SHA-256 and prints the result as JSON for agents
+([details and moving from the old script](docs/install.md)).
+
 On Windows (experimental), with [Scoop](https://scoop.sh) or npm:
 
 ```powershell

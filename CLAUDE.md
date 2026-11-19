@@ -6,8 +6,8 @@ Changes land through a branch and a pull request (green CI) into `next`, never b
 `main` is always the last stable release: only release PRs are merged into it.
 The version lives only in `package.json`. `scripts/gen-version.mjs` (run by build, test and
 `release.sh`) copies it into `src/version.ts`, the plugin manifests, `plugin/*` (including the
-pinned `npx better-tg-cli@X.Y.Z`), `server.json` and `gemini-extension.json`; CI fails if any of
-them drifts. Never edit a version by hand anywhere else. Releases
+pinned `npx better-tg-cli@X.Y.Z`), `server.json`, `gemini-extension.json` and the `VERSION=` pin of
+`install.sh`; CI fails if any of them drifts. Never edit a version by hand anywhere else. Releases
 use `scripts/release.sh` (see Releasing below): a release PR from `next` into `main` bumps the
 version, computed from the PR titles, then the tag `vX.Y.Z` is pushed from main after the merge.
 `scripts/release.sh pre` publishes a release candidate (`vX.Y.Z-rc.N`) of `next` without a bump.
@@ -76,6 +76,10 @@ these commands do, all run on `next`:
   ancestor of `next`, because the next release counts its PRs from that tag.
 - `scripts/release.sh tag` then tags main `vX.Y.Z`, pushes the tag and opens a `main` → `next`
   PR that brings the release commit back (merge commit again).
+
+`install.sh` is the user installer (release binary into `~/.local/bin`, see `docs/install.md`),
+pinned to the package version; on Linux it falls back to the `.tar.gz` that `build-binary.sh` adds
+next to `.tar.xz`. The old checkout-and-`npm -g` installer is `scripts/dev-install.sh`.
 
 A fix that cannot wait for `next` goes as a PR into `main` like a release, followed by the same
 `main` → `next` merge.

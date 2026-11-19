@@ -162,7 +162,7 @@ jobs:
           name: mcpb
           path: release
       - name: Checksums
-        run: cd release && sha256sum *.tar.xz *.zip *.mcpb > SHA256SUMS && cat SHA256SUMS
+        run: cd release && sha256sum *.tar.xz *.tar.gz *.zip *.mcpb > SHA256SUMS && cat SHA256SUMS
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
