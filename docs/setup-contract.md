@@ -5,10 +5,10 @@ one shape in which setup commands report problems and say how to fix them, so an
 the output without parsing prose. The types live in [`src/setup-contract.ts`](../src/setup-contract.ts)
 (types only). The rules below are checked by
 [`test/setup-contract-check.ts`](../test/setup-contract-check.ts), which every example on this
-page passes; the first command that emits the contract moves the checker into `src/`.
+page passes; the first CLI command that emits the contract moves the checker into `src/`.
 
-**Status.** Defined, not yet emitted. The commands that will emit it (`doctor`, `connect`, the
-installer and the managed update) come in later PRs of the agent-compatibility plan (#137).
+**Status.** Emitted by `install.sh` (see [`docs/install.md`](install.md)). `doctor`, `connect` and
+the managed update come in later PRs of the agent-compatibility plan (#137).
 
 ## What does not change
 
