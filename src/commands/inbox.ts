@@ -6,11 +6,11 @@ import { formatInboxMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import ora from '../spinner.js';
 import { fail } from '../errors.js';
-import { choiceOption, nonNegativeInt, positiveInt } from '../args.js';
+import { choiceOption, nonNegativeInt } from '../args.js';
 
 export const inboxCommand = new Command('inbox')
   .description('Show unread messages summary (most unread first)')
-  .option('-n, --limit <number>', 'Show at most N chats (totals still count all)', positiveInt, 30)
+  .option('-n, --limit <number>', 'Show at most N chats (totals still count all; 0 = totals only)', nonNegativeInt, 30)
   .option('--unmuted', 'Hide muted chats (usually what a human actually reads)')
   .option('--include-archived', 'Also count archived chats (Telegram itself does not badge them)')
   .addOption(choiceOption('--type <type>', 'Filter by type (user includes bots)', CHAT_TYPES))

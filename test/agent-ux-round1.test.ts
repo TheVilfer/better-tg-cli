@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -296,4 +296,32 @@ describe('10 usage errors exit 2, and are found before the write guard', () => {
       expect(oneJson(r.out).error.code).toBe('invalid_argument');
     }
   }, 60_000);
+});
+
+describe('12 inbox -n 0 still gives the totals only', () => {
+  it('exit 0, the totals, no chats', () => {
+    const r = cli(['inbox', '-n', '0', '--json']);
+    expect(r.code, r.err).toBe(0);
+    const inbox = oneJson(r.out);
+    expect(inbox).toMatchObject({ totalUnread: expect.any(Number), chatsWithUnread: expect.any(Number), chats: [] });
+    expect(inbox.totalUnread).toBeGreaterThan(0);
+    expect(cli(['inbox', '-n', '-1', '--json']).code).toBe(2);
+  }, 30_000);
+});
+
+describe('12 the skill says what the CLI does', () => {
+  const read = (f: string) => readFileSync(join(__dirname, '..', 'skills', 'better-tg-cli', f), 'utf8');
+  it('a chat that is not found is exit 1, not "anything else is refused (exit 2)"', () => {
+    const skill = read('SKILL.md');
+    expect(skill).not.toMatch(/anything else is refused \(exit 2\)/);
+    expect(skill).toMatch(/fits none is "not found" \(exit 1\)/);
+  });
+
+  it('mark-read promises no message ID; forward names its source and destination IDs', () => {
+    const ref = read('reference.md');
+    const markRead = ref.split('\n').filter(l => l.startsWith('| ') && l.includes('`mark-read`'));
+    expect(markRead).toHaveLength(1);
+    expect(markRead[0]).not.toMatch(/messageId/);
+    expect(ref).toMatch(/\| `forward` \|.*`messageIds` are the \*\*source\*\* IDs.*`forwardedIds`/);
+  });
 });
