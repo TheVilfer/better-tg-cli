@@ -123,7 +123,11 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   let resolveDone!: (result: { user?: LoginUser; mode?: WriteMode }) => void;
   const done = new Promise<{ user?: LoginUser; mode?: WriteMode }>(r => (resolveDone = r));
   let modeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When the mode step gives up; `modeLeft` is the time still left while a choice is being applied */
+  let modeDeadline = 0;
+  let modeLeft = 0;
   let applying = false;
+  let finished = false;
 
   const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined }, patch);
 
@@ -147,7 +151,11 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   }
 
   function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : readBack(options.defaultMode)?.mode): void {
+    // Exactly one done, whatever comes first: a saved choice or the time running out
+    if (finished) return;
+    finished = true;
     if (modeTimer) clearTimeout(modeTimer);
+    modeTimer = undefined;
     set({ step: 'done', mode, qrSvg: undefined });
     options.emit({ event: 'done', ...(state.user ? { user: state.user } : {}), ...(mode ? { mode } : {}) });
     resolveDone({ user: state.user, mode });
@@ -157,8 +165,24 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   function askMode(error?: string): void {
     set({ step: 'mode', qrSvg: undefined, error });
     options.emit({ event: 'waiting_mode' });
-    modeTimer = setTimeout(() => finish(), options.modeWaitMs ?? MODE_WAIT_MS);
+    waitMode(options.modeWaitMs ?? MODE_WAIT_MS);
+  }
+
+  function waitMode(ms: number): void {
+    if (modeTimer) clearTimeout(modeTimer);
+    modeDeadline = Date.now() + ms;
+    modeTimer = setTimeout(() => finish(), ms);
     modeTimer.unref?.();
+  }
+
+  /**
+   * The clock stops while a choice is applied (a dialog may stay open for long): running out then
+   * would send done with the old mode, and the approval a second done. A refusal resumes it.
+   */
+  function pauseMode(): void {
+    if (modeTimer) clearTimeout(modeTimer);
+    modeTimer = undefined;
+    modeLeft = Math.max(0, modeDeadline - Date.now());
   }
 
   async function runLogin(): Promise<void> {
@@ -279,6 +303,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       const span = typeof body.for === 'string' ? body.for : '';
       if ((mode !== 'read-only' && mode !== 'ask' && mode !== 'on') || !(span in MODE_SPANS)) return json(res, 400, { error: 'bad_mode' });
       applying = true;
+      pauseMode();
       try {
         const choice: ModeChoice = { mode, forSeconds: MODE_SPANS[span] };
         // May show a dialog (macOS, Windows) or a terminal prompt and wait for the person
@@ -296,6 +321,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
         return json(res, 202, { ok: true });
       } finally {
         applying = false;
+        if (!finished && !abort.signal.aborted) waitMode(modeLeft);
       }
     }
     if (route === 'retry') {

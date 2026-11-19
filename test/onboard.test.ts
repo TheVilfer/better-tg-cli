@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request } from 'node:http';
 import { rpcCode, type LoginDriver } from '../src/auth.js';
 import { RPCError } from 'teleproto/errors/index.js';
@@ -364,6 +364,74 @@ describe('rpcCode', () => {
       f.st.value = { mode: 'read-only' }; // `telegram write-access off` in another terminal
       expect((await until('done')).mode).toBe('read-only');
       expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'read-only' });
+    });
+
+    describe('the clock stops while a choice is being applied', () => {
+      afterEach(() => vi.useRealTimers());
+      // Only the clock the step uses is faked: node:http keeps its own timers, setImmediate stays real
+      const tick = () => new Promise(r => setImmediate(r));
+
+      /** applyMode that waits for the test, like an OS dialog the person has not answered yet */
+      async function dialog() {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        let answer!: (r: ModeResult) => void;
+        let asked = 0;
+        const t = await start({}, {
+          modeOnly: true,
+          modeWaitMs: 1000,
+          applyMode: () => { asked++; return new Promise<ModeResult>(r => (answer = r)); },
+        });
+        vi.advanceTimersByTime(300);
+        const res = t.post('mode', { mode: 'on', for: '' });
+        while (!asked) await tick();
+        // The dialog stays open far past the 10 minutes (here 1 s) of the step
+        vi.advanceTimersByTime(5000);
+        await tick();
+        const dones = () => t.events.filter(e => e.event === 'done');
+        expect(dones()).toEqual([]);
+        return { ...t, res, dones, answer: (r: ModeResult) => answer(r) };
+      }
+
+      it('an approval after the time ran out sends one done, with the new mode', async () => {
+        const d = await dialog();
+        d.answer({ ok: true });
+        expect((await d.res).status).toBe(202);
+        vi.advanceTimersByTime(60_000);
+        await tick();
+        expect(d.dones()).toEqual([{ event: 'done', mode: 'on' }]);
+        await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'on' });
+      });
+
+      it('a refusal resumes the wait with the time that was left, then one done', async () => {
+        const d = await dialog();
+        d.answer({ ok: false, error: 'not_confirmed' });
+        expect((await d.res).status).toBe(409);
+        expect((await d.state()).step).toBe('mode');
+        vi.advanceTimersByTime(699);
+        await tick();
+        expect(d.dones()).toEqual([]);
+        vi.advanceTimersByTime(1);
+        await tick();
+        expect(d.dones()).toEqual([{ event: 'done' }]);
+        vi.advanceTimersByTime(60_000);
+        expect(d.dones()).toHaveLength(1);
+      });
+
+      it('a choice that throws resumes the wait too', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        let fail!: (e: Error) => void;
+        let asked = 0;
+        const t = await start({}, { modeOnly: true, modeWaitMs: 1000, applyMode: () => { asked++; return new Promise<ModeResult>((_, j) => (fail = j)); } });
+        const res = t.post('mode', { mode: 'on', for: '' });
+        while (!asked) await tick();
+        vi.advanceTimersByTime(5000);
+        fail(new Error('dialog crashed'));
+        expect((await res).status).toBe(500);
+        expect((await t.state()).step).toBe('mode');
+        vi.advanceTimersByTime(1000);
+        await tick();
+        expect(t.events.filter(e => e.event === 'done')).toHaveLength(1);
+      });
     });
 
     it('serves the mode strings in all three languages', async () => {

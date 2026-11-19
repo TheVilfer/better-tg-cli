@@ -139,8 +139,8 @@ let session: OnboardSession | undefined;
 afterEach(() => session?.close());
 
 /** A server whose store refuses (`refuse`), or says ok but keeps the old value (`lie`). */
-async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolean; modeWaitMs?: number } = {}) {
-  let stored: SavedMode = { mode: 'read-only' };
+async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolean; modeWaitMs?: number; stored?: SavedMode; needsTerminal?: boolean } = {}) {
+  let stored: SavedMode = plan.stored ?? { mode: 'read-only' };
   session = await startOnboarding({
     driver,
     redeemInvite: async () => ({ apiId: 42, apiHash: 'h'.repeat(32) }),
@@ -153,6 +153,8 @@ async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolea
     modeWaitMs: plan.modeWaitMs,
     applyMode: async (c): Promise<ModeResult> => {
       if (plan.refuse) return { ok: false, error: 'store_failed' };
+      // A secret store and no terminal or dialog: "on" is refused, like applyModeChoice
+      if (plan.needsTerminal && c.mode === 'on') return { ok: false, error: 'needs_terminal' };
       if (!plan.lie) stored = { mode: c.mode };
       return { ok: true };
     },
@@ -232,6 +234,21 @@ describe.each(LANGS)('the page in %s', lang => {
     await page.click('modego');
     expect(page.visible()).toEqual(['mode']);
     expect(page.msg().text).toBe(`${E.store_failed} ${L.inEffect.replace('{mode}', L.roName)}`);
+  });
+
+  // The person picks "on" (a new end for it, too) where only a terminal can confirm it: the page
+  // names the mode that stays, as read back, never a guess
+  it.each([['on', 'onName'], ['ask', 'askName'], ['read-only', 'roName']] as const)('"on" needs a terminal: the mode that stays (%s) is named', async (prior, name) => {
+    const s = await server({ modeOnly: true, needsTerminal: true, stored: prior === 'read-only' ? { mode: prior } : { mode: prior, until: new Date(Date.now() + 3_600_000) } });
+    const page = openPage(s.url, lang);
+    await page.poll();
+    page.pick('on');
+    page.byId('for').value = '1d';
+    await page.click('modego');
+    expect(page.visible()).toEqual(['mode']);
+    expect(page.msg()).toEqual({ hidden: false, text: `${E.needs_terminal} ${L.inEffect.replace('{mode}', L[name])}`, small: '' });
+    // No promise of a mode that may not be the one in effect
+    expect(E.needs_terminal).not.toMatch(/before each|antes de cada|перед каждой/);
   });
 
   it('done shows the saved mode', async () => {

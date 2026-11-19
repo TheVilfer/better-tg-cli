@@ -55,7 +55,7 @@ const en = {
     not_waiting_for_mode: 'The write mode can\'t be changed right now: it was saved already, the time to choose ran out, or a confirmation window is still open (answer it). Wait for the page to update.',
     bad_mode: 'Pick one of the options, then press Save.',
     not_confirmed: 'Not confirmed in the dialog. Choose again.',
-    needs_terminal: 'This computer can only confirm that in a terminal. Run telegram write-access on there. Until then the agent asks before each write.',
+    needs_terminal: 'This computer can only confirm that in a terminal. Run telegram write-access on there.',
     store_failed: 'Couldn\'t save the write mode: this computer\'s secret store refused it. Choose again, or run telegram write-access ask, on or off in a terminal.',
   },
 };
@@ -115,7 +115,7 @@ const es: Strings = {
     not_waiting_for_mode: 'Ahora no se puede cambiar el modo de escritura: ya se guardó, se acabó el tiempo para elegir o sigue abierta una ventana de confirmación (respóndela). Espera a que la página se actualice.',
     bad_mode: 'Elige una de las opciones y pulsa Guardar.',
     not_confirmed: 'No se confirmó en el diálogo. Elige de nuevo.',
-    needs_terminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí telegram write-access on. Hasta entonces el agente pregunta antes de cada escritura.',
+    needs_terminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí telegram write-access on.',
     store_failed: 'No se pudo guardar el modo de escritura: el almacén de secretos de este equipo lo rechazó. Elige de nuevo o ejecuta telegram write-access ask, on u off en una terminal.',
   },
 };
@@ -173,7 +173,7 @@ const ru: Strings = {
     not_waiting_for_mode: 'Режим записи сейчас не поменять: он уже сохранён, время на выбор вышло или ещё открыто окно подтверждения (ответьте в нём). Дождитесь, пока страница обновится.',
     bad_mode: 'Выберите один из вариантов и нажмите «Сохранить».',
     not_confirmed: 'В диалоге не подтвердили. Выберите ещё раз.',
-    needs_terminal: 'На этом компьютере это подтверждается только в терминале. Запустите там telegram write-access on. До тех пор агент спрашивает перед каждой записью.',
+    needs_terminal: 'На этом компьютере это подтверждается только в терминале. Запустите там telegram write-access on.',
     store_failed: 'Не удалось сохранить режим записи: хранилище секретов этого компьютера его не приняло. Выберите ещё раз или выполните в терминале telegram write-access ask, on или off.',
   },
 };
@@ -307,7 +307,8 @@ function explain(code, detail, mode) {
   if (code === 'offline') return [modeOnly ? L.goneMode : step === 'mode' ? L.goneSaved : L.gone];
   if (!Object.hasOwn(L.errors, code)) return [L.failed, [code, detail].filter(Boolean).join(': ')];
   let text = L.errors[code];
-  if (code === 'store_failed' && mode && MODE_NAMES[mode]) text += ' ' + L.inEffect.replace('{mode}', L[MODE_NAMES[mode]]);
+  // Nothing changed: name the mode read back from the store, never a guess (it may be "on" already)
+  if ((code === 'store_failed' || code === 'needs_terminal') && mode && MODE_NAMES[mode]) text += ' ' + L.inEffect.replace('{mode}', L[MODE_NAMES[mode]]);
   return [text, detail];
 }
 const fail = (code, detail, mode, kind, sent) => {
