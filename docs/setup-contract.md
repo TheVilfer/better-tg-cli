@@ -3,10 +3,9 @@
 Agents set Better-TG-CLI up by running commands and reading what they print. This contract is the
 one shape in which setup commands report problems and say how to fix them, so an agent can act on
 the output without parsing prose. The types live in [`src/setup-contract.ts`](../src/setup-contract.ts)
-(types only, nothing there runs). The rules below are checked by
-[`test/setup-contract-check.ts`](../test/setup-contract-check.ts), and
-`test/setup-contract.test.ts` runs every example on this page through it. The first command that
-emits the contract moves the checker and the allowlist into `src/`.
+(types only). The rules below are checked by
+[`test/setup-contract-check.ts`](../test/setup-contract-check.ts), which every example on this
+page passes; the first command that emits the contract moves the checker into `src/`.
 
 **Status.** Defined, not yet emitted. The commands that will emit it (`doctor`, `connect`, the
 installer and the managed update) come in later PRs of the agent-compatibility plan (#137).
@@ -159,8 +158,7 @@ with one terminal event, `done` (with the result), `error` (with a message) or `
 
 ## Open points
 
-Settled by the PRs that first emit the contract, not here. Everything below was chosen in this
-PR where the issue says nothing, and may still change before a command emits it:
+Chosen where the issue says nothing; the PRs that first emit the contract settle them:
 
 - `fix.run` as the argv after the binary, `profile` as a name or `null`, `expect` as `{exit}`;
 - the mapping from a result to exit code 1 or 2 in `setupExitCode()`;

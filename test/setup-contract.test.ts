@@ -12,6 +12,7 @@ import {
 import { cliArgs } from './cli.js';
 
 const fixtures = JSON.parse(readFileSync('test/fixtures/setup-contract.json', 'utf8'));
+const doc = readFileSync('docs/setup-contract.md', 'utf8');
 
 // Every child process runs on a throwaway home with a profile of its own and none of the
 // inherited TG_* or OP_* settings, so it reaches no real account, config, 1Password vault or
@@ -126,7 +127,6 @@ describe('setup contract, schema 1', () => {
   });
 
   it('every example in docs/setup-contract.md is valid', () => {
-    const doc = readFileSync('docs/setup-contract.md', 'utf8');
     const blocks = [...doc.matchAll(/```(json|jsonl)\n([\s\S]*?)```/g)];
     expect(blocks.length).toBeGreaterThanOrEqual(5);
     for (const [, kind, body] of blocks) {
@@ -136,7 +136,6 @@ describe('setup contract, schema 1', () => {
   });
 
   it('the doc names exactly the commands of the allowlist', () => {
-    const doc = readFileSync('docs/setup-contract.md', 'utf8');
     const line = doc.slice(doc.indexOf('Allowed today:'), doc.indexOf('Later PRs add'));
     const named = [...line.matchAll(/`([a-z][a-z ]*?)(?: \[|`)/g)].map(m => m[1].trim());
     expect(named).toEqual(RUN_ALLOWLIST.map(e => e.command.join(' ')));
@@ -156,7 +155,7 @@ describe('setup contract, schema 1', () => {
       ['write-access', 'on'], ['write-access', 'ask'], ['auth'], ['logout'], ['mcp'], ['api', 'messages.sendMessage'],
       ['send', 'me', 'hi'], ['skill', 'install', '--force'], ['skill', 'uninstall'],
       // update runs a package manager or a build outside any profile; onboard hands out the page
-      // link whose secret also sets the write mode (#110 review)
+      // link whose secret also sets the write mode
       ['update'], ['update', '--json'], ['onboard'], ['onboard', '--json', '--no-open'], ['onboard', '--broker', 'https://evil.example'],
       ['skill', 'install', 'constructor', 'x'], ['skill', 'install', '__proto__', 'x'], ['skill', 'install', 'toString', 'x'],
       ['sh', '-c', 'telegram update'], [],
@@ -184,7 +183,7 @@ describe('current consumers keep their output', () => {
     expect(Array.isArray(rows)).toBe(true);
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      expect(Object.keys(row).sort()).toEqual(expect.arrayContaining(['agent', 'detected', 'kind', 'name', 'path']));
+      expect(Object.keys(row)).toEqual(expect.arrayContaining(['agent', 'detected', 'kind', 'name', 'path']));
       expect(row).not.toHaveProperty('schema');
     }
   }, 30_000);
@@ -196,10 +195,7 @@ describe('current consumers keep their output', () => {
     const lines = r.stdout.trimEnd().split('\n').map(l => JSON.parse(l));
     expect(lines.map(l => l.event)).toEqual(['url', 'waiting_invite', 'timeout']);
     expect(lines[0].url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/s\/[\w-]+\/$/);
-    for (const l of lines) {
-      expect(typeof l.event).toBe('string');
-      expect(l).not.toHaveProperty('schema');
-    }
+    for (const l of lines) expect(l).not.toHaveProperty('schema');
   }, 30_000);
 
   it('telegram mcp writes only JSON-RPC messages to stdout', async () => {

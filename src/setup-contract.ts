@@ -1,12 +1,10 @@
 /**
  * Setup contract, schema 1 (docs/setup-contract.md): the one shape in which setup commands
- * (`doctor`, `connect`, install and update, later PRs of #137) report problems and how to fix
- * them. No command emits it yet. Existing output (`chats --json` and `skill status --json` print
- * arrays, `onboard --json` prints its own JSON lines) never changes to it.
+ * (`doctor`, `connect`, install and update, #137) report problems and how to fix them. No command
+ * emits it yet, and existing output never changes to it.
  *
- * Types only (#110): nothing here runs. The allowlist of `fix.run` and the checker of results and
- * events live in test/setup-contract-check.ts until the first command that emits the contract
- * moves them here together with its own use of them.
+ * Types only (#110). The `fix.run` allowlist and the checker live in test/setup-contract-check.ts
+ * until the first command that emits the contract moves them here.
  */
 
 /**
@@ -58,7 +56,7 @@ export interface SetupResult<D extends object = Record<string, unknown>> {
   data?: D;
 }
 
-// Compile-time check (tsc --noEmit): a plain interface, with no index signature, is a valid `D`.
+// Compile-time check (only src/ is type-checked): a plain interface is a valid `D`.
 interface InstallerDataExample { path: string }
 type _InterfaceDataCompiles = SetupResult<InstallerDataExample>;
 

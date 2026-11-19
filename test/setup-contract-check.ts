@@ -1,7 +1,6 @@
 /**
  * The rules of setup contract schema 1 (docs/setup-contract.md) as a checker for the fixtures and
- * the doc's examples. Kept out of src/ on purpose (#110: src/setup-contract.ts is types only); the
- * first command that emits the contract moves what it needs into src/ with it.
+ * the doc's examples. Out of src/ until a command emits the contract (#110).
  */
 import type { Problem, SetupExitCode, SetupResult } from '../src/setup-contract.js';
 
@@ -11,12 +10,9 @@ export const TERMINAL_EVENTS = ['done', 'error', 'timeout'] as const;
 
 /**
  * Commands a `fix.run` may name: the exact subcommand path and the flags allowed after it (`bool`
- * takes no value, `values` one or more plain values). Positional arguments are not allowed. Later
- * PRs add their own entries (`doctor --fix`, `connect --refresh`). Never here: anything that
- * changes write authority or credentials (`write-access`, `auth`, `logout`), `onboard` (its local
- * page carries a secret that sets the write mode), `update` (it runs the system package manager,
- * a global npm install or a source build, outside any profile), `mcp`, `api`, any Telegram write,
- * and `skill install --force`.
+ * takes no value, `values` one or more plain values); no positional arguments. Never add what the
+ * doc's "Never allowed" list names (write authority, credentials, `onboard`, `update`, `mcp`, `api`,
+ * Telegram writes, `skill install --force`).
  */
 export const RUN_ALLOWLIST: readonly { command: readonly string[]; flags: Readonly<Record<string, 'bool' | 'values'>> }[] = [
   { command: ['skill', 'install'], flags: { '--agent': 'values', '--json': 'bool' } },
@@ -54,10 +50,11 @@ function fixRefusal(fix: unknown): string | null {
   const f = fix as Record<string, unknown>;
   const kinds = ['run', 'human', 'unavailable'].filter(k => k in f);
   if (kinds.length !== 1) return 'fix must have exactly one of run, human, unavailable';
+  const kind = kinds[0];
   const allowed: Record<string, string[]> = { run: ['run', 'profile', 'expect'], human: ['human', 'url'], unavailable: ['unavailable'] };
-  const extra = Object.keys(f).filter(k => !allowed[kinds[0]].includes(k));
-  if (extra.length) return `unexpected field ${extra[0]} in a fix of kind ${kinds[0]}`;
-  if (kinds[0] === 'run') {
+  const extra = Object.keys(f).filter(k => !allowed[kind].includes(k));
+  if (extra.length) return `unexpected field ${extra[0]} in a fix of kind ${kind}`;
+  if (kind === 'run') {
     const refused = runRefusal(f.run);
     if (refused) return refused;
     if (f.profile !== null && (typeof f.profile !== 'string' || !PROFILE.test(f.profile))) return 'profile must be a profile name or null';
@@ -67,7 +64,7 @@ function fixRefusal(fix: unknown): string | null {
     }
     return null;
   }
-  if (kinds[0] === 'human') {
+  if (kind === 'human') {
     if (typeof f.human !== 'string' || !f.human.trim()) return 'human must be a non-empty string';
     if ('url' in f) {
       if (typeof f.url !== 'string') return 'url must be a string';
@@ -96,9 +93,8 @@ export function setupResultErrors(value: unknown): string[] {
   if (r.schema !== SETUP_SCHEMA) errors.push(`schema must be ${SETUP_SCHEMA}`);
   const extra = Object.keys(r).filter(k => !['schema', 'ok', 'problems', 'data'].includes(k));
   if (extra.length) errors.push(`unexpected field ${extra[0]}`);
-  // `data` is the one open field: command-specific content that only its command documents and
-  // tests. Here it only has to be a plain JSON object, judged as it will appear on stdout (after
-  // JSON serialization), so a Date or anything with a toJSON that is not an object is refused.
+  // `data` is the one open field; its command documents its content. Judged as stdout shows it,
+  // so a Date (or a toJSON that is not an object) is refused.
   if ('data' in r && !isJsonObject(r.data)) errors.push('data must be a JSON object');
   if (typeof r.ok !== 'boolean') errors.push('ok must be a boolean');
   if (!Array.isArray(r.problems)) return [...errors, 'problems must be an array'];
