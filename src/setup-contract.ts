@@ -45,7 +45,7 @@ export interface Problem {
  * The single result of a contract command (its whole stdout with `--json`). `D` is the shape of
  * the command's own `data`.
  */
-export interface SetupResult<D extends Record<string, unknown> = Record<string, unknown>> {
+export interface SetupResult<D extends object = Record<string, unknown>> {
   schema: 1;
   /** true exactly when no problem has severity `error` */
   ok: boolean;
@@ -57,6 +57,10 @@ export interface SetupResult<D extends Record<string, unknown> = Record<string, 
    */
   data?: D;
 }
+
+// Compile-time check (tsc --noEmit): a plain interface, with no index signature, is a valid `D`.
+interface InstallerDataExample { path: string }
+type _InterfaceDataCompiles = SetupResult<InstallerDataExample>;
 
 /**
  * One JSON line of an event stream, printed only behind an explicit `--events v1` (no command has

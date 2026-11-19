@@ -58,12 +58,20 @@ beforeAll(() => {
   expect(spawnSync(resolved, ['whoami'], { env }).status).toBe(0);
 });
 // After each test: whatever its children asked, it was only the fake store. Only the lines this
-// test added are checked, so one bad call fails the test that made it and no later one.
-let opLogChecked = 0;
+// test added are checked, so one bad call fails the test that made it and no later one: the
+// cursor moves before the check, because a failed expect throws.
+const opLogCursor = (log: string) => {
+  let checked = 0;
+  return () => {
+    const calls = opCalls(log);
+    const added = calls.slice(checked);
+    checked = calls.length;
+    return added;
+  };
+};
+const newOpCalls = opLogCursor(opLog);
 afterEach(() => {
-  const calls = opCalls(opLog);
-  for (const call of calls.slice(opLogChecked)) expect(call).toMatch(ALLOWED_OP_CALL);
-  opLogChecked = calls.length;
+  for (const call of newOpCalls()) expect(call).toMatch(ALLOWED_OP_CALL);
 });
 const cli = (args: string[], env: NodeJS.ProcessEnv = baseEnv()) =>
   spawnSync(process.execPath, [...cliArgs(), ...args], { encoding: 'utf8', env, timeout: 30_000 });
@@ -83,6 +91,26 @@ describe('setup contract, schema 1', () => {
   it.each(fixtures.invalid.map((f: { name: string }) => [f.name, f]))('refuses: %s', (_name, f: { result: unknown; error: string }) => {
     const errors = setupResultErrors(f.result);
     expect(errors.join('\n')).toContain(f.error);
+  });
+
+  it('judges data as stdout will show it, after JSON serialization', () => {
+    const result = (data: unknown) => ({ schema: 1, ok: true, problems: [], data });
+    // A Date prints as a string, so it is refused before output just as after it
+    expect(setupResultErrors(result(new Date(0)))).toContain('data must be a JSON object');
+    expect(setupResultErrors(JSON.parse(JSON.stringify(result(new Date(0)))))).toContain('data must be a JSON object');
+    expect(setupResultErrors(result({ toJSON: () => [1] }))).toContain('data must be a JSON object');
+    expect(setupResultErrors(result({ n: 1n }))).toContain('data must be a JSON object');
+    expect(setupResultErrors(result({ path: '/x', at: new Date(0) }))).toEqual([]);
+  });
+
+  it('moves the op log cursor even when a call is refused, so only the test that made it fails', () => {
+    const log = join(home, 'cursor.log');
+    writeFileSync(log, 'item list\n');
+    const next = opLogCursor(log);
+    expect(next()).toEqual(['item list']);
+    expect(next()).toEqual([]);
+    writeFileSync(log, 'item list\nwhoami\n');
+    expect(next()).toEqual(['whoami']);
   });
 
   it('accepts event streams that end in exactly one terminal event, and refuses bad lines', () => {

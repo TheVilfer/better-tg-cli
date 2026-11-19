@@ -80,6 +80,14 @@ function fixRefusal(fix: unknown): string | null {
   return typeof f.unavailable === 'string' && f.unavailable.trim() ? null : 'unavailable must be a non-empty string';
 }
 
+/** Whether `value` serializes to a JSON object (not an array, not null). */
+function isJsonObject(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  let json: unknown;
+  try { json = JSON.parse(JSON.stringify(value) ?? 'null'); } catch { return false; }
+  return !!json && typeof json === 'object' && !Array.isArray(json);
+}
+
 /** Every reason `value` is not a valid schema 1 result; empty when it is. */
 export function setupResultErrors(value: unknown): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ['result must be an object'];
@@ -89,8 +97,9 @@ export function setupResultErrors(value: unknown): string[] {
   const extra = Object.keys(r).filter(k => !['schema', 'ok', 'problems', 'data'].includes(k));
   if (extra.length) errors.push(`unexpected field ${extra[0]}`);
   // `data` is the one open field: command-specific content that only its command documents and
-  // tests. Here it only has to be a plain JSON object.
-  if ('data' in r && (!r.data || typeof r.data !== 'object' || Array.isArray(r.data))) errors.push('data must be a JSON object');
+  // tests. Here it only has to be a plain JSON object, judged as it will appear on stdout (after
+  // JSON serialization), so a Date or anything with a toJSON that is not an object is refused.
+  if ('data' in r && !isJsonObject(r.data)) errors.push('data must be a JSON object');
   if (typeof r.ok !== 'boolean') errors.push('ok must be a boolean');
   if (!Array.isArray(r.problems)) return [...errors, 'problems must be an array'];
   const seen = new Set<string>();
