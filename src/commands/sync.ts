@@ -14,6 +14,7 @@ import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { assertLocalWriteAllowed } from '../guard.js';
 
 /** Per-chat sync checkpoints, keyed by chat ID (titles can change or collide). */
 interface SyncMeta {
@@ -115,6 +116,7 @@ export const syncCommand = new Command('sync')
   .option('--media', 'Also download photos and documents alongside markdown')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
   .action(async (options) => {
+    assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
 
     try {

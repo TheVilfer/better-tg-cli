@@ -74,8 +74,9 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
   const globalPath = getGlobalConfigPath();
   const fileConfig = readConfigFile(globalPath, warn);
 
-  // Migrate secrets from file → secret store on first load (one-time per process)
-  if (isSecretStoreAvailable()) {
+  // Migrate secrets from file → secret store on first load (one-time per process). Never in a read
+  // (TG_READ_ONLY, the MCP read tool): a read changes nothing in the profile, neither file nor store.
+  if (!process.env.TG_READ_ONLY && isSecretStoreAvailable()) {
     const cleaned = migrateSecretsToStore(fileConfig as Record<string, unknown>);
     if (cleaned !== fileConfig) {
       // Secrets were migrated — rewrite the file without them

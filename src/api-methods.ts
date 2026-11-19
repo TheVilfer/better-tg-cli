@@ -43,6 +43,15 @@ export function isApiReadMethod(name: string): boolean {
 }
 
 /**
+ * A read call that may spend Stars is a write: `channels.SearchPosts` with `allowPaidStars` pays for
+ * a full-text search once the free quota is used up. The only read in the schema with that param
+ * today; the check is by param, so a future one is covered too. Any value counts, 0 included.
+ */
+export function isApiReadCall(name: string, params?: Record<string, unknown>): boolean {
+  return isApiReadMethod(name) && !(params && params.allowPaidStars !== undefined && params.allowPaidStars !== null);
+}
+
+/**
  * Whole namespaces refused through the generic `api` command regardless of read/write:
  * `auth.*` is login / session management (belongs to `telegram auth` / `onboard`, never automated).
  */
@@ -96,6 +105,7 @@ const ALWAYS_REFUSED = new Map<string, string>([
   ['messages.accepturlauth', 'Refused: this logs into an external website with your account.'],
   ['messages.requesturlauth', 'Refused: this is part of logging into an external website.'],
   ['messages.checkurlauthmatchcode', 'Refused: this completes a url-auth login.'],
+  ['messages.getemojiurl', 'Refused: this returns a link that logs into the translation platform with your account.'],
   // Chat-ownership transfer (needs the 2FA password; use `telegram transfer-owner`)
   ['channels.editcreator', 'Refused: transferring ownership needs the 2FA password. Use `telegram transfer-owner`.'],
   ['messages.editchatcreator', 'Refused: transferring ownership needs the 2FA password. Use `telegram transfer-owner`.'],

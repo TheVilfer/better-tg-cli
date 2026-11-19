@@ -192,12 +192,17 @@ location sharing, paying):
 - **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,
   `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`.
 - **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,
-  `messages.CheckUrlAuthMatchCode`.
+  `messages.CheckUrlAuthMatchCode`, and the read-named `messages.GetEmojiURL` (a login link to
+  the translation platform).
 - **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA
   password — use `telegram transfer-owner`).
 - **Money:** every non-read `payments.*`, plus the read-named token minters
   `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,
   `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.
+
+**Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text
+search) needs write access, like any write; without it, it stays a read. `help.GetConfig` prints
+`autologinToken` as `[redacted]`.
 
 **Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,
 `account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,

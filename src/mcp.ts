@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
-import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
+import { isApiReadMethod, apiRefusalReason, resolveApiMethod } from './api-methods.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
 import { actionHash, createApproval, describeAction, readsStdin } from './approval.js';
 import { parseWriteState } from './write-state.js';
@@ -44,6 +44,12 @@ export const WRITE_COMMANDS = new Set([
   'set-avatar', 'avatar', 'download', 'sync',
 ]);
 
+/** Write groups run only these subcommands (`topic create`, …), each also registered: a new
+ * subcommand stays off MCP until it is listed here, instead of inheriting the group. */
+export const WRITE_SUBCOMMANDS: Record<string, Set<string>> = {
+  topic: new Set(['create', 'edit', 'close', 'reopen', 'pin', 'unpin']),
+};
+
 /** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
  * agents' config (skill), the server itself and help-all (served by telegram_help). */
 export const NEVER_COMMANDS = new Set(['auth', 'logout', 'transfer-owner', 'update', 'skill', 'onboard', 'mcp', 'help-all']);
@@ -51,7 +57,8 @@ export const NEVER_COMMANDS = new Set(['auth', 'logout', 'transfer-owner', 'upda
 /** Classified per call rather than by name: `api` by its TL method, `help` is a listing. */
 export const PER_CALL_COMMANDS = new Set(['api', 'help']);
 
-/** Commands registered on the CLI (set by index.ts); a write must also be registered. */
+/** Commands registered on the CLI (set by index.ts), with `group sub` paths for groups; a write
+ * must also be registered. */
 let knownCommands = new Set<string>();
 
 export function setKnownCommands(names: Iterable<string>): void {
@@ -60,6 +67,11 @@ export function setKnownCommands(names: Iterable<string>): void {
 
 export function isWriteCommand(name: string): boolean {
   return WRITE_COMMANDS.has(name) && knownCommands.has(name);
+}
+
+/** The names and `group sub` paths of a commander program, for setKnownCommands. */
+export function commandPaths(commands: readonly { name(): string; commands: readonly { name(): string }[] }[]): string[] {
+  return commands.flatMap(c => [c.name(), ...c.commands.map(s => `${c.name()} ${s.name()}`)]);
 }
 
 /**
@@ -97,10 +109,18 @@ export function classifyCall(args: string[]): CallClass {
   }
   // `api` is classified per method: a read method (Get*/Check*/Search*/Resolve*) is a read,
   // everything else a write; refused methods never run.
+  // The name is resolved first, as the CLI does (case, spaces): an unknown method is refused here
+  // rather than guessed from its prefix.
   if (cmd === 'api') {
     const method = apiMethodToken(args);
     if (!method) return { group: 'invalid', reason: 'api needs a method, e.g. ["api","messages.GetHistory"]' };
-    return byMethod(method, `api ${method}`);
+    let className: string;
+    try {
+      className = resolveApiMethod(method).className;
+    } catch (e) {
+      return { group: 'unknown', reason: `${e instanceof Error ? e.message : String(e)} See telegram_help.` };
+    }
+    return byMethod(className, `api ${className}`, args);
   }
   // Generated top-level API commands — `telegram <namespace> <method>`, `telegram <root-method>`,
   // and a method on a clash namespace (`stats get-broadcast-stats`) — classified by the underlying
@@ -109,20 +129,45 @@ export function classifyCall(args: string[]): CallClass {
   const className = resolveGeneratedCommand(args);
   if (className) {
     const second = args[1];
-    return byMethod(className, second && !second.startsWith('-') ? `${cmd} ${second}` : cmd);
+    return byMethod(className, second && !second.startsWith('-') ? `${cmd} ${second}` : cmd, args);
   }
   // `help` / `help <command>` is a harmless listing (its help.* methods were handled above).
   if (cmd === 'help' || READ_COMMANDS.has(cmd)) return { group: 'read', label: cmd };
+  const subs = WRITE_SUBCOMMANDS[cmd];
+  if (subs) {
+    const sub = args[1];
+    if (!sub || sub.startsWith('-')) return { group: 'invalid', reason: `${cmd} needs a subcommand: ${[...subs].join(', ')}` };
+    const path = `${cmd} ${sub}`;
+    return subs.has(sub) && isWriteCommand(cmd) && knownCommands.has(path) ? { group: 'write', label: path } : unknown(path);
+  }
   if (isWriteCommand(cmd)) return { group: 'write', label: cmd };
   return unknown(cmd);
 }
 
 const unknown = (cmd: string): CallClass => ({ group: 'unknown', reason: `Unknown command "${cmd}"; see telegram_help` });
 
-function byMethod(method: string, label: string): CallClass {
+/** `allowPaidStars` in any spelling the CLI takes: a JSON key or a generated flag. */
+const PAID_PARAM = /allow-?paid-?stars/i;
+
+function hasPaidKey(arg: string): boolean {
+  const json = arg.replace(/^(-p|--params|--json-params)=/, '');
+  if (!json.trimStart().startsWith('{')) return false;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return typeof parsed === 'object' && parsed !== null && 'allowPaidStars' in parsed;
+  } catch {
+    return false;
+  }
+}
+
+function byMethod(method: string, label: string, args: string[]): CallClass {
   const refusal = apiRefusalReason(method);
   if (refusal) return { group: 'never', reason: refusal };
-  return { group: isApiReadMethod(method) ? 'read' : 'write', label };
+  // A read that may spend Stars is a write (the CLI checks the parsed params too, see isApiReadCall).
+  // Read calls get no stdin, so the params are all in the argv: a flag, or a key in JSON params
+  // (parsed, so an escaped key such as "allow\u0050aidStars" is caught here as well).
+  const paid = args.slice(1).some(a => PAID_PARAM.test(a) || hasPaidKey(a));
+  return { group: isApiReadMethod(method) && !paid ? 'read' : 'write', label };
 }
 
 export const TOOLS = [
@@ -239,7 +284,8 @@ const cap = (s: string) =>
   s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
 
 function childEnv(plan: Plan): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1' };
+  // TG_MCP: local file writes (download, sync, avatar) follow the write mode, see assertLocalWriteAllowed
+  const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1', TG_MCP: '1' };
   if (plan.readOnly) env.TG_READ_ONLY = '1';
   // Only the approval for this call, never one inherited from the server's own environment
   delete env.TG_APPROVE;

@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  NEVER_COMMANDS, PER_CALL_COMMANDS, READ_COMMANDS, WRITE_COMMANDS, classifyCall, handleMessage, isWriteCommand, planCall,
+  NEVER_COMMANDS, PER_CALL_COMMANDS, READ_COMMANDS, WRITE_COMMANDS, WRITE_SUBCOMMANDS, classifyCall, handleMessage, isWriteCommand, planCall,
   setKnownCommands, useWorkers,
 } from '../src/mcp.js';
 import { rootMethodClassName } from '../src/generated-registry.js';
@@ -20,7 +20,12 @@ function commandNames(): string[] {
   return helpAll().split('\n').filter(l => /^[a-z]/.test(l)).map(l => l.split(' ')[0]);
 }
 
-beforeAll(() => setKnownCommands(commandNames()));
+/** `group sub` paths from help-all, e.g. "topic create" (the second word is a name, not an operand). */
+function subcommandPaths(): string[] {
+  return helpAll().split('\n').filter(l => /^[a-z][a-z-]* [a-z][a-z-]*( |$)/.test(l)).map(l => l.split(' ').slice(0, 2).join(' '));
+}
+
+beforeAll(() => setKnownCommands([...commandNames(), ...subcommandPaths()]));
 
 describe('command classification', () => {
   const groups = { read: READ_COMMANDS, write: WRITE_COMMANDS, never: NEVER_COMMANDS, 'per call': PER_CALL_COMMANDS };
@@ -39,6 +44,25 @@ describe('command classification', () => {
 
   it('no command name is also a root TL method, which would take its classification', () => {
     for (const c of commandNames()) expect(rootMethodClassName(c), c).toBeUndefined();
+  });
+
+  it('a write group lists exactly its registered subcommands (a new subcommand fails here)', () => {
+    const registered = subcommandPaths().filter(p => WRITE_COMMANDS.has(p.split(' ')[0]));
+    const listed = Object.entries(WRITE_SUBCOMMANDS).flatMap(([g, subs]) => [...subs].map(s => `${g} ${s}`));
+    expect(new Set(registered)).toEqual(new Set(listed));
+    // Every group with subcommands that MCP can run is listed (never groups such as skill are not)
+    for (const g of new Set(subcommandPaths().map(p => p.split(' ')[0]))) {
+      if (!NEVER_COMMANDS.has(g)) expect(WRITE_SUBCOMMANDS, g).toHaveProperty(g);
+    }
+  });
+
+  it('a subcommand that is listed but not registered does not run', () => {
+    setKnownCommands(commandNames());
+    try {
+      expect(classifyCall(['topic', 'create', 'g', 't']).group).toBe('unknown');
+    } finally {
+      setKnownCommands([...commandNames(), ...subcommandPaths()]);
+    }
   });
 
   it('commands that are obviously writes or local-file writers are writes', () => {
@@ -115,6 +139,29 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['--help'], 'invalid'],
   [['watch', 'me'], 'invalid'],
   [['watch', 'me', '-t', '30'], 'read'],
+  // A read method that can spend Stars is a write (review finding 2), in every form of params
+  [['api', 'channels.SearchPosts', '--params', '{"query":"x"}'], 'read'],
+  [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":"10"}'], 'write'],
+  [['api', 'channels.SearchPosts', '-p', '{"allowPaidStars":10}'], 'write'],
+  [['api', 'channels.SearchPosts', '--params={"allowPaidStars":10}'], 'write'],
+  [['channels', 'search-posts', '--query', 'x'], 'read'],
+  [['channels', 'search-posts', '--query', 'x', '--allow-paid-stars', '10'], 'write'],
+  [['channels', 'search-posts', '--allow-paid-stars=10'], 'write'],
+  [['channels', 'search-posts', '--json-params', '{"allowPaidStars":10}'], 'write'],
+  [['api', 'channels.SearchPosts', '--params', '{"allow\\u0050aidStars":10}'], 'write'],
+  // Reads that hand out a login link never run (finding 3)
+  [['api', 'messages.GetEmojiURL', '--params', '{"langCode":"en"}'], 'never'],
+  [['messages', 'get-emoji-url', '--lang-code', 'en'], 'never'],
+  // api classifies the resolved method, not the raw string (finding 5)
+  [['api', 'messages.GetNope'], 'unknown'],
+  [['api', 'nope.GetHistory'], 'unknown'],
+  [['api', ' account.DeleteAccount '], 'never'],
+  [['api', 'MESSAGES.getHistory'], 'read'],
+  // A write group runs only its registered subcommands (finding 4)
+  [['topic', 'close', 'g', '1'], 'write'],
+  [['topic', 'bogus', 'g'], 'unknown'],
+  [['topic'], 'invalid'],
+  [['topic', '--json'], 'invalid'],
 ];
 
 describe('call → group', () => {
@@ -133,8 +180,10 @@ describe('call → group', () => {
     }
   });
 
-  it('handleMessage never starts the CLI for a refused call', async () => {
+  it('handleMessage never starts the CLI or asks the user for a refused call', async () => {
     const ran: string[][] = [];
+    const asked: string[] = [];
+    const elicit = async (m: string) => (asked.push(m), true);
     const run = async (plan: { argv: string[] }) => {
       ran.push(plan.argv);
       return { content: [{ type: 'text' as const, text: 'ran' }] };
@@ -143,11 +192,12 @@ describe('call → group', () => {
     for (const [args, group] of CALLS) {
       if (group === 'read' || group === 'write') continue;
       for (const name of ['telegram_read', 'telegram_write']) {
-        const r = (await handleMessage({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: { args } } }, run)) as any;
+        const r = (await handleMessage({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: { args } } }, run, { elicit })) as any;
         expect(r.result.isError, `${name} ${args.join(' ')}`).toBe(true);
       }
     }
     expect(ran).toEqual([]);
+    expect(asked).toEqual([]);
   });
 });
 
@@ -243,7 +293,8 @@ describe.concurrent.each([
     const home = mkdtempSync(join(tmpdir(), 'tg-mcp-never-'));
     try {
       const child = spawn(process.execPath, [CLI, 'mcp'], {
-        env: { ...env, ...extraEnv, HOME: home, USERPROFILE: home, TG_PROFILE: 'mcp-never-test' },
+        // APPDATA too: the Windows profile (config, DPAPI file) lives there, not under HOME
+        env: { ...env, ...extraEnv, HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_PROFILE: 'mcp-never-test' },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       const lines: any[] = [];
@@ -260,9 +311,18 @@ describe.concurrent.each([
           child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: { args } } }) + '\n');
         }
       }
+      // A local file write follows the write mode over MCP (read-only here), unlike in a terminal
+      const out = join(home, 'media');
+      for (const args of [['download', 'me', '1', '-o', out], ['sync', '--output', out], ['avatar', 'me', '-o', out]]) {
+        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name: 'telegram_write', arguments: { args } } }) + '\n');
+      }
       child.stdin.end();
       expect(await new Promise(r => child.on('close', r))).toBe(0);
-      expect(lines).toHaveLength(refused.length * 2);
+      expect(lines).toHaveLength(refused.length * 2 + 3);
+      for (const l of lines.splice(refused.length * 2)) {
+        expect(l.result.isError).toBe(true);
+        expect(l.result.content[0].text).toMatch(/Write access|secret store/);
+      }
       for (const l of lines) {
         expect(l.result.isError).toBe(true);
         expect(l.result.content[0].text).toMatch(/not available over MCP|changed in a terminal|Unknown command/);

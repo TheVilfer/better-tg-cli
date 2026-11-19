@@ -1,5 +1,5 @@
 import { getClient, invokeApi, serializeApiResult, disconnectClient } from './client.js';
-import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
+import { isApiReadCall, apiRefusalReason } from './api-methods.js';
 import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
 import chalk from './colors.js';
@@ -27,7 +27,8 @@ export async function runApiMethod(
     process.exit(1);
   }
 
-  const isWrite = !isApiReadMethod(canonical);
+  // By the whole call: a read that may spend Stars (allowPaidStars) needs write access like any write
+  const isWrite = !isApiReadCall(canonical, params);
   if (isWrite) assertWriteEnabled();
 
   const spinner = ora(`Calling ${canonical}...`).start();

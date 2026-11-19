@@ -462,12 +462,17 @@ function build() {
   lines.push('- **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,');
   lines.push('  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`.');
   lines.push('- **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,');
-  lines.push('  `messages.CheckUrlAuthMatchCode`.');
+  lines.push('  `messages.CheckUrlAuthMatchCode`, and the read-named `messages.GetEmojiURL` (a login link to');
+  lines.push('  the translation platform).');
   lines.push('- **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA');
   lines.push('  password — use `telegram transfer-owner`).');
   lines.push('- **Money:** every non-read `payments.*`, plus the read-named token minters');
   lines.push('  `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,');
   lines.push('  `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.');
+  lines.push('');
+  lines.push('**Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text');
+  lines.push('search) needs write access, like any write; without it, it stays a read. `help.GetConfig` prints');
+  lines.push('`autologinToken` as `[redacted]`.');
   lines.push('');
   lines.push('**Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,');
   lines.push('`account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,');

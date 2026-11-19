@@ -91,7 +91,8 @@ export async function connectClient(
     await second.destroy().catch(() => {});
     throw isNetworkFailure(e) ? new Error(`${BLOCKED_HINT} (${(e as Error).message})`) : e;
   }
-  if (options.remember !== false) {
+  // A read (TG_READ_ONLY, the MCP read tool) never writes the profile; the next run just tries TCP again
+  if (options.remember !== false && !process.env.TG_READ_ONLY) {
     try {
       saveConfig({ transport: 'wss' });
       notice('Saved transport "wss" for this profile (TG_TRANSPORT=tcp or auto overrides it).');

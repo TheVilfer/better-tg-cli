@@ -36,6 +36,15 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void
   setStrictChatResolution(true);
 }
 
+/**
+ * download, sync and avatar only write local files, so in a terminal they need no write access. Over
+ * MCP (TG_MCP, set for every call) the model picks the path, so they follow the write mode like any
+ * write: refused in read-only, an approval each in "ask". A read (TG_READ_ONLY) never writes a file.
+ */
+export function assertLocalWriteAllowed(argv: string[] = process.argv.slice(2)): void {
+  if (process.env.TG_MCP || process.env.TG_READ_ONLY) assertWriteEnabled(argv);
+}
+
 const unprotectedFlag = () => (isWriteModeProtected() ? {} : { unprotected: true as const });
 
 /** Write mode "ask": go on only with a matching approval code, otherwise print the action and stop. */

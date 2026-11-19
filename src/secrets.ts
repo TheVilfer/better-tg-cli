@@ -61,6 +61,13 @@ export function secretDelete(key: string): boolean {
 let migrationDone = false;
 
 /**
+ * Secrets that may move from an old config file into the store. Not `writeEnabled`: the write mode
+ * was never saved to the file (only `write-access` sets it, straight in the store), so one found
+ * there was put in by hand, and taking it would let a config-file edit turn writes on.
+ */
+const MIGRATED_KEYS = ['apiHash', 'sessionString'];
+
+/**
  * Migrate secret fields from a config object into the active secret store.
  * Returns a new config object with successfully migrated secrets removed.
  */
@@ -71,7 +78,7 @@ export function migrateSecretsToStore(config: Record<string, unknown>): Record<s
   let needsRewrite = false;
   const cleaned = { ...config };
 
-  for (const key of SECRET_KEYS) {
+  for (const key of MIGRATED_KEYS) {
     const value = config[key];
     if (typeof value === 'string' && value !== '') {
       if (secretSet(key, value)) {

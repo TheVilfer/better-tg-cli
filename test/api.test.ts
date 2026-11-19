@@ -6,6 +6,9 @@ import { resolveApiMethod, isApiReadMethod, apiRefusalReason } from '../src/api-
 import { apiMethodToken, planCall } from '../src/mcp.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
+import { spawnSync } from 'node:child_process';
+import { cliArgs } from './cli.js';
+import { isApiReadCall } from '../src/api-methods.js';
 import { seedWorld, type MockWorld } from '../src/mock/world.js';
 
 const mock = (world: MockWorld = seedWorld()) => new MockClient(world) as unknown as TelegramClient;
@@ -153,6 +156,41 @@ describe('MCP routing of the api command', () => {
     expect(planCall('telegram_write', { args: ['api', 'account.SetPrivacy'] })).toMatch(/privacy/i);
     // A reclassified side-effecting read is a write, not a read.
     expect(planCall('telegram_read', { args: ['api', 'messages.GetMessagesViews'] })).toMatch(/use telegram_write/);
+  });
+});
+
+describe('api hardening: Stars and login tokens (review findings 2, 3)', () => {
+  it('a read that may spend Stars (allowPaidStars) is a write; the free form stays a read', () => {
+    expect(isApiReadCall('channels.SearchPosts', { query: 'x' })).toBe(true);
+    expect(isApiReadCall('channels.SearchPosts', { query: 'x', allowPaidStars: '10' })).toBe(false);
+    expect(isApiReadCall('channels.SearchPosts', { allowPaidStars: 0 })).toBe(false);
+    expect(isApiReadCall('contacts.Block', {})).toBe(false);
+  });
+
+  // An unconfigured profile under TG_READ_ONLY, as the MCP read tool runs it: the guard must stop the
+  // paid call before any connection (otherwise it fails later with "not configured")
+  const readOnly = (args: string[]) => spawnSync(process.execPath, [...cliArgs(), ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, TG_MOCK: '', TG_PROFILE: `api-paid-${process.pid}`, TG_NO_UPDATE_CHECK: '1', TG_READ_ONLY: '1' },
+  });
+
+  it.each([
+    [['api', 'channels.SearchPosts', '--params', '{"query":"x","offsetPeer":{"_":"inputPeerEmpty"},"allowPaidStars":5}']],
+    [["channels", "search-posts", "--json-params", "{\"query\":\"x\",\"offsetPeer\":{\"_\":\"inputPeerEmpty\"},\"limit\":10,\"allowPaidStars\":5}"]],
+  ])('the CLI refuses a paid search as a read: %j', args => {
+    const r = readOnly(args);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/cannot run as a read/);
+  }, 30_000);
+
+  it('messages.GetEmojiURL (a login link) is refused', () => {
+    expect(apiRefusalReason('messages.GetEmojiURL')).toMatch(/log/i);
+  });
+
+  it('never prints the autologin token of help.GetConfig', () => {
+    const out = serializeApiResult({ className: 'Config', autologinToken: 'secret-autologin', dcOptions: [], nested: { autologinToken: 'x2' } });
+    expect(out).not.toMatch(/secret-autologin|x2/);
+    expect(JSON.parse(out).autologinToken).toBe('[redacted]');
   });
 });
 

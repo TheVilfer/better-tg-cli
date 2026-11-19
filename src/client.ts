@@ -3058,6 +3058,8 @@ export function serializeApiResult(result: unknown): string {
     if (typeof val === 'bigint') return val.toString();
     if (bigInt.isInstance(val)) return val.toString();
     if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+    // help.GetConfig may carry a token that logs into Telegram's web pages as this account
+    if (_key === 'autologinToken' && val) return '[redacted]';
     return val;
   };
   const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);
