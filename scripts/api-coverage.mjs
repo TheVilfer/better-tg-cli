@@ -451,6 +451,8 @@ function build() {
   lines.push('  `account.ChangeAuthorizationSettings`.');
   lines.push('- **2FA / password:** `account.UpdatePasswordSettings`, `account.ResetPassword`,');
   lines.push('  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`.');
+  lines.push('- **Passkeys:** `account.InitPasskeyRegistration`, `account.RegisterPasskey`,');
+  lines.push('  `account.DeletePasskey` (listing them with `account.GetPasskeys` stays a read).');
   lines.push('- **Phone / email changes & verification:** `account.ChangePhone`, `SendChangePhoneCode`,');
   lines.push('  `ConfirmPhone`, `SendConfirmPhoneCode`, `SendVerifyPhoneCode`, `VerifyPhone`,');
   lines.push('  `SendVerifyEmailCode`, `VerifyEmail`.');
@@ -466,7 +468,8 @@ function build() {
   lines.push('  the translation platform).');
   lines.push('- **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA');
   lines.push('  password — use `telegram transfer-owner`).');
-  lines.push('- **Money:** every non-read `payments.*`, plus the read-named token minters');
+  lines.push('- **Money:** every non-read `payments.*`, `messages.SendPaidReaction` (its `count` is the Stars');
+  lines.push('  it spends), plus the read-named token minters');
   lines.push('  `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,');
   lines.push('  `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.');
   lines.push('');

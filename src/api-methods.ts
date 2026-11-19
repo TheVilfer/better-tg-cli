@@ -93,9 +93,9 @@ const REFUSED_NAMESPACES: Record<string, string> = {
 
 /**
  * Methods refused outright, even with write access — the categories issue #47 and `click` refuse:
- * account/session takeover, 2FA / password / phone changes, data-export (takeout), Telegram
- * Passport (identity docs), sharing the phone number or location, money-withdrawal tokens, and
- * chat-ownership transfer. Paying is handled separately (any non-read `payments.*`).
+ * account/session takeover, 2FA / password / passkey / phone changes, data-export (takeout), Telegram
+ * Passport (identity docs), sharing the phone number or location, money-withdrawal tokens, paid
+ * reactions and chat-ownership transfer. Other paying is handled separately (any non-read `payments.*`).
  */
 const ALWAYS_REFUSED = new Map<string, string>([
   ['account.deleteaccount', 'Refused: deleting the account is irreversible.'],
@@ -111,6 +111,10 @@ const ALWAYS_REFUSED = new Map<string, string>([
   ['account.declinepasswordreset', 'Refused: 2FA password-reset management is security-sensitive.'],
   ['account.getpasswordsettings', 'Refused: this reveals 2FA password settings and needs the password.'],
   ['account.gettmppassword', 'Refused: this mints a temporary password token.'],
+  // Passkeys (log-in credentials): registering or deleting one changes how the account signs in
+  ['account.initpasskeyregistration', 'Refused: registering a passkey adds a way to log in to the account; do it in an official client.'],
+  ['account.registerpasskey', 'Refused: registering a passkey adds a way to log in to the account; do it in an official client.'],
+  ['account.deletepasskey', 'Refused: deleting a passkey removes a way to log in to the account; do it in an official client.'],
   // Phone / email number changes and verification
   ['account.changephone', 'Refused: changing the account phone number is security-sensitive.'],
   ['account.sendchangephonecode', 'Refused: part of changing the account phone number.'],
@@ -146,6 +150,8 @@ const ALWAYS_REFUSED = new Map<string, string>([
   ['payments.getstargiftwithdrawalurl', 'Refused: this mints a URL that can withdraw a star gift.'],
   ['payments.getstarsrevenueadsaccounturl', 'Refused: this mints a URL into the Stars ad account.'],
   ['payments.resolvestargiftoffer', 'Refused: resolving/redeeming a star-gift offer is a paying action.'],
+  // Paying outside payments.*: the amount of a paid reaction is its `count` (no allowPaidStars)
+  ['messages.sendpaidreaction', 'Refused: a paid reaction spends Stars; send it in an official client.'],
   // Group-call stream credentials
   ['phone.getgroupcallstreamrtmpurl', 'Refused: this mints a stream key (a credential).'],
 ]);

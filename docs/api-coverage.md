@@ -181,6 +181,8 @@ location sharing, paying):
   `account.ChangeAuthorizationSettings`.
 - **2FA / password:** `account.UpdatePasswordSettings`, `account.ResetPassword`,
   `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`.
+- **Passkeys:** `account.InitPasskeyRegistration`, `account.RegisterPasskey`,
+  `account.DeletePasskey` (listing them with `account.GetPasskeys` stays a read).
 - **Phone / email changes & verification:** `account.ChangePhone`, `SendChangePhoneCode`,
   `ConfirmPhone`, `SendConfirmPhoneCode`, `SendVerifyPhoneCode`, `VerifyPhone`,
   `SendVerifyEmailCode`, `VerifyEmail`.
@@ -196,7 +198,8 @@ location sharing, paying):
   the translation platform).
 - **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA
   password — use `telegram transfer-owner`).
-- **Money:** every non-read `payments.*`, plus the read-named token minters
+- **Money:** every non-read `payments.*`, `messages.SendPaidReaction` (its `count` is the Stars
+  it spends), plus the read-named token minters
   `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,
   `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.
 

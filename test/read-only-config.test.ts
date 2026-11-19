@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 
 // An in-memory Keychain under the real secrets.ts, so the real secret resolution runs and the real
 // Keychain is never touched; 1Password, Secret Service and DPAPI are off.
@@ -22,6 +23,8 @@ vi.mock('../src/libsecret.js', () => ({ isLibsecretAvailable: () => false, libse
 vi.mock('../src/dpapi.js', () => ({ isDpapiAvailable: () => false, dpapiGet: () => null, dpapiSet: () => false, dpapiDelete: () => false }));
 
 const saved = { ...process.env };
+// A home of its own for each test: the profile dir lives under it, and only it is deleted
+let root: string | undefined;
 let dir: string;
 let file: string;
 
@@ -32,19 +35,28 @@ async function modules() {
 }
 
 beforeEach(async () => {
-  for (const k of ['TG_MOCK', 'TG_READ_ONLY', 'TG_APPROVE', 'TG_TRANSPORT']) delete process.env[k];
-  process.env.TG_PROFILE = `test-rocfg-${process.pid}`;
+  for (const k of ['TG_MOCK', 'TG_READ_ONLY', 'TG_APPROVE', 'TG_TRANSPORT', 'TG_PROFILE']) delete process.env[k];
+  root = mkdtempSync(join(tmpdir(), 'tg-rocfg-'));
+  process.env.HOME = root;
+  process.env.USERPROFILE = root;
+  process.env.APPDATA = join(root, 'AppData');
+  // A profile of its own also keeps any store access the mock misses off the real Keychain items
+  process.env.TG_PROFILE = 'test-rocfg';
   const { paths } = await modules();
   dir = paths.configDir();
-  expect(dir).toMatch(/tg-test-rocfg-\d+$/);
+  const inside = relative(root, dir);
+  expect(inside && !inside.startsWith('..') && !inside.includes(':')).toBeTruthy();
   file = join(dir, 'config.json5');
   mkdirSync(dir, { recursive: true });
   store.clear();
   failNextRead.clear();
 });
 afterEach(() => {
-  process.env = { ...saved };
-  rmSync(dir, { recursive: true, force: true });
+  // In place: a replaced process.env is a plain object that os.homedir() no longer reads
+  for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+  Object.assign(process.env, saved);
+  if (root) rmSync(root, { recursive: true, force: true });
+  root = undefined;
 });
 
 // An old profile: secrets still in the file, and a stray writeEnabled that must never become the mode

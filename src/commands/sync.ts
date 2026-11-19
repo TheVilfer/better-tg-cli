@@ -7,11 +7,11 @@ import {
   disconnectClient,
   parseTimeOffset,
 } from '../client.js';
-import type { GetMessagesOptions, MessageInfo } from '../client.js';
+import type { ChatInfo, GetMessagesOptions, MessageInfo } from '../client.js';
 import type { TelegramClient } from 'teleproto';
 import { formatMediaLabel } from '../formatters/plain.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
-import { join, relative } from 'path';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { assertLocalWriteAllowed } from '../guard.js';
@@ -88,6 +88,33 @@ async function formatMessageLines(
 }
 
 /**
+ * The chats `--chat` names. In a terminal: exact titles (or the ID), else every title containing it.
+ * Over MCP the model chose the name, so it must be exactly one chat by ID, @username or exact title;
+ * otherwise this returns the reason to stop, before any file is created.
+ */
+export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolean): ChatInfo[] | string {
+  const needle = name.toLowerCase();
+  const exact = all.filter(c => c.id === name || c.title.toLowerCase() === needle);
+  if (!exactOnly) {
+    const chats = exact.length > 0 ? exact : all.filter(c => c.title.toLowerCase().includes(needle));
+    return chats.length > 0 ? chats : `No chat found matching "${name}"`;
+  }
+  const user = needle.replace(/^@/, '');
+  const matches = needle.startsWith('@') ? all.filter(c => c.username?.toLowerCase() === user) : exact;
+  if (matches.length === 1) return matches;
+  if (matches.length === 0) return `No chat is exactly "${name}". Over MCP sync needs an ID, @username or the exact title.`;
+  const list = matches.slice(0, 5).map(c => `  ${c.id} ${c.type} ${c.title}${c.username ? ` @${c.username}` : ''}`).join('\n');
+  return `"${name}" matches ${matches.length} chats; use an ID:\n${list}`;
+}
+
+/** `path` itself, or a stop if it is not strictly inside `dir` (a chat title must never pick the folder). */
+export function insideDir(dir: string, path: string): string {
+  const rel = relative(resolve(dir), resolve(path));
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error(`Refusing to write outside ${dir}: ${path}`);
+  return path;
+}
+
+/**
  * getMessages options for one chat. When resuming from a checkpoint, minId is the
  * lower bound: the default --days window and the 1000-message cap would otherwise
  * drop the gap for good once the checkpoint jumps to the newest ID.
@@ -123,10 +150,6 @@ export const syncCommand = new Command('sync')
       const client = await getClient();
       const outputDir = options.output;
 
-      if (!existsSync(outputDir)) {
-        mkdirSync(outputDir, { recursive: true });
-      }
-
       // Determine date range
       let minDate: Date | undefined;
       let maxDate: Date | undefined;
@@ -144,25 +167,28 @@ export const syncCommand = new Command('sync')
         maxDate = parseTimeOffset(options.until);
       }
 
-      // Checkpoints are always written, but only read with --resume
-      const meta = readSyncMeta(outputDir);
-
       let chats;
       if (options.chat) {
-        const allChats = await getDialogs(client, 500);
-        const needle = options.chat.toLowerCase();
-        const exact = allChats.filter(c => c.id === options.chat || c.title.toLowerCase() === needle);
-        chats = exact.length > 0 ? exact : allChats.filter(c => c.title.toLowerCase().includes(needle));
-
-        if (chats.length === 0) {
-          spinner.fail(`No chat found matching "${options.chat}"`);
+        const overMcp = !!process.env.TG_MCP;
+        const selected = selectSyncChats(await getDialogs(client, 500), options.chat, overMcp);
+        if (typeof selected === 'string') {
+          spinner.fail(selected);
           await disconnectClient();
+          if (overMcp) process.exit(1);
           return;
         }
+        chats = selected;
       } else {
         // Sync all chats with recent activity
         chats = await getDialogs(client, 100);
       }
+
+      if (!existsSync(outputDir)) {
+        mkdirSync(outputDir, { recursive: true });
+      }
+
+      // Checkpoints are always written, but only read with --resume
+      const meta = readSyncMeta(outputDir);
 
       spinner.text = `Syncing ${chats.length} chats...`;
 
@@ -173,8 +199,9 @@ export const syncCommand = new Command('sync')
           spinner.text = `Syncing "${chat.title}"...`;
 
           const safeTitle = chat.title.replace(/[/\\?%*:|"<>]/g, '-');
-          const filePath = join(outputDir, `${safeTitle}.md`);
-          const chatMediaDir = join(outputDir, safeTitle, 'media');
+          const filePath = insideDir(outputDir, join(outputDir, `${safeTitle}.md`));
+          // By chat ID: a title such as ".." would otherwise put the media outside outputDir
+          const chatMediaDir = insideDir(outputDir, join(outputDir, 'media', chat.id.replace(/[^\w-]/g, '_')));
 
           // Incremental sync: only messages newer than the last checkpoint
           const minId = options.resume && existsSync(filePath) ? meta[chat.id]?.lastMessageId : undefined;

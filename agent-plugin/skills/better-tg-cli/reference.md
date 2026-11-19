@@ -161,7 +161,8 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
   when running unattended. A second `telegram` process that writes while `watch` runs can steal
   its update stream.
 - `sync --chat X --output DIR` writes markdown. It takes `--days N` (default 7),
-  `--since/--until` and `--all` for full history. `--media` downloads files into `<chat>/media/`.
+  `--since/--until` and `--all` for full history. `--media` downloads files into `DIR/media/<chat id>/`.
+  Over MCP `--chat` must name exactly one chat (ID, @username or exact title).
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
   run fetches everything after the checkpoint and ignores the default `--days` window.
 
