@@ -40,8 +40,11 @@ export async function applyModeChoice(choice: ModeChoice, options: { alreadyConf
       return { ok: false, error: 'needs_terminal' };
     }
   }
-  if (!setWriteValue(encodeWriteState(choice.forSeconds, Date.now(), choice.mode))) return { ok: false, error: 'store_failed' };
-  return { ok: true, until: parseWriteState(getWriteValue()).until };
+  // The end is fixed once, right before the write (a dialog above may have waited minutes), and
+  // reported as written, so the caller can compare it with what the store holds afterwards
+  const now = Date.now();
+  if (!setWriteValue(encodeWriteState(choice.forSeconds, now, choice.mode))) return { ok: false, error: 'store_failed' };
+  return { ok: true, until: choice.forSeconds ? new Date((Math.floor(now / 1000) + choice.forSeconds) * 1000) : undefined };
 }
 
 /**

@@ -72,10 +72,12 @@ function fakeDocument(html: string) {
   return { document, byId: (id: string) => document.getElementById(id)! };
 }
 
-/** Loads the page in one language. `fetchImpl` defaults to the real server, with the Origin a browser sends. */
-function openPage(url: string, lang: string, fetchImpl?: typeof fetch) {
+/**
+ * Loads the page in one language. `fetchImpl` defaults to the real server, with the Origin a browser
+ * sends. `html`: the page as the server sent it, instead of one rendered here.
+ */
+function openPage(url: string, lang: string, fetchImpl?: typeof fetch, html = onboardPage({ site: 'https://site.test', returnTo: `${url}cb` }).html) {
   const u = new URL(url);
-  const html = onboardPage({ site: 'https://site.test', returnTo: `${url}cb` }).html;
   const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(html)![1];
   const { document, byId } = fakeDocument(html);
   const realFetch: typeof fetch = (input, init = {}) =>
@@ -112,6 +114,7 @@ function openPage(url: string, lang: string, fetchImpl?: typeof fetch) {
     msg: () => ({ hidden: byId('msg').hidden, text: byId('msg').ownText, small: byId('msg').children.map(c => c.textContent).join('') }),
     byId,
     visible,
+    heading: () => document.querySelector('h1')!.textContent,
   };
 }
 
@@ -182,8 +185,12 @@ describe('the hints name a command that does what they say', () => {
   it.each(LANGS)('%s', lang => {
     const L = STRINGS[lang] as unknown as Record<string, unknown>;
     const texts = [...Object.values(L), ...Object.values(L.errors as object)].filter((t): t is string => typeof t === 'string');
-    // `telegram write-access` alone only prints the status: every hint says which mode to set
-    for (const t of texts) for (const m of t.matchAll(/telegram write-access(?! (ask|on|off)\b)/g)) expect.fail(`${lang}: "${t.slice(Math.max(0, m.index! - 30), m.index! + 40)}"`);
+    // `telegram write-access` alone only prints the status: a hint to change the mode says which one,
+    // and the status is named only as such ("with nothing after it")
+    const status = /telegram write-access (with nothing after it|sin nada más|без аргументов)/;
+    for (const t of texts) for (const m of t.matchAll(/telegram write-access(?! (ask|on|off)\b)(?! (with nothing after it|sin nada más|без аргументов))/g)) expect.fail(`${lang}: "${t.slice(Math.max(0, m.index! - 30), m.index! + 40)}"`);
+    // Where the mode may have changed out of sight, the hint says how to see it
+    for (const k of ['goneSaved', 'goneMode', 'notSentMode']) expect(L[k], `${lang}: ${k}`).toMatch(status);
     // Only the hint before the login sends the person back to onboard
     for (const k of ['goneSaved', 'goneMode']) expect(L[k], `${lang}: ${k}`).not.toMatch(/telegram onboard (again|de nuevo|ещё|заново)|vuelva a ejecutar telegram onboard|запустить telegram onboard/);
     expect((L.errors as Record<string, string>).internal).not.toContain('telegram onboard');
@@ -379,5 +386,89 @@ describe.each(LANGS)('the page in %s', lang => {
     expect(page.msg().text).toBe(L.goneSaved);
     expect(L.goneSaved).not.toContain('telegram onboard again');
     expect(L.goneSaved).toMatch(/telegram write-access ask, on/);
+  });
+  it('a click on the mode lost on the way does not claim it never arrived: the result is unknown', async () => {
+    // The server may have taken it (and be showing a dialog); the page says how to check
+    const s = await server();
+    const real = (input: RequestInfo | URL, init?: RequestInit) => fetch(new URL(String(input), new URL(s.url).origin), init);
+    const page = openPage(s.url, lang, (input, init) =>
+      init?.method === 'POST' && String(input).endsWith('mode') ? Promise.reject(new TypeError('Failed to fetch')) : real(input, init));
+    await s.post('invite', { invite: 'tok' });
+    await s.untilStep('mode');
+    await page.poll();
+    page.pick('on');
+    await page.click('modego');
+    expect(page.visible()).toEqual(['mode']);
+    expect(page.msg()).toEqual({ hidden: false, text: L.notSentMode, small: '' });
+    expect(L.notSentMode).not.toBe(L.notSent);
+  });
+
+  it('after done, a late answer to a click changes nothing', async () => {
+    // The GET sees "done" and stops polling; the POST that did it loses its answer afterwards
+    const s = await server();
+    const real = (input: RequestInfo | URL, init?: RequestInit) => fetch(new URL(String(input), new URL(s.url).origin), init);
+    let lose!: () => void;
+    const page = openPage(s.url, lang, (input, init) => {
+      if (init?.method !== 'POST') return real(input, init);
+      const origin = new URL(s.url).origin; // a browser sends it on every POST
+      return real(input, { ...init, headers: { ...init.headers as object, origin } }).then(() => new Promise<Response>((_, reject) => { lose = () => reject(new TypeError('Failed to fetch')); }));
+    });
+    await s.post('invite', { invite: 'tok' });
+    await s.untilStep('mode');
+    await page.poll();
+    page.pick('read-only');
+    const clicked = page.click('modego');
+    await s.untilStep('done');
+    while (!lose) await new Promise(r => setTimeout(r, 5));
+    expect(await page.tick()).toBe(true);
+    expect(page.visible()).toEqual(['done']);
+    lose();
+    await clicked;
+    expect(page.visible()).toEqual(['done']);
+    expect(page.msg().hidden).toBe(true);
+  });
+
+  it('after done, a poll sent before it and answered late does not bring the old step back', async () => {
+    const s = await server();
+    const origin = new URL(s.url).origin;
+    let hold = false, release!: () => void;
+    const page = openPage(s.url, lang, async (input, init) => {
+      const res = await fetch(new URL(String(input), origin), init?.method === 'POST' ? { ...init, headers: { ...init.headers as object, origin } } : init);
+      if (!hold || init?.method === 'POST') return res;
+      hold = false;
+      const body = await res.text(); // the "mode" state, as it was when the poll was sent
+      return new Promise<Response>(r => { release = () => r(new Response(body, { status: 200 })); });
+    });
+    await s.post('invite', { invite: 'tok' });
+    await s.untilStep('mode');
+    await page.poll();
+    hold = true;
+    const late = page.tick();
+    while (!release) await new Promise(r => setTimeout(r, 5));
+    page.pick('read-only');
+    await page.click('modego');
+    expect(page.visible()).toEqual(['done']);
+    release();
+    await late;
+    expect(page.visible()).toEqual(['done']);
+  });
+
+  it('write-access on a page: a drop on the very first poll already names that command', async () => {
+    // The page the server sends knows it is write-access alone before any /state answer
+    const s = await server({ modeOnly: true });
+    const html = await (await fetch(s.url)).text();
+    const page = openPage(s.url, lang, () => Promise.reject(new TypeError('Failed to fetch')), html);
+    await page.poll();
+    expect(page.msg().text).toBe(L.goneMode);
+    expect(page.heading()).toBe(L.modeTitle); // not the login heading
+  });
+
+  it('a 404 whose body is cut short is still an old link: polling stops', async () => {
+    const s = await server();
+    const page = openPage(s.url, lang, async () =>
+      new Response(new ReadableStream({ start(c) { c.error(new TypeError('network error')); } }), { status: 404 }));
+    await page.poll();
+    expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: '' });
+    expect(await page.tick()).toBe(false);
   });
 });

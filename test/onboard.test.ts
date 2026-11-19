@@ -246,7 +246,7 @@ describe('rpcCode', () => {
      * A fake secret store: applyMode writes the mode and its end to it unless told to fail,
      * currentMode reads it back. `lie`: says ok, keeps the old value. `start`: the value already there.
      */
-    const store = (plan: { refuse?: boolean; lie?: boolean; start?: SavedMode } = {}) => {
+    const store = (plan: { refuse?: boolean; lie?: boolean; start?: SavedMode; dialogMs?: number } = {}) => {
       const st = { value: plan.start ?? ({ mode: 'read-only' } as SavedMode), choices: [] as unknown[] };
       return {
         st,
@@ -254,9 +254,11 @@ describe('rpcCode', () => {
         applyMode: async (c: ModeChoice): Promise<ModeResult> => {
           st.choices.push(c);
           if (plan.refuse) return { ok: false, error: 'store_failed' };
+          if (plan.dialogMs && c.mode === 'on') await new Promise(r => setTimeout(r, plan.dialogMs)); // the person answers a dialog
+          // Like applyModeChoice: the end is fixed right before the write and reported as written
           const until = c.mode !== 'read-only' && c.forSeconds ? new Date(Math.floor(Date.now() / 1000) * 1000 + c.forSeconds * 1000) : undefined;
           if (!plan.lie) st.value = until ? { mode: c.mode, until } : { mode: c.mode };
-          return { ok: true, until: st.value.until };
+          return { ok: true, until };
         },
       };
     };
@@ -320,6 +322,38 @@ describe('rpcCode', () => {
       const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
       await post('invite', { invite: 'tok' });
       expect(await until('mode')).toMatchObject({ error: 'store_failed', mode: 'ask' });
+    });
+
+    it('nor an older "on for an hour" whose end falls inside the time the dialog was open', async () => {
+      // The dialog opens at 12:00 and the write happens at 12:02: an old end of 13:00 is not 13:02.
+      // Here the store already holds "on" until an hour from now and the dialog takes 1.5 s.
+      const f = store({ lie: true, start: { mode: 'on', until: new Date(Math.floor(Date.now() / 1000) * 1000 + 3_600_000) }, dialogMs: 1500 });
+      const { post, until, state, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      const res = await post('mode', { mode: 'on', for: '1h' });
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe('store_failed');
+      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'on' });
+      expect(events.map(e => e.event)).not.toContain('mode');
+    });
+
+    it('does not take a timed choice as saved when applyMode does not say which end it wrote', async () => {
+      const f = store();
+      const silent = async (c: ModeChoice): Promise<ModeResult> => { const r = await f.applyMode(c); return r.ok ? { ok: true } : r; };
+      const { post, until } = await start({}, { applyMode: silent, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'on', for: '1h' })).status).toBe(409);
+    });
+
+    it('accepts an honest "on for an hour" after a long dialog', async () => {
+      const f = store({ start: { mode: 'on' }, dialogMs: 1500 });
+      const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'on', for: '1h' })).status).toBe(202);
+      expect((await until('done')).mode).toBe('on');
     });
 
     it('accepts an honest "on for an hour"', async () => {
