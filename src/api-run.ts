@@ -4,6 +4,7 @@ import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
 import chalk from './colors.js';
 import ora from './spinner.js';
+import { fail } from './errors.js';
 
 /**
  * One execution path for every raw TL call, shared by the generic `api` command and the generated
@@ -49,8 +50,6 @@ export async function runApiMethod(
     if (isWrite) {
       auditLog({ timestamp: new Date().toISOString(), command: auditCommand, target: canonical, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
     }
-    spinner.fail(`${canonical} failed`);
-    console.error(error instanceof Error ? error.message : error);
-    process.exit(1);
+    fail(error, spinner, `${canonical} failed`);
   }
 }

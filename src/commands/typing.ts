@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Argument, Command } from 'commander';
 import { getClient, sendTyping, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { assertWriteEnabled } from '../guard.js';
@@ -11,14 +11,10 @@ const ACTIONS = ['typing', 'photo', 'video', 'audio', 'document', 'cancel'] as c
 export const typingCommand = new Command('typing')
   .description('Show a "typing…" (or uploading) status in a chat')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('[action]', `One of: ${ACTIONS.join(', ')}`, 'typing')
+  .addArgument(new Argument('[action]', 'What the chat sees').choices(ACTIONS).default('typing'))
   .option('--json', 'Output as JSON')
   .action(async (chat, action, options) => {
     assertWriteEnabled();
-    if (!ACTIONS.includes(action)) {
-      console.error(`Action must be one of: ${ACTIONS.join(', ')}`);
-      process.exit(1);
-    }
     const spinner = ora(`Sending "${action}" status to "${chat}"...`).start();
     try {
       const client = await getClient();

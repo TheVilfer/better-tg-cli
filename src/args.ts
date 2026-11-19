@@ -41,15 +41,23 @@ export function eachOf<T>(parse: (value: string) => T): (value: string, previous
   return (value, previous) => [...(previous ?? []), parse(value)];
 }
 
-/** A time for --since/--until: checked now, kept as text so it is resolved against "now" later. */
-export function timeArg(value: string): string {
-  try {
-    parseTimeOffset(value);
-  } catch (error) {
-    throw new InvalidArgumentError((error as Error).message);
-  }
-  return value;
+/**
+ * A value checked now by `check` (which throws on a bad one) and kept as text, for values resolved
+ * later against "now" (durations, times): the command line fails at parse time, exit 2.
+ */
+export function checkedBy(check: (value: string) => unknown): (value: string) => string {
+  return value => {
+    try {
+      check(value);
+    } catch (error) {
+      throw new InvalidArgumentError((error as Error).message);
+    }
+    return value;
+  };
 }
+
+/** A time for --since/--until ("30m", "1h", "7d", "2w", "2026-09-01"). */
+export const timeArg = checkedBy(parseTimeOffset);
 
 /** An option whose value must be one of `values` (commander lists them on a mismatch). */
 export function choiceOption(flags: string, description: string, values: readonly string[]): Option {

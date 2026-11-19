@@ -290,7 +290,10 @@ program
     }
     if (needle) {
       // A search prints only what matched; the API summary below would hide an empty answer
-      if (!lines.length) lines.push(`No commands match "${options.grep}". Try a shorter word, or run \`telegram help-all\` without -g.`);
+      if (!lines.length) {
+        lines.push(`No commands match "${options.grep}". Try a shorter word, or run \`telegram help-all\` without -g. ` +
+          'Raw Telegram API methods are not listed here: `telegram schema` shows them.');
+      }
       console.log(lines.join('\n'));
       return;
     }

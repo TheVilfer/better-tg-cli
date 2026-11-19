@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { getClient, setChatPermissions, permissionPresets, disconnectClient, parseDuration, type BannedRight } from '../client.js';
+import { checkedBy } from '../args.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
@@ -24,11 +25,10 @@ export const editPermissionsCommand = new Command('edit-permissions')
   .option('--ban', 'Remove the member entirely (deny viewing messages); per-user only')
   .option('--lift', 'Lift all restrictions (full permissions)')
   .option('--deny <list>', `Comma-separated rights to deny: ${Object.keys(DENY_MAP).join(', ')}`)
-  .option('--until <duration>', 'Temporary restriction (e.g. 1h, 1d, 1w); per-user only')
+  .option('--until <duration>', 'Temporary restriction (e.g. 1h, 1d, 1w); per-user only', checkedBy(parseDuration))
   .option('--json', 'Output as JSON')
   .action(async (chat, user, options) => {
-    assertWriteEnabled();
-
+    // The checks below come first: a bad command line must not cost an approval
     const denied = new Set<BannedRight>();
     if (options.mute) permissionPresets.MUTE_RIGHTS.forEach(r => denied.add(r));
     if (options.ban) denied.add('viewMessages');
@@ -42,6 +42,8 @@ export const editPermissionsCommand = new Command('edit-permissions')
     if (!options.lift && denied.size === 0) {
       fail(usageError('Specify what to restrict (--mute, --ban, --deny <list>) or --lift to remove restrictions.'));
     }
+
+    assertWriteEnabled();
 
     let untilDate = 0;
     if (options.until) {

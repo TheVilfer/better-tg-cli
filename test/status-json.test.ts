@@ -7,7 +7,7 @@ const home = await vi.hoisted(async () => {
   const { join } = await import('node:path');
   const root = mkdtempSync(join(tmpdir(), 'tg-status-home-'));
   Object.assign(process.env, { HOME: root, USERPROFILE: root, APPDATA: join(root, 'AppData'), TG_NO_UPDATE_CHECK: '1' });
-  for (const k of ['TG_MOCK', 'TG_PROFILE', 'TG_MCP', 'TG_READ_ONLY', 'TG_APPROVE', 'OP_SERVICE_ACCOUNT_TOKEN']) delete process.env[k];
+  for (const k of ['TG_MOCK', 'TG_PROFILE', 'TG_MCP', 'TG_READ_ONLY', 'TG_APPROVE', 'TG_TRANSPORT', 'OP_SERVICE_ACCOUNT_TOKEN']) delete process.env[k];
   return root;
 });
 // An in-memory secret store; the real Keychain, 1Password, libsecret and DPAPI are never asked
@@ -29,7 +29,9 @@ vi.mock('../src/dpapi.js', async orig => ({ ...(await orig<typeof import('../src
 
 import { writeAccessCommand } from '../src/commands/write-access.js';
 import { checkCommand } from '../src/commands/check.js';
-import { EXIT } from '../src/errors.js';
+import { pollCommand } from '../src/commands/poll.js';
+import { editPermissionsCommand } from '../src/commands/edit-permissions.js';
+import { errorDetails, EXIT } from '../src/errors.js';
 
 let out = '';
 let err = '';
@@ -50,6 +52,35 @@ async function run(cmd: typeof checkCommand, args: string[]): Promise<number | n
     return (e as { code: number }).code;
   }
 }
+
+describe('checks before the write guard', () => {
+  // In "ask" the guard would stop with exit 3 and hand out a code: a bad command must not get one
+  it.each([
+    [pollCommand, ['Team', 'Q?', 'only one']],
+    [pollCommand, ['Team', 'Q?', 'a', 'b', '--quiz', '--correct', '3']],
+    [editPermissionsCommand, ['Team', '@alice']],
+    [editPermissionsCommand, ['Team', '@alice', '--deny', 'everything']],
+  ])('%#: exits 2 in mode "ask" without asking for an approval', async (cmd, args) => {
+    store.values.set('writeEnabled', 'ask');
+    expect(await run(cmd as typeof checkCommand, args)).toBe(EXIT.USAGE);
+    expect(out).not.toMatch(/approval_required/);
+    expect(err).not.toMatch(/Approval needed/);
+  });
+});
+
+describe('6.1 error codes of Telegram errors', () => {
+  it('a flood wait is flood_wait with the seconds; another RPC error is telegram_rpc; both exit 1', () => {
+    expect(errorDetails({ errorMessage: 'FLOOD_WAIT', seconds: 120, message: 'A wait of 120 seconds is required' })).toEqual({
+      code: 'flood_wait', message: 'A wait of 120 seconds is required', exitCode: 1, retryAfterSeconds: 120,
+      hint: 'Telegram rate limit: wait 120 s, then run the command again.',
+    });
+    expect(errorDetails({ errorMessage: 'FLOOD_WAIT_30', message: 'FLOOD_WAIT_30' })).toMatchObject({ code: 'flood_wait', retryAfterSeconds: 30 });
+    expect(errorDetails({ errorMessage: 'MESSAGE_ID_INVALID', message: 'MESSAGE_ID_INVALID: no such message' })).toEqual({
+      code: 'telegram_rpc', message: 'MESSAGE_ID_INVALID: no such message', exitCode: 1,
+    });
+    expect(errorDetails(new Error('boom'))).toEqual({ code: 'error', message: 'boom', exitCode: 1 });
+  });
+});
 
 describe('2.1 status an agent can read', () => {
   it('write-access --json prints the mode as one JSON line', async () => {

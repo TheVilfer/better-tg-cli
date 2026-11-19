@@ -6,6 +6,7 @@ import { applyModeChoice, currentModeLine, modeQuestion, savedMode } from '../wr
 import { ONBOARD_SITE, startOnboarding } from '../onboard.js';
 import { openBrowser } from './onboard.js';
 import chalk from '../colors.js';
+import { checkedBy } from '../args.js';
 import { fail, usageError } from '../errors.js';
 import { writeStatus } from '../status.js';
 
@@ -18,7 +19,7 @@ const UNPROTECTED_NOTE =
 export const writeAccessCommand = new Command('write-access')
   .description('Manage write access: read-only, ask (the user approves each write in the chat; set after onboarding) or on (no questions; needs the user\'s confirmation)')
   .argument('[action]', 'ask, on, off, or omit to show status')
-  .option('--for <duration>', 'With "ask" or "on": back to read-only automatically after 30m / 2h / 1d / 1w')
+  .option('--for <duration>', 'With "ask" or "on": back to read-only automatically after 30m / 2h / 1d / 1w', checkedBy(parseForDuration))
   .option('--no-open', 'Without a terminal or dialog: print the page URL instead of opening a browser')
   .option('--json', 'Print the resulting status as JSON: {writeMode, writeUntil?, writeModeProtected, secretStore, profile}')
   .action(async (action: string | undefined, options: { for?: string; open: boolean; json?: boolean }) => {

@@ -45,19 +45,12 @@ export const pinCommand = new Command('pin')
 export const unpinCommand = new Command('unpin')
   .description('Unpin a message (or all pinned messages) in a chat')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('[messageId]', 'Message ID to unpin; omit to unpin all messages')
+  .argument('[messageId]', 'Message ID to unpin; omit to unpin all messages', positiveInt)
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
     assertWriteEnabled();
 
-    let id: number | undefined;
-    if (messageId != null) {
-      id = parseInt(messageId, 10);
-      if (!Number.isInteger(id)) {
-        console.error('Message ID must be a number');
-        process.exit(1);
-      }
-    }
+    const id: number | undefined = messageId;
 
     const spinner = ora(id == null ? `Unpinning all in "${chat}"...` : `Unpinning #${id} in "${chat}"...`).start();
 

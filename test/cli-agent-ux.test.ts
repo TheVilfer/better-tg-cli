@@ -48,7 +48,7 @@ describe('discovery', () => {
 
   it('1.4 a search prints only its matches, and says so when there are none', () => {
     const none = cli(['help-all', '-g', 'nonsensexyz']);
-    expect(none.out.trim()).toBe('No commands match "nonsensexyz". Try a shorter word, or run `telegram help-all` without -g.');
+    expect(none.out.trim()).toBe('No commands match "nonsensexyz". Try a shorter word, or run `telegram help-all` without -g. Raw Telegram API methods are not listed here: `telegram schema` shows them.');
     expect(cli(['help-all', '-g', 'unread']).out).not.toMatch(/Telegram API/);
     expect(cli(['help-all']).out).toMatch(/Telegram API/);
   }, 30_000);
@@ -81,6 +81,14 @@ describe('input validation (exit 2, never a silent default)', () => {
     [['inbox', '--type', 'robot']],
     [['chats', '--type', 'bots']],
     [['search', 'x', '--type', 'pictures']],
+    [['topic', 'create', 'Dev Forum', 'T', '--icon-color', 'red']],
+    [['topic', 'edit', 'Dev Forum', 'abc', '--title', 'x']],
+    [['topic', 'close', 'Dev Forum', '0']],
+    [['unpin', 'Team', 'abc']],
+    [['typing', 'Team', 'dance']],
+    [['mute', 'Team', '-d', 'soon']],
+    [['edit-permissions', 'Team', '@alice', '--mute', '--until', 'later']],
+    [['write-access', 'ask', '--for', '3x']],
   ])('3.1/3.4 %j', args => {
     const r = cli(args);
     expect(r.code).toBe(2);
@@ -145,6 +153,14 @@ describe('chat names', () => {
     // One exact title or one partial match still reads
     expect(cli(['read', 'Team', '-n', '1']).code).toBe(0);
     expect(cli(['read', 'Desig', '-n', '1']).out).toMatch(/^# Team Design /m);
+  }, 30_000);
+
+  it('3.2 a write to a partial title stays refused, now with exit 2 and the candidates in JSON', () => {
+    const r = cli(['send', 'Tea', 'hi', '--json']);
+    expect(r.code).toBe(2);
+    const json = jsonError(r.out);
+    expect(json).toMatchObject({ code: 'chat_not_exact' });
+    expect(json.candidates.map((c: { id: string }) => c.id)).toEqual(['-1004001', '-1004002']);
   }, 30_000);
 
   it('3.3 "Chat not found" names the closest titles and the command to look further', () => {
@@ -231,6 +247,24 @@ describe('output shapes', () => {
     expect(again.out).toMatch(new RegExp(`^Team \\(-1004001\\): up to date \\(last #${report.chats[0].lastId}\\)`, 'm'));
     expect(again.err).toMatch(/Synced 0 new messages in 0 chats .*\(1 already up to date\)/);
     expect(readFileSync(report.chats[0].file, 'utf8')).toMatch(/^# Team/);
+  }, 30_000);
+
+  it('3.6/3.7 search says when more may exist and names the time zone of a global result list', () => {
+    const r = cli(['search', '', '-n', '1']);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/^# Results for "" \(times in .+, UTC[+-]\d/m);
+    expect(r.out).toMatch(/^… more may exist: raise -n \(now 1\)/m);
+    expect(JSON.parse(cli(['search', '', '-n', '1', '--json']).out)[0].hasMore).toBe(true);
+    expect(JSON.parse(cli(['search', 'green', '--chat', 'Team', '--json']).out)[0].hasMore).toBeUndefined();
+  }, 30_000);
+
+  it('6.2 a message without media says how to look at it', () => {
+    const r = cli(['download', 'Team', '3', '--json']);
+    expect(r.code).toBe(1);
+    expect(jsonError(r.out)).toEqual({
+      code: 'no_media', message: 'Message #3 has no downloadable media',
+      hint: 'Check the message: telegram get "Team" 3 (media shows as [photo …] or [document …]).',
+    });
   }, 30_000);
 
   it('3.10 schema prints one line of JSON outside a terminal', () => {
