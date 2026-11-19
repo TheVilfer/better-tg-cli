@@ -7,6 +7,7 @@ import { ANOTHER_ACCOUNT, actionHash, consumeApproval, createApproval, describeA
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 import { getSessionString } from './config.js';
+import { errorJson, EXIT, wantsJson } from './errors.js';
 
 /**
  * `readsStdin`: the command takes its body from stdin, as its parsed options say (`-p-`, `-c -`,
@@ -32,10 +33,14 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts:
   }
   const state = parseWriteState(getWriteValue());
   if (!state.enabled) {
+    // A code of its own (4) and, with --json, one JSON line: the agent's next step is to ask the user
+    if (wantsJson(argv)) {
+      console.log(errorJson({ code: 'write_disabled', message: `Write access is disabled (${describeWriteState(state)})`, hint: 'telegram write-access ask' }));
+    }
     console.error(chalk.red(`Write access is disabled (${describeWriteState(state)}).`));
     console.error(chalk.gray('To write, run `telegram write-access ask`: then each write waits for the user\'s yes in the chat. Writing without asking (`write-access on`) needs the user\'s own confirmation.'));
     if (!isWriteModeProtected()) console.error(chalk.gray(CLOUD_HINT));
-    process.exit(1);
+    process.exit(EXIT.WRITE_DISABLED);
   }
   if (state.mode === 'ask') requireApproval(argv, opts.readsStdin === true);
   else {

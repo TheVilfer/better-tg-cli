@@ -5,6 +5,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 function parseTopicId(value: string): number {
   const id = parseInt(value, 10);
@@ -32,9 +33,7 @@ async function run(
     await disconnectClient();
   } catch (error) {
     auditLog({ timestamp: new Date().toISOString(), command, target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-    spinner.fail('Failed');
-    console.error(error instanceof Error ? error.message : error);
-    process.exit(1);
+    fail(error, spinner, 'Failed');
   }
 }
 

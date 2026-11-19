@@ -5,6 +5,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 function makePinCommand(name: 'pin-chat' | 'unpin-chat', pinned: boolean): Command {
   return new Command(name)
@@ -24,9 +25,7 @@ function makePinCommand(name: 'pin-chat' | 'unpin-chat', pinned: boolean): Comma
         await disconnectClient();
       } catch (error) {
         auditLog({ timestamp: new Date().toISOString(), command: name, target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-        spinner.fail(`Failed to ${pinned ? 'pin' : 'unpin'} chat`);
-        console.error(error instanceof Error ? error.message : error);
-        process.exit(1);
+        fail(error, spinner, `Failed to ${pinned ? 'pin' : 'unpin'} chat`);
       }
     });
 }
@@ -53,9 +52,7 @@ export const markUnreadCommand = new Command('mark-unread')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'mark-unread', target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to mark the chat');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to mark the chat');
     }
   });
 
@@ -77,8 +74,6 @@ export const deleteDialogCommand = new Command('delete-dialog')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'delete-dialog', target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to delete the dialog');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to delete the dialog');
     }
   });

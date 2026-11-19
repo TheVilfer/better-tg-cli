@@ -5,11 +5,13 @@ import { formatMembers } from '../formatters/plain.js';
 import { formatMembersMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const membersCommand = new Command('members')
   .description('List group members')
   .argument('<group>', 'Group name or username')
-  .option('-n, --limit <number>', 'Maximum members to fetch', '200')
+  .option('-n, --limit <number>', 'Maximum members to fetch', positiveInt, 200)
   .option('-q, --query <text>', 'Only members whose name or @username matches')
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
@@ -19,7 +21,7 @@ export const membersCommand = new Command('members')
     try {
       const client = await getClient();
       const members = await getChatMembers(client, group, {
-        limit: parseInt(options.limit),
+        limit: options.limit,
         query: options.query,
       });
 
@@ -40,9 +42,7 @@ export const membersCommand = new Command('members')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch members');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch members');
     }
   });
 
@@ -77,8 +77,6 @@ export const adminsCommand = new Command('admins')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch admins');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch admins');
     }
   });

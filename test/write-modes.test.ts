@@ -55,6 +55,7 @@ import { getWriteValue, isFileFallbackAllowed } from '../src/write-store.js';
 import { configDir } from '../src/paths.js';
 import { elicitApproved, gateWrite } from '../src/mcp.js';
 import { getSessionString } from '../src/config.js';
+import { EXIT } from '../src/errors.js';
 
 // A home of its own for each test: the profile dir lives under it, and only that root is deleted
 let root: string | undefined;
@@ -192,8 +193,17 @@ describe('approvals', () => {
 describe('the guard', () => {
   it('refuses writes in read-only and names both ways to allow them', () => {
     const r = guard(['send', '@alice', 'hi']);
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(EXIT.WRITE_DISABLED);
     expect(r.err).toMatch(/write-access ask/);
+    expect(r.out).toBe('');
+  });
+
+  it('read-only with --json: exit 4 and one JSON error line on stdout naming the next step', () => {
+    const r = guard(['send', '@alice', 'hi', '--json']);
+    expect(r.code).toBe(4);
+    expect(JSON.parse(r.out)).toEqual({
+      error: { code: 'write_disabled', message: 'Write access is disabled (read-only)', hint: 'telegram write-access ask' },
+    });
   });
 
   it('lets writes through in "on" and records the mode in the audit log', () => {
@@ -242,7 +252,7 @@ describe('the guard', () => {
 
   it('without a secret store reads the mode from the profile file and marks writes unprotected', async () => {
     store.available = false;
-    expect(guard(['send', '@alice', 'hi']).code).toBe(1);
+    expect(guard(['send', '@alice', 'hi']).code).toBe(EXIT.WRITE_DISABLED);
     expect(await applyModeChoice({ mode: 'on' })).toEqual({ ok: true, until: undefined });
     expect(readFileSync(join(dir, 'write-access'), 'utf8').trim()).toBe('true');
     expect(guard(['send', '@alice', 'hi']).code).toBeNull();
@@ -267,7 +277,7 @@ describe('local file writes', () => {
     process.env.TG_MCP = '1';
     for (const argv of [['download', 'me', '1'], ['sync'], ['avatar', 'me']]) {
       const r = local(argv);
-      expect(r.code, argv.join(' ')).toBe(1);
+      expect(r.code, argv.join(' ')).toBe(EXIT.WRITE_DISABLED);
       expect(r.err).toMatch(/Write access is disabled/);
     }
   });
@@ -323,7 +333,7 @@ describe('the file fallback', () => {
   it('tells agents on cloud computers not to install a keyring', () => {
     store.available = false;
     const r = guard(['send', '@alice', 'hi']);
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(EXIT.WRITE_DISABLED);
     expect(r.err).toMatch(/Do not try to install one/);
   });
 });

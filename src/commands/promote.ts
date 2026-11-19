@@ -3,6 +3,7 @@ import { getClient, promoteAdmin, disconnectClient } from '../client.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const promoteCommand = new Command('promote')
   .description('Promote a group member to admin')
@@ -32,8 +33,6 @@ export const promoteCommand = new Command('promote')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'promote', target: group, targetUser: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to promote user');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to promote user');
     }
   });

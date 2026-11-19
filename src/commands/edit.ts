@@ -1,16 +1,18 @@
 import { Command } from 'commander';
-import { getClient, editMessageText, disconnectClient } from '../client.js';
+import { getClient, editMessageText, disconnectClient, chatRef } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { readTextArg } from '../text.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const editCommand = new Command('edit')
   .description('Edit one of your own messages')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageId>', 'Message ID to edit')
+  .argument('<messageId>', 'Message ID to edit', positiveInt)
   .argument('<text>', 'New message text, or "-" to read it from stdin')
   .option('--markdown', 'Parse the new text as Markdown')
   .option('--html', 'Parse the new text as HTML')
@@ -18,11 +20,7 @@ export const editCommand = new Command('edit')
   .action(async (chat, messageId, textArg, options) => {
     assertWriteEnabled();
     const text = readTextArg(textArg);
-    const id = parseInt(messageId, 10);
-    if (!Number.isInteger(id)) {
-      console.error('Message ID must be a number');
-      process.exit(1);
-    }
+    const id: number = messageId;
     const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
     const spinner = ora(`Editing #${id}...`).start();
     try {

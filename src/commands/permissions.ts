@@ -4,6 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const permissionsCommand = new Command('permissions')
   .description("Show a member's rights in a group/channel, or the chat's default permissions")
@@ -27,8 +28,6 @@ export const permissionsCommand = new Command('permissions')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch permissions');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch permissions');
     }
   });

@@ -16,6 +16,9 @@ import { isAbsolute, join, relative, resolve, sep } from 'path';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { assertLocalWriteAllowed } from '../guard.js';
+import { fail } from '../errors.js';
+import { positiveInt, timeArg } from '../args.js';
+import { formatJson } from '../formatters/json.js';
 
 /** Per-chat sync checkpoints, keyed by chat ID (titles can change or collide). */
 interface SyncMeta {
@@ -193,15 +196,16 @@ export function buildSyncFetchOptions(o: {
 const SYNC_DIALOG_LIMIT = 500;
 
 export const syncCommand = new Command('sync')
-  .description('Sync messages to markdown files')
-  .option('--days <number>', 'Number of days to sync', '7')
-  .option('--since <time>', 'Start from time offset (e.g., "1h", "30m", "7d")')
-  .option('--until <time>', 'End at time offset (e.g., "1h", "30m", "7d")')
+  .description('Export or incrementally sync chat history to Markdown files (backup, archive)')
+  .option('--days <number>', 'Number of days to sync', positiveInt, 7)
+  .option('--since <time>', 'Start from time offset (e.g., "1h", "30m", "7d")', timeArg)
+  .option('--until <time>', 'End at time offset (e.g., "1h", "30m", "7d")', timeArg)
   .option('--all', 'Sync entire chat history (no time limit)')
   .option('--chat <name>', 'Sync specific chat only')
   .option('--output <dir>', 'Output directory', './telegram-sync')
   .option('--media', 'Also download photos and documents alongside markdown')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
+  .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}]}')
   .action(async (options) => {
     assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
@@ -220,7 +224,7 @@ export const syncCommand = new Command('sync')
         minDate = parseTimeOffset(options.since);
       } else {
         minDate = new Date();
-        minDate.setDate(minDate.getDate() - parseInt(options.days));
+        minDate.setDate(minDate.getDate() - options.days);
       }
 
       if (options.until) {

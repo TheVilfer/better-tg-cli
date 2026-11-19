@@ -4,6 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 const ACTIONS = ['typing', 'photo', 'video', 'audio', 'document', 'cancel'] as const;
 
@@ -27,8 +28,6 @@ export const typingCommand = new Command('typing')
       else console.log(chalk.green(`✓ Sent "${action}" status to "${result.title}"`));
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to send status');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to send status');
     }
   });

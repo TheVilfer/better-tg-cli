@@ -1,24 +1,22 @@
 import { Command } from 'commander';
-import { getClient, deleteChatMessages, disconnectClient } from '../client.js';
+import { getClient, deleteChatMessages, disconnectClient, chatRef } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { messageIdList } from '../args.js';
 
 export const deleteCommand = new Command('delete')
   .description('Delete one or more messages')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageIds>', 'Message ID, or comma-separated IDs (e.g. 123 or 123,124)')
+  .argument('<messageIds>', 'Message ID, or comma-separated IDs (e.g. 123 or 123,124)', messageIdList)
   .option('--just-me', 'Delete only for you (do not revoke for everyone)')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageIds, options) => {
     assertWriteEnabled();
-    const ids = messageIds.split(',').map((s: string) => parseInt(s.trim(), 10)).filter((n: number) => Number.isInteger(n));
-    if (ids.length === 0) {
-      console.error('Provide at least one numeric message ID');
-      process.exit(1);
-    }
+    const ids: number[] = messageIds;
     const revoke = !options.justMe;
     const spinner = ora(`Deleting ${ids.length} message(s)...`).start();
     try {

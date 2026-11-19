@@ -5,6 +5,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 function makeBlockCommand(name: 'block' | 'unblock', blocked: boolean): Command {
   return new Command(name)
@@ -24,9 +25,7 @@ function makeBlockCommand(name: 'block' | 'unblock', blocked: boolean): Command 
         await disconnectClient();
       } catch (error) {
         auditLog({ timestamp: new Date().toISOString(), command: name, target: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-        spinner.fail(`Failed to ${name}`);
-        console.error(error instanceof Error ? error.message : error);
-        process.exit(1);
+        fail(error, spinner, `Failed to ${name}`);
       }
     });
 }

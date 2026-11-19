@@ -4,6 +4,8 @@ import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
 import { connectClient, transportSetting } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
+import { CliError, EXIT, formatCandidates } from './errors.js';
+import type { ChatCandidate } from './errors.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
 import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
@@ -33,7 +35,7 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   // (a second read after the 1 s cache could see something else or fail)
   const config = snapshot ?? loadConfig(() => {});
   if (!isConfigured(config)) {
-    throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
+    throw new CliError('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.', 'not_configured', EXIT.NOT_LOGGED_IN);
   }
 
   const { apiId, apiHash } = getCredentials(config);
@@ -53,10 +55,11 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
 
   if (!await clientInstance.isUserAuthorized()) {
     const invited = config.credentialSource === 'invite';
-    throw new Error(
+    throw new CliError(
       invited
         ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'
-        : 'Not authenticated. Run "telegram onboard" or "telegram auth --qr" to log in.'
+        : 'Not authenticated. Run "telegram onboard" or "telegram auth --qr" to log in.',
+      'session_expired', EXIT.NOT_LOGGED_IN,
     );
   }
 
@@ -115,10 +118,20 @@ export async function getMe(client: TelegramClient): Promise<Api.User> {
   return me;
 }
 
+/** Values of `--type` in chats and inbox: the chat types plus "bot" (users that are bots). */
+export const CHAT_TYPES = ['user', 'bot', 'group', 'supergroup', 'channel'] as const;
+
+/** Whether a chat passes `--type`: "user" keeps its old meaning (bots included), "bot" only bots. */
+export function matchesChatType(chat: Pick<ChatInfo, 'type' | 'bot'>, type: string): boolean {
+  return type === 'bot' ? chat.type === 'user' && !!chat.bot : chat.type === type;
+}
+
 export interface ChatInfo {
   id: string;
   title: string;
   type: 'user' | 'group' | 'supergroup' | 'channel';
+  /** A bot account (type stays "user"); `--type bot` lists only these. */
+  bot?: boolean;
   username?: string;
   unreadCount: number;
   lastMessage?: string;
@@ -142,11 +155,13 @@ export async function getDialogs(
     let type: ChatInfo['type'] = 'user';
     let title = dialog.title || 'Unknown';
     let username: string | undefined;
+    let bot: boolean | undefined;
 
     if (dialog.isUser) {
       type = 'user';
       const entity = dialog.entity as Api.User;
       username = entity.username ?? undefined;
+      bot = entity.bot || undefined;
     } else if (dialog.entity instanceof Api.Channel) {
       // Check Channel first: GramJS reports megagroups as isGroup too
       type = dialog.entity.megagroup ? 'supergroup' : 'channel';
@@ -159,6 +174,7 @@ export async function getDialogs(
       id: dialog.id?.toString() || '',
       title,
       type,
+      bot,
       username,
       unreadCount: dialog.unreadCount,
       lastMessage: dialog.message instanceof Api.Message ? messageText(dialog.message) : undefined,
@@ -212,7 +228,7 @@ export type ButtonType =
   | 'unknown';
 
 export interface ButtonInfo {
-  /** 1-based flat index across all rows (what the user passes to `tg click`). */
+  /** 1-based flat index across all rows (what the user passes to `telegram click`). */
   index: number;
   row: number;
   col: number;
@@ -549,25 +565,7 @@ function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
   return undefined;
 }
 
-export function parseTimeOffset(offset: string): Date {
-  const now = new Date();
-  const match = offset.match(/^(\d+)([mhdw])$/);
-  if (!match) {
-    // Absolute dates: "2026-09-01", "2026-09-01T12:00"
-    const abs = Date.parse(offset);
-    if (!Number.isNaN(abs)) return new Date(abs);
-    throw new Error(`Invalid time: ${offset}. Use "30m", "1h", "7d", "2w" or a date like "2026-09-01"`);
-  }
-  const value = parseInt(match[1]);
-  const unit = match[2];
-  switch (unit) {
-    case 'm': return new Date(now.getTime() - value * 60 * 1000);
-    case 'h': return new Date(now.getTime() - value * 60 * 60 * 1000);
-    case 'd': return new Date(now.getTime() - value * 24 * 60 * 60 * 1000);
-    case 'w': return new Date(now.getTime() - value * 7 * 24 * 60 * 60 * 1000);
-    default: throw new Error(`Unknown time unit: ${unit}`);
-  }
-}
+export { parseTimeOffset } from './time.js';
 
 /** Convert a raw message into the CLI's MessageInfo shape. Pass `full` to attach MessageFull. */
 export async function toMessageInfo(client: TelegramClient, msg: Api.Message, opts: { full?: boolean } = {}): Promise<MessageInfo> {
@@ -759,6 +757,8 @@ export interface GetMessagesOptions {
   from?: string;
   /** Read the replies thread of this message (channel post comments or a forum topic ID). */
   thread?: number;
+  /** `thread` is a forum topic: refuse a chat that is not a forum instead of reading an empty thread. */
+  topic?: boolean;
   /** Attach MessageFull to each message (the `--full` flag). */
   full?: boolean;
 }
@@ -767,13 +767,20 @@ export async function getMessages(
   client: TelegramClient,
   chatIdentifier: string,
   options: GetMessagesOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; threadChatId?: string }> {
+): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; threadChatId?: string; forum?: boolean }> {
   const { limit = 50, offsetId, minDate, maxDate, minId, from, thread, full } = options;
   let threadChatId: string | undefined;
 
   // Find the chat by name or username
   const entity = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(entity);
+  const chatId = utils.getPeerId(entity).toString();
+  const forum = entity instanceof Api.Channel && !!entity.forum;
+  if (options.topic && !forum) {
+    throw new CliError(`${chatTitle} (${chatId}) is not a forum, so it has no topics`, 'not_a_forum', EXIT.USAGE, {
+      hint: 'Read it without --topic; for the comments of one message use --thread <id>.',
+    });
+  }
   const fromUser = from ? await resolveChat(client, from) : undefined;
 
   const messages: MessageInfo[] = [];
@@ -863,7 +870,7 @@ export async function getMessages(
     if (batch.length < batchLimit) break;
   }
 
-  return { messages, chatTitle, threadChatId };
+  return { messages, chatTitle, chatId, threadChatId, ...(forum ? { forum } : {}) };
 }
 
 /** Fetch specific messages by ID (missing/deleted IDs are skipped). */
@@ -872,7 +879,7 @@ export async function getMessagesByIds(
   chatIdentifier: string,
   ids: number[],
   options: { full?: boolean } = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; missing: number[] }> {
+): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; missing: number[] }> {
   const entity = await resolveChat(client, chatIdentifier);
   const raw = await client.getMessages(entity, { ids });
   const messages: MessageInfo[] = [];
@@ -883,7 +890,7 @@ export async function getMessagesByIds(
       found.add(msg.id);
     }
   }
-  return { messages, chatTitle: getChatTitle(entity), missing: ids.filter(id => !found.has(id)) };
+  return { messages, chatTitle: getChatTitle(entity), chatId: utils.getPeerId(entity).toString(), missing: ids.filter(id => !found.has(id)) };
 }
 
 export async function downloadMessageMedia(
@@ -1393,23 +1400,31 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
   } else {
     const needle = identifier.trim().toLowerCase();
     const exact = dialogs.filter(d => d.title?.trim().toLowerCase() === needle);
-    if (isStrictChatResolution()) {
-      // Writes: exactly one exact title, or refuse with the candidates
-      if (exact.length > 1) {
-        throw new Error(`"${identifier}" matches ${exact.length} chats; use an ID:\n${describeCandidates(exact)}`);
+    // Never a silent pick between several chats: the caller would act on (or report) the wrong one
+    if (exact.length > 1) {
+      throw new CliError(`"${identifier}" matches ${exact.length} chats; use an ID`, 'ambiguous_chat', EXIT.USAGE, {
+        candidates: chatCandidates(exact), hint: 'Run the command again with one of these IDs.',
+        text: `"${identifier}" matches ${exact.length} chats; use an ID:\n${describeCandidates(exact)}`,
+      });
+    }
+    dialog = exact[0];
+    if (!dialog) {
+      const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
+      if (isStrictChatResolution() && partial.length) {
+        // Writes: exactly one exact title, or refuse with the candidates
+        throw new CliError(`No chat is titled exactly "${identifier}"; writes need an ID, @username or the exact title`, 'chat_not_exact', EXIT.USAGE, {
+          candidates: chatCandidates(partial), hint: 'Run the command again with one of these IDs.',
+          text: `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial)}`,
+        });
       }
-      dialog = exact[0];
-      if (!dialog) {
-        const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
-        if (partial.length) {
-          throw new Error(
-            `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial)}`,
-          );
-        }
+      // Reads: one partial match is fine, several are a question for the caller
+      if (partial.length > 1) {
+        throw new CliError(`"${identifier}" is part of ${partial.length} chat titles; use an ID or the exact title`, 'ambiguous_chat', EXIT.USAGE, {
+          candidates: chatCandidates(partial), hint: 'Run the command again with one of these IDs.',
+          text: `"${identifier}" is part of ${partial.length} chat titles; use an ID or the exact title:\n${describeCandidates(partial)}`,
+        });
       }
-    } else {
-      // Reads: exact title first, then partial match
-      dialog = exact[0] ?? dialogs.find(d => d.title?.toLowerCase().includes(needle));
+      dialog = partial[0];
     }
   }
 
@@ -1428,18 +1443,68 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   } catch {
-    throw new Error(`Chat not found: ${identifier}`);
+    throw chatNotFound(identifier, dialogs);
   }
 }
 
-function describeCandidates(dialogs: Awaited<ReturnType<TelegramClient['getDialogs']>>): string {
-  const lines = dialogs.slice(0, 5).map(d => {
-    const kind = d.isUser ? 'user' : d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
+type Dialogs = Awaited<ReturnType<TelegramClient['getDialogs']>>;
+
+function dialogKind(d: Dialogs[number]): string {
+  if (d.isUser) return (d.entity as Api.User | undefined)?.bot ? 'bot' : 'user';
+  return d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
+}
+
+function chatCandidates(dialogs: Dialogs, max = 5): ChatCandidate[] {
+  return dialogs.slice(0, max).map(d => {
     const username = (d.entity as { username?: string } | undefined)?.username;
-    return `  ${d.id} ${kind} ${d.title}${username ? ` @${username}` : ''}`;
+    return { id: String(d.id), title: d.title ?? '', type: dialogKind(d), ...(username ? { username } : {}) };
   });
-  if (dialogs.length > 5) lines.push(`  … and ${dialogs.length - 5} more`);
-  return lines.join('\n');
+}
+
+function describeCandidates(dialogs: Dialogs): string {
+  return formatCandidates(chatCandidates(dialogs), dialogs.length);
+}
+
+/** Edit distance, for "did you mean" (titles are short, so the quadratic table is fine). */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/** "Chat not found" with the closest titles (by the whole title or one of its words) and the next command. */
+function chatNotFound(identifier: string, dialogs: Dialogs): CliError {
+  const needle = identifier.trim().replace(/^@/, '').toLowerCase();
+  const limit = Math.max(1, Math.floor(needle.length / 3));
+  const scored = dialogs
+    .map(d => {
+      const title = (d.title ?? '').toLowerCase();
+      const username = ((d.entity as { username?: string } | undefined)?.username ?? '').toLowerCase();
+      const words = [title, ...title.split(/\s+/), username].filter(Boolean);
+      return { d, score: Math.min(...words.map(w => editDistance(needle, w))) };
+    })
+    .filter(x => needle && x.score <= limit)
+    .sort((a, b) => a.score - b.score);
+  const candidates = chatCandidates(scored.map(x => x.d));
+  const hint = `List matching chats: telegram chats -q "${identifier.replace(/"/g, '')}"`;
+  return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
+    candidates, hint,
+    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', hint].filter(Boolean).join('\n'),
+  });
+}
+
+/** The chat an identifier resolves to (cached after the command's own call): its ID and title. */
+export async function chatRef(client: TelegramClient, identifier: string): Promise<{ chatId: string; chatTitle: string }> {
+  const entity = await resolveChat(client, identifier);
+  return { chatId: utils.getPeerId(entity).toString(), chatTitle: getChatTitle(entity) };
 }
 
 function getChatTitle(entity: ResolvedEntity): string {
@@ -2119,7 +2184,10 @@ export async function clickButton(
   const match = findRawButton(markup, layout, selector);
   if (!match) {
     const label = selector.index != null ? `#${selector.index}` : selector.dataBase64 != null ? `data ${selector.dataBase64}` : `"${selector.text}"`;
-    throw new Error(`Button ${label} not found on message #${msgId}`);
+    const available = layout.rows.flat().map(b => `[${b.index}] ${b.text || '(no label)'}`).join(', ');
+    throw new CliError(`Button ${label} not found on message #${msgId}`, 'button_not_found', EXIT.ERROR, {
+      hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
+    });
   }
 
   const { raw, info } = match;

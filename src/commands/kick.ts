@@ -4,6 +4,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import ora from '../spinner.js';
 import { formatJson } from '../formatters/json.js';
+import { fail } from '../errors.js';
 
 export const kickCommand = new Command('kick')
   .description('Kick/remove a user from a group')
@@ -39,8 +40,6 @@ export const kickCommand = new Command('kick')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'kick', target: group, kickedUser: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to kick user');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to kick user');
     }
   });

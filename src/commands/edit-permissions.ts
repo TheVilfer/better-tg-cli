@@ -5,6 +5,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail, usageError } from '../errors.js';
 
 /** Friendly `--deny` names → ChatBannedRights keys. */
 const DENY_MAP: Record<string, BannedRight> = {
@@ -34,13 +35,12 @@ export const editPermissionsCommand = new Command('edit-permissions')
     if (options.deny) {
       for (const name of String(options.deny).split(',').map(s => s.trim()).filter(Boolean)) {
         const key = DENY_MAP[name.toLowerCase()];
-        if (!key) { console.error(`Unknown right "${name}". Use: ${Object.keys(DENY_MAP).join(', ')}`); process.exit(1); }
+        if (!key) fail(usageError(`Unknown right "${name}". Use: ${Object.keys(DENY_MAP).join(', ')}`));
         denied.add(key);
       }
     }
     if (!options.lift && denied.size === 0) {
-      console.error('Specify what to restrict (--mute, --ban, --deny <list>) or --lift to remove restrictions.');
-      process.exit(1);
+      fail(usageError('Specify what to restrict (--mute, --ban, --deny <list>) or --lift to remove restrictions.'));
     }
 
     let untilDate = 0;
@@ -66,8 +66,6 @@ export const editPermissionsCommand = new Command('edit-permissions')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'edit-permissions', target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to update permissions');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to update permissions');
     }
   });

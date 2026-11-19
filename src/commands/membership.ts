@@ -5,6 +5,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const joinCommand = new Command('join')
   .description('Join a channel/group by @username or invite link')
@@ -23,9 +24,7 @@ export const joinCommand = new Command('join')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'join', target, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to join');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to join');
     }
   });
 
@@ -46,9 +45,7 @@ export const leaveCommand = new Command('leave')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'leave', target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to leave');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to leave');
     }
   });
 
@@ -69,9 +66,7 @@ export const inviteLinkCommand = new Command('invite-link')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'invite-link', target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to get invite link');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to get invite link');
     }
   });
 
@@ -93,9 +88,7 @@ function makeArchiveCommand(name: 'archive' | 'unarchive', archived: boolean): C
         await disconnectClient();
       } catch (error) {
         auditLog({ timestamp: new Date().toISOString(), command: name, target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-        spinner.fail(`Failed to ${name}`);
-        console.error(error instanceof Error ? error.message : error);
-        process.exit(1);
+        fail(error, spinner, `Failed to ${name}`);
       }
     });
 }

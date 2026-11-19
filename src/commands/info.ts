@@ -2,11 +2,11 @@ import { Command } from 'commander';
 import { getClient, getChatInfo, getForumTopics, getMessageLink, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import ora from '../spinner.js';
+import { fail as report } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 function fail(spinner: ReturnType<typeof ora>, what: string, error: unknown): never {
-  spinner.fail(what);
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
+  report(error, spinner, what);
 }
 
 export const infoCommand = new Command('info')
@@ -36,13 +36,13 @@ export const topicsCommand = new Command('topics')
   .description('List forum topics of a forum supergroup (use the ID with read/send --topic)')
   .argument('<chat>', 'Forum supergroup name, @username or ID')
   .option('-q, --query <text>', 'Only topics whose title matches')
-  .option('-n, --limit <number>', 'Maximum topics', '100')
+  .option('-n, --limit <number>', 'Maximum topics', positiveInt, 100)
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
     const spinner = ora(`Fetching topics of "${chat}"...`).start();
     try {
       const client = await getClient();
-      const res = await getForumTopics(client, chat, { limit: parseInt(options.limit), query: options.query });
+      const res = await getForumTopics(client, chat, { limit: options.limit, query: options.query });
       spinner.stop();
       if (options.json) {
         console.log(formatJson(res));
@@ -62,14 +62,14 @@ export const topicsCommand = new Command('topics')
 export const linkCommand = new Command('link')
   .description('Get the t.me link to a message in a channel or supergroup')
   .argument('<chat>', 'Channel/supergroup name, @username or ID')
-  .argument('<messageId>', 'Message ID')
+  .argument('<messageId>', 'Message ID', positiveInt)
   .option('--thread', 'Link to the message inside its comments thread')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
     const spinner = ora('Exporting link...').start();
     try {
       const client = await getClient();
-      const link = await getMessageLink(client, chat, parseInt(messageId), { thread: options.thread });
+      const link = await getMessageLink(client, chat, messageId, { thread: options.thread });
       spinner.stop();
       console.log(options.json ? formatJson({ link }) : link);
       await disconnectClient();

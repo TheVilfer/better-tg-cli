@@ -4,6 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const draftsCommand = new Command('drafts')
   .description('List saved but unsent message drafts across chats')
@@ -26,8 +27,6 @@ export const draftsCommand = new Command('drafts')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch drafts');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch drafts');
     }
   });

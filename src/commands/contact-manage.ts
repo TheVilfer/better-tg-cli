@@ -5,6 +5,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const addContactCommand = new Command('add-contact')
   .description('Add a user to your contacts')
@@ -25,9 +26,7 @@ export const addContactCommand = new Command('add-contact')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'add-contact', target: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to add contact');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to add contact');
     }
   });
 
@@ -48,8 +47,6 @@ export const delContactCommand = new Command('del-contact')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'del-contact', target: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to remove contact');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to remove contact');
     }
   });

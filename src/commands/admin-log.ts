@@ -4,18 +4,20 @@ import { formatJson } from '../formatters/json.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const adminLogCommand = new Command('admin-log')
   .description("Recent admin actions in a supergroup or channel (the 'recent actions' log)")
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .option('-n, --limit <number>', 'Max entries to fetch', '50')
+  .option('-n, --limit <number>', 'Max entries to fetch', positiveInt, 50)
   .option('-q, --query <text>', 'Only entries mentioning this text')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
     const spinner = ora(`Fetching admin log for "${chat}"...`).start();
     try {
       const client = await getClient();
-      const { chatTitle, entries } = await getAdminLog(client, chat, { limit: parseInt(options.limit, 10), query: options.query });
+      const { chatTitle, entries } = await getAdminLog(client, chat, { limit: options.limit, query: options.query });
       spinner.stop();
       if (getOutputFormat(options) === 'json') {
         console.log(formatJson({ chatTitle, entries }));
@@ -30,8 +32,6 @@ export const adminLogCommand = new Command('admin-log')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch admin log');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch admin log');
     }
   });

@@ -3,6 +3,7 @@ import { getClient, muteChat, disconnectClient } from '../client.js';
 import { assertWriteEnabled } from '../guard.js';
 import ora from '../spinner.js';
 import { formatJson } from '../formatters/json.js';
+import { fail } from '../errors.js';
 
 export const muteCommand = new Command('mute')
   .description('Mute a chat')
@@ -36,8 +37,6 @@ export const muteCommand = new Command('mute')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to mute chat');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to mute chat');
     }
   });

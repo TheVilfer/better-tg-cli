@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { getClient, getFolder, disconnectClient } from '../client.js';
 import { formatFolder } from '../formatters/plain.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const folderCommand = new Command('folder')
   .description('Show chats in a specific folder')
@@ -29,8 +30,6 @@ export const folderCommand = new Command('folder')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to load folder');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to load folder');
     }
   });

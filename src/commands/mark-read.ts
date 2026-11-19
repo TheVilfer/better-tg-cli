@@ -1,10 +1,11 @@
 import { Command } from 'commander';
-import { getClient, markChatRead, disconnectClient } from '../client.js';
+import { getClient, markChatRead, disconnectClient, chatRef } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const markReadCommand = new Command('mark-read')
   .description('Mark a chat as read (clear its unread badge)')

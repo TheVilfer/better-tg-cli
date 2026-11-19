@@ -5,6 +5,7 @@ import { assertWriteEnabled } from '../guard.js';
 import { prompt, promptHidden } from '../prompt.js';
 import ora from '../spinner.js';
 import chalk from '../colors.js';
+import { fail } from '../errors.js';
 
 export const transferOwnerCommand = new Command('transfer-owner')
   .description('Transfer group/channel ownership to another member (irreversible)')
@@ -48,8 +49,6 @@ export const transferOwnerCommand = new Command('transfer-owner')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'transfer-owner', target: group, targetUser: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to transfer ownership');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to transfer ownership');
     }
   });
