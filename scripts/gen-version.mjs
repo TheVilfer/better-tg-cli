@@ -29,6 +29,16 @@ for (const file of ['../.claude-plugin/plugin.json', '../server.json', '../gemin
   if (next !== text) writeFileSync(url, next);
 }
 
+// install.sh downloads exactly this stable release (each stable release ships it as an asset, and
+// releases/latest/download/install.sh is the public entry point)
+{
+  const url = new URL('../install.sh', import.meta.url);
+  const text = readFileSync(url, 'utf8');
+  const next = text.replace(/^VERSION='[^']*'$/m, `VERSION='${version}'`);
+  if (!/^VERSION='/m.test(text)) throw new Error("install.sh has no VERSION='...' line");
+  if (next !== text) writeFileSync(url, next);
+}
+
 // Embed the agent skill so `telegram skill install` works from brew and standalone binaries too
 const skillDir = new URL('../skills/better-tg-cli/', import.meta.url);
 const skillFiles = Object.fromEntries(['SKILL.md', 'reference.md'].map(f => [f, readFileSync(new URL(f, skillDir), 'utf8')]));

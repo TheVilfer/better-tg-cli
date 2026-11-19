@@ -40,6 +40,11 @@ export const updateCommand = new Command('update')
       console.error(`This is a standalone binary: ${command}`);
       process.exit(1);
     }
+    if (method.kind === 'script') {
+      // Never advise replacing it by hand: install.json would no longer match it.
+      console.error(`Installed by install.sh; update it by running the script again: ${command}`);
+      process.exit(1);
+    }
     console.error(`Updating via ${method.kind}: ${command}`);
     process.exit(runUpdate(method));
   });

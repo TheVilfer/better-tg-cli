@@ -39,5 +39,9 @@ fi
 # -T0 alone stays on one thread: at -9 a block is 192 MiB, larger than the ~95 MB binary. 24 MiB
 # blocks give each core one (3.5x faster), for about 1.7% more size.
 tar -C "$stage" -cf - telegram LICENSE README.md | xz -9e -T0 --block-size=24MiB > "${out}/${name}.tar.xz"
+# install.sh falls back to .tar.gz: Debian and Ubuntu images ship gzip but not xz (macOS tar reads xz)
+if [[ "$target" == linux-* ]]; then
+  tar -C "$stage" -cf - telegram LICENSE README.md | gzip -9n > "${out}/${name}.tar.gz"
+fi
 rm -rf "$stage"
 echo "${out}/${name}.tar.xz"
