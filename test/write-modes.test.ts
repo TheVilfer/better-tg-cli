@@ -11,6 +11,8 @@ vi.mock('../src/secrets.js', () => ({
   secretGet: (k: string) => (store.available ? store.values.get(k) ?? null : null),
   secretSet: (k: string, v: string) => (store.available ? (store.values.set(k, v), true) : false),
   secretDelete: (k: string) => store.values.delete(k),
+  // the strict read loadConfig uses once secrets resolve through it
+  secretGetStrict: (k: string) => ({ ok: true, value: (store.available ? store.values.get(k) ?? null : null) }),
   SECRET_KEYS: new Set(['apiHash', 'sessionString', 'writeEnabled']),
   isSecretKey: (k: string) => ['apiHash', 'sessionString', 'writeEnabled'].includes(k),
   migrateSecretsToStore: (c: Record<string, unknown>) => c,
