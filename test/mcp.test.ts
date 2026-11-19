@@ -4,14 +4,15 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  NEVER_COMMANDS, PER_CALL_COMMANDS, READ_COMMANDS, WRITE_COMMANDS, WRITE_SUBCOMMANDS, classifyCall, handleMessage, isWriteCommand, planCall,
+  NEVER_COMMANDS, PER_CALL_COMMANDS, READ_COMMANDS, WRITE_COMMANDS, WRITE_SUBCOMMANDS, classifyCall, commandPaths, handleMessage, isWriteCommand, planCall,
   setKnownCommands, useWorkers,
 } from '../src/mcp.js';
 import { rootMethodClassName } from '../src/generated-registry.js';
 
 const CLI = 'dist/telegram.mjs';
 // Unconfigured profile: nothing here can reach a real account
-const env = { ...process.env, TG_PROFILE: 'mcp-test', TG_NO_UPDATE_CHECK: '1' };
+// TG_MOCK off: an inherited TG_MOCK=1 would run file commands with no write guard at all
+const env = { ...process.env, TG_MOCK: '', TG_PROFILE: 'mcp-test', TG_NO_UPDATE_CHECK: '1' };
 
 let helpAllText: string | undefined;
 // `help-all` from one CLI process for the whole file
@@ -20,12 +21,19 @@ function commandNames(): string[] {
   return helpAll().split('\n').filter(l => /^[a-z]/.test(l)).map(l => l.split(' ')[0]);
 }
 
-/** `group sub` paths from help-all, e.g. "topic create" (the second word is a name, not an operand). */
+/** Full paths of the subcommands help-all lists, at any depth, e.g. "topic create" (help-all lists a
+ * group through its leaves; the path is every word before the first `<arg>`, `[arg]` or ` — `). */
 function subcommandPaths(): string[] {
-  return helpAll().split('\n').filter(l => /^[a-z][a-z-]* [a-z][a-z-]*( |$)/.test(l)).map(l => l.split(' ').slice(0, 2).join(' '));
+  return helpAll().split('\n').filter(l => /^[a-z]/.test(l) && l.includes(' — '))
+    .map(l => l.slice(0, l.indexOf(' — ')).split(' ').filter((w, i, all) => !all.slice(0, i + 1).some(x => /^[<[]/.test(x))).join(' '))
+    .filter(p => p.includes(' '));
+}
+/** Every registered path: names, leaves and the groups in between, as commandPaths gives them. */
+function allPaths(): string[] {
+  return [...new Set([...commandNames(), ...subcommandPaths().flatMap(p => p.split(' ').map((_, i, w) => w.slice(0, i + 1).join(' ')))])];
 }
 
-beforeAll(() => setKnownCommands([...commandNames(), ...subcommandPaths()]));
+beforeAll(() => setKnownCommands(allPaths()));
 
 describe('command classification', () => {
   const groups = { read: READ_COMMANDS, write: WRITE_COMMANDS, never: NEVER_COMMANDS, 'per call': PER_CALL_COMMANDS };
@@ -46,13 +54,32 @@ describe('command classification', () => {
     for (const c of commandNames()) expect(rootMethodClassName(c), c).toBeUndefined();
   });
 
-  it('a write group lists exactly its registered subcommands (a new subcommand fails here)', () => {
-    const registered = subcommandPaths().filter(p => WRITE_COMMANDS.has(p.split(' ')[0]));
-    const listed = Object.entries(WRITE_SUBCOMMANDS).flatMap(([g, subs]) => [...subs].map(s => `${g} ${s}`));
-    expect(new Set(registered)).toEqual(new Set(listed));
-    // Every group with subcommands that MCP can run is listed (never groups such as skill are not)
-    for (const g of new Set(subcommandPaths().map(p => p.split(' ')[0]))) {
-      if (!NEVER_COMMANDS.has(g)) expect(WRITE_SUBCOMMANDS, g).toHaveProperty(g);
+  it('the write subcommands are exactly the full leaf paths of every group MCP can run (a new one fails here)', () => {
+    // Full paths, not two words: a child added under `topic create` makes `topic create …` a new
+    // leaf here, so it cannot inherit the permission of `topic create`. Never groups (skill) are off.
+    const leaves = subcommandPaths().filter(p => !NEVER_COMMANDS.has(p.split(' ')[0]));
+    expect(new Set(leaves)).toEqual(WRITE_SUBCOMMANDS);
+    for (const p of WRITE_SUBCOMMANDS) expect(WRITE_COMMANDS, p).toContain(p.split(' ')[0]);
+  });
+
+  it('the parser of help-all sees nested paths', () => {
+    expect(subcommandPaths()).toContain('topic create');
+    expect(subcommandPaths()).toContain('skill install');
+    expect(subcommandPaths().some(p => /[<[]/.test(p))).toBe(false);
+  });
+
+  it('commandPaths lists commands at every depth', () => {
+    const cmd = (n: string, ...commands: { name(): string; commands: unknown[] }[]) => ({ name: () => n, commands });
+    expect(commandPaths([cmd('topic', cmd('create', cmd('sub'))), cmd('send')] as never)).toEqual(['topic', 'topic create', 'topic create sub', 'send']);
+  });
+
+  it('a flat write command that gains a subcommand does not pass it on', () => {
+    setKnownCommands([...allPaths(), 'send sub']);
+    try {
+      expect(classifyCall(['send', 'sub', 'me']).group).toBe('unknown');
+      expect(classifyCall(['send', 'me', 'hi']).group).toBe('unknown');
+    } finally {
+      setKnownCommands(allPaths());
     }
   });
 
@@ -61,7 +88,19 @@ describe('command classification', () => {
     try {
       expect(classifyCall(['topic', 'create', 'g', 't']).group).toBe('unknown');
     } finally {
-      setKnownCommands([...commandNames(), ...subcommandPaths()]);
+      setKnownCommands(allPaths());
+    }
+  });
+
+  it('a child of a listed subcommand does not inherit its permission', () => {
+    setKnownCommands([...allPaths(), 'topic create sub']);
+    try {
+      expect(classifyCall(['topic', 'create', 'sub', 'g']).group).toBe('unknown');
+      // `topic create` is now a group, so it runs only through a listed leaf
+      expect(classifyCall(['topic', 'create', 'g', 't']).group).toBe('unknown');
+      expect(classifyCall(['topic', 'create']).group).toBe('invalid');
+    } finally {
+      setKnownCommands(allPaths());
     }
   });
 
@@ -139,16 +178,31 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['--help'], 'invalid'],
   [['watch', 'me'], 'invalid'],
   [['watch', 'me', '-t', '30'], 'read'],
-  // A read method that can spend Stars is a write (review finding 2), in every form of params
+  // A read method that would spend Stars never runs over MCP (review rounds 1 and 2), in every form of params
   [['api', 'channels.SearchPosts', '--params', '{"query":"x"}'], 'read'],
-  [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":"10"}'], 'write'],
-  [['api', 'channels.SearchPosts', '-p', '{"allowPaidStars":10}'], 'write'],
-  [['api', 'channels.SearchPosts', '--params={"allowPaidStars":10}'], 'write'],
+  [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":"10"}'], 'never'],
+  [['api', 'channels.SearchPosts', '-p', '{"allowPaidStars":10}'], 'never'],
+  [['api', 'channels.SearchPosts', '-p{"allowPaidStars":10}'], 'never'],
+  [['api', 'channels.SearchPosts', '--params={"allowPaidStars":10}'], 'never'],
   [['channels', 'search-posts', '--query', 'x'], 'read'],
-  [['channels', 'search-posts', '--query', 'x', '--allow-paid-stars', '10'], 'write'],
-  [['channels', 'search-posts', '--allow-paid-stars=10'], 'write'],
-  [['channels', 'search-posts', '--json-params', '{"allowPaidStars":10}'], 'write'],
-  [['api', 'channels.SearchPosts', '--params', '{"allow\\u0050aidStars":10}'], 'write'],
+  [['channels', 'search-posts', '--query', 'x', '--allow-paid-stars', '10'], 'never'],
+  [['channels', 'search-posts', '--allow-paid-stars=10'], 'never'],
+  [['channels', 'search-posts', '--json-params', '{"allowPaidStars":10}'], 'never'],
+  [['api', 'channels.SearchPosts', '--params', '{"allow\\u0050aidStars":10}'], 'never'],
+  // The word itself in a query, a nested key or a null value is a free search (round 2)
+  [['channels', 'search-posts', '--query', 'allowPaidStars'], 'read'],
+  [['api', 'channels.SearchPosts', '--params', '{"query":"allowPaidStars"}'], 'read'],
+  [['api', 'channels.SearchPosts', '--params', '{"query":"x","offsetPeer":{"allowPaidStars":1}}'], 'read'],
+  [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":null}'], 'read'],
+  // Inherited names of a plain object are not commands (round 2)
+  [['constructor'], 'unknown'],
+  [['__proto__'], 'unknown'],
+  [['toString'], 'unknown'],
+  [['topic', 'constructor', 'g'], 'unknown'],
+  [['topic', 'bogus'], 'unknown'],
+  [['constructor', '--help'], 'unknown'],
+  [['constructor', 'get-history'], 'unknown'],
+  [['messages', 'constructor'], 'unknown'],
   // Reads that hand out a login link never run (finding 3)
   [['api', 'messages.GetEmojiURL', '--params', '{"langCode":"en"}'], 'never'],
   [['messages', 'get-emoji-url', '--lang-code', 'en'], 'never'],

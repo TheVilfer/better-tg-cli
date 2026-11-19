@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
-import { isApiReadMethod, apiRefusalReason, resolveApiMethod } from './api-methods.js';
+import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_READ_REFUSAL } from './api-methods.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
 import { actionHash, createApproval, describeAction, readsStdin } from './approval.js';
 import { parseWriteState } from './write-state.js';
@@ -44,11 +44,12 @@ export const WRITE_COMMANDS = new Set([
   'set-avatar', 'avatar', 'download', 'sync',
 ]);
 
-/** Write groups run only these subcommands (`topic create`, …), each also registered: a new
- * subcommand stays off MCP until it is listed here, instead of inheriting the group. */
-export const WRITE_SUBCOMMANDS: Record<string, Set<string>> = {
-  topic: new Set(['create', 'edit', 'close', 'reopen', 'pin', 'unpin']),
-};
+/** Write groups run only these full command paths, each a registered leaf (a command with no
+ * subcommands of its own): a new subcommand at any depth stays off MCP until it is listed here,
+ * instead of inheriting its parent. */
+export const WRITE_SUBCOMMANDS = new Set([
+  'topic create', 'topic edit', 'topic close', 'topic reopen', 'topic pin', 'topic unpin',
+]);
 
 /** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
  * agents' config (skill), the server itself and help-all (served by telegram_help). */
@@ -69,10 +70,20 @@ export function isWriteCommand(name: string): boolean {
   return WRITE_COMMANDS.has(name) && knownCommands.has(name);
 }
 
-/** The names and `group sub` paths of a commander program, for setKnownCommands. */
-export function commandPaths(commands: readonly { name(): string; commands: readonly { name(): string }[] }[]): string[] {
-  return commands.flatMap(c => [c.name(), ...c.commands.map(s => `${c.name()} ${s.name()}`)]);
+interface NamedCommand { name(): string; readonly commands: readonly NamedCommand[] }
+
+/** Every command path of a commander program at any depth (`topic`, `topic create`, …), for setKnownCommands. */
+export function commandPaths(commands: readonly NamedCommand[], prefix = ''): string[] {
+  return commands.flatMap(c => {
+    const path = prefix + c.name();
+    return [path, ...commandPaths(c.commands, `${path} `)];
+  });
 }
+
+/** A registered path with registered subcommands of its own. */
+const hasChildren = (path: string): boolean => [...knownCommands].some(p => p.startsWith(`${path} `));
+/** A group that MCP can write through: it has listed subcommand paths. */
+const isWriteGroup = (cmd: string): boolean => [...WRITE_SUBCOMMANDS].some(p => p.startsWith(`${cmd} `));
 
 /**
  * The group of a whole call (`args[0]` is the command): `read` and `write` run through their tool,
@@ -133,12 +144,21 @@ export function classifyCall(args: string[]): CallClass {
   }
   // `help` / `help <command>` is a harmless listing (its help.* methods were handled above).
   if (cmd === 'help' || READ_COMMANDS.has(cmd)) return { group: 'read', label: cmd };
-  const subs = WRITE_SUBCOMMANDS[cmd];
-  if (subs) {
-    const sub = args[1];
-    if (!sub || sub.startsWith('-')) return { group: 'invalid', reason: `${cmd} needs a subcommand: ${[...subs].join(', ')}` };
-    const path = `${cmd} ${sub}`;
-    return subs.has(sub) && isWriteCommand(cmd) && knownCommands.has(path) ? { group: 'write', label: path } : unknown(path);
+  if (isWriteGroup(cmd) || (isWriteCommand(cmd) && hasChildren(cmd))) {
+    // Walk down the registered subcommands as commander does; only a listed leaf runs
+    let path = cmd;
+    let i = 1;
+    while (i < args.length && !args[i].startsWith('-') && knownCommands.has(`${path} ${args[i]}`)) path += ` ${args[i++]}`;
+    if (hasChildren(path)) {
+      const next = args[i];
+      if (next === undefined || next.startsWith('-')) {
+        const subs = [...knownCommands].filter(p => p.startsWith(`${path} `) && !p.slice(path.length + 1).includes(' ')).map(p => p.slice(path.length + 1));
+        return { group: 'invalid', reason: `${path} needs a subcommand: ${subs.join(', ')}` };
+      }
+      return unknown(`${path} ${next}`);
+    }
+    if (path === cmd && args[1] && !args[1].startsWith('-')) return unknown(`${cmd} ${args[1]}`);
+    return WRITE_SUBCOMMANDS.has(path) && isWriteCommand(cmd) ? { group: 'write', label: path } : unknown(path);
   }
   if (isWriteCommand(cmd)) return { group: 'write', label: cmd };
   return unknown(cmd);
@@ -146,15 +166,37 @@ export function classifyCall(args: string[]): CallClass {
 
 const unknown = (cmd: string): CallClass => ({ group: 'unknown', reason: `Unknown command "${cmd}"; see telegram_help` });
 
-/** `allowPaidStars` in any spelling the CLI takes: a JSON key or a generated flag. */
-const PAID_PARAM = /allow-?paid-?stars/i;
+/** The options that carry JSON params: `api -p/--params`, a generated command's `--json-params`. */
+const PARAMS_OPTION = /^(-p|--params|--json-params)$/;
 
-function hasPaidKey(arg: string): boolean {
-  const json = arg.replace(/^(-p|--params|--json-params)=/, '');
-  if (!json.trimStart().startsWith('{')) return false;
+/**
+ * Whether a call asks to pay Stars: the generated `--allow-paid-stars` option, or a top-level
+ * `allowPaidStars` in the JSON of a params option. Only option names and the params object count,
+ * so a query that merely contains the word (`--query allowPaidStars`) stays a free read. Read calls
+ * get no stdin, so `-p -` cannot hide it here; the CLI checks the built request again.
+ */
+function asksPaidStars(args: string[]): boolean {
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') break;
+    if (/^--allow-paid-stars(=|$)/.test(a)) return true;
+    let json: string | undefined;
+    const inline = /^(-p|--params|--json-params)=(.*)$/s.exec(a);
+    if (inline) json = inline[2];
+    else if (PARAMS_OPTION.test(a)) json = args[++i]; // the value is the next argument
+    else if (/^-p./s.test(a)) json = a.slice(2); // `-p{…}`
+    else continue;
+    if (json !== undefined && hasPaidKey(json)) return true;
+  }
+  return false;
+}
+
+function hasPaidKey(json: string): boolean {
   try {
     const parsed = JSON.parse(json) as unknown;
-    return typeof parsed === 'object' && parsed !== null && 'allowPaidStars' in parsed;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false;
+    // Parsed, so an escaped key such as "allow\u0050aidStars" counts; null is no payment, as in the CLI
+    return Object.hasOwn(parsed, 'allowPaidStars') && (parsed as Record<string, unknown>).allowPaidStars !== null;
   } catch {
     return false;
   }
@@ -163,11 +205,10 @@ function hasPaidKey(arg: string): boolean {
 function byMethod(method: string, label: string, args: string[]): CallClass {
   const refusal = apiRefusalReason(method);
   if (refusal) return { group: 'never', reason: refusal };
-  // A read that may spend Stars is a write (the CLI checks the parsed params too, see isApiReadCall).
-  // Read calls get no stdin, so the params are all in the argv: a flag, or a key in JSON params
-  // (parsed, so an escaped key such as "allow\u0050aidStars" is caught here as well).
-  const paid = args.slice(1).some(a => PAID_PARAM.test(a) || hasPaidKey(a));
-  return { group: isApiReadMethod(method) && !paid ? 'read' : 'write', label };
+  // A read that would spend Stars never runs over MCP, in any write mode (the CLI refuses it too,
+  // on the built request, see mcpPaidReadRefusal).
+  if (isApiReadMethod(method) && asksPaidStars(args)) return { group: 'never', reason: PAID_READ_REFUSAL };
+  return { group: isApiReadMethod(method) ? 'read' : 'write', label };
 }
 
 export const TOOLS = [

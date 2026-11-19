@@ -201,8 +201,8 @@ location sharing, paying):
   `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.
 
 **Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text
-search) needs write access, like any write; without it, it stays a read. `help.GetConfig` prints
-`autologinToken` as `[redacted]`.
+search) needs write access in a terminal, like any write, and is refused over MCP in every write
+mode; without it, it stays a read. `help.GetConfig` prints `autologinToken` as `[redacted]`.
 
 **Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,
 `account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,

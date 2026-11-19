@@ -3027,10 +3027,13 @@ export async function invokeApi(
   methodName: string,
   rawParams: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const { resolveApiMethod } = await import('./api-methods.js');
-  const { ctor } = resolveApiMethod(methodName);
+  const { resolveApiMethod, mcpPaidReadRefusal } = await import('./api-methods.js');
+  const { ctor, className } = resolveApiMethod(methodName);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
+  // The last check, on the fields the request really carries (a paid search over MCP)
+  const refusal = mcpPaidReadRefusal(className, { ...request } as Record<string, unknown>);
+  if (refusal) throw new Error(refusal);
   return client.invoke(request);
 }
 
@@ -3044,7 +3047,9 @@ async function materializeApiParams(client: TelegramClient, value: unknown): Pro
     if (typeof obj._base64 === 'string') return Buffer.from(obj._base64, 'base64');
     if (typeof obj._hex === 'string') return Buffer.from(obj._hex, 'hex');
     if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return bigInt(String(obj._bigint));
-    const out: Record<string, unknown> = {};
+    // Prototype-free: a `"__proto__"` key stays an own key instead of becoming the prototype, so no
+    // field (allowPaidStars) can be inherited after the checks in runApiMethod
+    const out = Object.create(null) as Record<string, unknown>;
     for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
     return out;
   }

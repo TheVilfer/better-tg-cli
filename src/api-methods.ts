@@ -48,7 +48,41 @@ export function isApiReadMethod(name: string): boolean {
  * today; the check is by param, so a future one is covered too. Any value counts, 0 included.
  */
 export function isApiReadCall(name: string, params?: Record<string, unknown>): boolean {
-  return isApiReadMethod(name) && !(params && params.allowPaidStars !== undefined && params.allowPaidStars !== null);
+  return isApiReadMethod(name) && !hasPaidStars(params);
+}
+
+/** An own, non-null `allowPaidStars`: the field teleproto copies into the request (any value, 0 too). */
+function hasPaidStars(params?: Record<string, unknown>): boolean {
+  return Boolean(params) && Object.hasOwn(params!, 'allowPaidStars') && params!.allowPaidStars !== undefined && params!.allowPaidStars !== null;
+}
+
+/**
+ * Over MCP (TG_MCP or TG_READ_ONLY, set for every MCP call) a read that would pay Stars
+ * (`channels.SearchPosts` with `allowPaidStars`) is refused in every write mode: the model must not
+ * spend the user's Stars, even in mode "on". A terminal run keeps it as a write behind the guard.
+ * Checked on the built params (prototype-free, see plainParams) and again on the request itself.
+ */
+export function mcpPaidReadRefusal(name: string, params?: Record<string, unknown>): string | null {
+  if (!process.env.TG_MCP && !process.env.TG_READ_ONLY) return null;
+  if (!isApiReadMethod(name) || !hasPaidStars(params)) return null;
+  return PAID_READ_REFUSAL;
+}
+
+export const PAID_READ_REFUSAL = 'Refused over MCP: allowPaidStars makes this search spend Stars; run a paid search in a terminal.';
+
+/**
+ * A deep copy of request params made of prototype-free objects, so no field can come from a
+ * prototype (a JSON `"__proto__"` key stays an ordinary own key, which the TL constructor ignores).
+ * Arrays stay arrays; other values are kept as they are.
+ */
+export function plainParams<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(v => plainParams(v)) as T;
+  if (value && typeof value === 'object' && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
+    const out = Object.create(null) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(value)) out[k] = plainParams(v);
+    return out as T;
+  }
+  return value;
 }
 
 /**

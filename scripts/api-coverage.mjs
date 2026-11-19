@@ -471,8 +471,8 @@ function build() {
   lines.push('  `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.');
   lines.push('');
   lines.push('**Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text');
-  lines.push('search) needs write access, like any write; without it, it stays a read. `help.GetConfig` prints');
-  lines.push('`autologinToken` as `[redacted]`.');
+  lines.push('search) needs write access in a terminal, like any write, and is refused over MCP in every write');
+  lines.push('mode; without it, it stays a read. `help.GetConfig` prints `autologinToken` as `[redacted]`.');
   lines.push('');
   lines.push('**Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,');
   lines.push('`account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,');

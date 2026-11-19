@@ -8,7 +8,7 @@ import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
 import { spawnSync } from 'node:child_process';
 import { cliArgs } from './cli.js';
-import { isApiReadCall } from '../src/api-methods.js';
+import { isApiReadCall, mcpPaidReadRefusal, plainParams } from '../src/api-methods.js';
 import { seedWorld, type MockWorld } from '../src/mock/world.js';
 
 const mock = (world: MockWorld = seedWorld()) => new MockClient(world) as unknown as TelegramClient;
@@ -167,20 +167,103 @@ describe('api hardening: Stars and login tokens (review findings 2, 3)', () => {
     expect(isApiReadCall('contacts.Block', {})).toBe(false);
   });
 
-  // An unconfigured profile under TG_READ_ONLY, as the MCP read tool runs it: the guard must stop the
-  // paid call before any connection (otherwise it fails later with "not configured")
-  const readOnly = (args: string[]) => spawnSync(process.execPath, [...cliArgs(), ...args], {
+  // An unconfigured profile, as MCP runs it (TG_READ_ONLY for the read tool, TG_MCP for every call):
+  // the paid call must stop before any connection (otherwise it fails later with "not configured")
+  const run = (args: string[], extra: Record<string, string>) => spawnSync(process.execPath, [...cliArgs(), ...args], {
     encoding: 'utf8',
-    env: { ...process.env, TG_MOCK: '', TG_PROFILE: `api-paid-${process.pid}`, TG_NO_UPDATE_CHECK: '1', TG_READ_ONLY: '1' },
+    env: { ...process.env, TG_MOCK: '', TG_MCP: '', TG_READ_ONLY: '', TG_PROFILE: `api-paid-${process.pid}`, TG_NO_UPDATE_CHECK: '1', ...extra },
   });
-
-  it.each([
+  const PAID = [
     [['api', 'channels.SearchPosts', '--params', '{"query":"x","offsetPeer":{"_":"inputPeerEmpty"},"allowPaidStars":5}']],
     [["channels", "search-posts", "--json-params", "{\"query\":\"x\",\"offsetPeer\":{\"_\":\"inputPeerEmpty\"},\"limit\":10,\"allowPaidStars\":5}"]],
-  ])('the CLI refuses a paid search as a read: %j', args => {
-    const r = readOnly(args);
+  ];
+
+  it.each(PAID)('over MCP the CLI refuses a paid search, on either tool: %j', args => {
+    for (const extra of [{ TG_READ_ONLY: '1', TG_MCP: '1' }, { TG_MCP: '1' }, { TG_READ_ONLY: '1' }]) {
+      const r = run(args, extra);
+      expect(r.status, JSON.stringify(extra)).toBe(1);
+      expect(r.stderr).toMatch(/Refused over MCP: allowPaidStars/);
+    }
+  }, 30_000);
+
+  it.each(PAID)('in a terminal a paid search stays a write behind the write guard: %j', args => {
+    const r = run(args, {});
     expect(r.status).toBe(1);
-    expect(r.stderr).toMatch(/cannot run as a read/);
+    expect(r.stderr).not.toMatch(/Refused over MCP/);
+    expect(r.stderr).toMatch(/Write access|secret store/);
+  }, 30_000);
+
+  it('mcpPaidReadRefusal: only over MCP, only a read, only an own non-null field', () => {
+    const saved = { mcp: process.env.TG_MCP, ro: process.env.TG_READ_ONLY };
+    try {
+      delete process.env.TG_MCP; delete process.env.TG_READ_ONLY;
+      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: 5 })).toBeNull();
+      process.env.TG_MCP = '1';
+      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: 5 })).toMatch(/Refused over MCP/);
+      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: 0 })).toMatch(/Refused over MCP/);
+      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: null })).toBeNull();
+      expect(mcpPaidReadRefusal('channels.SearchPosts', Object.create({ allowPaidStars: 5 }))).toBeNull();
+      // A paid message is a write already (approved in "ask"), not this refusal
+      expect(mcpPaidReadRefusal('messages.SendMessage', { allowPaidStars: 5 })).toBeNull();
+    } finally {
+      if (saved.mcp === undefined) delete process.env.TG_MCP; else process.env.TG_MCP = saved.mcp;
+      if (saved.ro === undefined) delete process.env.TG_READ_ONLY; else process.env.TG_READ_ONLY = saved.ro;
+    }
+  });
+
+  // Round 2: a JSON "__proto__" key must not turn into an inherited allowPaidStars after the checks
+  const PROTO = '{"query":"x","__proto__":{"allowPaidStars":5}}';
+
+  it('plainParams builds prototype-free objects, so no field is inherited', () => {
+    const p = plainParams(JSON.parse(PROTO) as Record<string, unknown>);
+    expect(Object.getPrototypeOf(p)).toBeNull();
+    expect(p.allowPaidStars).toBeUndefined();
+    expect(isApiReadCall('channels.SearchPosts', p)).toBe(true);
+    const nested = plainParams({ a: [{ b: 1 }] } as Record<string, unknown>) as { a: object[] };
+    expect(Object.getPrototypeOf(nested.a[0])).toBeNull();
+  });
+
+  it('the request sent to Telegram never carries an inherited allowPaidStars', async () => {
+    let sent: Record<string, unknown> | undefined;
+    const client = { invoke: async (r: unknown) => { sent = r as Record<string, unknown>; return true; } } as unknown as TelegramClient;
+    await invokeApi(client, 'channels.SearchPosts', JSON.parse(PROTO));
+    expect(sent?.className).toBe('channels.SearchPosts');
+    expect(sent?.allowPaidStars).toBeUndefined();
+    expect(sent?.query).toBe('x');
+  });
+
+  it('prototype-free params serialize to the same bytes as ordinary objects (nested and vectors)', async () => {
+    const body = '{"id":[{"_":"inputMessageID","id":5},{"_":"inputMessageID","id":7}]}';
+    const bytes = async (params: Record<string, unknown>) => {
+      let sent: { getBytes(): Buffer } | undefined;
+      const client = { invoke: async (r: unknown) => { sent = r as never; return true; } } as unknown as TelegramClient;
+      await invokeApi(client, 'messages.GetMessages', params);
+      return sent!.getBytes();
+    };
+    const plain = await bytes(plainParams(JSON.parse(body) as Record<string, unknown>));
+    const { Api } = await import('teleproto');
+    const ordinary = new Api.messages.GetMessages({ id: [new Api.InputMessageID({ id: 5 }), new Api.InputMessageID({ id: 7 })] }).getBytes();
+    expect(plain.length).toBeGreaterThan(8);
+    expect(Buffer.compare(plain, ordinary)).toBe(0);
+  });
+
+  it('over MCP the built request is checked once more before it is sent', async () => {
+    const saved = process.env.TG_MCP;
+    process.env.TG_MCP = '1';
+    let sent = false;
+    const client = { invoke: async () => { sent = true; return true; } } as unknown as TelegramClient;
+    try {
+      await expect(invokeApi(client, 'channels.SearchPosts', { query: 'x', allowPaidStars: 5 })).rejects.toThrow(/Refused over MCP/);
+      expect(sent).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.TG_MCP; else process.env.TG_MCP = saved;
+    }
+  });
+
+  it('over MCP the CLI also refuses the "__proto__" form only if it really pays (it does not)', () => {
+    const r = run(['api', 'channels.SearchPosts', '--params', PROTO], { TG_READ_ONLY: '1', TG_MCP: '1' });
+    expect(r.stderr).not.toMatch(/Refused over MCP|cannot run as a read/);
+    expect(r.stderr).toMatch(/not configured|not authenticated|auth/i);
   }, 30_000);
 
   it('messages.GetEmojiURL (a login link) is refused', () => {

@@ -88,3 +88,56 @@ describe('the write mode is never taken from the config file', () => {
     expect(store.has('writeEnabled')).toBe(false);
   });
 });
+
+// Review round 2: a read and the write after it must use the same account. The store wins in both:
+// a session left in an old config.json5 never replaces the stored one.
+describe('whoami → write resolve the same account', () => {
+  it('with session A in the store and B in the file, both the read and the write use A', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "file-hash", "sessionString": "session-B"}');
+    store.set('apiHash', 'store-hash');
+    store.set('sessionString', 'session-A');
+
+    // whoami through telegram_read
+    process.env.TG_READ_ONLY = '1';
+    let { config } = await modules();
+    expect(config.getSessionString()).toBe('session-A');
+
+    // the next write (telegram_write, its own process): the migration runs, but the store stays A
+    delete process.env.TG_READ_ONLY;
+    ({ config } = await modules());
+    const warnings: string[] = [];
+    expect(config.loadConfig(m => warnings.push(m)).sessionString).toBe('session-A');
+    expect(config.loadConfig().apiHash).toBe('store-hash');
+    expect(store.get('sessionString')).toBe('session-A');
+    expect(store.get('apiHash')).toBe('store-hash');
+    // The file copy is left alone (conflict handling is issue #116), with a one-line warning per key
+    expect(readFileSync(file, 'utf8')).toMatch(/session-B/);
+    expect(readFileSync(file, 'utf8')).toMatch(/file-hash/);
+    expect(warnings).toHaveLength(2);
+    expect(warnings.join('\n')).toMatch(/sessionString that differs from the secret store/);
+    expect(warnings.join('\n')).not.toMatch(/session-[AB]|hash/);
+  });
+
+  it('with an empty store, both use the file session, and the write moves it into the store', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "file-hash", "sessionString": "session-B"}');
+    process.env.TG_READ_ONLY = '1';
+    let { config } = await modules();
+    expect(config.getSessionString()).toBe('session-B');
+    delete process.env.TG_READ_ONLY;
+    ({ config } = await modules());
+    expect(config.loadConfig(() => {}).sessionString).toBe('session-B');
+    expect(store.get('sessionString')).toBe('session-B');
+    expect(readFileSync(file, 'utf8')).not.toMatch(/session-B/);
+  });
+
+  it('a file copy equal to the stored value is dropped from the file without a warning', async () => {
+    writeFileSync(file, '{"apiId": 1, "sessionString": "session-A"}');
+    store.set('sessionString', 'session-A');
+    const { config } = await modules();
+    const warnings: string[] = [];
+    config.loadConfig(m => warnings.push(m));
+    expect(warnings).toEqual([]);
+    expect(store.get('sessionString')).toBe('session-A');
+    expect(readFileSync(file, 'utf8')).not.toMatch(/session-A/);
+  });
+});

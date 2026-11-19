@@ -68,10 +68,16 @@ let migrationDone = false;
 const MIGRATED_KEYS = ['apiHash', 'sessionString'];
 
 /**
- * Migrate secret fields from a config object into the active secret store.
- * Returns a new config object with successfully migrated secrets removed.
+ * Migrate secret fields from a config object into the active secret store, only where the store has
+ * no value: the store always wins, as it does when the config is read (loadConfig overlays it), so a
+ * read and a later write resolve the same account. A file copy that differs from the stored value is
+ * left in the file with a warning (resolving that conflict is issue #116); one equal to it is dropped.
+ * Returns a new config object with migrated (or duplicate) secrets removed.
  */
-export function migrateSecretsToStore(config: Record<string, unknown>): Record<string, unknown> {
+export function migrateSecretsToStore(
+  config: Record<string, unknown>,
+  warn: (message: string) => void = m => console.error(m),
+): Record<string, unknown> {
   if (migrationDone || !isSecretStoreAvailable()) return config;
   migrationDone = true;
 
@@ -80,11 +86,20 @@ export function migrateSecretsToStore(config: Record<string, unknown>): Record<s
 
   for (const key of MIGRATED_KEYS) {
     const value = config[key];
-    if (typeof value === 'string' && value !== '') {
-      if (secretSet(key, value)) {
+    if (typeof value !== 'string' || value === '') continue;
+    const stored = secretGet(key);
+    if (stored) {
+      if (stored === value) {
         delete cleaned[key];
         needsRewrite = true;
+      } else {
+        warn(`config.json5 has a ${key} that differs from the secret store; using the stored one and leaving the file copy as it is.`);
       }
+      continue;
+    }
+    if (secretSet(key, value)) {
+      delete cleaned[key];
+      needsRewrite = true;
     }
   }
 
