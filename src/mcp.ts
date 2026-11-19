@@ -233,7 +233,7 @@ export const TOOLS = [
     name: 'telegram_help',
     title: 'Telegram CLI reference',
     description: 'List telegram CLI commands and flags. Pass grep to filter (e.g. "thread", "search"). Call this before guessing flags.',
-    inputSchema: { type: 'object', properties: { grep: { type: 'string' } } },
+    inputSchema: { type: 'object', properties: { grep: { type: 'string', description: 'Only commands whose name, description or flags mention this word, e.g. "thread"' } } },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -245,7 +245,7 @@ export const TOOLS = [
       'Add "--full" (read/get/search/inbox/watch) for complete per-message stats: views, forwards, full reactions, comments, flags, media detail. watch needs -t or -n.',
     inputSchema: {
       type: 'object',
-      properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1 } },
+      properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'CLI argv, command first, one item per word: ["read","@user","-n","20"]' } },
       required: ['args'],
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
@@ -261,7 +261,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        args: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        args: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'CLI argv, command first, one item per word: ["send","-1004001","-"] (text in stdin)' },
         stdin: { type: 'string', description: 'Text for a "-" argument (message body), avoids quoting issues' },
         approval: {
           type: 'string',
