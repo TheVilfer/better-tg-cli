@@ -219,7 +219,9 @@ invitación: `--invite` y `TG_INVITE` siguen funcionando.
 La sesión se guarda en el Keychain de macOS (servicio `tg-cli`) o en 1Password con
 `--op-vault <vault>`. `telegram logout` la elimina. En Linux va al Secret Service (GNOME Keyring,
 KWallet, KeePassXC) a través de `secret-tool`, que necesita el paquete `libsecret-tools`. Una sesión
-ya guardada en el archivo de configuración se traslada allí automáticamente. Sin ningún almacén de
+ya guardada en el archivo de configuración se usa desde allí tal cual, y `telegram check` lo indica;
+el traslado al almacén de secretos llegará más adelante
+([#116](https://github.com/TheVilfer/better-tg-cli/issues/116)). Sin ningún almacén de
 secretos, la sesión se guarda en `~/.config/tg/config.json5` (modo 0600). En Linux sin un Secret
 Service que funcione (sin `secret-tool` o sin bus de sesión, como en los ordenadores de agentes en la
 nube) el modo de escritura también se guarda en un archivo normal del perfil, que protege de errores

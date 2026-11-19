@@ -211,7 +211,9 @@ can be revoked. Before 0.37 the key was called an invite: `--invite` and `TG_INV
 The session is stored in the macOS Keychain (service `tg-cli`), or in 1Password with
 `--op-vault <vault>`. `telegram logout` removes it. On Linux it goes to the Secret Service (GNOME
 Keyring, KWallet, KeePassXC) through `secret-tool`, which needs the `libsecret-tools` package. A
-session already saved in the config file moves there automatically. Without any secret store, the
+session already saved in the config file is used from there as is, and `telegram check` says so;
+moving it into the secret store comes later
+([#116](https://github.com/TheVilfer/better-tg-cli/issues/116)). Without any secret store, the
 session is kept in `~/.config/tg/config.json5` (mode 0600). On Linux without a working Secret
 Service (no `secret-tool` or no session bus, as on cloud agent computers) the write mode is then kept
 in a plain file in the profile too, which guards against mistakes, not against an agent that can

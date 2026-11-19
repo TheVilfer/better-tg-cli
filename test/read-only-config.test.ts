@@ -268,3 +268,104 @@ describe('whoami → write resolve the same account', () => {
     expect(readFileSync(file, 'utf8')).toBe(B);
   });
 });
+
+// Review round 5: getClient() and `telegram check` take everything from ONE loaded snapshot, so a
+// store that fails after the 1 s cache expired can't break a connection whose credentials it already
+// gave, and check says where the session really came from.
+describe('one snapshot per connection', () => {
+  const later = (ms: number) => { const now = Date.now(); vi.spyOn(Date, 'now').mockReturnValue(now + ms); };
+
+  it('getClient() takes the transport and testServers from its snapshot, with no second store read', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "h", "transport": "wss", "testServers": true}');
+    store.set('sessionString', 'session-A');
+    vi.resetModules();
+    const built: unknown[][] = [];
+    const seen: { setting?: string } = {};
+    vi.doMock('teleproto', async orig => ({
+      ...(await orig<typeof import('teleproto')>()),
+      TelegramClient: class { constructor(...a: unknown[]) { built.push(a); } isUserAuthorized = async () => true; },
+    }));
+    vi.doMock('teleproto/sessions/index.js', () => ({ StringSession: class { constructor(public s: string) {} } }));
+    vi.doMock('../src/client-options.js', () => ({ clientParams: (testServers: boolean, t: string) => ({ testServers, t }) }));
+    vi.doMock('../src/transport.js', async orig => ({
+      ...(await orig<typeof import('../src/transport.js')>()),
+      connectClient: async (make: (t: string) => unknown, options: { setting?: string }) => {
+        seen.setting = options.setting;
+        // The cache has expired and the store fails now: a second loadConfig() here would throw
+        later(5000);
+        failNextRead.add('sessionString');
+        return make('wss');
+      },
+    }));
+    try {
+      const { getClient } = await import('../src/client.js');
+      await getClient();
+      expect(seen.setting).toBe('wss');
+      expect(built).toHaveLength(1);
+      expect((built[0][0] as { s: string }).s).toBe('session-A');
+      expect(built[0][3]).toEqual({ testServers: true, t: 'wss' });
+      expect(failNextRead.has('sessionString')).toBe(true); // nobody read the store again
+    } finally {
+      for (const m of ['teleproto', 'teleproto/sessions/index.js', '../src/client-options.js', '../src/transport.js']) vi.doUnmock(m);
+      vi.restoreAllMocks();
+    }
+  });
+
+  async function runCheck(getClient: (c: unknown) => Promise<unknown>) {
+    vi.resetModules();
+    vi.doMock('../src/client.js', () => ({
+      getClient,
+      getMe: async () => ({ firstName: 'A', username: 'a' }),
+      disconnectClient: async () => {},
+    }));
+    const out: string[] = [];
+    const err: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation(m => { out.push(String(m)); });
+    vi.spyOn(console, 'error').mockImplementation(m => { err.push(String(m)); });
+    vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`exit ${code}`); }) as never);
+    let error: unknown;
+    try {
+      const { checkCommand } = await import('../src/commands/check.js');
+      await checkCommand.parseAsync([], { from: 'user' });
+    } catch (e) {
+      error = e;
+    } finally {
+      vi.doUnmock('../src/client.js');
+      vi.restoreAllMocks();
+    }
+    return { out: out.join('\n'), err: err.join('\n'), error };
+  }
+
+  it('check names config.json5 for a file-only session, not the reachable Keychain', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "h", "sessionString": "session-B", "testServers": true}');
+    let given: unknown;
+    const r = await runCheck(async c => { given = c; later(5000); failNextRead.add('sessionString'); return {}; });
+    expect(r.error).toBeUndefined();
+    expect(r.out).toMatch(/Session stored in: config\.json5 \(plaintext file, used as is/);
+    expect(r.out).not.toMatch(/Keychain/);
+    expect(r.out).toMatch(/Servers: TEST/); // from the snapshot, after the store started failing
+    expect((given as { sessionString: string }).sessionString).toBe('session-B');
+  });
+
+  it('check names the store for a stored session and lists the differing file copies', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "h", "sessionString": "session-B"}');
+    store.set('sessionString', 'session-A');
+    let given: unknown;
+    const r = await runCheck(async c => { given = c; return {}; });
+    expect(r.out).toMatch(/config\.json5 also holds a sessionString that differs/);
+    expect(r.out).toMatch(/Session stored in: macOS Keychain/);
+    expect((given as { sessionString: string }).sessionString).toBe('session-A');
+  });
+
+  it('check reports a store read failure as one red line, never a stack', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "h", "sessionString": "session-B"}');
+    store.set('sessionString', 'session-A');
+    failNextRead.add('sessionString');
+    const getClient = vi.fn();
+    const r = await runCheck(getClient);
+    expect(String(r.error)).toMatch(/exit 1/);
+    expect(r.err).toMatch(/Could not read sessionString from the secret store/);
+    expect(r.err).not.toMatch(/\n\s+at /);
+    expect(getClient).not.toHaveBeenCalled();
+  });
+});

@@ -210,7 +210,8 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 Сессия хранится в Keychain macOS (сервис `tg-cli`) или в 1Password с флагом `--op-vault <vault>`.
 `telegram logout` её удаляет. На Linux сессия хранится в Secret Service (GNOME Keyring, KWallet,
 KeePassXC) через `secret-tool`, для этого нужен пакет `libsecret-tools`. Сессия, которая уже лежит
-в конфиге, переедет туда сама. Если хранилища секретов нет, сессия лежит в
+в конфиге, используется оттуда как есть, и `telegram check` об этом пишет; перенос в хранилище
+секретов появится позже ([#116](https://github.com/TheVilfer/better-tg-cli/issues/116)). Если хранилища секретов нет, сессия лежит в
 `~/.config/tg/config.json5` (права 0600). На Linux без работающего Secret Service (нет `secret-tool`
 или сессионной шины, как на облачных компьютерах агентов) режим записи тогда тоже хранится в
 обычном файле профиля: это защита от ошибок, но не от агента, который может править файлы. На Linux

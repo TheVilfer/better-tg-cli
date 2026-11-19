@@ -2,11 +2,11 @@ import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
-import { connectClient } from './transport.js';
+import { connectClient, transportSetting } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
-import { getCredentials, setSessionString, isConfigured, loadConfig } from './config.js';
+import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
 import bigInt from 'big-integer';
 import { existsSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
@@ -15,7 +15,8 @@ import { isTTY } from './spinner.js';
 
 let clientInstance: TelegramClient | null = null;
 
-export async function getClient(): Promise<TelegramClient> {
+/** `snapshot`: a config the caller already loaded (`telegram check`), used instead of a new read. */
+export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   if (clientInstance?.connected) {
     return clientInstance;
   }
@@ -27,9 +28,10 @@ export async function getClient(): Promise<TelegramClient> {
     return clientInstance;
   }
 
-  // One snapshot of the config, so the check, the credentials and the session come from the same
-  // store read (a second read, after the 1 s cache, could see something else)
-  const config = loadConfig(() => {});
+  // One snapshot of the config, so the check, the credentials, the session, the transport and the
+  // test-DC flag come from the same store read (a second read, after the 1 s cache, could see
+  // something else or fail on a store that went away meanwhile)
+  const config = snapshot ?? loadConfig(() => {});
   if (!isConfigured(config)) {
     throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
   }
@@ -39,7 +41,11 @@ export async function getClient(): Promise<TelegramClient> {
 
   // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
   // A fresh StringSession per attempt: a failed TCP try must not leave state behind for WSS.
-  clientInstance = await connectClient(t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(undefined, t)));
+  const testServers = !!config.testServers;
+  clientInstance = await connectClient(
+    t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(testServers, t)),
+    { setting: transportSetting(undefined, config) },
+  );
 
   if (!await clientInstance.isUserAuthorized()) {
     const invited = config.credentialSource === 'invite';

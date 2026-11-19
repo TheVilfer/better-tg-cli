@@ -248,6 +248,25 @@ describe('local file writes', () => {
     process.env.TG_READ_ONLY = '1';
     expect(local(['download', 'me', '1']).code).toBe(1);
   });
+
+  // Review round 5: a mock write needs no approval, so over MCP the model could pick any path
+  it('over MCP in mock mode are refused, whatever the mode; a terminal and a misrouted read as without mock', () => {
+    process.env.TG_MOCK = '1';
+    expect(local(['sync', '--output', '/tmp/x']).code).toBeNull();
+    process.env.TG_MCP = '1';
+    for (const mode of [undefined, 'ask', 'true']) {
+      if (mode) store.values.set('writeEnabled', mode);
+      for (const argv of [['download', 'me', '1'], ['sync', '--output', '/tmp/x'], ['avatar', 'me']]) {
+        const r = local(argv);
+        expect(r.code, `${mode} ${argv.join(' ')}`).toBe(1);
+        expect(r.err).toMatch(/mock mode \(TG_MOCK\).*write no local files/);
+      }
+    }
+    process.env.TG_READ_ONLY = '1';
+    const read = local(['download', 'me', '1']);
+    expect(read.code).toBe(1);
+    expect(read.err).toMatch(/cannot run as a read/);
+  });
 });
 
 describe('the file fallback', () => {

@@ -30,7 +30,12 @@ const DEFAULT_CONFIG: TgConfig = {
 
 // Cache loaded config to avoid repeated file I/O
 let cachedConfig: TgConfig | null = null;
-let cachedConflicts: string[] = [];
+/** Per loaded snapshot: where each secret came from and which file copies differ from the store. */
+interface SecretsInfo {
+  conflicts: string[];
+  sources: Partial<Record<SecretKey, 'store' | 'file'>>;
+}
+const secretsInfo = new WeakMap<TgConfig, SecretsInfo>();
 let cachedConfigTime: number = 0;
 const CONFIG_CACHE_TTL_MS = 1000; // 1 second cache
 
@@ -81,10 +86,9 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
     ...fileConfig,
   };
   delete (config as Record<string, unknown>).writeEnabled;
-  const conflicts = resolveSecrets(config, fileConfig);
+  secretsInfo.set(config, resolveSecrets(config, fileConfig));
 
   cachedConfig = config;
-  cachedConflicts = conflicts;
   cachedConfigTime = now;
 
   return cachedConfig;
@@ -92,21 +96,26 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
 
 /** The secrets of a config: the store holds them, config.json5 may hold an older copy. */
 const CONFIG_SECRETS = ['apiHash', 'sessionString'] as const;
+type SecretKey = typeof CONFIG_SECRETS[number];
 
 /**
  * The one way every command, read or write, gets the session and api_hash: ONE strict store read per
  * key. Stored → that value. Missing → the file copy, if any. A failed read (locked Keychain,
  * 1Password offline) throws, read and write alike, so no command ever connects with a file copy that
  * may be another account than the stored one. Nothing is written to the store or the file here.
- * Returns the keys whose file copy differs from the stored value (shown by `telegram check`).
+ * Returns where each secret came from and the keys whose file copy differs from the stored value
+ * (both shown by `telegram check`).
  */
-function resolveSecrets(config: TgConfig, fileConfig: Partial<TgConfig>): string[] {
+function resolveSecrets(config: TgConfig, fileConfig: Partial<TgConfig>): SecretsInfo {
   const conflicts: string[] = [];
-  if (!isSecretStoreAvailable()) return conflicts;
+  const sources: SecretsInfo['sources'] = {};
+  const storeAvailable = isSecretStoreAvailable();
   const target = config as Record<string, unknown>;
   for (const key of CONFIG_SECRETS) {
     const fileValue = fileConfig[key];
     const fileHasValue = typeof fileValue === 'string' && fileValue !== '';
+    if (fileHasValue) sources[key] = 'file';
+    if (!storeAvailable) continue;
     const read = secretGetStrict(key, fileHasValue);
     if (!read.ok) {
       throw new Error(`Could not read ${key} from the secret store (${read.reason}), so nothing was used or changed. ` +
@@ -117,18 +126,23 @@ function resolveSecrets(config: TgConfig, fileConfig: Partial<TgConfig>): string
     if (read.value) {
       if (fileHasValue && fileValue !== read.value) conflicts.push(key);
       target[key] = read.value;
+      sources[key] = 'store';
     }
   }
-  return conflicts;
+  return { conflicts, sources };
 }
 
 /**
- * Secrets whose copy in config.json5 differs from the stored one. The stored value is used; the file
- * copy is left as it is (moving or resolving it is #116).
+ * Secrets whose copy in config.json5 differs from the stored one, in the given snapshot. The stored
+ * value is used; the file copy is left as it is (moving or resolving it is #116).
  */
-export function secretFileConflicts(): string[] {
-  loadConfig(() => {});
-  return [...cachedConflicts];
+export function secretFileConflicts(config: TgConfig = loadConfig(() => {})): string[] {
+  return [...(secretsInfo.get(config)?.conflicts ?? [])];
+}
+
+/** Where a secret of the given snapshot came from: the secret store, config.json5, or nowhere. */
+export function secretSource(key: SecretKey, config: TgConfig = loadConfig(() => {})): 'store' | 'file' | undefined {
+  return secretsInfo.get(config)?.sources[key];
 }
 
 /** Save settings; a key given as `undefined` is removed from config.json5 in the same write. */

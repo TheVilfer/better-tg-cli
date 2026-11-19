@@ -40,9 +40,16 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void
  * download, sync and avatar only write local files, so in a terminal they need no write access. Over
  * MCP (TG_MCP, set for every call) the model picks the path, so they follow the write mode like any
  * write: refused in read-only, an approval each in "ask". A read (TG_READ_ONLY) never writes a file.
+ * Under TG_MOCK a write needs no approval, so over MCP these are refused outright: the model would
+ * otherwise write real files wherever it likes.
  */
 export function assertLocalWriteAllowed(argv: string[] = process.argv.slice(2)): void {
-  if (process.env.TG_MCP || process.env.TG_READ_ONLY) assertWriteEnabled(argv);
+  if (!process.env.TG_MCP && !process.env.TG_READ_ONLY) return;
+  if (isMock() && !process.env.TG_READ_ONLY) {
+    console.error(chalk.red('Over MCP in mock mode (TG_MOCK), download, sync and avatar write no local files. Run them in a terminal, or unset TG_MOCK.'));
+    process.exit(1);
+  }
+  assertWriteEnabled(argv);
 }
 
 const unprotectedFlag = () => (isWriteModeProtected() ? {} : { unprotected: true as const });
