@@ -1,6 +1,5 @@
 import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
-import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
 import { connectClient, transportSetting } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
@@ -8,12 +7,14 @@ import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
 import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
 import bigInt from 'big-integer';
-import { existsSync, lstatSync, mkdirSync, statSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync } from 'fs';
 import { isMock } from './paths.js';
-import { basename, join } from 'path';
+import { join } from 'path';
 import { isTTY } from './spinner.js';
 import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
 import { loginHint } from './login-hint.js';
+import { fileSnapshot, uploadable } from './file-snapshot.js';
+import { INVITE_LINK } from './approval-action.js';
 
 /** First words of the error getClient() throws for a session Telegram no longer accepts (onboard looks for it). */
 export const SESSION_EXPIRED = 'Session expired or was revoked.';
@@ -114,6 +115,18 @@ function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['ge
 
 function cacheKey(identifier: string): string {
   return identifier.trim().toLowerCase();
+}
+
+/**
+ * Recipients the write guard resolved for an approval (or for its description), by the identifier
+ * as given. The write takes exactly these objects: a second lookup (after a disconnect, with other
+ * matching, or a @username that changed hands meanwhile) could name someone else than the
+ * person approved. Unlike the cache above it survives disconnectClient().
+ */
+const pinnedPeers = new Map<string, ResolvedEntity>();
+
+export function pinPeer(identifier: string, entity: ResolvedEntity): void {
+  pinnedPeers.set(identifier, entity);
 }
 
 export async function getMe(client: TelegramClient): Promise<Api.User> {
@@ -1010,8 +1023,9 @@ export async function sendFileMessage(
     ? new Api.InputReplyToMessage({ replyToMsgId: options.replyToMsgId ?? options.topic, topMsgId: options.topic })
     : options.replyToMsgId;
 
+  // The bytes the approval was checked against (read once per process), never the path again
   const result = await client.sendFile(entity, {
-    file: filePath,
+    file: uploadable(fileSnapshot(filePath)),
     caption: options.caption,
     forceDocument: options.asDocument,
     replyTo,
@@ -1138,12 +1152,12 @@ export async function searchMessages(
 
 export async function sendMessage(
   client: TelegramClient,
-  chatIdentifier: string,
+  chatIdentifier: string | ResolvedEntity,
   text: string,
   replyToMsgId?: number,
   options: { parseMode?: 'html' | 'md'; schedule?: number; silent?: boolean; topic?: number } = {}
 ): Promise<Api.Message> {
-  const entity = await resolveChat(client, chatIdentifier);
+  const entity = typeof chatIdentifier === 'string' ? await resolveChat(client, chatIdentifier) : chatIdentifier;
 
   // Forum topics: the topic's root message is the thread; replies inside it keep topMsgId
   const replyTo = options.topic
@@ -1365,6 +1379,8 @@ export async function getAdminGroups(client: TelegramClient): Promise<ChatInfo[]
 export type ResolvedEntity = Api.User | Api.Chat | Api.Channel;
 
 export async function resolveChat(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
+  const pinned = pinnedPeers.get(identifier);
+  if (pinned) return pinned;
   const key = `${isStrictChatResolution() ? 'strict:' : ''}${cacheKey(identifier)}`;
   const cached = resolvedChatCache.get(key);
   if (cached) return cached;
@@ -1855,16 +1871,13 @@ export async function kickUser(
 ): Promise<{ success: boolean; message: string }> {
   const chat = await resolveChat(client, chatIdentifier);
 
-  // Get the user to kick
+  // The same lookup the write guard used for the approval (and the very object, when it did)
   let user: Api.User;
   try {
-    const entity = await client.getEntity(userIdentifier);
-    if (!(entity instanceof Api.User)) {
-      return { success: false, message: 'Target is not a user' };
-    }
-    user = entity;
+    user = await resolveUser(client, userIdentifier);
   } catch (e) {
-    return { success: false, message: `User not found: ${userIdentifier}` };
+    const msg = e instanceof Error ? e.message : String(e);
+    return { success: false, message: msg === 'Target is not a user' ? msg : `User not found: ${userIdentifier}` };
   }
 
   if (chat instanceof Api.Channel) {
@@ -2108,14 +2121,26 @@ function buttonSignature(layout?: ButtonLayout): string {
  * string round-trip) and the message is re-read afterwards so the caller sees
  * how the bot edited it — the whole point of "navigating" a bot's keyboard.
  */
-export async function clickButton(
+/** What pressing a button does, as the person approved it: kind, label and what it sends. */
+export function buttonFingerprint(info: ButtonInfo): string {
+  const { index, type, text, data, url, query, copyText, requiresPassword } = info;
+  return JSON.stringify({ index, type, text, data: data ?? null, url: url ?? null, query: query ?? null, copyText: copyText ?? null, requiresPassword: !!requiresPassword });
+}
+
+/** The button the write guard showed for an approved click; set only after the approval held. */
+let approvedButton: string | undefined;
+
+export function expectButton(fingerprint: string | undefined): void {
+  approvedButton = fingerprint;
+}
+
+/** Finds the button a click would press, without pressing it (the guard shows it for approval). */
+export async function findButton(
   client: TelegramClient,
   chatIdentifier: string,
   msgId: number,
   selector: ClickSelector,
-  options: { password?: string; waitMs?: number } = {}
-): Promise<ClickOutcome> {
-  const { waitMs = 1500 } = options;
+): Promise<{ entity: ResolvedEntity; msg: Api.Message; layout: ButtonLayout; raw: RawButton; info: ButtonInfo }> {
   const entity = await resolveChat(client, chatIdentifier);
   const msg = await fetchRawMessage(client, entity, msgId);
   if (!msg) throw new Error(`Message #${msgId} not found`);
@@ -2130,8 +2155,23 @@ export async function clickButton(
     const label = selector.index != null ? `#${selector.index}` : selector.dataBase64 != null ? `data ${selector.dataBase64}` : `"${selector.text}"`;
     throw new Error(`Button ${label} not found on message #${msgId}`);
   }
+  return { entity, msg, layout, ...match };
+}
 
-  const { raw, info } = match;
+export async function clickButton(
+  client: TelegramClient,
+  chatIdentifier: string,
+  msgId: number,
+  selector: ClickSelector,
+  options: { password?: string; waitMs?: number } = {}
+): Promise<ClickOutcome> {
+  const { waitMs = 1500 } = options;
+  const { entity, msg, layout, raw, info } = await findButton(client, chatIdentifier, msgId, selector);
+  // The bot may have changed the keyboard since the person approved this click: never press
+  // another button (or send other bytes) than the one they saw
+  if (approvedButton !== undefined && buttonFingerprint(info) !== approvedButton) {
+    throw new Error(`The buttons of message #${msgId} changed after the approval; nothing was pressed. Run the command again to approve the button as it is now.`);
+  }
   const beforeText = messageText(msg);
   const beforeSig = buttonSignature(layout);
 
@@ -2164,7 +2204,7 @@ export async function clickButton(
 
   // Plain reply-keyboard button: pressing it just sends its label as a message.
   if (kind instanceof Api.ButtonTypeDefault) {
-    const sent = await sendMessage(client, chatIdentifier, raw.text);
+    const sent = await sendMessage(client, entity, raw.text);
     const outcome: ClickOutcome = { button: info, action: 'sent_text', sentMessageId: sent.id, note: `Reply-keyboard button — sent "${raw.text}" as a message.` };
     await collectBotResponse(client, entity, msgId, beforeText, beforeSig, waitMs, outcome);
     return outcome;
@@ -2277,8 +2317,36 @@ export async function deleteChatMessages(
   revoke: boolean
 ): Promise<{ chatTitle: string; count: number }> {
   const entity = await resolveChat(client, chatIdentifier);
+  await assertMessagesInChat(client, entity, msgIds);
   await client.deleteMessages(entity, msgIds, { revoke });
   return { chatTitle: getChatTitle(entity), count: msgIds.length };
+}
+
+/** The message IDs of `delete` (`123` or `123,124`), as the command parses them. */
+export function parseIdList(text: string): number[] {
+  return text.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n));
+}
+
+/** Where Telegram deletes for everyone whatever `--just-me` says: channels and supergroups. */
+export function deletesForEveryone(entity: ResolvedEntity): boolean {
+  return entity instanceof Api.Channel;
+}
+
+/**
+ * Every message to delete exists and belongs to this chat. In private chats and basic groups
+ * Telegram deletes by message ID alone (messages.DeleteMessages carries no chat), so an ID from
+ * another chat would delete there, under a "yes" to this one. Refuses the whole operation.
+ */
+export async function assertMessagesInChat(client: TelegramClient, entity: ResolvedEntity, msgIds: number[]): Promise<void> {
+  const want = utils.getPeerId(entity).toString();
+  const found = await client.getMessages(entity, { ids: msgIds });
+  const bad = msgIds.filter((id, i) => {
+    const m = found[i] as unknown;
+    return !(m instanceof Api.Message || m instanceof Api.MessageService) || m.id !== id || !m.peerId || utils.getPeerId(m.peerId).toString() !== want;
+  });
+  if (bad.length) {
+    throw new Error(`Message${bad.length > 1 ? 's' : ''} ${bad.map(id => `#${id}`).join(', ')} not found in ${getChatTitle(entity)} (id ${want}); nothing was deleted. Check the IDs with \`telegram read\`.`);
+  }
 }
 
 export async function markChatRead(
@@ -2472,7 +2540,7 @@ export async function joinChat(
   target: string
 ): Promise<{ title: string }> {
   // Invite link (t.me/+hash or t.me/joinchat/hash) → ImportChatInvite; otherwise JoinChannel.
-  const inviteMatch = target.match(/(?:t\.me\/(?:joinchat\/|\+)|^\+)([A-Za-z0-9_-]+)/);
+  const inviteMatch = target.match(INVITE_LINK);
   if (inviteMatch) {
     const res = await client.invoke(new Api.messages.ImportChatInvite({ hash: inviteMatch[1] }));
     let title = 'chat';
@@ -2539,9 +2607,9 @@ export async function createGroup(
   const users: Api.TypeInputUser[] = [];
   for (const u of userIdentifiers) {
     const entity = await resolveChat(client, u);
-    if (entity instanceof Api.User) {
-      users.push(new Api.InputUser({ userId: entity.id, accessHash: entity.accessHash || bigInt(0) }));
-    }
+    // Every member the person approved, or no group: dropping one silently changes what was approved
+    if (!(entity instanceof Api.User)) throw new Error(`${u} is not a user; a group's members are users`);
+    users.push(new Api.InputUser({ userId: entity.id, accessHash: entity.accessHash || bigInt(0) }));
   }
   const res = await client.invoke(new Api.messages.CreateChat({ users, title }));
   let id = '';
@@ -2613,10 +2681,8 @@ export async function setProfilePhoto(
   client: TelegramClient,
   filePath: string
 ): Promise<void> {
-  const file = await client.uploadFile({
-    file: new CustomFile(basename(filePath), statSync(filePath).size, filePath),
-    workers: 1,
-  });
+  // The bytes the approval was checked against (read once per process), never the path again
+  const file = await client.uploadFile({ file: uploadable(fileSnapshot(filePath)), workers: 1 });
   await client.invoke(new Api.photos.UploadProfilePhoto({ file }));
 }
 
@@ -2691,8 +2757,9 @@ export async function getUserStories(
 
 // --- Admin Management Functions ---
 
+/** A user argument, found like every other recipient (resolveChat), so the approval and the write agree. */
 async function resolveUser(client: TelegramClient, userIdentifier: string): Promise<Api.User> {
-  const entity = await client.getEntity(userIdentifier);
+  const entity = await resolveChat(client, userIdentifier);
   if (!(entity instanceof Api.User)) {
     throw new Error('Target is not a user');
   }

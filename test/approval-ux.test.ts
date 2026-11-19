@@ -93,11 +93,14 @@ describe('the person sees who gets the write, by name (4.1)', () => {
     expect(cli(['send', 'me', 'hi']).err).toContain('To: Saved Messages (your own chat, id 1000)');
   });
 
-  it('a user the command finds its own way (getEntity) is looked up only by @username or id, a name is shown as typed', () => {
+  it('a user argument is looked up like every recipient, and one that does not resolve gets no code', () => {
     const cli = account();
-    // kick resolves its user with getEntity: "Alice" there is not the dialog titled Alice Example
-    expect(cli(['kick', '-1004001', 'Alice']).err).toContain('User: Alice (as typed: the command looks this name up itself)');
+    // kick takes the very user the approval showed (no second lookup with other rules)
+    expect(cli(['kick', '-1004001', 'Alice Example']).err).toContain('User: Alice Example (user, @alice_example, id 1001)');
     expect(cli(['kick', '-1004001', '@alice_example']).err).toContain('User: Alice Example (user, @alice_example, id 1001)');
+    const unknown = cli(['kick', '-1004001', 'Alice']);
+    expect(unknown.code).toBe(1);
+    expect(unknown.err).toMatch(/Not sent, nothing to approve: No chat is titled exactly "Alice"/);
   });
 
   it('gives the recipients as data in the JSON answer', () => {
@@ -150,9 +153,9 @@ describe('a code is bound to the action, not to the bytes of argv (4.2)', () => 
   it('normalizes: options at their default and output-only flags are not part of it, everything parsed is', () => {
     const base: ParsedAction = { command: 'send', args: [{ name: 'target', value: '@x' }], options: [['silent', true]], argv: [], parsed: true };
     const peers = new Map([['@x', { ok: true as const, id: '42', title: 'X', type: 'user' }]]);
-    expect(normalizedForm(base, peers)).toEqual({ v: 2, command: 'send', args: [{ name: 'target', value: { peer: '42' } }], options: [['silent', true]] });
-    // An unresolved recipient keeps its raw text, in a shape a resolved id can never take
-    expect(normalizedForm(base, new Map([['@x', { ok: false, error: 'no' }]]))).toMatchObject({ args: [{ value: { raw: '@x' } }] });
+    expect(normalizedForm(base, peers)).toEqual({ v: 3, command: 'send', args: [{ name: 'target', value: { peer: '42' } }], options: [['silent', true]] });
+    // A recipient that did not resolve has no form to approve
+    expect(() => normalizedForm(base, new Map([['@x', { ok: false, error: 'no' }]]))).toThrow(/not resolved/);
   });
 });
 

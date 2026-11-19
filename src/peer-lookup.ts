@@ -1,5 +1,5 @@
 import { Api, utils } from 'teleproto';
-import { getClient, resolveChat } from './client.js';
+import { getClient, pinPeer, resolveChat } from './client.js';
 import type { PeerInfo } from './approval-action.js';
 
 /**
@@ -17,7 +17,10 @@ export async function lookupPeers(values: string[]): Promise<Map<string, PeerInf
   const client = await getClient();
   for (const v of wanted) {
     try {
-      out.set(v, peerInfo(await resolveChat(client, v)));
+      const entity = await resolveChat(client, v);
+      // The write takes this very object (resolveChat returns it), not a second lookup
+      pinPeer(v, entity);
+      out.set(v, peerInfo(entity));
     } catch (e) {
       // The whole message (it may list the candidates), as one line
       out.set(v, { ok: false, error: (e instanceof Error ? e.message : String(e)).split('\n').map(l => l.trim()).filter(Boolean).join('; ').replace(/:; /g, ': ') });

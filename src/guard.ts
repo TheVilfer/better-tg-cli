@@ -7,7 +7,8 @@ import {
   approvalHash, consumeApproval, createApproval, EXIT_NEEDS_APPROVAL, MOCK_ACCOUNT, readsStdin,
   APPROVAL_TTL_MS, REJECT_HINT, STDIN_IN_APPROVAL_ENV, type RejectReason,
 } from './approval.js';
-import { describeParsedAction, parsedAction, peerArgs, type ParsedAction, type PeerInfo } from './approval-action.js';
+import { apiChatRefs, declaredReadsStdin, describeParsedAction, parsedAction, peerArgs, type ParsedAction, type PeerInfo } from './approval-action.js';
+import { prepareAction, type Prepared } from './approval-prepare.js';
 import { lookupPeers } from './peer-lookup.js';
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
@@ -25,6 +26,12 @@ export const DESCRIBE_MARK = 'TG_APPROVAL_DESCRIPTION ';
 export const EXIT_DESCRIBED = 4;
 
 /**
+ * `apiParams`: the params a raw API call (`api`, a generated command) will send; the chats named in
+ * them (`{"_chat": …}`) are recipients like any argument.
+ */
+export interface GuardOptions { readsStdin?: boolean; apiParams?: Record<string, unknown> }
+
+/**
  * `readsStdin`: the command takes its body from stdin, as its parsed options say (`-p-`, `-c -`,
  * `--json-params=-` …). The guard also covers stdin when the argv shows a "-" or "=-", when the
  * command already read it, or when the MCP server handed it over; any of them is enough.
@@ -32,7 +39,7 @@ export const EXIT_DESCRIBED = 4;
  * Async: in mode "ask" it looks up the recipients (a read) to show and bind them. Every caller
  * awaits it before doing anything else (test/guard-awaited.test.ts checks the sources).
  */
-export async function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts: { readsStdin?: boolean } = {}): Promise<void> {
+export async function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts: GuardOptions = {}): Promise<void> {
   // Set by the MCP read tool: a hard stop even if a write command was misclassified as a read
   if (process.env.TG_READ_ONLY) {
     console.error(chalk.red('This command changes something; it cannot run as a read (use telegram_write).'));
@@ -40,13 +47,13 @@ export async function assertWriteEnabled(argv: string[] = process.argv.slice(2),
   }
   // Writes match chats strictly, and so does the lookup of the recipients below
   setStrictChatResolution(true);
-  if (process.env[DESCRIBE_ENV] === '1') return describeAndExit(argv, opts.readsStdin === true);
+  if (process.env[DESCRIBE_ENV] === '1') return describeAndExit(argv, opts);
   if (isMock()) {
     // A mock write only changes a local file: getClient() hands out the mock under the same check,
     // so there is nothing for a human to approve, unless TG_MOCK_ASK=1 rehearses the "ask" flow.
     // A code given for this call still has to hold, as in mode "on".
-    if (isMockAsk()) await requireApproval(argv, opts.readsStdin === true);
-    else if (process.env.TG_APPROVE) await requireGivenCode(argv, opts.readsStdin === true);
+    if (isMockAsk()) await requireApproval(argv, opts);
+    else if (process.env.TG_APPROVE) await requireGivenCode(argv, opts);
     return;
   }
   if (!isWriteModeProtected() && !isFileFallbackAllowed()) {
@@ -70,11 +77,11 @@ export async function assertWriteEnabled(argv: string[] = process.argv.slice(2),
     if (!isWriteModeProtected()) console.error(chalk.gray(CLOUD_HINT));
     process.exit(1);
   }
-  if (state.mode === 'ask') await requireApproval(argv, opts.readsStdin === true);
+  if (state.mode === 'ask') await requireApproval(argv, opts);
   else {
     // A code given for this call (the MCP dialog's yes) still binds it to the action and the
     // account it was approved for, even if the mode turned "on" meanwhile
-    if (process.env.TG_APPROVE) await requireGivenCode(argv, opts.readsStdin === true);
+    if (process.env.TG_APPROVE) await requireGivenCode(argv, opts);
     setWriteContext({ writeMode: 'on', ...unprotectedFlag() });
   }
 }
@@ -103,34 +110,43 @@ interface Scope {
   stdin: string | undefined;
   action: ParsedAction;
   peers: Map<string, PeerInfo>;
+  prepared: Prepared;
   hash: string;
 }
+
+const nothingToApprove = (message: string): never => {
+  console.error(chalk.red(`Not sent, nothing to approve: ${message}`));
+  process.exit(1);
+};
 
 /**
  * What an approval for this call covers: the parsed action with its recipients looked up, and stdin
  * when anything reads it. A failure to connect for the lookup stops here: the write could not run.
  */
-async function approvalScope(argv: string[], parsedReadsStdin: boolean): Promise<Scope> {
-  const covered = parsedReadsStdin || readsStdin(argv) || stdinWasRead() || process.env[STDIN_IN_APPROVAL_ENV] === '1';
-  const stdin = covered ? readStdinOnce() : undefined;
+async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope> {
   const action = parsedAction(argv);
-  const named = peerArgs(action);
+  // A curated command covers stdin only where it reads it (`set-bio -` sets the bio to "-")
+  const declared = declaredReadsStdin(action);
+  const covered = opts.readsStdin === true || (declared ?? readsStdin(argv)) || stdinWasRead() || process.env[STDIN_IN_APPROVAL_ENV] === '1';
+  const stdin = covered ? readStdinOnce() : undefined;
+  if (opts.apiParams && action.parsed) action.apiPeers = apiChatRefs(opts.apiParams);
   let peers = new Map<string, PeerInfo>();
   try {
-    peers = await lookupPeers(named.map(p => p.value));
+    peers = await lookupPeers(peerArgs(action));
   } catch (e) {
     console.error(chalk.red(`Not sent: could not look up the recipient (${e instanceof Error ? e.message : String(e)}).`));
     process.exit(1);
   }
-  // A chat the write itself would not find: say so now instead of asking the user to approve a failure
-  for (const { value, chat } of named) {
-    const info = peers.get(value);
-    if (chat && info && !info.ok) {
-      console.error(chalk.red(`Not sent, nothing to approve: ${info.error}`));
-      process.exit(1);
-    }
+  // Every recipient is approved as the ID it resolves to; one that does not resolve (the write
+  // would fail, or find someone else) gets no code
+  for (const info of peers.values()) if (!info.ok) nothingToApprove(info.error);
+  let prepared: Prepared;
+  try {
+    prepared = await prepareAction(action);
+  } catch (e) {
+    return nothingToApprove(e instanceof Error ? e.message : String(e));
   }
-  return { covered, stdin, action, peers, hash: approvalHash(action, peers, stdin) };
+  return { covered, stdin, action, peers, prepared, hash: approvalHash(action, peers, stdin, prepared.bound) };
 }
 
 /** The account an approval binds to: the profile's stored session (a fixed one for the mock account). */
@@ -141,9 +157,9 @@ const currentAccount = (): string | undefined => (isMock() ? MOCK_ACCOUNT : getS
  * MCP dialog, or the mock account): it must still be a valid approval of exactly this action in this
  * account. Any refusal stops the write: a "yes" to an older version of it is no "yes" to this one.
  */
-async function requireGivenCode(argv: string[], parsedReadsStdin: boolean): Promise<void> {
+async function requireGivenCode(argv: string[], opts: GuardOptions): Promise<void> {
   const session = currentAccount();
-  const { covered, hash } = await approvalScope(argv, parsedReadsStdin);
+  const { covered, hash, prepared } = await approvalScope(argv, opts);
   const used = consumeApproval(process.env.TG_APPROVE!, hash, session);
   if (!used.ok) {
     console.error(chalk.red(`Not sent: approval ${process.env.TG_APPROVE!.trim().toUpperCase()} not accepted: ${used.reason} (${REJECT_HINT[used.kind]}).`));
@@ -152,12 +168,14 @@ async function requireGivenCode(argv: string[], parsedReadsStdin: boolean): Prom
       : 'Run the command again without TG_APPROVE.'));
     process.exit(1);
   }
+  prepared.onApproved();
   if (!covered) sealStdin();
 }
 
 /** The body as the person should see it: an empty stdin the MCP server always hands over says nothing. */
-function shownStdin(stdin: string | undefined, argv: string[], parsedReadsStdin: boolean): string | undefined {
-  return stdin === '' && !parsedReadsStdin && !readsStdin(argv) ? undefined : stdin;
+function shownStdin(scope: Scope, argv: string[], opts: GuardOptions): string | undefined {
+  const reads = opts.readsStdin === true || (declaredReadsStdin(scope.action) ?? readsStdin(argv));
+  return scope.stdin === '' && !reads ? undefined : scope.stdin;
 }
 
 /** The action for the JSON answer: what the person reads, and the parts an agent may want on their own. */
@@ -174,10 +192,10 @@ function actionJson(scope: Scope, shown: string | undefined, description: string
 }
 
 /** MCP describe run: print the description and the hash, never write, never create or use a code. */
-async function describeAndExit(argv: string[], parsedReadsStdin: boolean): Promise<never> {
-  const scope = await approvalScope(argv, parsedReadsStdin);
-  const shown = shownStdin(scope.stdin, argv, parsedReadsStdin);
-  const description = describeParsedAction(scope.action, scope.peers, shown);
+async function describeAndExit(argv: string[], opts: GuardOptions): Promise<never> {
+  const scope = await approvalScope(argv, opts);
+  const shown = shownStdin(scope, argv, opts);
+  const description = describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines);
   console.log(DESCRIBE_MARK + JSON.stringify({ hash: scope.hash, description, action: actionJson(scope, shown, description) }));
   process.exit(EXIT_DESCRIBED);
 }
@@ -186,16 +204,17 @@ const shellQuote = (a: string) => (/^[\w@./:=+,-]+$/.test(a) ? a : `'${a.replace
 const psQuote = (a: string) => (/^[\w@./:=+,-]+$/.test(a) ? a : `'${a.replace(/'/g, `''`)}'`);
 
 /** Write mode "ask": go on only with a matching approval code, otherwise print the action and stop. */
-async function requireApproval(argv: string[], parsedReadsStdin: boolean): Promise<void> {
+async function requireApproval(argv: string[], opts: GuardOptions): Promise<void> {
   // One read of the account for both the check and a new code; getClient() connects with it only
   const session = currentAccount();
-  const scope = await approvalScope(argv, parsedReadsStdin);
+  const scope = await approvalScope(argv, opts);
   const given = process.env.TG_APPROVE;
   let rejected: { code: string; reason: RejectReason; message: string } | undefined;
   if (given) {
     const used = consumeApproval(given, scope.hash, session);
     if (used.ok) {
       setWriteContext({ writeMode: 'ask', approvedVia: used.via, ...unprotectedFlag() });
+      scope.prepared.onApproved();
       // Nothing read from stdin after this point can be part of the write: it was not approved
       if (!scope.covered) sealStdin();
       return;
@@ -204,8 +223,8 @@ async function requireApproval(argv: string[], parsedReadsStdin: boolean): Promi
   }
   const code = createApproval(scope.hash, session);
   const minutes = APPROVAL_TTL_MS / 60_000;
-  const shown = shownStdin(scope.stdin, argv, parsedReadsStdin);
-  const description = describeParsedAction(scope.action, scope.peers, shown);
+  const shown = shownStdin(scope, argv, opts);
+  const description = describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines);
   const mcp = !!process.env.TG_MCP;
   const retry = mcp
     ? undefined // the MCP server knows the exact tool call and adds it

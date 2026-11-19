@@ -57,6 +57,7 @@ import { auditLog } from '../src/audit.js';
 import { applyModeChoice } from '../src/write-mode.js';
 import { getWriteValue, isFileFallbackAllowed } from '../src/write-store.js';
 import { configDir } from '../src/paths.js';
+import { forgetFileSnapshots } from '../src/file-snapshot.js';
 import { elicitApproved, gateWrite } from '../src/mcp.js';
 import { getSessionString } from '../src/config.js';
 import { describeInProcess } from './helpers/describe-in-process.js';
@@ -185,6 +186,7 @@ describe('approvals', () => {
     const a = actionHash(['send-file', '@alice', f]);
     const b = actionHash(['send-file', '@alice', `--file=${f}`]);
     writeFileSync(f, 'v2'); // same size, changed contents
+    forgetFileSnapshots(); // a new process (the retry) reads the file again
     expect(actionHash(['send-file', '@alice', f])).not.toBe(a);
     expect(actionHash(['send-file', '@alice', `--file=${f}`])).not.toBe(b);
   });

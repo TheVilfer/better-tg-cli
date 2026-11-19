@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { fileSnapshot, snapshotDigest } from './file-snapshot.js';
 import { join } from 'node:path';
 import { configFile, isMock } from './paths.js';
 import { isSecretStoreAvailable, secretGet, secretSet } from './secrets.js';
@@ -136,12 +137,13 @@ export function actionHash(argv: string[], stdin?: string): string {
  * the body on stdin stays exact, and every file it names is bound by content. Without a parsed
  * command it is the exact argv (actionHash).
  */
-export function approvalHash(action: ParsedAction, peers: Map<string, PeerInfo>, stdin?: string): string {
+export function approvalHash(action: ParsedAction, peers: Map<string, PeerInfo>, stdin?: string, bound: unknown[] = []): string {
   if (!action.parsed) return actionHash(action.argv, stdin);
   return createHash('sha256').update(JSON.stringify({
     action: normalizedForm(action, peers),
     stdin: stdin ?? null,
     files: fileDigests(actionValues(action)),
+    ...(bound.length ? { bound } : {}),
   })).digest('hex');
 }
 
@@ -150,9 +152,8 @@ function fileDigests(values: string[]): string[] {
     const candidates = [arg, ...(arg.startsWith('-') && arg.includes('=') ? [arg.slice(arg.indexOf('=') + 1)] : [])];
     return candidates.map(c => {
       try {
-        const real = realpathSync(c);
-        if (!statSync(real).isFile()) return '';
-        return `${real}:${createHash('sha256').update(readFileSync(real)).digest('hex')}`;
+        // The same snapshot an upload of this file sends (src/file-snapshot.ts)
+        return snapshotDigest(fileSnapshot(c));
       } catch {
         return '';
       }

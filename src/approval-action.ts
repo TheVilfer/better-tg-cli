@@ -21,6 +21,11 @@ export interface ParsedAction {
   options: [string, unknown][];
   /** The raw argv, shown last for the agent and hashed when nothing was parsed */
   argv: string[];
+  /**
+   * Chats named inside the params of a raw API call (`{"_chat": …}`, by JSON path), set by the
+   * guard from the params the call will send: they are recipients like any argument.
+   */
+  apiPeers?: { path: string; value: string }[];
   /** False when no parsed command was available: the raw argv is all there is */
   parsed: boolean;
 }
@@ -87,11 +92,14 @@ interface Descriptor {
   text?: Record<string, string>;
   /** Labels for the other arguments */
   labels?: Record<string, string>;
-  /**
-   * The command finds its user argument with getEntity, not by dialog title: only the forms both
-   * resolve alike (@username, an ID, me) are looked up, a name is shown as typed.
-   */
-  userByEntity?: boolean;
+  /** Arguments that name a local file the command uploads: read once, hashed and sent as those bytes */
+  files?: string[];
+  /** The argument whose "-" the command reads from stdin (only these show stdin in their place) */
+  stdin?: string;
+  /** Takes stdin for this option's "-" (`send-file -c -`) */
+  stdinOption?: string;
+  /** A peer argument value that is not a chat to look up (an invite link for `join`) */
+  notPeer?: (name: string, value: string) => boolean;
 }
 
 const CHAT = { chat: 'Chat' };
@@ -99,10 +107,10 @@ const MSG = { messageId: 'Message', msgId: 'Message', messageIds: 'Messages', to
 
 /** The curated write commands. One not listed here is shown and hashed generically, its peers unresolved. */
 const DESCRIPTORS: Record<string, Descriptor> = {
-  send: { verb: 'Send a message', peers: { target: 'To' }, text: { message: 'Text' } },
-  reply: { verb: 'Reply to a message', peers: { chat: 'To' }, text: { message: 'Text' }, labels: MSG },
-  'send-file': { verb: 'Send a file', peers: { target: 'To' }, labels: { path: 'File' } },
-  edit: { verb: 'Edit a message', peers: CHAT, text: { text: 'New text' }, labels: MSG },
+  send: { verb: 'Send a message', peers: { target: 'To' }, text: { message: 'Text' }, stdin: 'message' },
+  reply: { verb: 'Reply to a message', peers: { chat: 'To' }, text: { message: 'Text' }, labels: MSG, stdin: 'message' },
+  'send-file': { verb: 'Send a file', peers: { target: 'To' }, labels: { path: 'File' }, files: ['path'], stdinOption: 'caption' },
+  edit: { verb: 'Edit a message', peers: CHAT, text: { text: 'New text' }, labels: MSG, stdin: 'text' },
   delete: { verb: 'Delete messages', peers: CHAT, labels: MSG },
   forward: { verb: 'Forward messages', peers: { fromChat: 'From', toChat: 'To' }, labels: MSG },
   react: { verb: 'React to a message', peers: CHAT, labels: { ...MSG, emoji: 'Reaction' } },
@@ -127,14 +135,14 @@ const DESCRIPTORS: Record<string, Descriptor> = {
   unblock: { verb: 'Unblock a user', peers: { user: 'User' } },
   'add-contact': { verb: 'Add a contact', peers: { user: 'User' }, labels: { firstName: 'First name', lastName: 'Last name' } },
   'del-contact': { verb: 'Delete a contact', peers: { user: 'User' } },
-  join: { verb: 'Join a chat', labels: { target: 'Chat or link' } },
+  join: { verb: 'Join a chat', peers: { target: 'Chat' }, labels: { target: 'Invite link' }, notPeer: (_name, value) => INVITE_LINK.test(value) },
   leave: { verb: 'Leave a chat', peers: CHAT },
   'invite-link': { verb: 'Create an invite link', peers: CHAT },
-  'create-group': { verb: 'Create a group', labels: { title: 'Title', users: 'Members' } },
+  'create-group': { verb: 'Create a group', peers: { users: 'Member' }, labels: { title: 'Title' } },
   'create-channel': { verb: 'Create a channel', labels: { title: 'Title' } },
-  kick: { verb: 'Remove a member', peers: { group: 'Chat', user: 'User' }, userByEntity: true },
-  promote: { verb: 'Make a member an admin', peers: { group: 'Chat', user: 'User' }, userByEntity: true },
-  'transfer-owner': { verb: 'Transfer chat ownership', peers: { group: 'Chat', user: 'New owner' }, userByEntity: true },
+  kick: { verb: 'Remove a member', peers: { group: 'Chat', user: 'User' } },
+  promote: { verb: 'Make a member an admin', peers: { group: 'Chat', user: 'User' } },
+  'transfer-owner': { verb: 'Transfer chat ownership', peers: { group: 'Chat', user: 'New owner' } },
   'edit-permissions': { verb: 'Change a member\'s permissions', peers: { chat: 'Chat', user: 'User' } },
   'topic create': { verb: 'Create a forum topic', peers: CHAT, text: { title: 'Title' } },
   'topic edit': { verb: 'Edit a forum topic', peers: CHAT, labels: MSG },
@@ -145,33 +153,49 @@ const DESCRIPTORS: Record<string, Descriptor> = {
   'set-name': { verb: 'Change your name', labels: { firstName: 'First name', lastName: 'Last name' } },
   'set-bio': { verb: 'Change your bio', text: { text: 'Bio' } },
   'set-username': { verb: 'Change your username', labels: { username: 'Username' } },
-  'set-avatar': { verb: 'Change your profile photo', labels: { path: 'File' } },
+  'set-avatar': { verb: 'Change your profile photo', labels: { path: 'File' }, files: ['path'] },
   avatar: { verb: 'Save a profile photo to this computer', peers: CHAT },
   download: { verb: 'Save media to this computer', peers: CHAT, labels: MSG },
   sync: { verb: 'Save chat history to this computer' },
 };
 
-/** Arguments that name a user rather than a chat: the command looks them up its own way, so a miss here is not final. */
-const USER_ARGS = new Set(['user', 'users']);
-
 /**
- * The arguments of this action that name a chat or user and are resolved for the approval.
- * `chat`: resolved exactly as the write resolves it, so when it does not resolve the write would
- * fail too, and there is nothing to approve.
+ * Whether this command reads stdin, as its curated description declares (the argument or option
+ * whose "-" it reads); undefined for a command without one (api, generated), where any "-" counts.
  */
-export function peerArgs(action: ParsedAction): { value: string; chat: boolean }[] {
+export function declaredReadsStdin(action: ParsedAction): boolean | undefined {
   const d = action.parsed ? DESCRIPTORS[action.command] : undefined;
-  const peers = d?.peers;
-  if (!peers) return [];
-  return action.args.flatMap(a => (a.name in peers
-    ? (Array.isArray(a.value) ? a.value : [a.value])
-      .filter(value => !(d.userByEntity && USER_ARGS.has(a.name)) || SAME_BY_ENTITY.test(value.trim()))
-      .map(value => ({ value, chat: !USER_ARGS.has(a.name) }))
-    : []));
+  if (!d) return undefined;
+  return action.args.some(a => a.name === d.stdin && a.value === '-')
+    || action.options.some(([k, v]) => k === d.stdinOption && v === '-');
 }
 
-/** Forms that getEntity and the chat lookup resolve to the same user. */
-const SAME_BY_ENTITY = /^(@\w+|-?\d+|me|self)$/i;
+/** Invite links (`t.me/+hash`, `t.me/joinchat/hash`, `+hash`): `join` imports them, there is no chat to look up first. */
+export const INVITE_LINK = /(?:t\.me\/(?:joinchat\/|\+)|^\+)([A-Za-z0-9_-]+)/;
+
+/** The curated description of a command, if it has one (exported for the scan in the tests). */
+export function descriptorOf(command: string): Readonly<Descriptor> | undefined {
+  return DESCRIPTORS[command];
+}
+
+/** The command paths with a curated description. */
+export const DESCRIBED_COMMANDS: readonly string[] = Object.keys(DESCRIPTORS);
+
+/**
+ * The values of this action that name a chat or user: its peer arguments and the chats inside the
+ * params of a raw API call. Each is resolved for the approval exactly as the write resolves it, and
+ * one that does not resolve stops the write before a code exists: there is nothing to approve.
+ */
+export function peerArgs(action: ParsedAction): string[] {
+  const d = action.parsed ? DESCRIPTORS[action.command] : undefined;
+  const out: string[] = [];
+  for (const a of action.args) {
+    if (!d?.peers?.[a.name]) continue;
+    for (const value of Array.isArray(a.value) ? a.value : [a.value]) if (!d.notPeer?.(a.name, value)) out.push(value);
+  }
+  for (const p of action.apiPeers ?? []) out.push(p.value);
+  return out;
+}
 
 /** One line, whatever a name contains: a title with a newline must not forge a line of its own. */
 export function oneLine(text: string): string {
@@ -186,8 +210,8 @@ export function visible(text: string): string {
 const quoteArg = (a: string): string => (/^[\w@./:=+-]+$/.test(a) ? a : JSON.stringify(oneLine(a)));
 
 export function describePeer(raw: string, info: PeerInfo | undefined): string {
-  if (!info) return `${quoteArg(raw)} (as typed: the command looks this name up itself)`;
-  if (!info.ok) return `${quoteArg(raw)} — could not be looked up (${oneLine(info.error)}). Check who this is before you approve.`;
+  if (!info) return `${quoteArg(raw)} (not looked up)`;
+  if (!info.ok) return `${quoteArg(raw)} — could not be looked up (${oneLine(info.error)})`;
   if (info.self) return `Saved Messages (your own chat, id ${info.id})`;
   const extra = [info.type, info.username ? `@${oneLine(info.username)}` : undefined, `id ${info.id}`].filter(Boolean).join(', ');
   return `${oneLine(info.title)} (${extra})`;
@@ -210,38 +234,44 @@ function flagText(key: string, value: unknown): string {
  * id), where in the chat, every argument, the full text, and the exact command as the last line.
  * `stdin` is the whole body when the command takes it from stdin.
  */
-export function describeParsedAction(action: ParsedAction, peers: Map<string, PeerInfo>, stdin?: string): string {
+export function describeParsedAction(action: ParsedAction, peers: Map<string, PeerInfo>, stdin?: string, extra: string[] = []): string {
   const d = action.parsed ? DESCRIPTORS[action.command] : undefined;
+  // Only a field the handler really reads from stdin shows stdin in its place; elsewhere "-" is
+  // what gets sent, and stdin (if any) is shown on its own below
+  const fromStdin = (name: string, value: string | string[]) => value === '-' && stdin !== undefined && (!action.parsed || d?.stdin === name);
   const lines: string[] = [];
   const texts: string[] = [];
   const verb = d?.verb ?? (action.command === 'api' || !action.parsed ? `Run "telegram ${oneLine(action.command)}"` : `Run "telegram ${oneLine(action.command)}" (Telegram API method)`);
   lines.push(`  ${verb}`);
   for (const a of action.args) {
     const values = Array.isArray(a.value) ? a.value : [a.value];
-    if (d?.peers?.[a.name]) {
+    if (d?.peers?.[a.name] && !values.some(v => d.notPeer?.(a.name, v))) {
       for (const v of values) lines.push(`  ${d.peers[a.name]}: ${describePeer(v, peers.get(v))}`);
     } else if (d?.text?.[a.name]) {
-      texts.push(textBlock(d.text[a.name], a.value === '-' && stdin !== undefined ? stdin : values.join(' ')));
-    } else if (a.value === '-' && stdin !== undefined) {
-      texts.push(textBlock(d?.labels?.[a.name] ?? 'Text', stdin));
+      texts.push(textBlock(d.text[a.name], fromStdin(a.name, a.value) ? stdin! : values.join(' ')));
+    } else if (fromStdin(a.name, a.value)) {
+      texts.push(textBlock(d?.labels?.[a.name] ?? 'Text', stdin!));
     } else {
       const label = d?.labels?.[a.name] ?? a.name;
       const shown = /^message|^msg|topicId/.test(a.name) ? values.map(v => (/^\d+$/.test(v) ? `#${v}` : quoteArg(v))) : values.map(quoteArg);
       lines.push(`  ${label}: ${shown.join(', ')}`);
     }
   }
+  for (const p of action.apiPeers ?? []) lines.push(`  Chat in ${oneLine(p.path)}: ${describePeer(p.value, peers.get(p.value))}`);
+  lines.push(...extra);
   const options = new Map(action.options);
   if (options.has('topic')) lines.push(`  Topic: #${oneLine(String(options.get('topic')))} (a thread of a forum)`);
   if (options.has('replyTo')) lines.push(`  In reply to: message #${oneLine(String(options.get('replyTo')))}`);
   if (options.has('caption')) {
     const caption = String(options.get('caption'));
-    texts.push(textBlock('Caption', caption === '-' && stdin !== undefined ? stdin : caption));
+    texts.push(textBlock('Caption', caption === '-' && stdin !== undefined && d?.stdinOption === 'caption' ? stdin : caption));
   }
   const rest = action.options.filter(([k]) => !['topic', 'replyTo', 'caption'].includes(k));
   if (rest.length) lines.push(`  Options: ${rest.map(([k, v]) => flagText(k, v)).join(' ')}`);
   // A body on stdin that no argument names ("-p -", or stdin handed over by the MCP server)
-  const named = action.args.some(a => a.value === '-') || options.get('caption') === '-';
-  if (stdin !== undefined && !named) texts.push(textBlock(action.parsed ? 'Input (stdin)' : 'Text (stdin)', stdin));
+  const named = action.args.some(a => fromStdin(a.name, a.value)) || (options.get('caption') === '-' && d?.stdinOption === 'caption');
+  // A curated command shows stdin only in the field that reads it: elsewhere it is not sent
+  if (stdin !== undefined && !named && !d) texts.push(textBlock(action.parsed ? 'Input (stdin)' : 'Text (stdin)', stdin));
   lines.push(...texts);
   lines.push(`  Command: telegram ${action.argv.map(quoteArg).join(' ')}`);
   return lines.join('\n');
@@ -254,18 +284,35 @@ export function describeParsedAction(action: ParsedAction, peers: Map<string, Pe
  */
 export function normalizedForm(action: ParsedAction, peers: Map<string, PeerInfo>): unknown {
   const d = DESCRIPTORS[action.command];
+  // Every recipient is in as the ID it resolved to; one that did not resolve never gets this far
   const resolve = (v: string) => {
     const info = peers.get(v);
-    return info?.ok ? { peer: info.id } : { raw: v };
+    if (!info?.ok) throw new Error(`Recipient ${JSON.stringify(v)} was not resolved`);
+    return { peer: info.id };
   };
+  const value = (name: string, v: string) => (d?.notPeer?.(name, v) ? { raw: v } : resolve(v));
   return {
-    v: 2,
+    v: 3,
     command: action.command,
     args: action.args.map(a => (d?.peers?.[a.name]
-      ? { name: a.name, value: Array.isArray(a.value) ? a.value.map(resolve) : resolve(a.value) }
+      ? { name: a.name, value: Array.isArray(a.value) ? a.value.map(v => value(a.name, v)) : value(a.name, a.value) }
       : a)),
     options: action.options,
+    ...(action.apiPeers?.length ? { apiPeers: action.apiPeers.map(p => [p.path, resolve(p.value)]) } : {}),
   };
+}
+
+/**
+ * The chats named inside the params of a raw API call, in the order materializeApiParams resolves
+ * them: `{"_chat": "…"}` anywhere in the params, with its JSON path.
+ */
+export function apiChatRefs(value: unknown, path = 'params'): { path: string; value: string }[] {
+  if (Array.isArray(value)) return value.flatMap((v, i) => apiChatRefs(v, `${path}[${i}]`));
+  if (!value || typeof value !== 'object') return [];
+  const obj = value as Record<string, unknown>;
+  if (typeof obj._chat === 'string') return [{ path, value: obj._chat }];
+  if ('_base64' in obj || '_hex' in obj || '_bigint' in obj) return [];
+  return Object.entries(obj).flatMap(([k, v]) => apiChatRefs(v, `${path}.${k}`));
 }
 
 /** Every string an action carries (arguments and option values), for the file-content binding. */
