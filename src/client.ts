@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
 import { basename, join } from 'path';
 import { isTTY } from './spinner.js';
+import { approvedForAnotherSession } from './approval.js';
 
 let clientInstance: TelegramClient | null = null;
 
@@ -33,6 +34,10 @@ export async function getClient(): Promise<TelegramClient> {
 
   const { apiId, apiHash } = getCredentials();
   const sessionString = getSessionString() || '';
+  // A write approved in mode "ask" connects only as the account it was approved for
+  if (approvedForAnotherSession(sessionString)) {
+    throw new Error('Another account logged in after this write was approved. Nothing was sent; run the command again for a new approval.');
+  }
 
   // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
   // A fresh StringSession per attempt: a failed TCP try must not leave state behind for WSS.

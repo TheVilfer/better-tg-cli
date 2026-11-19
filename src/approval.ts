@@ -2,7 +2,6 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configFile } from './paths.js';
-import { getSessionString } from './config.js';
 import { isSecretStoreAvailable, secretGet, secretSet } from './secrets.js';
 
 /**
@@ -63,12 +62,24 @@ function sign(key: Buffer, code: string, p: Omit<Pending, 'mac'>): string {
 /**
  * Which account an approval belongs to: an HMAC of the stored session under the signing key, so the
  * record names the session without revealing it. A logout and a login as someone else in the same
- * profile change it, and a code given for the old account no longer matches. Read on every use (the
- * config cache lives a second), since the MCP server runs for long and the user may log in again.
+ * profile change it, and a code given for the old account no longer matches. The caller passes the
+ * session it read when the action was shown (the MCP server reads it before opening the dialog), so
+ * a login as someone else while the user is still answering does not move the approval to them.
  */
-function sessionFingerprint(key: Buffer): string {
-  const session = getSessionString() ?? '';
-  return createHmac('sha256', key).update(`tg-approval-session\0${session}`).digest('hex');
+function sessionFingerprint(key: Buffer, session: string | undefined): string {
+  return createHmac('sha256', key).update(`tg-approval-session\0${session ?? ''}`).digest('hex');
+}
+
+/**
+ * The session an approval was checked against in this process (undefined: none was used).
+ * getClient() builds its client only from this same session, so a login as someone else between
+ * the guard and the connection cannot carry the approved write to the new account.
+ */
+let approvedSession: string | undefined;
+
+/** Whether this process used an approval for another session than the one it is about to connect with. */
+export function approvedForAnotherSession(session: string): boolean {
+  return approvedSession !== undefined && approvedSession !== session;
 }
 
 /** Drops every pending approval of this profile; logout and login call it, since codes belong to the old account. */
@@ -134,12 +145,16 @@ export function readsStdin(argv: string[]): boolean {
  */
 export const STDIN_IN_APPROVAL_ENV = 'TG_APPROVAL_STDIN';
 
-/** Records a pending approval for this action and returns its code. */
-export function createApproval(hash: string, via: ApprovedVia = 'chat', now = Date.now()): string {
+/**
+ * Records a pending approval for this action and returns its code. `account` is the stored session
+ * as it was when the action was shown to the user (getSessionString() at that moment), never read
+ * here: by now someone else may be logged in.
+ */
+export function createApproval(hash: string, account: string | undefined, via: ApprovedVia = 'chat', now = Date.now()): string {
   prune(now);
   if (!existsSync(storeDir())) mkdirSync(storeDir(), { recursive: true, mode: 0o700 });
   const key = signingKey();
-  const session = sessionFingerprint(key);
+  const session = sessionFingerprint(key, account);
   for (;;) {
     const code = newCode();
     const record = { hash, expiresAt: now + APPROVAL_TTL_MS, via, session };
@@ -154,10 +169,12 @@ export function createApproval(hash: string, via: ApprovedVia = 'chat', now = Da
 }
 
 /**
- * Uses up an approval: it must exist, be unexpired and match this exact action. Returns how it was
- * approved, or why not. A code is single-use even when it does not match (no guessing in a loop).
+ * Uses up an approval: it must exist, be unexpired, match this exact action and the account in
+ * `session` (the stored session this process will connect with). Returns how it was approved, or
+ * why not. A code is single-use even when it does not match (no guessing in a loop).
  */
-export function consumeApproval(code: string, hash: string, now = Date.now()): { ok: true; via: ApprovedVia } | { ok: false; reason: string } {
+export function consumeApproval(code: string, hash: string, session: string | undefined, now = Date.now()): { ok: true; via: ApprovedVia } | { ok: false; reason: string } {
+  approvedSession = undefined;
   const key = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{6}$/.test(key)) return { ok: false, reason: 'unknown or expired approval code' };
   const file = join(storeDir(), `${key}.json`);
@@ -174,8 +191,9 @@ export function consumeApproval(code: string, hash: string, now = Date.now()): {
   const got = Buffer.from(typeof pending.mac === 'string' ? pending.mac : '', 'hex');
   if (got.length !== expected.length || !timingSafeEqual(got, expected)) return { ok: false, reason: 'the approval record is not genuine' };
   if (!(pending.expiresAt > now)) return { ok: false, reason: 'unknown or expired approval code' };
-  if (pending.session !== sessionFingerprint(signing)) return { ok: false, reason: 'the approval was given while another account was logged in' };
+  if (pending.session !== sessionFingerprint(signing, session)) return { ok: false, reason: 'the approval was given while another account was logged in' };
   if (pending.hash !== hash) return { ok: false, reason: 'the approval was for a different command or text' };
+  approvedSession = session ?? '';
   return { ok: true, via: pending.via };
 }
 

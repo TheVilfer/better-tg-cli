@@ -10,6 +10,7 @@ import { actionHash, createApproval, describeAction, readsStdin, STDIN_IN_APPROV
 import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock } from './paths.js';
+import { getSessionString } from './config.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -339,9 +340,12 @@ export async function gateWrite(plan: Plan, input: Record<string, unknown>, elic
     return undefined;
   }
   const shown = plan.stdin !== '' || readsStdin(plan.argv) ? plan.stdin : undefined;
+  // The account the user is asked about, read before the dialog opens: a login as someone else
+  // while the user is answering must not move the approval to that account
+  const account = getSessionString();
   const approved = await elicit(`The agent wants to change something in your Telegram:\n${describeAction(plan.argv, shown)}\n\nApprove this one action?`);
   if (!approved) return 'The user did not approve this write. Nothing was sent.';
-  plan.approval = createApproval(actionHash(plan.argv, plan.stdin), 'elicitation');
+  plan.approval = createApproval(actionHash(plan.argv, plan.stdin), account, 'elicitation');
   return undefined;
 }
 

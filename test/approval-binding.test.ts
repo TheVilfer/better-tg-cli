@@ -1,9 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { Command } from 'commander';
 
+// Before any module under test is imported: HOME (and the Windows dirs) point at a temp root, so
+// no path these tests touch can resolve into the real ~/.config
+const home = await vi.hoisted(async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const original = { ...process.env };
+  const root = mkdtempSync(join(tmpdir(), 'tg-binding-home-'));
+  process.env.HOME = root;
+  process.env.USERPROFILE = root;
+  process.env.APPDATA = join(root, 'AppData');
+  // What each test returns to: the temp home, never the real one
+  return { root, original, saved: { ...process.env } };
+});
 // What an approval in mode "ask" is bound to: the whole body (every way stdin can reach the
 // command) and the account logged in when it was given. The real Keychain is never touched.
 const store = vi.hoisted(() => ({ values: new Map<string, string>() }));
@@ -26,10 +40,14 @@ vi.mock('../src/text.js', async orig => ({
   readTextArg: (v: string) => (v === '-' ? stdin.text : v),
 }));
 // Reaching Telegram is what an unapproved write must never do
-const telegram = vi.hoisted(() => ({ reached: 0 }));
+const telegram = vi.hoisted(() => ({ reached: 0, connected: 0 }));
 vi.mock('../src/client.js', async orig => ({
   ...(await orig<typeof import('../src/client.js')>()),
   getClient: async () => { telegram.reached++; throw new Error('reached Telegram'); },
+}));
+// Under the real getClient (taken with importActual): the connection it would open
+vi.mock('../src/transport.js', () => ({
+  connectClient: async () => { telegram.connected++; throw new Error('connected to Telegram'); },
 }));
 
 import { actionHash, consumeApproval, createApproval, EXIT_NEEDS_APPROVAL, STDIN_IN_APPROVAL_ENV } from '../src/approval.js';
@@ -41,28 +59,47 @@ import { apiCommand } from '../src/commands/api.js';
 import { sendFileCommand } from '../src/commands/send-file.js';
 import { registerGeneratedCommands } from '../src/commands/generated.js';
 import { configDir } from '../src/paths.js';
-import { setSessionString } from '../src/config.js';
+import { getSessionString, saveConfig, setSessionString } from '../src/config.js';
 
-const saved = { ...process.env };
 const savedArgv = process.argv;
+// A home of its own for each test: the profile dir lives under it, and only that root is deleted
+let root: string | undefined;
 let dir: string;
 beforeEach(() => {
   for (const k of ['TG_MOCK', 'TG_READ_ONLY', 'TG_APPROVE', STDIN_IN_APPROVAL_ENV]) delete process.env[k];
-  process.env.TG_PROFILE = `test-binding-${process.pid}`;
+  root = mkdtempSync(join(tmpdir(), 'tg-binding-'));
+  process.env.HOME = root;
+  process.env.USERPROFILE = root;
+  process.env.APPDATA = join(root, 'AppData');
+  process.env.TG_PROFILE = 'test-binding';
   dir = configDir();
-  expect(dir).toMatch(/tg-test-binding-\d+$/);
+  const inside = relative(root, dir);
+  expect(inside && !inside.startsWith('..') && !isAbsolute(inside)).toBeTruthy();
   store.values.clear();
   store.values.set('writeEnabled', 'ask');
-  store.values.set('sessionString', 'session-of-account-A');
+  // Through config.ts, so its one-second cache does not hand a test the previous test's account
+  setSessionString('session-of-account-A');
   stdin.text = '';
   telegram.reached = 0;
+  telegram.connected = 0;
 });
 afterEach(() => {
-  process.env = { ...saved };
+  // In place: a replaced process.env is a plain object that os.homedir() no longer reads
+  for (const k of Object.keys(process.env)) if (!(k in home.saved)) delete process.env[k];
+  Object.assign(process.env, home.saved);
   process.argv = savedArgv;
-  rmSync(dir, { recursive: true, force: true });
+  if (root) rmSync(root, { recursive: true, force: true });
+  root = undefined;
   vi.restoreAllMocks();
 });
+afterAll(() => {
+  for (const k of Object.keys(process.env)) if (!(k in home.original)) delete process.env[k];
+  Object.assign(process.env, home.original);
+  rmSync(home.root, { recursive: true, force: true });
+});
+
+/** The account as the guard reads it: the stored session of the profile. */
+const account = () => getSessionString();
 
 const codeIn = (s: string) => /TG_APPROVE=([A-Z2-9]{6})/.exec(s)?.[1];
 
@@ -217,8 +254,44 @@ describe('an approval belongs to the account it was given for', () => {
     expect(telegram.reached).toBe(0);
   });
 
+  it('a dialog answered after a login as B does not approve the write for B', async () => {
+    const args = ['api', 'messages.SendMessage', '--params', '{"peer":{"_chat":"me"},"message":"hi","randomId":1}'];
+    const plan: { argv: string[]; readOnly: boolean; stdin?: string; approval?: string } = { argv: args, readOnly: false };
+    // The dialog opens in A; while the user reads it, the profile logs in as B
+    const refused = await gateWrite(plan, {}, async () => {
+      saveLogin('session-of-account-B', { apiId: 1, apiHash: 'h' }, false);
+      return true;
+    });
+    expect(refused).toBeUndefined();
+    expect(plan.approval).toBeTruthy();
+    // The child of this call (its environment as childEnv builds it) now runs in B
+    const env = childEnv(plan);
+    process.env.TG_APPROVE = env.TG_APPROVE;
+    process.env[STDIN_IN_APPROVAL_ENV] = env[STDIN_IN_APPROVAL_ENV];
+    stdin.text = plan.stdin ?? '';
+    const r = await cli(args);
+    expect(r.code).toBe(EXIT_NEEDS_APPROVAL);
+    expect(r.err).toMatch(/another account was logged in/);
+    expect(telegram.reached).toBe(0);
+  });
+
+  it('the client connects only with the session the approval was checked against', async () => {
+    const { getClient } = await vi.importActual<typeof import('../src/client.js')>('../src/client.js');
+    saveConfig({ apiId: 1, apiHash: 'h' });
+    process.env.TG_APPROVE = codeIn(guard(argv).err)!;
+    expect(guard(argv).code).toBeNull();
+    // B logs in between the guard and the connection
+    setSessionString('session-of-account-B');
+    await expect(getClient()).rejects.toThrow(/Another account logged in after this write was approved/);
+    expect(telegram.connected).toBe(0);
+    // In A, the same process connects as usual
+    setSessionString('session-of-account-A');
+    await expect(getClient()).rejects.toThrow(/connected to Telegram/);
+    expect(telegram.connected).toBe(1);
+  });
+
   it('records a fingerprint of the session, never the session', () => {
-    createApproval(actionHash(argv));
+    createApproval(actionHash(argv), account());
     const records = readdirSync(join(dir, 'approvals')).map(n => readFileSync(join(dir, 'approvals', n), 'utf8'));
     expect(records).toHaveLength(1);
     expect(records[0]).not.toContain('session-of-account-A');
@@ -226,22 +299,22 @@ describe('an approval belongs to the account it was given for', () => {
   });
 
   it('a login as B drops the codes given in A', () => {
-    const code = createApproval(actionHash(argv));
+    const code = createApproval(actionHash(argv), account());
     saveLogin('session-of-account-B', { apiId: 1, apiHash: 'h' }, false);
     // Even back in A the old code is gone
     setSessionString('session-of-account-A');
-    expect(consumeApproval(code, actionHash(argv))).toEqual({ ok: false, reason: 'unknown or expired approval code' });
+    expect(consumeApproval(code, actionHash(argv), account())).toEqual({ ok: false, reason: 'unknown or expired approval code' });
   });
 
   it('a logout drops the pending codes', async () => {
-    const code = createApproval(actionHash(argv));
+    const code = createApproval(actionHash(argv), account());
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     await new Command().addCommand(logoutCommand).parseAsync(['logout'], { from: 'user' });
     vi.restoreAllMocks();
     expect(existsSync(join(dir, 'approvals'))).toBe(false);
     setSessionString('session-of-account-A');
-    expect(consumeApproval(code, actionHash(argv)).ok).toBe(false);
+    expect(consumeApproval(code, actionHash(argv), account()).ok).toBe(false);
   });
 });
 
@@ -249,7 +322,7 @@ describe('a client that can ask the user never takes a code from the model', () 
   it('even when this process saw "on" and the child already sees "ask"', async () => {
     const argv = ['send', '@alice', 'Hello'];
     // A genuine code the model got earlier (say, from a CLI run in chat mode)
-    const modelCode = createApproval(actionHash(argv, ''));
+    const modelCode = createApproval(actionHash(argv, ''), account());
     store.values.set('writeEnabled', 'true');
     let asked = false;
     const plan = { argv, readOnly: false } as { argv: string[]; readOnly: boolean; stdin?: string; approval?: string };

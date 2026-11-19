@@ -6,6 +6,7 @@ import { isMock } from './paths.js';
 import { actionHash, consumeApproval, createApproval, describeAction, EXIT_NEEDS_APPROVAL, readsStdin, APPROVAL_TTL_MS, STDIN_IN_APPROVAL_ENV } from './approval.js';
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
+import { getSessionString } from './config.js';
 
 /**
  * `readsStdin`: the command takes its body from stdin, as its parsed options say (`-p-`, `-c -`,
@@ -48,9 +49,11 @@ function requireApproval(argv: string[], parsedReadsStdin: boolean): void {
   const covered = parsedReadsStdin || readsStdin(argv) || stdinWasRead() || process.env[STDIN_IN_APPROVAL_ENV] === '1';
   const stdin = covered ? readStdinOnce() : undefined;
   const hash = actionHash(argv, stdin);
+  // One read of the account for both the check and a new code; getClient() connects with it only
+  const session = getSessionString();
   const given = process.env.TG_APPROVE;
   if (given) {
-    const used = consumeApproval(given, hash);
+    const used = consumeApproval(given, hash, session);
     if (used.ok) {
       setWriteContext({ writeMode: 'ask', approvedVia: used.via, ...unprotectedFlag() });
       // Nothing read from stdin after this point can be part of the write: it was not approved
@@ -59,7 +62,7 @@ function requireApproval(argv: string[], parsedReadsStdin: boolean): void {
     }
     console.error(chalk.yellow(`Approval ${given} not accepted: ${used.reason}. A new one is below.`));
   }
-  const code = createApproval(hash);
+  const code = createApproval(hash, session);
   const minutes = APPROVAL_TTL_MS / 60_000;
   // An empty stdin the MCP server always hands over says nothing to show (the hash still covers it)
   const shown = stdin === '' && !parsedReadsStdin && !readsStdin(argv) ? undefined : stdin;
