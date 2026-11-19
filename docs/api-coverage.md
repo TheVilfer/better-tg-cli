@@ -16,7 +16,7 @@ Tracks issue #47. Three measures:
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
 - Dedicated per-method commands (`telegram <namespace> <method>`): **823 (100%)**
-- Curated/friendly commands: **99 (12%)** — 65 called directly in src/, 34 through teleproto client helpers
+- Curated/friendly commands: **99 (12%)** — 66 called directly in src/, 34 through teleproto client helpers
 
 CI gate (`npm run coverage:api`, also enforced by `npm test`): reachability and Telethon
 accounting (section 2) must each stay at or above **90%** (`--min <n>` / `API_COVERAGE_MIN`),

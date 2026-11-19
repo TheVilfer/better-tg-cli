@@ -4,7 +4,7 @@ import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
 import { connectClient, transportSetting } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
-import { CliError, EXIT, formatCandidates, shellCommand, usageError } from './errors.js';
+import { CliError, EXIT, formatCandidates, sessionEndedBy, shellCommand, usageError } from './errors.js';
 import type { ChatCandidate } from './errors.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
@@ -53,8 +53,23 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
     { setting: transportSetting(undefined, config) },
   );
 
-  if (!await clientInstance.isUserAuthorized()) {
-    const invited = config.credentialSource === 'invite';
+  await checkSession(clientInstance, config.credentialSource === 'invite');
+
+  return clientInstance;
+}
+
+/**
+ * Whether the saved login still works, by the reason a probe fails: an auth error (the session was
+ * revoked, expired, its key dropped) is "log in again", exit 5; anything else (no network,
+ * FLOOD_WAIT) is thrown as it is and keeps its own code. teleproto's isUserAuthorized() is not
+ * used: it answers false for any failure, a dropped connection included.
+ */
+export async function checkSession(client: Pick<TelegramClient, 'invoke'>, invited = false): Promise<void> {
+  try {
+    await client.invoke(new Api.updates.GetState());
+  } catch (error) {
+    const ended = sessionEndedBy(error);
+    if (!ended) throw error;
     throw new CliError(
       invited
         ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'
@@ -62,8 +77,6 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
       'session_expired', EXIT.NOT_LOGGED_IN,
     );
   }
-
-  return clientInstance;
 }
 
 export async function createClient(apiId: number, apiHash: string): Promise<TelegramClient> {

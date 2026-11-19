@@ -106,6 +106,35 @@ function humanText(summary: string, candidates?: ChatCandidate[], hint?: Hint): 
   return [summary, candidates?.length ? formatCandidates(candidates) : '', hintText(hint) ?? ''].filter(Boolean).join('\n');
 }
 
+/**
+ * RPC errors that mean this login is gone (the key was dropped, the session revoked or expired,
+ * the account deactivated), wherever they come: at connect or from any later call. Exit 5.
+ */
+export const SESSION_ERRORS: ReadonlySet<string> = new Set([
+  'AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'AUTH_KEY_PERM_EMPTY',
+  'SESSION_EXPIRED', 'SESSION_REVOKED', 'SESSION_PASSWORD_NEEDED',
+  'USER_DEACTIVATED', 'USER_DEACTIVATED_BAN',
+]);
+
+export const SESSION_ENDED_HINT = 'Log in again: telegram onboard (or telegram auth --qr in a terminal).';
+
+/** The RPC error name of a session that ended, if `error` is one. */
+export function sessionEndedBy(error: unknown): string | undefined {
+  const name = (error as { errorMessage?: unknown } | null)?.errorMessage;
+  return typeof name === 'string' && SESSION_ERRORS.has(name) ? name : undefined;
+}
+
+const NETWORK_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE', 'ECONNABORTED']);
+
+/** A failure to reach Telegram at all (no RPC answer): a socket error, a timeout, a dropped connection. */
+export function isNetworkError(error: unknown): boolean {
+  const e = error as { code?: unknown; name?: unknown; message?: unknown } | null;
+  if (!e || typeof e !== 'object') return false;
+  if (typeof e.code === 'string' && NETWORK_CODES.has(e.code)) return true;
+  if (e.name === 'TimeoutError') return true;
+  return typeof e.message === 'string' && /^(Not connected|Disconnect|Connection (closed|refused|timed out)|TIMEOUT$)/i.test(e.message);
+}
+
 /** What an error says, whatever threw it: our CliError, a Telegram RPC error or anything else. */
 export function errorDetails(error: unknown): ErrorDetails & { exitCode: number } {
   if (error instanceof CliError) {
@@ -120,13 +149,17 @@ export function errorDetails(error: unknown): ErrorDetails & { exitCode: number 
   if (rpc && typeof rpc.errorMessage === 'string') {
     const message = typeof rpc.message === 'string' ? rpc.message : rpc.errorMessage;
     const wait = typeof rpc.seconds === 'number' ? rpc.seconds : /^FLOOD_(PREMIUM_)?WAIT_(\d+)/.exec(rpc.errorMessage)?.[2];
+    const ended = sessionEndedBy(rpc);
+    if (ended) return { code: 'session_expired', message: `Telegram ended this session (${ended})`, exitCode: EXIT.NOT_LOGGED_IN, hint: SESSION_ENDED_HINT };
     if (wait !== undefined && /FLOOD/.test(rpc.errorMessage)) {
       const seconds = Number(wait);
       return { code: 'flood_wait', message, exitCode: EXIT.ERROR, retryAfterSeconds: seconds, hint: `Telegram rate limit: wait ${seconds} s, then run the command again.` };
     }
     return { code: 'telegram_rpc', message, exitCode: EXIT.ERROR };
   }
-  return { code: 'error', message: error instanceof Error ? error.message : String(error), exitCode: EXIT.ERROR };
+  const message = error instanceof Error ? error.message : String(error);
+  if (isNetworkError(error)) return { code: 'network', message: `Could not reach Telegram: ${message}`, exitCode: EXIT.ERROR, hint: 'Check the connection, then run the command again.' };
+  return { code: 'error', message, exitCode: EXIT.ERROR };
 }
 
 /** `--json` on this command line: errors then go to stdout as one JSON line. */
