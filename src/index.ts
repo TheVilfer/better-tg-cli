@@ -359,9 +359,11 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
 function reportUsageErrors(root: Command): void {
   const json = wantsJson();
   const onExit = (err: CommanderError): never => {
-    if (err.exitCode === 0 || err.code === 'commander.help' || err.code === 'commander.helpDisplayed') process.exit(err.exitCode);
+    if (err.exitCode === 0 || err.code === 'commander.helpDisplayed') process.exit(err.exitCode);
+    // A command group run without its subcommand ("telegram topic"): help on stderr, then a usage error
+    if (err.code === 'commander.help' && err.exitCode === 0) process.exit(0);
     if (json) {
-      const message = err.message.replace(/^error: /, '');
+      const message = err.code === 'commander.help' ? 'missing subcommand' : err.message.replace(/^error: /, '');
       const code = err.code === 'commander.invalidArgument' ? 'invalid_argument' : 'usage';
       console.log(errorJson({ code, message, hint: 'See `telegram <command> --help` or `telegram help-all -g <word>`.' }));
     }

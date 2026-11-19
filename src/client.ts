@@ -1112,10 +1112,10 @@ export async function searchMessages(
 ): Promise<{ messages: MessageInfo[]; chatTitle?: string; chatId?: string; hasMore?: boolean }[]> {
   const { chat, limit = 50, minDate, maxDate, from, type, full } = options;
   if (type && !SEARCH_FILTERS[type]) {
-    throw new Error(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
+    throw usageError(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
   }
   if (from && !chat) {
-    throw new Error('--from needs --chat (Telegram global search cannot filter by sender)');
+    throw usageError('--from needs --chat (Telegram global search cannot filter by sender)');
   }
   const filter = type ? SEARCH_FILTERS[type]() : new Api.InputMessagesFilterEmpty();
   const minTs = minDate ? Math.floor(minDate.getTime() / 1000) : 0;

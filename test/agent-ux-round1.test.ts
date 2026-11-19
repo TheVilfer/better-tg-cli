@@ -253,3 +253,47 @@ describe('9 numbers and dates never silently become other values', () => {
     expect(parseForDuration('2h')).toBe(7200);
   });
 });
+
+describe('10 usage errors exit 2, and are found before the write guard', () => {
+  it('search --from without --chat exits 2 with one JSON error', () => {
+    const r = cli(['search', 'coffee', '--from', '@alice_example', '--json']);
+    expect(r.code, r.out + r.err).toBe(2);
+    expect(oneJson(r.out).error.code).toBe('invalid_argument');
+  }, 30_000);
+
+  // These take no --json (it would itself be an unknown option, exit 2 for any reason)
+  it.each([
+    [['topic'], /missing subcommand|Usage: telegram topic/],
+    [['api', 'help.GetConfig', '-p', 'oops'], /Invalid --params JSON/],
+    [['api', 'no.SuchMethod'], /Unknown namespace "no"/],
+  ])('%j exits 2', (args, text) => {
+    const r = cli(args);
+    expect(r.code, r.out + r.err).toBe(2);
+    expect(r.err).toMatch(text);
+  }, 30_000);
+
+  // A real guard in write mode "ask": the child runs as on a Linux cloud computer (the mode in a
+  // file of the profile, no secret store), so this machine's Keychain is never touched
+  it('in mode ask a command line that cannot run gets exit 2, never an approval (exit 3)', () => {
+    const profile = mkdtempSync(join(home, 'ask-'));
+    const real = (args: string[]) => {
+      const e = env({ HOME: profile, USERPROFILE: profile, APPDATA: join(profile, 'AppData'), TG_MOCK: '', TG_PROFILE: 'ask-test', TG_NO_LIBSECRET: '1' });
+      const r = spawnSync(process.execPath, ['--import', join(__dirname, 'helpers', 'as-linux.mjs'), ...cliArgs(), ...args], { encoding: 'utf8', env: e, stdio: ['ignore', 'pipe', 'pipe'] });
+      return { code: r.status, out: r.stdout, err: r.stderr };
+    };
+    expect(real(['write-access', 'ask']).code).toBe(0);
+    expect(JSON.parse(real(['write-access', '--json']).out).writeMode).toBe('ask');
+    // A well-formed write does reach the guard and asks for an approval
+    expect(real(['send', 'me', 'hi', '--json']).code).toBe(3);
+    for (const args of [
+      ['click', 'Team', '3', '--json'],
+      ['send-file', 'me', join(profile, 'no-such-file.png'), '--json'],
+      ['react', 'Team', '3', '--json'],
+      ['set-avatar', join(profile, 'no-such-file.png'), '--json'],
+    ]) {
+      const r = real(args);
+      expect(r.code, `${args.join(' ')}: ${r.out}${r.err}`).toBe(2);
+      expect(oneJson(r.out).error.code).toBe('invalid_argument');
+    }
+  }, 60_000);
+});

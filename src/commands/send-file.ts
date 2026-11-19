@@ -24,14 +24,13 @@ export const sendFileCommand = new Command('send-file')
   .option('--reply-to <id>', 'Reply to a specific message ID', positiveInt)
   .option('--json', 'Output as JSON')
   .action(async (target, filePath, options) => {
-    assertWriteEnabled(undefined, { readsStdin: options.caption === '-' });
-    if (options.caption) options.caption = readTextArg(options.caption);
-
+    // The file is checked before the guard: a missing one never costs an approval
     const absPath = resolve(filePath);
     if (!existsSync(absPath)) fail(usageError(`File not found: ${absPath}`));
+    if (!statSync(absPath).isFile()) fail(usageError(`Not a regular file: ${absPath}`));
 
-    const stat = statSync(absPath);
-    if (!stat.isFile()) fail(usageError(`Not a regular file: ${absPath}`));
+    assertWriteEnabled(undefined, { readsStdin: options.caption === '-' });
+    if (options.caption) options.caption = readTextArg(options.caption);
 
     const spinner = ora(`Uploading "${absPath}" to "${target}"...`).start();
 

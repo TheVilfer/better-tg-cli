@@ -18,8 +18,6 @@ export const clickCommand = new Command('click')
   .option('--no-wait', 'Do not wait for / fetch the bot response after clicking')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, button, options) => {
-    assertWriteEnabled();
-
     const id: number = messageId;
 
     const selector: ClickSelector = {};
@@ -31,6 +29,8 @@ export const clickCommand = new Command('click')
     } else {
       fail(usageError('Specify a button by index/text, or use --data <base64>', `See the buttons: telegram buttons "${chat}" ${id}`));
     }
+    // After the local checks: a command line that can't run never costs an approval
+    assertWriteEnabled();
 
     const spinner = ora(`Pressing button on #${id}...`).start();
     const auditTarget = options.data ? `data:${options.data}` : String(button);
