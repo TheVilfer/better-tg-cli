@@ -29,7 +29,7 @@ const opLog = join(home, 'op-calls.log');
 // TMPDIR cannot break the script (a broken fake `op` would hand the children the system store)
 if (fakeOp) {
   mkdirSync(join(home, 'bin'));
-  writeFileSync(fakeOpBin, '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CONTRACT_OP_LOG"\n[ "$1" = whoami ] && exit 0\nexit 1\n', { mode: 0o755 });
+  writeFileSync(fakeOpBin, '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CONTRACT_OP_LOG"\n[ "$1" = whoami ] && exit 0\n# what op prints for an item that does not exist\necho "[ERROR] could not read secret: \\"x\\" isn\'t an item in the \\"contract-vault\\" vault." >&2\nexit 1\n', { mode: 0o755 });
 }
 const ALLOWED_OP_CALL = /^(whoami|read op:\/\/contract-vault\/tg-cli-contract-test-(apiHash|sessionString|writeEnabled)\/credential)$/;
 const opCalls = (log: string) => existsSync(log) ? readFileSync(log, 'utf8').trimEnd().split('\n') : [];
