@@ -2,9 +2,8 @@ import { getClient, invokeApi, serializeApiResult, disconnectClient } from './cl
 import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, plainParams } from './api-methods.js';
 import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
-import chalk from './colors.js';
 import ora from './spinner.js';
-import { fail } from './errors.js';
+import { CliError, EXIT, fail } from './errors.js';
 
 /**
  * One execution path for every raw TL call, shared by the generic `api` command and the generated
@@ -26,10 +25,7 @@ export async function runApiMethod(
   // over MCP) apply.
   params = plainParams(params);
   const refusal = apiRefusalReason(canonical, params) ?? mcpPaidStarsRefusal(canonical, params);
-  if (refusal) {
-    console.error(chalk.red(refusal));
-    process.exit(1);
-  }
+  if (refusal) fail(new CliError(refusal, 'refused', EXIT.ERROR));
 
   // A read that may spend Stars (allowPaidStars) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);

@@ -104,7 +104,7 @@ describe('mock account: reads go through the real client code', () => {
 
   it('keeps the strict chat matching that guards real writes', async () => {
     setStrictChatResolution(true);
-    await expect(sendMessage(mock(), 'Tea', 'x')).rejects.toThrow(/Did you mean:\n.*Team @mock_team\n.*Team Design/s);
+    await expect(sendMessage(mock(), 'Tea', 'x')).rejects.toThrow(/Did you mean:\n.*supergroup Team\n.*Team Design/s);
   });
 });
 

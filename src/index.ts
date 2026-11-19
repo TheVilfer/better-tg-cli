@@ -5,7 +5,7 @@ import { isMainThread } from 'node:worker_threads';
 import { primeStdin } from './text.js';
 import { VERSION } from './version.js';
 import { Command, CommanderError } from 'commander';
-import { CliError, EXIT, EXIT_CODES_HELP, errorJson, fail, wantsJson } from './errors.js';
+import { CliError, EXIT, EXIT_CODES_HELP, errorJson, fail, installDrainingExit, wantsJson } from './errors.js';
 import { isMock, profile } from './paths.js';
 import { commandPaths, startMcpServer } from './mcp.js';
 import { mcpToken, startMcpHttpServer } from './mcp-http.js';
@@ -102,6 +102,9 @@ import {
 } from './commands/index.js';
 import { generatedSummaryLines } from './commands/generated.js';
 
+
+// Every exit waits until stdout and stderr reached the reader (a --json result is never cut)
+installDrainingExit();
 
 // Exit quietly when the output pipe is closed early (e.g. `telegram help stats | head`): Node turns
 // the SIGPIPE into an async EPIPE 'error' on stdout, which would otherwise crash with an unhandled
@@ -320,8 +323,7 @@ program.hook('preAction', (_program, command) => {
 try {
   profile();
 } catch (error) {
-  console.error((error as Error).message);
-  process.exit(2);
+  fail(new CliError((error as Error).message, 'invalid_profile', EXIT.USAGE));
 }
 
 if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {

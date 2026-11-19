@@ -7,7 +7,7 @@ import { ONBOARD_SITE, startOnboarding } from '../onboard.js';
 import { openBrowser } from './onboard.js';
 import chalk from '../colors.js';
 import { checkedBy } from '../args.js';
-import { fail, usageError } from '../errors.js';
+import { CliError, EXIT, fail, usageError } from '../errors.js';
 import { writeStatus } from '../status.js';
 
 export { windowsConfirmScript } from '../confirm.js';
@@ -31,10 +31,7 @@ export const writeAccessCommand = new Command('write-access')
     if (action === 'ask') {
       // No dialog: in "ask" every write waits for the user's yes in the chat, which is the confirmation
       const result = await applyModeChoice({ mode: 'ask', forSeconds: options.for ? parseForDuration(options.for) : undefined });
-      if (!result.ok) {
-        console.error(chalk.red(`Write access unchanged (${result.error}).`));
-        process.exit(1);
-      }
+      if (!result.ok) unchanged(result.error);
       out(chalk.green(`Write access: ${currentModeLine()}.`));
       out(chalk.gray('Before every send, show the user the exact action and wait for their yes in the chat.'));
       if (!isWriteModeProtected()) out(chalk.gray(UNPROTECTED_NOTE));
@@ -43,20 +40,15 @@ export const writeAccessCommand = new Command('write-access')
       let result;
       if (hasHumanChannel()) {
         if (!(await confirmByHuman(modeQuestion(action, forSeconds)))) {
-          console.error(chalk.yellow('Not confirmed by the user. Write access stays as it was.'));
-          process.exit(1);
+          fail(new CliError('Not confirmed by the user. Write access stays as it was.', 'not_confirmed', EXIT.ERROR));
         }
         result = await applyModeChoice({ mode: action, forSeconds }, { alreadyConfirmed: true });
       } else if (mayTrustUnconfirmedChoice()) {
         result = await chooseOnPage(options.open, out);
       } else {
-        console.error(chalk.red('No terminal or dialog to confirm on. Run this command yourself in a terminal.'));
-        process.exit(1);
+        fail(new CliError('No terminal or dialog to confirm on. Run this command yourself in a terminal.', 'no_human_channel', EXIT.ERROR));
       }
-      if (!result.ok) {
-        console.error(chalk.red(`Write access unchanged (${result.error}).`));
-        process.exit(1);
-      }
+      if (!result.ok) unchanged(result.error);
       out(chalk.green(`Write access: ${currentModeLine()}.`));
       if (!isWriteModeProtected()) out(chalk.gray(UNPROTECTED_NOTE));
     } else if (action === 'off') {
@@ -73,6 +65,11 @@ export const writeAccessCommand = new Command('write-access')
     }
     if (options.json) console.log(JSON.stringify(writeStatus()));
   });
+
+/** The mode could not be changed: one error (JSON with --json), exit 1. */
+function unchanged(reason: string): never {
+  fail(new CliError(`Write access unchanged (${reason}).`, reason === 'not_confirmed' ? 'not_confirmed' : 'write_access_unchanged', EXIT.ERROR));
+}
 
 /**
  * No terminal, no dialog, no secret store (a cloud agent computer): the person picks the mode on a

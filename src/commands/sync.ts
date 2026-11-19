@@ -3,6 +3,8 @@ import {
   assertDownloadTarget,
   getClient,
   getDialogs,
+  DIALOG_MAX,
+  DIALOG_PAGE,
   getMessages,
   downloadMessageMedia,
   disconnectClient,
@@ -16,7 +18,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'path';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { assertLocalWriteAllowed } from '../guard.js';
-import { fail } from '../errors.js';
+import { CliError, EXIT, errorDetails, fail, usageError } from '../errors.js';
 import { positiveInt, timeArg } from '../args.js';
 import { formatJson } from '../formatters/json.js';
 
@@ -107,30 +109,35 @@ async function formatMessageLines(
  * `all` is the whole dialog list: when it was cut, one exact title is not proven unique (another
  * chat with that title may sit beyond the cut), so over MCP an ID is required.
  */
-export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolean, complete = true): ChatInfo[] | string {
+export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolean, complete = true): ChatInfo[] | CliError {
   // An empty name would match every title (and must never fall back to exporting every chat)
-  if (!name.trim()) return '--chat needs a chat: an ID, @username or title';
+  if (!name.trim()) return usageError('--chat needs a chat: an ID, @username or title');
   // A numeric name is an ID, never a title ("123" must not pick a chat titled 123)
   if (/^-?\d+$/.test(name.trim())) {
     const byId = all.filter(c => c.id === name.trim());
-    return byId.length > 0 ? byId : `No chat has the ID ${name.trim()}`;
+    return byId.length > 0 ? byId : notFound(`No chat has the ID ${name.trim()}`, name);
   }
   const needle = name.toLowerCase();
   const exact = all.filter(c => c.title.toLowerCase() === needle);
   if (!exactOnly) {
     const chats = exact.length > 0 ? exact : all.filter(c => c.title.toLowerCase().includes(needle));
-    return chats.length > 0 ? chats : `No chat found matching "${name}"`;
+    return chats.length > 0 ? chats : notFound(`No chat found matching "${name}"`, name);
   }
   const user = needle.replace(/^@/, '');
   const matches = needle.startsWith('@') ? all.filter(c => c.username?.toLowerCase() === user) : exact;
-  const list = matches.slice(0, 5).map(c => `  ${c.id} ${c.type} ${c.title}${c.username ? ` @${c.username}` : ''}`).join('\n');
+  const candidates = matches.slice(0, 5).map(c => ({ id: c.id, title: c.title, type: c.bot ? 'bot' : c.type }));
+  const hint = 'Run the command again with one of these IDs.';
   // A @username is unique on Telegram, so one match is proven even in a cut list; a title is not
   if (matches.length === 1 && (complete || needle.startsWith('@'))) return matches;
   if (matches.length === 1) {
-    return `"${name}" matches a chat among the first ${all.length} dialogs, but the list was cut, so another chat may have the same title; use an ID:\n${list}`;
+    return new CliError(`"${name}" matches a chat among the first ${all.length} dialogs, but the list was cut, so another chat may have the same title; use an ID`, 'ambiguous_or_unverified', EXIT.USAGE, { candidates, hint });
   }
-  if (matches.length === 0) return `No chat is exactly "${name}". Over MCP sync needs an ID, @username or the exact title.`;
-  return `"${name}" matches ${matches.length} chats; use an ID:\n${list}`;
+  if (matches.length === 0) return notFound(`No chat is exactly "${name}". Over MCP sync needs an ID, @username or the exact title.`, name);
+  return new CliError(`"${name}" matches ${matches.length} chats; use an ID`, 'ambiguous_chat', EXIT.USAGE, { candidates, hint });
+}
+
+function notFound(message: string, name: string): CliError {
+  return new CliError(message, 'chat_not_found', EXIT.ERROR, { hint: ['chats', '-q', name.replace(/^@/, ''), '--preview', '0'] });
 }
 
 /** Stops the whole sync: a write would leave the export folder through a symbolic link. */
@@ -193,7 +200,6 @@ export function buildSyncFetchOptions(o: {
 }
 
 /** How many dialogs `--chat` searches; a list this long may have been cut. */
-const SYNC_DIALOG_LIMIT = 500;
 
 export const syncCommand = new Command('sync')
   .description('Export or incrementally sync chat history to Markdown files (backup, archive)')
@@ -205,7 +211,7 @@ export const syncCommand = new Command('sync')
   .option('--output <dir>', 'Output directory', './telegram-sync')
   .option('--media', 'Also download photos and documents alongside markdown')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
-  .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}]}')
+  .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}], failed?:[{chatId, title, code, error}]} (exit 1 if any chat failed)')
   .action(async (options) => {
     assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
@@ -235,14 +241,11 @@ export const syncCommand = new Command('sync')
       // Present but empty is a mistake to stop at, never "every chat"
       if (options.chat !== undefined) {
         const overMcp = !!process.env.TG_MCP;
-        const dialogs = await getDialogs(client, SYNC_DIALOG_LIMIT);
-        const selected = selectSyncChats(dialogs, options.chat, overMcp, dialogs.length < SYNC_DIALOG_LIMIT);
-        if (typeof selected === 'string') {
-          spinner.fail(selected);
-          await disconnectClient();
-          if (overMcp) process.exit(1);
-          return;
-        }
+        // As for any title: a full page is read on, and past DIALOG_MAX a title is not proven unique
+        let dialogs = await getDialogs(client, DIALOG_PAGE);
+        if (dialogs.length >= DIALOG_PAGE) dialogs = await getDialogs(client, DIALOG_MAX);
+        const selected = selectSyncChats(dialogs, options.chat, overMcp, dialogs.length < DIALOG_MAX);
+        if (selected instanceof CliError) throw selected;
         chats = selected;
       } else {
         // Sync all chats with recent activity
@@ -264,6 +267,7 @@ export const syncCommand = new Command('sync')
       let newMessages = 0;
       // What happened to each chat: the agent needs the file path and whether anything was new
       const report: { chatId: string; title: string; file: string; added: number; lastId?: number }[] = [];
+      const failed: { chatId: string; title: string; code: string; error: string }[] = [];
       for (const chat of chats) {
         try {
           spinner.text = `Syncing "${chat.title}"...`;
@@ -329,17 +333,21 @@ export const syncCommand = new Command('sync')
           report.push({ chatId: chat.id, title: chat.title, file: filePath, added: messages.length, lastId: meta[chat.id].lastMessageId });
         } catch (error) {
           if (error instanceof ExportPathError) throw error;
-          // Skip chats that fail
-          console.error(chalk.yellow(`\nWarning: Could not sync "${chat.title}": ${error instanceof Error ? error.message : error}`));
+          // Go on with the other chats, but never call a partial export a success
+          const { code, message } = errorDetails(error);
+          failed.push({ chatId: chat.id, title: chat.title, code, error: message });
+          console.error(chalk.yellow(`\nWarning: Could not sync "${chat.title}": ${message}`));
         }
       }
 
       writeSyncMeta(outputDir, meta);
 
       const upToDate = report.length - synced;
-      spinner.succeed(chalk.green(`Synced ${newMessages} new messages in ${synced} chats to ${outputDir}${upToDate ? ` (${upToDate} already up to date)` : ''}`));
+      const summary = `Synced ${newMessages} new messages in ${synced} chats to ${outputDir}${upToDate ? ` (${upToDate} already up to date)` : ''}`;
+      if (failed.length) spinner.fail(chalk.yellow(`${summary}; ${failed.length} failed: ${failed.map(f => f.title).join(', ')}`));
+      else spinner.succeed(chalk.green(summary));
       if (options.json) {
-        console.log(formatJson({ output: outputDir, added: newMessages, chats: report }));
+        console.log(formatJson({ output: outputDir, added: newMessages, chats: report, ...(failed.length ? { failed } : {}) }));
       } else if (report.length <= 10) {
         for (const r of report) {
           console.log(r.added
@@ -349,7 +357,7 @@ export const syncCommand = new Command('sync')
       }
 
       await disconnectClient();
-      process.exit(0);
+      process.exit(failed.length ? EXIT.ERROR : EXIT.OK);
     } catch (error) {
       fail(error, spinner, 'Sync failed');
     }

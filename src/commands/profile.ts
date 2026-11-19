@@ -7,7 +7,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { fail, usageError } from '../errors.js';
 
 export const setNameCommand = new Command('set-name')
   .description('Update your own first (and optional last) name')
@@ -77,12 +77,10 @@ export const setAvatarCommand = new Command('set-avatar')
   .argument('<path>', 'Path to an image file')
   .option('--json', 'Output as JSON')
   .action(async (path, options) => {
-    assertWriteEnabled();
+    // A local mistake first: a missing file never costs an approval
     const filePath = resolve(path);
-    if (!existsSync(filePath)) {
-      console.error(`File not found: ${filePath}`);
-      process.exit(1);
-    }
+    if (!existsSync(filePath)) fail(usageError(`File not found: ${filePath}`));
+    assertWriteEnabled();
     const spinner = ora('Uploading profile photo...').start();
     try {
       const client = await getClient();

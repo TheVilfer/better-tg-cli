@@ -36,8 +36,20 @@ export interface ChatCandidate {
   id: string;
   title: string;
   type: string;
-  username?: string;
 }
+
+/**
+ * The next step. A string is prose or a fixed command; an array is the argv of a `telegram`
+ * command built from the caller's own text (run it as is, never through a shell).
+ */
+export type Hint = string | string[];
+
+/** A `telegram` argv as one line a POSIX shell runs unchanged (each odd argument single-quoted). */
+export function shellCommand(argv: string[]): string {
+  return ['telegram', ...argv.map(a => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)].join(' ');
+}
+
+const hintText = (hint?: Hint) => (Array.isArray(hint) ? shellCommand(hint) : hint);
 
 export interface ErrorDetails {
   /** Stable snake_case id an agent can branch on */
@@ -45,7 +57,7 @@ export interface ErrorDetails {
   /** One line, without the candidate list or the hint */
   message: string;
   /** The next step: a command or an action */
-  hint?: string;
+  hint?: Hint;
   candidates?: ChatCandidate[];
   retryAfterSeconds?: number;
 }
@@ -58,7 +70,7 @@ export class CliError extends Error {
   readonly code: string;
   readonly exitCode: number;
   readonly summary: string;
-  readonly hint?: string;
+  readonly hint?: Hint;
   readonly candidates?: ChatCandidate[];
   readonly retryAfterSeconds?: number;
 
@@ -66,7 +78,7 @@ export class CliError extends Error {
     summary: string,
     code: string,
     exitCode: number = EXIT.ERROR,
-    extra: { hint?: string; candidates?: ChatCandidate[]; retryAfterSeconds?: number; text?: string } = {},
+    extra: { hint?: Hint; candidates?: ChatCandidate[]; retryAfterSeconds?: number; text?: string } = {},
   ) {
     super(extra.text ?? humanText(summary, extra.candidates, extra.hint));
     this.name = 'CliError';
@@ -85,13 +97,13 @@ export function usageError(message: string, hint?: string): CliError {
 }
 
 export function formatCandidates(candidates: ChatCandidate[], total = candidates.length): string {
-  const lines = candidates.map(c => `  ${c.id} ${c.type} ${c.title}${c.username ? ` @${c.username}` : ''}`);
+  const lines = candidates.map(c => `  ${c.id} ${c.type} ${c.title}`);
   if (total > candidates.length) lines.push(`  … and ${total - candidates.length} more`);
   return lines.join('\n');
 }
 
-function humanText(summary: string, candidates?: ChatCandidate[], hint?: string): string {
-  return [summary, candidates?.length ? formatCandidates(candidates) : '', hint ?? ''].filter(Boolean).join('\n');
+function humanText(summary: string, candidates?: ChatCandidate[], hint?: Hint): string {
+  return [summary, candidates?.length ? formatCandidates(candidates) : '', hintText(hint) ?? ''].filter(Boolean).join('\n');
 }
 
 /** What an error says, whatever threw it: our CliError, a Telegram RPC error or anything else. */
@@ -142,6 +154,8 @@ export function errorJson(details: ErrorDetails): string {
  * and the error text on stderr.
  */
 export function fail(error: unknown, spinner?: Spinner, label?: string): never {
+  // A process.exit() already on its way (see installDrainingExit): its code stands
+  if (error instanceof ExitSignal) throw error;
   const details = errorDetails(error);
   if (wantsJson()) {
     spinner?.stop();
@@ -150,8 +164,53 @@ export function fail(error: unknown, spinner?: Spinner, label?: string): never {
     if (spinner && label && !process.env.TG_MCP) spinner.fail(label);
     else spinner?.stop();
     const text = error instanceof CliError ? error.message
-      : [details.message, details.hint].filter(Boolean).join('\n');
+      : [details.message, hintText(details.hint)].filter(Boolean).join('\n');
     console.error(text);
   }
   process.exit(details.exitCode);
+}
+
+/**
+ * Thrown by process.exit() once installDrainingExit() is in place: the exit itself waits for
+ * stdout and stderr, and the throw makes sure no code after the call runs meanwhile (callers
+ * rely on process.exit() never returning). `fail()` passes it on, the top level ignores it.
+ */
+export class ExitSignal extends Error {
+  constructor() {
+    super('exiting');
+    this.name = 'ExitSignal';
+  }
+}
+
+/**
+ * Make process.exit() wait until everything written to stdout and stderr has reached the reader.
+ * A pipe is asynchronous on macOS and Windows: a plain exit right after a large write (a long JSON
+ * error, a big --json result) cuts the output at the pipe buffer (64 KiB), and the agent gets half
+ * an object. The first call decides the exit code; later calls (a catch that fails again) only stop
+ * their caller.
+ */
+export function installDrainingExit(): void {
+  const realExit = process.exit.bind(process) as (code?: number) => never;
+  let exiting = false;
+  process.exit = ((code?: number | string | null) => {
+    if (!exiting) {
+      exiting = true;
+      if (code !== undefined && code !== null) process.exitCode = Number(code);
+      const waiting = [process.stdout, process.stderr].filter(s => !s.destroyed && !s.writableEnded && s.writableLength > 0);
+      // Nothing buffered: exit now, as before (a later tick could still load modules and print warnings)
+      if (!waiting.length) realExit();
+      let pending = waiting.length;
+      for (const stream of waiting) stream.write('', () => { if (--pending === 0) realExit(); });
+    }
+    throw new ExitSignal();
+  }) as typeof process.exit;
+  // An exit requested from a callback or a promise nobody awaits is not an error
+  process.on('uncaughtException', error => {
+    if (error instanceof ExitSignal) return;
+    try { fail(error); } catch { /* the ExitSignal of fail()'s own exit */ }
+  });
+  process.on('unhandledRejection', error => {
+    if (error instanceof ExitSignal) return;
+    try { fail(error); } catch { /* the ExitSignal of fail()'s own exit */ }
+  });
 }

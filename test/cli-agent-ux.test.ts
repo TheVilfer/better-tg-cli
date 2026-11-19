@@ -143,11 +143,11 @@ describe('chat names', () => {
     const r = cli(['read', 'Tea', '-n', '1']);
     expect(r.code).toBe(2);
     expect(r.out).toBe('');
-    expect(r.err).toMatch(/"Tea" is part of 2 chat titles; use an ID or the exact title:\n {2}-1004001 supergroup Team @mock_team\n {2}-1004002 supergroup Team Design/);
+    expect(r.err).toMatch(/"Tea" is part of 2 chat titles; use an ID or the exact title:\n {2}-1004001 supergroup Team\n {2}-1004002 supergroup Team Design/);
     const json = jsonError(cli(['read', 'Tea', '--json']).out);
     expect(json).toMatchObject({ code: 'ambiguous_chat' });
     expect(json.candidates).toEqual([
-      { id: '-1004001', title: 'Team', type: 'supergroup', username: 'mock_team' },
+      { id: '-1004001', title: 'Team', type: 'supergroup' },
       { id: '-1004002', title: 'Team Design', type: 'supergroup' },
     ]);
     // One exact title or one partial match still reads
@@ -166,10 +166,10 @@ describe('chat names', () => {
   it('3.3 "Chat not found" names the closest titles and the command to look further', () => {
     const r = cli(['read', 'Tem']);
     expect(r.code).toBe(1);
-    expect(r.err).toMatch(/Chat not found: Tem\nClosest titles:\n {2}-1004001 supergroup Team @mock_team/);
-    expect(r.err).toMatch(/List matching chats: telegram chats -q "Tem"/);
+    expect(r.err).toMatch(/Chat not found: Tem\nClosest titles:\n {2}-1004001 supergroup Team\n/);
+    expect(r.err).toMatch(/List matching chats: telegram chats -q Tem --preview 0/);
     const json = jsonError(cli(['read', 'Tem', '--json']).out);
-    expect(json).toMatchObject({ code: 'chat_not_found', hint: 'List matching chats: telegram chats -q "Tem"' });
+    expect(json).toMatchObject({ code: 'chat_not_found', hint: ['chats', '-q', 'Tem', '--preview', '0'] });
     expect(json.candidates[0]).toMatchObject({ id: '-1004001', title: 'Team' });
   }, 30_000);
 
@@ -177,7 +177,7 @@ describe('chat names', () => {
     const r = cli(['read', 'NoSuchChatAtAll'], { TG_MCP: '1' });
     expect(r.code).toBe(1);
     expect(r.err).not.toMatch(/✖/);
-    expect(r.err).toMatch(/^Chat not found: NoSuchChatAtAll\nList matching chats: telegram chats -q "NoSuchChatAtAll"/);
+    expect(r.err).toMatch(/^Chat not found: NoSuchChatAtAll\nList matching chats: telegram chats -q NoSuchChatAtAll --preview 0/);
   }, 30_000);
 
   it('3.4 bots are a type of their own in chats and inbox; user still includes them', () => {

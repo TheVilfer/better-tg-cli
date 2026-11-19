@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { getClient, getFolder, disconnectClient } from '../client.js';
 import { formatFolder } from '../formatters/plain.js';
 import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { CliError, EXIT, fail } from '../errors.js';
 
 export const folderCommand = new Command('folder')
   .description('Show chats in a specific folder')
@@ -18,8 +18,7 @@ export const folderCommand = new Command('folder')
       spinner.stop();
 
       if (!folder) {
-        console.error(`Folder not found: ${name}`);
-        process.exit(1);
+        throw new CliError(`Folder not found: ${name}`, 'folder_not_found', EXIT.ERROR, { hint: 'List the folders: telegram folders' });
       }
 
       if (options.json) {

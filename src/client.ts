@@ -4,7 +4,7 @@ import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
 import { connectClient, transportSetting } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
-import { CliError, EXIT, formatCandidates } from './errors.js';
+import { CliError, EXIT, formatCandidates, shellCommand, usageError } from './errors.js';
 import type { ChatCandidate } from './errors.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
@@ -88,6 +88,7 @@ export async function disconnectClient(): Promise<void> {
   }
   resolvedChatCache.clear();
   dialogsCache = null;
+  allDialogsCache = null;
 }
 
 // Cache resolved chat entities by identifier (normalized) to avoid re-fetching
@@ -98,12 +99,34 @@ const resolvedChatCache = new Map<string, ResolvedEntity>();
 // must not refetch the full dialog list for every chat.
 let dialogsCache: ReturnType<TelegramClient['getDialogs']> | null = null;
 
+/** One page of dialogs: enough for IDs and most accounts. */
+export const DIALOG_PAGE = 500;
+/** How far a title lookup reads before it gives up proving a title unique. */
+export const DIALOG_MAX = 5000;
+
 function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['getDialogs']> {
   if (!dialogsCache) {
-    dialogsCache = client.getDialogs({ limit: 500 });
+    dialogsCache = client.getDialogs({ limit: DIALOG_PAGE });
     dialogsCache.catch(() => { dialogsCache = null; });
   }
   return dialogsCache;
+}
+
+let allDialogsCache: Promise<{ dialogs: Dialogs; complete: boolean }> | null = null;
+
+/**
+ * The dialog list a title is matched against, and whether it is the whole list. A full first page
+ * may be cut: a chat with the same title can sit beyond it, so the list is read on (once per
+ * process) up to DIALOG_MAX dialogs. Past that a title is never proven unique.
+ */
+async function dialogsForTitles(client: TelegramClient): Promise<{ dialogs: Dialogs; complete: boolean }> {
+  const first = await getDialogsCached(client);
+  if (first.length < DIALOG_PAGE) return { dialogs: first, complete: true };
+  if (!allDialogsCache) {
+    allDialogsCache = client.getDialogs({ limit: DIALOG_MAX }).then(dialogs => ({ dialogs, complete: dialogs.length < DIALOG_MAX }));
+    allDialogsCache.catch(() => { allDialogsCache = null; });
+  }
+  return allDialogsCache;
 }
 
 function cacheKey(identifier: string): string {
@@ -1388,17 +1411,27 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     return await client.getMe();
   }
 
+  // A t.me link names its chat exactly: never a title search ("Team https://t.me/x" titles)
+  const link = parseChatLink(identifier);
+  if (link?.invite) {
+    throw usageError(`${identifier} is an invite link; it does not name a chat you can read or write`,
+      'Join it first (telegram join <link>), then use the chat ID from telegram chats.');
+  }
+  if (link?.id) identifier = link.id;
+
   // Check if it's a username (starts with @)
-  if (identifier.startsWith('@')) {
-    const entity = await client.getEntity(identifier);
+  const username = link?.username ? `@${link.username}` : identifier.startsWith('@') ? identifier : undefined;
+  if (username) {
+    const entity = await client.getEntity(username);
     if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
       return entity;
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   }
 
-  const dialogs = await getDialogsCached(client);
   const isNumericId = /^-?\d+$/.test(identifier);
+  // IDs are matched in the first page (then asked of Telegram); titles need the whole list
+  const { dialogs, complete } = isNumericId ? { dialogs: await getDialogsCached(client), complete: true } : await dialogsForTitles(client);
 
   let dialog;
   if (isNumericId) {
@@ -1433,6 +1466,14 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
       }
       dialog = partial[0];
     }
+    // One match in a cut list proves nothing: another chat beyond the cut may have the same title
+    if (dialog && !complete) {
+      const matched = exact.length ? exact : [dialog];
+      throw new CliError(`"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title; use an ID or @username`, 'ambiguous_or_unverified', EXIT.USAGE, {
+        candidates: chatCandidates(matched), hint: 'Run the command again with this ID, or with the chat\'s @username.',
+        text: `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title. Use an ID or @username:\n${describeCandidates(matched)}`,
+      });
+    }
   }
 
   if (dialog && dialog.entity) {
@@ -1461,11 +1502,27 @@ function dialogKind(d: Dialogs[number]): string {
   return d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
 }
 
+/** Candidates show only what tells chats apart: ID, title, type (never a @username). */
 function chatCandidates(dialogs: Dialogs, max = 5): ChatCandidate[] {
-  return dialogs.slice(0, max).map(d => {
-    const username = (d.entity as { username?: string } | undefined)?.username;
-    return { id: String(d.id), title: d.title ?? '', type: dialogKind(d), ...(username ? { username } : {}) };
-  });
+  return dialogs.slice(0, max).map(d => ({ id: String(d.id), title: d.title ?? '', type: dialogKind(d) }));
+}
+
+/**
+ * What a t.me link (or tg://resolve) names: a public @username, a private channel by its ID
+ * (t.me/c/<id>/…), or an invite. Anything that is not a link is undefined.
+ */
+export function parseChatLink(text: string): { username?: string; id?: string; invite?: boolean } | undefined {
+  const value = text.trim();
+  const tg = /^tg:\/\/resolve\?(?:.*&)?domain=([A-Za-z0-9_]{4,})/i.exec(value);
+  if (tg) return { username: tg[1] };
+  const m = /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/(.+)$/i.exec(value);
+  if (!m) return undefined;
+  const path = m[1].split(/[?#]/)[0].replace(/\/+$/, '');
+  if (/^(\+|joinchat\/)/i.test(path)) return { invite: true };
+  const priv = /^c\/(\d+)(?:\/\d+)*$/i.exec(path);
+  if (priv) return { id: `-100${priv[1]}` };
+  const user = /^(?:s\/)?([A-Za-z][A-Za-z0-9_]{3,})(?:\/\d+)*$/.exec(path);
+  return user ? { username: user[1] } : undefined;
 }
 
 function describeCandidates(dialogs: Dialogs): string {
@@ -1494,17 +1551,17 @@ function chatNotFound(identifier: string, dialogs: Dialogs): CliError {
   const scored = dialogs
     .map(d => {
       const title = (d.title ?? '').toLowerCase();
-      const username = ((d.entity as { username?: string } | undefined)?.username ?? '').toLowerCase();
-      const words = [title, ...title.split(/\s+/), username].filter(Boolean);
+      const words = [title, ...title.split(/\s+/)].filter(Boolean);
       return { d, score: Math.min(...words.map(w => editDistance(needle, w))) };
     })
     .filter(x => needle && x.score <= limit)
     .sort((a, b) => a.score - b.score);
   const candidates = chatCandidates(scored.map(x => x.d));
-  const hint = `List matching chats: telegram chats -q "${identifier.replace(/"/g, '')}"`;
+  // An argv, not a shell line: the text came from the caller. --preview 0: titles, no message text
+  const hint = ['chats', '-q', identifier, '--preview', '0'];
   return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
     candidates, hint,
-    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', hint].filter(Boolean).join('\n'),
+    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', `List matching chats: ${shellCommand(hint)}`].filter(Boolean).join('\n'),
   });
 }
 

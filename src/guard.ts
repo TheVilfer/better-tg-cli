@@ -7,7 +7,7 @@ import { ANOTHER_ACCOUNT, actionHash, consumeApproval, createApproval, describeA
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 import { getSessionString } from './config.js';
-import { errorJson, EXIT, wantsJson } from './errors.js';
+import { CliError, errorJson, EXIT, fail, wantsJson } from './errors.js';
 
 /**
  * `readsStdin`: the command takes its body from stdin, as its parsed options say (`-p-`, `-c -`,
@@ -17,8 +17,7 @@ import { errorJson, EXIT, wantsJson } from './errors.js';
 export function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts: { readsStdin?: boolean } = {}): void {
   // Set by the MCP read tool: a hard stop even if a write command was misclassified as a read
   if (process.env.TG_READ_ONLY) {
-    console.error(chalk.red('This command changes something; it cannot run as a read (use telegram_write).'));
-    process.exit(1);
+    fail(new CliError('This command changes something; it cannot run as a read (use telegram_write).', 'write_on_read_tool', EXIT.ERROR));
   }
   // A mock write only changes a local file: getClient() hands out the mock under the same check,
   // so there is nothing for a human to approve. Strict chat matching stays, as for real writes.
@@ -27,9 +26,9 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts:
     return;
   }
   if (!isWriteModeProtected() && !isFileFallbackAllowed()) {
-    console.error(chalk.red('Write access needs the secret store, which is unavailable right now (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).'));
-    console.error(chalk.gray('This ensures write permissions cannot be tampered with via config files.'));
-    process.exit(1);
+    fail(new CliError('Write access needs the secret store, which is unavailable right now (macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password).', 'secret_store_unavailable', EXIT.ERROR, {
+      hint: 'This ensures write permissions cannot be tampered with via config files.',
+    }));
   }
   const state = parseWriteState(getWriteValue());
   if (!state.enabled) {
@@ -62,8 +61,7 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts:
 export function assertLocalWriteAllowed(argv: string[] = process.argv.slice(2)): void {
   if (!process.env.TG_MCP && !process.env.TG_READ_ONLY) return;
   if (isMock() && !process.env.TG_READ_ONLY) {
-    console.error(chalk.red('Over MCP in mock mode (TG_MOCK), download, sync and avatar write no local files. Run them in a terminal, or unset TG_MOCK.'));
-    process.exit(1);
+    fail(new CliError('Over MCP in mock mode (TG_MOCK), download, sync and avatar write no local files. Run them in a terminal, or unset TG_MOCK.', 'not_in_mock', EXIT.ERROR));
   }
   assertWriteEnabled(argv);
 }
@@ -82,8 +80,7 @@ function refuseOtherAccount(argv: string[], parsedReadsStdin: boolean): void {
   const { covered, hash } = approvalScope(argv, parsedReadsStdin);
   const used = consumeApproval(process.env.TG_APPROVE!, hash, getSessionString());
   if (!used.ok && used.reason === ANOTHER_ACCOUNT) {
-    console.error(chalk.red(`Not sent: ${used.reason}. Run the command again.`));
-    process.exit(1);
+    fail(new CliError(`Not sent: ${used.reason}. Run the command again.`, 'approval_other_account', EXIT.ERROR));
   }
   if (used.ok && !covered) sealStdin();
 }

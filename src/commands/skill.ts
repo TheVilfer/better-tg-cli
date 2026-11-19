@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { formatJson } from '../formatters/json.js';
+import { CliError, fail, usageError } from '../errors.js';
 import {
   agentStatus, installSkill, knownAgents, selectAgents, uninstallSkill, type Agent,
 } from '../skill-install.js';
@@ -10,8 +11,7 @@ function pick(ids: string[] | undefined): Agent[] {
   try {
     return selectAgents(ids, knownAgents());
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
+    fail(usageError(error instanceof Error ? error.message : String(error), 'See the agents: telegram skill status'));
   }
 }
 
@@ -22,10 +22,7 @@ const install = new Command('install')
   .option('--json', 'Output as JSON')
   .action((options: { agent?: string[]; force?: boolean; json?: boolean }) => {
     const agents = pick(options.agent);
-    if (!agents.length) {
-      console.error(`No supported agents found. ${OTHER_AGENTS}`);
-      process.exit(1);
-    }
+    if (!agents.length) fail(new CliError('No supported agents found', 'no_agents', 1, { hint: OTHER_AGENTS }));
     const results = agents.map(a => installSkill(a, { force: options.force }));
     if (options.json) {
       console.log(formatJson(results.map(r => ({ agent: r.agent.id, path: r.path, action: r.action, reason: r.reason }))));

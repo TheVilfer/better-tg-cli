@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { readStdinOnce } from '../text.js';
 import { resolveApiMethod } from '../api-methods.js';
 import { runApiMethod } from '../api-run.js';
+import { CliError, EXIT, fail, usageError } from '../errors.js';
 
 export const apiCommand = new Command('api')
   .description('Call any raw Telegram TL method (full API reachability; output is JSON)')
@@ -35,8 +36,7 @@ export const apiCommand = new Command('api')
       const resolved = resolveApiMethod(method);
       canonical = resolved.className;
     } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exit(1);
+      fail(new CliError(error instanceof Error ? error.message : String(error), 'unknown_method', EXIT.USAGE, { hint: 'List the methods: telegram schema' }));
     }
 
     const raw = options.params === '-' ? readStdinOnce() : options.params;
@@ -46,8 +46,7 @@ export const apiCommand = new Command('api')
         throw new Error('params must be a JSON object');
       }
     } catch (error) {
-      console.error(`Invalid --params JSON: ${error instanceof Error ? error.message : String(error)}`);
-      process.exit(1);
+      fail(usageError(`Invalid --params JSON: ${error instanceof Error ? error.message : String(error)}`, 'Pass a JSON object, e.g. --params \'{"limit":10}\'.'));
     }
 
     await runApiMethod(canonical, parsed, { auditCommand: 'api', paramsFromStdin: options.params === '-' });

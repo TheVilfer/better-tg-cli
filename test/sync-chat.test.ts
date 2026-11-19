@@ -6,7 +6,7 @@ import type { MockWorld } from '../src/mock/world.js';
 
 // sync over MCP in mock mode is refused by the guard, so the guard is lifted here and the mock
 // account is served straight to the command; nothing reaches Telegram.
-const state = vi.hoisted(() => ({ world: undefined as MockWorld | undefined, realDownload: false }));
+const state = vi.hoisted(() => ({ world: undefined as MockWorld | undefined, realDownload: false, failTitle: undefined as string | undefined }));
 vi.mock('../src/guard.js', async orig => ({ ...(await orig<typeof import('../src/guard.js')>()), assertLocalWriteAllowed: () => {} }));
 vi.mock('../src/client.js', async orig => {
   const { MockClient } = await import('../src/mock/client.js');
@@ -14,6 +14,14 @@ vi.mock('../src/client.js', async orig => {
     ...(await orig<typeof import('../src/client.js')>()),
     getClient: async () => {
       const client = new MockClient(state.world!);
+      if (state.failTitle) {
+        // One chat whose history Telegram refuses to give (e.g. CHANNEL_PRIVATE after a kick)
+        const getMessages = client.getMessages.bind(client);
+        client.getMessages = (async (entity: { title?: string }, params: never) => {
+          if (entity?.title === state.failTitle) throw Object.assign(new Error('CHANNEL_PRIVATE'), { errorMessage: 'CHANNEL_PRIVATE' });
+          return getMessages(entity as never, params);
+        }) as never;
+      }
       if (state.realDownload) {
         // teleproto's own downloadMedia (its path choice and the write) on a photo with a cached
         // size, which it writes without any network request
@@ -61,6 +69,7 @@ async function world(a: string, b: string): Promise<MockWorld> {
 
 beforeEach(() => {
   state.realDownload = false;
+  state.failTitle = undefined;
   root = mkdtempSync(join(tmpdir(), 'tg-sync-'));
   out = join(root, 'export');
   exits = [];
@@ -90,7 +99,7 @@ describe('sync --chat over MCP names exactly one chat', () => {
   it('two chats with the same exact title stop with both IDs, before any file is created', async () => {
     state.world = await world('Team', 'Team');
     await sync('--chat', 'Team');
-    expect(exits).toEqual([1]);
+    expect(exits).toEqual([2]);
     expect(err.join('\n')).toMatch(/"Team" matches 2 chats; use an ID/);
     expect(existsSync(out)).toBe(false);
   });
@@ -124,11 +133,11 @@ describe('sync --chat over MCP when the dialog list was cut', () => {
     return w;
   }
 
-  it('an exact title found on the first page is not proven unique: an ID is required', async () => {
+  it('a full first page is read on: the second "Team A" beyond it makes the title ambiguous', async () => {
     state.world = await crowded();
     await sync('--chat', 'Team A');
-    expect(exits).toEqual([1]);
-    expect(err.join('\n')).toMatch(/list was cut[\s\S]*use an ID:\n {2}-1004001 /);
+    expect(exits).toEqual([2]);
+    expect(err.join('\n')).toMatch(/"Team A" matches 2 chats; use an ID\n {2}-1004001 \w+ Team A\n {2}-1008000 /);
     expect(existsSync(out)).toBe(false);
   });
 
@@ -144,7 +153,7 @@ describe('sync --chat over MCP when the dialog list was cut', () => {
     const { selectSyncChats } = await import('../src/commands/sync.js');
     const chats = [{ id: '1', title: 'Team A', type: 'group' as const }, { id: '2', title: 'X', type: 'group' as const }];
     expect(selectSyncChats(chats, 'Team A', true, true)).toEqual([chats[0]]);
-    expect(selectSyncChats(chats, 'Team A', true, false)).toMatch(/list was cut/);
+    expect((selectSyncChats(chats, 'Team A', true, false) as Error).message).toMatch(/list was cut/);
     // In a terminal the user picks the name and sees what was exported
     expect(selectSyncChats(chats, 'Team A', false, false)).toEqual([chats[0]]);
   });
@@ -192,7 +201,8 @@ describe('sync --chat: an empty or numeric name never widens the export', () => 
       expect(err.join('\n')).toMatch(/--chat needs a chat/);
       expect(existsSync(out)).toBe(false);
     }
-    expect(exits).toEqual(mcp ? [1, 1] : []);
+    // A usage error everywhere, not a silent 0 in a terminal
+    expect(exits).toEqual([2, 2]);
   });
 
   it.each([['MCP', '1'], ['terminal', '']])('a numeric --chat matches only an ID, never a title (%s)', async (_where, mcp) => {
@@ -203,7 +213,7 @@ describe('sync --chat: an empty or numeric name never widens the export', () => 
     expect(existsSync(out)).toBe(false);
     await sync('--chat', '1001');
     expect(readdirSync(out).sort()).toEqual(['.sync-meta.json', 'Alice Example (1001).md']);
-    expect(exits).toEqual(mcp ? [1, 0] : [0]);
+    expect(exits).toEqual([1, 0]);
   });
 });
 
@@ -364,5 +374,29 @@ describe('sync names each Markdown file by chat ID', () => {
     const ids = [...text.matchAll(/^\*#(\d+)\*$/gm)].map(m => Number(m[1]));
     expect([ids.length, ids[0], ids.at(-1)]).toEqual([1100, 101, 1200]);
     expect(text).not.toContain(`Chat ID: ${B}`);
+  });
+});
+
+describe('sync: a chat that fails is never a silent success', () => {
+  it('lists the failed chat in the JSON result and exits 1; the other chats are still exported', async () => {
+    state.world = await world('Team A', 'Team B');
+    state.failTitle = 'Team B';
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation(m => { logs.push(String(m)); });
+    await sync('--json');
+    expect(exits).toEqual([1]);
+    const result = JSON.parse(logs.join('\n'));
+    expect(result.failed).toEqual([{ chatId: B, title: 'Team B', code: 'telegram_rpc', error: 'CHANNEL_PRIVATE' }]);
+    expect(result.chats.map((c: { chatId: string }) => c.chatId)).toContain(A);
+    expect(existsSync(join(out, `Team A (${A}).md`))).toBe(true);
+  });
+
+  it('a full run with no failure still exits 0 and has no "failed"', async () => {
+    state.world = await world('Team A', 'Team B');
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation(m => { logs.push(String(m)); });
+    await sync('--json');
+    expect(exits).toEqual([0]);
+    expect(JSON.parse(logs.join('\n')).failed).toBeUndefined();
   });
 });

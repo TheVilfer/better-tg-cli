@@ -22,6 +22,13 @@ vi.mock('../src/secrets.js', () => ({
   isSecretKey: (k: string) => ['apiHash', 'sessionString', 'writeEnabled'].includes(k),
   migrateSecretsToStore: (c: Record<string, unknown>) => c,
 }));
+// A person at a terminal who answers the y/N question with "no"
+const human = vi.hoisted(() => ({ present: false }));
+vi.mock('../src/confirm.js', async orig => ({ ...(await orig<typeof import('../src/confirm.js')>()), confirmByHuman: async () => false }));
+vi.mock('../src/write-store.js', async orig => {
+  const real = await orig<typeof import('../src/write-store.js')>();
+  return { ...real, hasHumanChannel: () => human.present || real.hasHumanChannel() };
+});
 vi.mock('../src/keychain.js', async orig => ({ ...(await orig<typeof import('../src/keychain.js')>()), isKeychainAvailable: () => true }));
 vi.mock('../src/onepassword.js', async orig => ({ ...(await orig<typeof import('../src/onepassword.js')>()), isOnePasswordAvailable: () => false }));
 vi.mock('../src/libsecret.js', async orig => ({ ...(await orig<typeof import('../src/libsecret.js')>()), isLibsecretAvailable: () => false }));
@@ -97,6 +104,19 @@ describe('2.1 status an agent can read', () => {
     expect(status).toMatchObject({ writeMode: 'ask', writeModeProtected: true });
     expect(Date.parse(status.writeUntil)).toBeGreaterThan(Date.now());
     expect(err).toMatch(/Write access: ask/);
+  });
+
+  it('write-access on --json refused by the user is one JSON error on stdout, exit 1', async () => {
+    human.present = true;
+    const argv = process.argv;
+    process.argv = [argv[0], 'telegram', 'write-access', 'on', '--json'];
+    try {
+      expect(await run(writeAccessCommand, ['on', '--json'])).toBe(EXIT.ERROR);
+    } finally {
+      process.argv = argv;
+      human.present = false;
+    }
+    expect(JSON.parse(out.trim())).toEqual({ error: { code: 'not_confirmed', message: 'Not confirmed by the user. Write access stays as it was.' } });
   });
 
   it('write-access with an unknown action is a usage error', async () => {
