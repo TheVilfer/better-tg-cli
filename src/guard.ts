@@ -3,11 +3,16 @@ import { describeWriteState, parseWriteState } from './write-state.js';
 import chalk from './colors.js';
 import { setStrictChatResolution } from './resolve-mode.js';
 import { isMock } from './paths.js';
-import { actionHash, consumeApproval, createApproval, describeAction, EXIT_NEEDS_APPROVAL, readsStdin, APPROVAL_TTL_MS } from './approval.js';
-import { readStdinOnce } from './text.js';
+import { actionHash, consumeApproval, createApproval, describeAction, EXIT_NEEDS_APPROVAL, readsStdin, APPROVAL_TTL_MS, STDIN_IN_APPROVAL_ENV } from './approval.js';
+import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 
-export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void {
+/**
+ * `readsStdin`: the command takes its body from stdin, as its parsed options say (`-p-`, `-c -`,
+ * `--json-params=-` …). The guard also covers stdin when the argv shows a "-" or "=-", when the
+ * command already read it, or when the MCP server handed it over; any of them is enough.
+ */
+export function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts: { readsStdin?: boolean } = {}): void {
   // Set by the MCP read tool: a hard stop even if a write command was misclassified as a read
   if (process.env.TG_READ_ONLY) {
     console.error(chalk.red('This command changes something; it cannot run as a read (use telegram_write).'));
@@ -31,7 +36,7 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void
     if (!isWriteModeProtected()) console.error(chalk.gray(CLOUD_HINT));
     process.exit(1);
   }
-  if (state.mode === 'ask') requireApproval(argv);
+  if (state.mode === 'ask') requireApproval(argv, opts.readsStdin === true);
   else setWriteContext({ writeMode: 'on', ...unprotectedFlag() });
   setStrictChatResolution(true);
 }
@@ -39,25 +44,30 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2)): void
 const unprotectedFlag = () => (isWriteModeProtected() ? {} : { unprotected: true as const });
 
 /** Write mode "ask": go on only with a matching approval code, otherwise print the action and stop. */
-function requireApproval(argv: string[]): void {
-  const stdin = readsStdin(argv) ? readStdinOnce() : undefined;
+function requireApproval(argv: string[], parsedReadsStdin: boolean): void {
+  const covered = parsedReadsStdin || readsStdin(argv) || stdinWasRead() || process.env[STDIN_IN_APPROVAL_ENV] === '1';
+  const stdin = covered ? readStdinOnce() : undefined;
   const hash = actionHash(argv, stdin);
   const given = process.env.TG_APPROVE;
   if (given) {
     const used = consumeApproval(given, hash);
     if (used.ok) {
       setWriteContext({ writeMode: 'ask', approvedVia: used.via, ...unprotectedFlag() });
+      // Nothing read from stdin after this point can be part of the write: it was not approved
+      if (!covered) sealStdin();
       return;
     }
     console.error(chalk.yellow(`Approval ${given} not accepted: ${used.reason}. A new one is below.`));
   }
   const code = createApproval(hash);
   const minutes = APPROVAL_TTL_MS / 60_000;
+  // An empty stdin the MCP server always hands over says nothing to show (the hash still covers it)
+  const shown = stdin === '' && !parsedReadsStdin && !readsStdin(argv) ? undefined : stdin;
   if (argv.includes('--json')) {
-    console.log(JSON.stringify({ error: 'approval_required', code, action: { argv, ...(stdin !== undefined ? { stdin } : {}) }, expiresInMinutes: minutes }));
+    console.log(JSON.stringify({ error: 'approval_required', code, action: { argv, ...(shown !== undefined ? { stdin: shown } : {}) }, expiresInMinutes: minutes }));
   }
   console.error(chalk.yellow('Approval needed: write mode is "ask", so the user approves each write.'));
-  console.error('Show the user this action word for word and ask for an explicit yes:\n' + describeAction(argv, stdin));
+  console.error('Show the user this action word for word and ask for an explicit yes:\n' + describeAction(argv, shown));
   console.error(chalk.gray(
     `After a yes, run the same command again with TG_APPROVE=${code} in its environment ` +
     `(over MCP: pass "approval": "${code}" to telegram_write). The code works once, for this exact ` +

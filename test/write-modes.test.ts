@@ -11,6 +11,9 @@ vi.mock('../src/secrets.js', () => ({
   secretGet: (k: string) => (store.available ? store.values.get(k) ?? null : null),
   secretSet: (k: string, v: string) => (store.available ? (store.values.set(k, v), true) : false),
   secretDelete: (k: string) => store.values.delete(k),
+  SECRET_KEYS: new Set(['apiHash', 'sessionString', 'writeEnabled']),
+  isSecretKey: (k: string) => ['apiHash', 'sessionString', 'writeEnabled'].includes(k),
+  migrateSecretsToStore: (c: Record<string, unknown>) => c,
 }));
 // stdin for "-": the guard reads it through this helper; the tests feed it directly
 const stdin = vi.hoisted(() => ({ text: '' }));
