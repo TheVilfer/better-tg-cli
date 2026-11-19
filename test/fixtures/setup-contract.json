@@ -1,0 +1,117 @@
+{
+  "valid": [
+    { "name": "nothing to report", "exit": 0,
+      "result": { "schema": 1, "ok": true, "problems": [] } },
+    { "name": "a warning the agent can fix", "exit": 0,
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "skill_outdated", "severity": "warning", "message": "The Codex skill is outdated.",
+          "fix": { "run": ["skill", "install", "--agent", "codex", "claude-code", "--json"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "an error the agent can fix, on a named profile", "exit": 1,
+      "result": { "schema": 1, "ok": false, "problems": [
+        { "id": "not_logged_in", "severity": "error", "message": "This profile has no login.",
+          "fix": { "run": ["onboard", "--json", "--no-open"], "profile": "work", "expect": { "exit": 0 } } },
+        { "id": "update_available", "severity": "info", "message": "A new version is out.",
+          "fix": { "run": ["update"], "profile": "work", "expect": { "exit": 0 } } } ] } },
+    { "name": "only the person can fix it", "exit": 2,
+      "result": { "schema": 1, "ok": false, "problems": [
+        { "id": "session_revoked", "severity": "error", "message": "Telegram ended this login.",
+          "fix": { "human": "Log in again with a QR code.", "url": "https://better-tg-cli.com/login" } },
+        { "id": "local_page", "severity": "error", "message": "Waiting on the local page.",
+          "fix": { "human": "Open the page.", "url": "http://127.0.0.1:53111/s/abc/" } } ] } },
+    { "name": "nothing can fix it here", "exit": 1,
+      "result": { "schema": 1, "ok": false, "problems": [
+        { "id": "secret_store_missing", "severity": "error", "message": "No secret store.",
+          "fix": { "unavailable": "No Secret Service on this machine." } },
+        { "id": "browser_missing", "severity": "error", "message": "No browser.",
+          "fix": { "human": "Open the link on your phone." } } ] } }
+  ],
+  "invalid": [
+    { "name": "not an object", "error": "result must be an object", "result": [] },
+    { "name": "wrong schema", "error": "schema must be 1",
+      "result": { "schema": 2, "ok": true, "problems": [] } },
+    { "name": "unknown top-level field", "error": "unexpected field notices",
+      "result": { "schema": 1, "ok": true, "problems": [], "notices": [] } },
+    { "name": "ok disagrees with the errors", "error": "ok must be true exactly when",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "error", "message": "m", "fix": { "unavailable": "r" } } ] } },
+    { "name": "ok false without an error", "error": "ok must be true exactly when",
+      "result": { "schema": 1, "ok": false, "problems": [] } },
+    { "name": "shell string in run", "error": "run must be a non-empty argv array",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": "telegram update && rm -rf ~", "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "the binary in run", "error": "is not an allowed command",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["telegram", "update"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "a command outside the allowlist", "error": "\"write-access on\" is not an allowed command",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["write-access", "on"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "a flag the entry does not allow", "error": "flag \"--force\" is not allowed",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install", "--force"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "a positional argument", "error": "argument \"now\" is not allowed",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update", "now"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "an inherited property name as a flag", "error": "argument \"constructor\" is not allowed",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update", "constructor", "x"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "a value with shell characters", "error": "is not a plain value",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install", "--agent", "codex;id"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "a flag without its value", "error": "--agent needs a value",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install", "--agent", "--json"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "two fix kinds at once", "error": "exactly one of run, human, unavailable",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "human": "h", "unavailable": "u" } } ] } },
+    { "name": "a run fix without its profile", "error": "profile must be a profile name or null",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update"], "expect": { "exit": 0 } } } ] } },
+    { "name": "an invalid profile", "error": "profile must be a profile name or null",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update"], "profile": "../x", "expect": { "exit": 0 } } } ] } },
+    { "name": "an unknown exit code", "error": "expect must be",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update"], "profile": null, "expect": { "exit": 130 } } } ] } },
+    { "name": "a plain http url", "error": "url must be https",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "human": "h", "url": "http://example.com/login" } } ] } },
+    { "name": "a javascript url", "error": "url must be https",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "human": "h", "url": "javascript:alert(1)" } } ] } },
+    { "name": "an extra field in a fix", "error": "unexpected field url in a fix of kind unavailable",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "unavailable": "u", "url": "https://x" } } ] } },
+    { "name": "a missing fix", "error": "fix must be an object",
+      "result": { "schema": 1, "ok": true, "problems": [ { "id": "x", "severity": "info", "message": "m" } ] } },
+    { "name": "a duplicate id", "error": "duplicate id x",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "unavailable": "u" } },
+        { "id": "x", "severity": "info", "message": "m", "fix": { "unavailable": "u" } } ] } },
+    { "name": "an id that is not snake_case", "error": "id must be snake_case",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "Skill-Outdated", "severity": "info", "message": "m", "fix": { "unavailable": "u" } } ] } },
+    { "name": "an unknown severity", "error": "severity must be",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "fatal", "message": "m", "fix": { "unavailable": "u" } } ] } },
+    { "name": "a multi-line message", "error": "message must be one non-empty line",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "a\nb", "fix": { "unavailable": "u" } } ] } }
+  ],
+  "events": {
+    "valid": [
+      [
+        { "schema": 1, "event": "link", "url": "http://127.0.0.1:53111/s/abc/" },
+        { "schema": 1, "event": "waiting_human" },
+        { "schema": 1, "event": "done", "result": { "schema": 1, "ok": true, "problems": [] } }
+      ],
+      [ { "schema": 1, "event": "error", "message": "Telegram refused the login." } ],
+      [ { "schema": 1, "event": "timeout" } ]
+    ],
+    "invalid": [
+      { "name": "an onboard --json line (no schema)", "error": "schema must be 1", "event": { "event": "url", "url": "http://127.0.0.1:1/" } },
+      { "name": "done with a broken result", "error": "result: schema must be 1", "event": { "schema": 1, "event": "done", "result": { "ok": true, "problems": [] } } },
+      { "name": "error without a message", "error": "error needs a message", "event": { "schema": 1, "event": "error" } },
+      { "name": "an event name that is not snake_case", "error": "event must be a snake_case name", "event": { "schema": 1, "event": "Waiting Human" } }
+    ]
+  }
+}
