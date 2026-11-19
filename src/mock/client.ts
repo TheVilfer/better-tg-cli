@@ -39,6 +39,7 @@ export class MockClient {
       username: u.username,
       phone: u.phone,
       bot: u.bot,
+      botForumView: u.forumView,
       contact: u.contact,
       mutualContact: u.mutual,
       self: u.id === this.world.me,

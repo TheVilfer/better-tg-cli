@@ -25,6 +25,8 @@ export interface MockUser {
   username?: string;
   phone?: string;
   bot?: boolean;
+  /** Bots only: the private chat is shown as forum topics (botForumView). */
+  forumView?: boolean;
   contact?: boolean;
   mutual?: boolean;
   about?: string;

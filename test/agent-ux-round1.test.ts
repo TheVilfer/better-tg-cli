@@ -164,3 +164,27 @@ describe('2 a question to the user never lands on stdout', () => {
     expect(err).toContain('Allow? [y/N] ');
   });
 });
+
+describe('7 --topic: bot forums count, and an empty unread page is checked like any other', () => {
+  it('a bot with topics (botForumView) reads a topic; a bot without them is not_a_forum', async () => {
+    const forum = await worldFile(w => { w.users.find(u => u.id === 2001)!.forumView = true; });
+    const r = cli(['read', '@demo_bot', '--topic', '1', '--json'], {}, forum);
+    expect(r.code, r.out + r.err).toBe(0);
+    expect(JSON.parse(r.out).chatId).toBe('2001');
+    const plain = cli(['read', '@demo_bot', '--topic', '1', '--json']);
+    expect(plain.code).toBe(2);
+    expect(oneJson(plain.out).error.code).toBe('not_a_forum');
+  }, 30_000);
+
+  it('read --unread --topic on a chat without topics is refused even with nothing unread', () => {
+    const r = cli(['read', 'me', '--unread', '--topic', '10', '--json']);
+    expect(r.code).toBe(2);
+    expect(oneJson(r.out).error.code).toBe('not_a_forum');
+  }, 30_000);
+
+  it('an empty --unread page still names its chat', () => {
+    const r = cli(['read', 'me', '--unread', '--json']);
+    expect(r.code).toBe(0);
+    expect(oneJson(r.out)).toEqual({ chatTitle: 'Mock', chatId: '1000', messages: [] });
+  }, 30_000);
+});

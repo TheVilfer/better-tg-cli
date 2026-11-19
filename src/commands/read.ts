@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { getClient, getMessages, getMessagesByIds, getReadState, disconnectClient, parseTimeOffset } from '../client.js';
+import { chatRef, getClient, getMessages, getMessagesByIds, getReadState, disconnectClient, parseTimeOffset } from '../client.js';
 import type { MessageInfo } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { formatMessages, truncate } from '../formatters/plain.js';
@@ -71,8 +71,10 @@ export const readCommand = new Command('read')
       if (options.unread) {
         const state = await getReadState(client, chat);
         if (state.unreadCount === 0) {
+          // The same checks (--topic needs a forum) and the same chat fields as a page with messages
+          const { chatId, chatTitle } = await chatRef(client, chat, { topic: !!options.topic && !options.thread });
           spinner.stop();
-          console.log(options.json ? formatJson({ messages: [] }) : 'No unread messages.');
+          console.log(options.json ? formatJson({ chatTitle, chatId, messages: [] }) : 'No unread messages.');
           await disconnectClient();
           return;
         }

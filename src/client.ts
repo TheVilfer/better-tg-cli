@@ -813,12 +813,8 @@ export async function getMessages(
   const entity = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(entity);
   const chatId = utils.getPeerId(entity).toString();
-  const forum = entity instanceof Api.Channel && !!entity.forum;
-  if (options.topic && !forum) {
-    throw new CliError(`${chatTitle} (${chatId}) is not a forum, so it has no topics`, 'not_a_forum', EXIT.USAGE, {
-      hint: 'Read it without --topic; for the comments of one message use --thread <id>.',
-    });
-  }
+  const forum = hasTopics(entity);
+  if (options.topic && !forum) throw notAForum(entity);
   const fromUser = from ? await resolveChat(client, from) : undefined;
 
   const messages: MessageInfo[] = [];
@@ -1405,6 +1401,15 @@ export async function getAdminGroups(client: TelegramClient): Promise<ChatInfo[]
 
 export type ResolvedEntity = Api.User | Api.Chat | Api.Channel;
 
+/**
+ * Whether a chat has forum topics: a forum supergroup, or the private chat with a bot that shows
+ * its chats as topics (botForumView); the topic methods take either peer.
+ */
+export function hasTopics(entity: ResolvedEntity): boolean {
+  if (entity instanceof Api.Channel) return !!entity.forum;
+  return entity instanceof Api.User && !!entity.bot && !!entity.botForumView;
+}
+
 export async function resolveChat(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
   const key = `${isStrictChatResolution() ? 'strict:' : ''}${cacheKey(identifier)}`;
   const cached = resolvedChatCache.get(key);
@@ -1578,10 +1583,20 @@ function chatNotFound(identifier: string, dialogs: Dialogs): CliError {
   });
 }
 
-/** The chat an identifier resolves to (cached after the command's own call): its ID and title. */
-export async function chatRef(client: TelegramClient, identifier: string): Promise<{ chatId: string; chatTitle: string }> {
+/**
+ * The chat an identifier resolves to (cached after the command's own call): its ID and title.
+ * `topic`: the caller reads a forum topic, so a chat without topics is refused as getMessages does.
+ */
+export async function chatRef(client: TelegramClient, identifier: string, options: { topic?: boolean } = {}): Promise<{ chatId: string; chatTitle: string }> {
   const entity = await resolveChat(client, identifier);
+  if (options.topic && !hasTopics(entity)) throw notAForum(entity);
   return { chatId: utils.getPeerId(entity).toString(), chatTitle: getChatTitle(entity) };
+}
+
+function notAForum(entity: ResolvedEntity): CliError {
+  return new CliError(`${getChatTitle(entity)} (${utils.getPeerId(entity)}) is not a forum, so it has no topics`, 'not_a_forum', EXIT.USAGE, {
+    hint: 'Read it without --topic; for the comments of one message use --thread <id>.',
+  });
 }
 
 function getChatTitle(entity: ResolvedEntity): string {
@@ -3112,8 +3127,8 @@ export async function getForumTopics(
   options: { limit?: number; query?: string } = {}
 ): Promise<{ chatTitle: string; topics: ForumTopicInfo[] }> {
   const entity = await resolveChat(client, chatIdentifier);
-  if (!(entity instanceof Api.Channel) || !entity.forum) {
-    throw new Error(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups)`);
+  if (!hasTopics(entity)) {
+    throw new CliError(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups and bots with topics)`, 'not_a_forum', EXIT.USAGE);
   }
   const res = await client.invoke(
     new Api.messages.GetForumTopics({
@@ -3138,7 +3153,7 @@ export async function getForumTopics(
       });
     }
   }
-  return { chatTitle: entity.title, topics };
+  return { chatTitle: getChatTitle(entity), topics };
 }
 
 /** Public t.me link to a message (private chats/groups have no message links). */
@@ -4025,9 +4040,9 @@ export const permissionPresets = { MUTE_RIGHTS };
 
 // --- Forum topics: create / edit / close / reopen / pin (write) -------------------------------
 
-async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<Api.Channel> {
+async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<ResolvedEntity> {
   const entity = await resolveChat(client, chatIdentifier);
-  if (!(entity instanceof Api.Channel) || !entity.forum) throw new Error(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`);
+  if (!hasTopics(entity)) throw new CliError(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`, 'not_a_forum', EXIT.USAGE);
   return entity;
 }
 
