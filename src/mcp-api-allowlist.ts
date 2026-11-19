@@ -12,6 +12,15 @@
  * suggested post, a stake, a referer, a paid invite link, a story audience, a 2FA button, a view
  * increment, any location). Over MCP the raw result hides phones, birthdays, notes and locations.
  *
+ * Threat model for MCP output: the model never receives credentials or redeemable value (login
+ * codes, 2FA, session and auth tokens, gift and Premium codes and their links). Ordinary chat
+ * content (a contact card's phone, a shared location, reply media) is what the user asks the agent
+ * to read and stays available through the curated commands; writes are governed by the write mode
+ * and its approval flow, not by inspecting content. So login codes from the service accounts
+ * 777000 and 489000 are hidden in every part of their messages (src/client.ts) and gift links are
+ * masked on every MCP output (src/mcp-output.ts); the raw-result redaction above goes further
+ * because the raw API is a power tool.
+ *
  * Deliberately absent: payments and Stars, account/auth/Passport/passkeys, privacy and security
  * settings, sessions, takeout, phone calls, sticker-set management, business and premium
  * purchases, geo/location, bot administration, folders, chat import and export.

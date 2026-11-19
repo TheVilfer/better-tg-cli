@@ -227,6 +227,21 @@ Over MCP only the allowlist below runs.
 
 ## 5. Raw API over MCP: the allowlist
 
+**Threat model for MCP output.** Over MCP the model never receives credentials or redeemable
+value: login codes, 2FA, session and auth tokens, gift and Premium codes and their links. Ordinary
+chat content (the phone on a contact card, a shared location, reply media) is what the user asks
+the agent to read, so curated commands (`read`, `get`, `contacts`, …) keep showing it. Writes are
+governed by the write mode and its approval flow; the content refusals listed in section 4 and
+below (location and contact media, `forward` of a contact card or a location) predate this model
+and stay, but no new ones are added on content grounds. Concretely, every
+MCP output, raw or curated: hides login codes in all content of a message from the service
+accounts 777000 (Telegram) and 489000 (Verification Codes): text, `richMessage`, entity URLs,
+button texts, URLs, copy texts and callback data, the quote and the link preview, plus a quote of
+such a message elsewhere. It also masks the slug of every gift link (`t.me/giftcode/<slug>`,
+`telegram.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`) as `[gift code hidden]`, in the CLI
+under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself. A raw
+result additionally redacts the fields listed below: the raw API is a power tool.
+
 Over MCP (the `telegram_read` and `telegram_write` tools) a raw call, `api <method>` or a
 generated `<namespace> <method>` command, runs only if its method is one of these **91**
 of the 823 TL methods. Any other method is refused before anything runs: "not available over

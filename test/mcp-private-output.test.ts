@@ -8,11 +8,12 @@ import { cliArgs } from './cli.js';
 import { Api } from 'teleproto';
 import bigInt from 'big-integer';
 import {
-  forwardMessages, getDialogs, maskLoginCodes, messageText, serializeApiResult, toMessageInfo,
+  clickButton, forwardMessages, getDialogs, maskLoginCodes, messageText, serializeApiResult, toMessageInfo,
 } from '../src/client.js';
 import { mcpParamRefusal } from '../src/api-methods.js';
 import { isMcpApiAllowed, mcpApiAllowlistRefusal } from '../src/mcp-api-allowlist.js';
-import { classifyCall } from '../src/mcp.js';
+import { classifyCall, result as mcpToolResult } from '../src/mcp.js';
+import { maskGiftCodes } from '../src/mcp-output.js';
 
 // Over MCP (TG_MCP on every call, TG_READ_ONLY on the read tool) the model must not see login codes,
 // redeemable gift links or a venue's place ID, and must not forward a contact card or a location.
@@ -191,7 +192,7 @@ describe('forwarding over MCP', () => {
   it('the curated forward refuses a login-service message and a rich message with a map block', async () => {
     overMcp();
     const login = fakeClient([serviceMessage(LOGIN_TEXT, 1)]);
-    await expect(forwardMessages(login.client, 'me', [1], '@bob')).rejects.toThrow(/login service \(777000\)/);
+    await expect(forwardMessages(login.client, 'me', [1], '@bob')).rejects.toThrow(/login-code service account \(777000 or 489000\)/);
     expect(login.forward).not.toHaveBeenCalled();
     const map = new Api.Message({
       id: 1, date: 0, message: '', peerId: new Api.PeerUser({ userId: bigInt(1) }),
@@ -277,5 +278,200 @@ describe('end to end on a mock account with a login code from 777000', () => {
     const r = run(['read', '777000', '--json'], { TG_MCP: '', TG_READ_ONLY: '' });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/52813/);
+  });
+});
+
+// Round 3: the threat model is credentials and redeemable value. Login codes come from 777000 and
+// 489000 and are hidden wherever a service message's content reaches output; gift links are masked
+// on every MCP output by shape.
+describe('login codes in every part of a service message', () => {
+  const VERIFY = bigInt(489000);
+  const code = '52813';
+  const richService = (userId = SERVICE) => new Api.Message({
+    id: 5, date: 0, message: LOGIN_TEXT, peerId: new Api.PeerUser({ userId }),
+    entities: [new Api.MessageEntityTextUrl({ offset: 0, length: 5, url: `https://example.com/login?code=${code}` })],
+    replyMarkup: new Api.ReplyInlineMarkup({
+      rows: [new Api.KeyboardButtonRow({
+        buttons: [
+          new Api.KeyboardInlineButton({ text: `Copy ${code}`, type: new Api.InlineButtonTypeCopy({ copyText: code }) }),
+          new Api.KeyboardInlineButton({ text: 'Open', type: new Api.InlineButtonTypeUrl({ url: `https://t.me/login/${code}` }) }),
+          new Api.KeyboardInlineButton({ text: 'Confirm', type: new Api.InlineButtonTypeCallback({ data: Buffer.from(`ok:${code}`) }) }),
+        ],
+      })],
+    }),
+    replyTo: new Api.MessageReplyHeader({ replyToMsgId: 4, quoteText: `Your code: ${code}` }),
+    media: new Api.MessageMediaWebPage({
+      webpage: new Api.WebPage({ id: bigInt(1), url: `https://my.telegram.org/auth?code=${code}`, displayUrl: 'my.telegram.org', hash: 0, description: `Code ${code}` }),
+    }),
+  } as never);
+
+  it('raw: entity URLs, buttons (copy text, URL, callback data), the quote and the preview are masked; IDs stay', () => {
+    overMcp();
+    const out = serializeApiResult({ messages: [richService(), richService(VERIFY)] });
+    expect(out).not.toMatch(new RegExp(code));
+    expect(out).not.toMatch(new RegExp(Buffer.from(`ok:${code}`).toString('base64')));
+    const j = JSON.parse(out);
+    expect(j.messages[0].peerId.userId).toBe('777000');
+    expect(j.messages[1].peerId.userId).toBe('489000');
+    expect(j.messages[0].id).toBe(5);
+    expect(j.messages[0].replyMarkup.rows[0].buttons[0].type.copyText).toBe('[login code hidden]');
+    expect(j.messages[0].replyMarkup.rows[0].buttons[2].type.data).toBe('[login code hidden]');
+    expect(j.messages[0].replyTo.quoteText).toBe('Your code: [login code hidden]');
+    inTerminal();
+    expect(serializeApiResult({ messages: [richService()] })).toMatch(new RegExp(code));
+  });
+
+  it('a copy button of a service message is hidden whole, even a code without digits', async () => {
+    const letters = new Api.Message({
+      id: 6, date: 0, message: 'Your code is below', peerId: new Api.PeerUser({ userId: VERIFY }),
+      replyMarkup: new Api.ReplyInlineMarkup({
+        rows: [new Api.KeyboardButtonRow({ buttons: [new Api.KeyboardInlineButton({ text: 'Copy', type: new Api.InlineButtonTypeCopy({ copyText: 'EeKyAbQeXM' }) })] })],
+      }),
+    });
+    overMcp();
+    expect(serializeApiResult({ messages: [letters] })).not.toMatch(/EeKyAbQeXM/);
+    const client = { getEntity: async () => new Api.User({ id: VERIFY, firstName: 'Verification Codes' }) } as never;
+    expect(JSON.stringify(await toMessageInfo(client, letters))).not.toMatch(/EeKyAbQeXM/);
+  });
+
+  it('raw: a JSON-form message and a short update from 489000 are masked', () => {
+    process.env.TG_READ_ONLY = '1';
+    const out = serializeApiResult({
+      messages: [{ _: 'message', id: 1, message: `Your code: ${code}`, peerId: { _: 'peerUser', userId: '489000' }, entities: [{ _: 'messageEntityTextUrl', url: `https://x.io/${code}` }] }],
+      updates: [new Api.UpdateShortMessage({ id: 2, userId: VERIFY, message: LOGIN_TEXT, pts: 1, ptsCount: 1, date: 0 })],
+    });
+    expect(out).not.toMatch(new RegExp(code));
+    expect(JSON.parse(out).messages[0].peerId.userId).toBe('489000');
+  });
+
+  it('raw: a quote of a service message in another chat is masked', () => {
+    overMcp();
+    const quoting = new Api.Message({
+      id: 3, date: 0, message: 'look', peerId: new Api.PeerUser({ userId: bigInt(42) }),
+      replyTo: new Api.MessageReplyHeader({ replyToMsgId: 1, replyToPeerId: new Api.PeerUser({ userId: SERVICE }), quoteText: `Login code: ${code}` }),
+    });
+    expect(serializeApiResult({ messages: [quoting] })).not.toMatch(new RegExp(code));
+  });
+
+  it('curated: text, buttons and --full (quote, link preview) of 777000 and 489000 are masked; a terminal keeps them', async () => {
+    overMcp();
+    const client = { getEntity: async () => new Api.User({ id: SERVICE, firstName: 'Telegram' }) } as never;
+    for (const userId of [SERVICE, VERIFY]) {
+      const info = await toMessageInfo(client, richService(userId), { full: true });
+      const out = JSON.stringify(info);
+      expect(out).not.toMatch(new RegExp(code));
+      expect(out).not.toMatch(new RegExp(Buffer.from(`ok:${code}`).toString('base64')));
+      expect(info.buttons!.rows[0][0]).toMatchObject({ type: 'copy', copyText: '[login code hidden]', text: 'Copy [login code hidden]' });
+      expect(info.full!.replyTo!.quoteText).toBe('Your code: [login code hidden]');
+      expect(info.full!.media).toMatchObject({ type: 'webpage', url: expect.stringContaining('[login code hidden]') });
+    }
+    // A quote of a service message from another chat
+    const quoting = new Api.Message({
+      id: 3, date: 0, message: 'look', peerId: new Api.PeerUser({ userId: bigInt(42) }),
+      replyTo: new Api.MessageReplyHeader({ replyToMsgId: 1, replyToPeerId: new Api.PeerUser({ userId: VERIFY }), quoteText: `Code: ${code}` }),
+    });
+    expect((await toMessageInfo(client, quoting, { full: true })).full!.replyTo!.quoteText).toBe('Code: [login code hidden]');
+    inTerminal();
+    expect(JSON.stringify(await toMessageInfo(client, richService(), { full: true }))).toMatch(new RegExp(code));
+  });
+
+  it('curated: clicking a copy or URL button of a service message does not reveal the code', async () => {
+    overMcp();
+    const msg = richService();
+    const client = {
+      getEntity: async () => new Api.User({ id: SERVICE, firstName: 'Telegram', username: 'telegram_svc' }),
+      getMessages: async () => [msg],
+    } as never;
+    const copy = await clickButton(client, '@telegram_svc', 5, { index: 1 }, { waitMs: 0 });
+    expect(copy.action).toBe('copy');
+    expect(JSON.stringify(copy)).not.toMatch(new RegExp(code));
+    const url = await clickButton(client, '@telegram_svc', 5, { index: 2 }, { waitMs: 0 });
+    expect(url.action).toBe('url');
+    expect(JSON.stringify(url)).not.toMatch(new RegExp(code));
+  });
+
+  it('forward refuses a message from 489000 too', async () => {
+    overMcp();
+    const me = new Api.User({ id: bigInt(1), firstName: 'Me', self: true });
+    const forward = vi.fn(async () => []);
+    const client = {
+      getMe: async () => me, getEntity: async () => me, forwardMessages: forward,
+      getMessages: async () => [new Api.Message({ id: 1, date: 0, message: `Code ${code}`, peerId: new Api.PeerUser({ userId: VERIFY }) })],
+    } as never;
+    await expect(forwardMessages(client, 'me', [1], '@bob')).rejects.toThrow(/may hold a login code/);
+    expect(forward).not.toHaveBeenCalled();
+  });
+});
+
+describe('gift-code links on every MCP output', () => {
+  const LINKS = 'Gift for you: https://t.me/giftcode/AbC123xyz, telegram.me/giftcode/QwE_rty-1 and tg://giftcode?slug=ZxC987. Also t.me/durov.';
+
+  it('maskGiftCodes hides the slug of every form and keeps other links', () => {
+    const out = maskGiftCodes(LINKS);
+    expect(out).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);
+    expect(out).toBe('Gift for you: https://t.me/giftcode/[gift code hidden], telegram.me/giftcode/[gift code hidden] and tg://giftcode?slug=[gift code hidden]. Also t.me/durov.');
+    expect(maskGiftCodes('{"url":"tg://giftcode?ref=1&slug=Hh7"}')).toBe('{"url":"tg://giftcode?ref=1&slug=[gift code hidden]"}');
+  });
+
+  it('the MCP tool result masks them in output and in errors', () => {
+    expect(mcpToolResult(0, false, JSON.stringify({ text: LINKS, url: 'https://t.me/giftcode/AbC123xyz' }), '').content[0].text).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);
+    expect(mcpToolResult(1, false, '', `Error: ${LINKS}`).content[0].text).not.toMatch(/AbC123xyz/);
+    expect(mcpToolResult(null, true, LINKS, '').content[0].text).not.toMatch(/ZxC987/);
+  });
+
+  const giftMessage = () => new Api.Message({
+    id: 8, date: 0, message: 'Here: t.me/giftcode/AbC123xyz', peerId: new Api.PeerUser({ userId: bigInt(42) }),
+    entities: [new Api.MessageEntityTextUrl({ offset: 0, length: 4, url: 'https://t.me/giftcode/QwE_rty-1' })],
+    replyMarkup: new Api.ReplyInlineMarkup({
+      rows: [new Api.KeyboardButtonRow({ buttons: [new Api.KeyboardInlineButton({ text: 'Claim', type: new Api.InlineButtonTypeUrl({ url: 'tg://giftcode?slug=ZxC987' }) })] })],
+    }),
+    media: new Api.MessageMediaWebPage({ webpage: new Api.WebPage({ id: bigInt(1), url: 'https://t.me/giftcode/AbC123xyz', displayUrl: 't.me/giftcode/AbC123xyz', hash: 0 }) }),
+  } as never);
+
+  it('raw and curated output of an ordinary message masks them over MCP and keeps them in a terminal', async () => {
+    const client = { getEntity: async () => new Api.User({ id: bigInt(42), firstName: 'Ann' }) } as never;
+    process.env.TG_READ_ONLY = '1';
+    for (const out of [serializeApiResult({ messages: [giftMessage()] }), JSON.stringify(await toMessageInfo(client, giftMessage(), { full: true }))]) {
+      expect(out).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);
+      expect(out).toMatch(/gift code hidden/);
+    }
+    const info = await toMessageInfo(client, giftMessage(), { full: true });
+    expect(info.buttons!.rows[0][0]).toMatchObject({ type: 'url', url: 'tg://giftcode?slug=[gift code hidden]' });
+    expect(info.full!.media).toMatchObject({ url: 'https://t.me/giftcode/[gift code hidden]' });
+    inTerminal();
+    expect(serializeApiResult({ messages: [giftMessage()] })).toMatch(/AbC123xyz/);
+    expect(JSON.stringify(await toMessageInfo(client, giftMessage(), { full: true }))).toMatch(/ZxC987/);
+  });
+
+  describe('end to end on a mock account', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-gift-code-'));
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+    const state = join(dir, 'state.json');
+    const world = seedWorld();
+    world.users.push({ id: 4242, firstName: 'Gifter', username: 'gifter' } as never);
+    world.chats.push({ id: 4242, kind: 'user', unread: 1, messages: [{ id: 1, ago: 60, text: LINKS }] } as never);
+    writeFileSync(state, JSON.stringify(world));
+    const run = (args: string[], extra: Record<string, string> = {}) => spawnSync(process.execPath, [...cliArgs(), ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, TG_MOCK: state, TG_PROFILE: `mcp-gift-code-${process.pid}`, TG_NO_UPDATE_CHECK: '1', TG_MCP: '1', TG_READ_ONLY: '1', ...extra },
+    });
+
+    it.each([
+      ['read', ['read', '4242', '--json']],
+      ['read --full', ['read', '4242', '--full', '--json']],
+      ['read (text)', ['read', '4242']],
+      ['search', ['search', 'Gift', '--json']],
+      ['chats', ['chats', '--json']],
+    ])('%s over MCP never prints a gift slug; a terminal does', (_what, args) => {
+      const r = run(args);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);
+      expect(r.stdout).toMatch(/gift code hidden/);
+      const terminal = run(args, { TG_MCP: '', TG_READ_ONLY: '' });
+      expect(terminal.status, terminal.stderr).toBe(0);
+      expect(terminal.stdout).toMatch(/AbC123xyz/);
+      // The server's own mask is a backstop on whatever the CLI prints
+      expect(mcpToolResult(0, false, terminal.stdout, '').content[0].text).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);
+    });
   });
 });

@@ -13,6 +13,7 @@ import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock } from './paths.js';
 import { getSessionString } from './config.js';
+import { maskGiftCodes } from './mcp-output.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -342,8 +343,11 @@ function cliBase(): string[] {
 
 type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string };
 
-const cap = (s: string) =>
-  s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
+/** Every output the model gets, raw or curated, text or JSON, error or not: gift links masked, then capped. */
+const cap = (raw: string) => {
+  const s = maskGiftCodes(raw);
+  return s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
+};
 
 /** The environment of the CLI that runs one call. Exported for tests. */
 export function childEnv(plan: Plan): NodeJS.ProcessEnv {
@@ -359,7 +363,7 @@ export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   return env;
 }
 
-function result(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
+export function result(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
   if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out)}`, true);
   if (code !== 0) return text(cap([err.trim(), out.trim()].filter(Boolean).join('\n')) || `exit ${code}`, true);
   return text(cap(out.trimEnd() || err.trim() || '(no output)'));

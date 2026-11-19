@@ -13,6 +13,7 @@ import { isMock } from './paths.js';
 import { basename, join } from 'path';
 import { isTTY } from './spinner.js';
 import { approvedForAnotherSession } from './approval.js';
+import { maskGiftCodes } from './mcp-output.js';
 
 let clientInstance: TelegramClient | null = null;
 
@@ -422,7 +423,8 @@ function classifyButton(btn: RawButton, index: number, row: number, col: number)
  */
 export function messageText(msg: Api.Message): string {
   const text = plainMessageText(msg);
-  return isOverMcp() && isLoginServiceMessage(msg) ? maskLoginCodes(text) : text;
+  if (!isOverMcp()) return text;
+  return maskGiftCodes(isLoginServiceMessage(msg) ? maskLoginCodes(text) : text);
 }
 
 function plainMessageText(msg: Api.Message): string {
@@ -440,15 +442,18 @@ function plainMessageText(msg: Api.Message): string {
 /** The MCP server sets TG_MCP on every call and TG_READ_ONLY on the read tool. */
 const isOverMcp = (): boolean => !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
 
-/** Telegram's service account: it delivers login codes to every logged-in client. */
-const LOGIN_SERVICE_USER_ID = '777000';
+/**
+ * Service accounts whose messages carry login codes: 777000 (Telegram) delivers the codes of this
+ * account, 489000 ("Verification Codes") the codes other services send through Telegram Gateway.
+ */
+const LOGIN_SERVICE_USER_IDS = new Set(['777000', '489000']);
 
 const isLoginServicePeer = (peer: unknown): boolean =>
-  !!peer && typeof peer === 'object' && 'userId' in peer && String((peer as { userId: unknown }).userId) === LOGIN_SERVICE_USER_ID;
+  !!peer && typeof peer === 'object' && 'userId' in peer && LOGIN_SERVICE_USER_IDS.has(String((peer as { userId: unknown }).userId));
 
 /**
- * A message from (or in the chat with, or forwarded from) Telegram's service account 777000. Works
- * on a TL `Message` and on its JSON form.
+ * A message from (or in the chat with, or forwarded from) a login-code service account (777000 or
+ * 489000). Works on a TL `Message` and on its JSON form.
  */
 function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown }): boolean {
   const fwd = msg.fwdFrom as { fromId?: unknown } | null | undefined;
@@ -456,6 +461,36 @@ function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFro
 }
 
 export const LOGIN_CODE_HIDDEN = '[login code hidden]';
+
+/** Keys whose strings are IDs, hashes, dates or type tags rather than message content. */
+const NOT_CONTENT_KEY = /^(className|_|type|kind|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
+
+/**
+ * Plain data with every gift-code link masked and, for a login-service message (`login`), every
+ * piece of its content with codes hidden, at any depth: text, entity URLs, button texts, URLs and
+ * queries, a quote, a link preview. Callback data (and any other bytes, already a string here) and
+ * a copy button's text are hidden whole: in a service message they exist to carry the code.
+ */
+function maskContent<T>(value: T, login: boolean, key = ''): T {
+  if (typeof value === 'string') {
+    if (!login || NOT_CONTENT_KEY.test(key)) return maskGiftCodes(value) as T;
+    if (key === 'data' || key === 'copyText') return (value ? LOGIN_CODE_HIDDEN : value) as T;
+    return maskGiftCodes(maskLoginCodes(value)) as T;
+  }
+  if (Array.isArray(value)) return value.map(v => maskContent(v, login, key)) as T;
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskContent(v, login, k)])) as T;
+  }
+  return value;
+}
+
+/**
+ * Over MCP, `value` built from `msg` with gift links masked, and login codes hidden if `msg` is from
+ * a login service; in a terminal as is.
+ */
+function maskedForMcp<T>(msg: Api.Message, value: T): T {
+  return value !== undefined && isOverMcp() ? maskContent(value, isLoginServiceMessage(msg)) : value;
+}
 
 /**
  * Hide login codes in a service message and keep the rest of the text: the word after "code:"
@@ -516,7 +551,7 @@ export function extractButtons(msg: Api.Message): ButtonLayout | undefined {
     rows.push(parsedRow);
   });
 
-  return { isInline, rows };
+  return maskedForMcp(msg, { isInline, rows });
 }
 
 function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
@@ -691,14 +726,15 @@ export function buildMessageFull(msg: Api.Message): MessageFull {
       replyToMsgId: r.replyToMsgId ?? undefined,
       topMsgId: r.replyToTopId ?? undefined,
       forumTopic: r.forumTopic || undefined,
-      quoteText: r.quoteText ?? undefined,
+      // A quote of a login-service message hides its codes too (the quoted peer is in the header)
+      quoteText: r.quoteText != null && isOverMcp() && isLoginServicePeer(r.replyToPeerId) ? maskLoginCodes(r.quoteText) : r.quoteText ?? undefined,
       replyToPeerId: r.replyToPeerId ? peerIdStr(r.replyToPeerId) : undefined,
     };
   }
 
   const media = buildFullMedia(msg);
   if (media) full.media = media;
-  return full;
+  return maskedForMcp(msg, full);
 }
 
 function docAttributes(doc: Api.Document): Partial<FullMediaInfo> {
@@ -2006,7 +2042,7 @@ export async function forwardMessages(
         throw new Error(`Refused over MCP: message ${id} holds a contact card or a location; forwarding it would share them. Forward it in a terminal.`);
       }
       if (isLoginServiceMessage(m)) {
-        throw new Error(`Refused over MCP: message ${id} is from Telegram's login service (777000) and may hold a login code.`);
+        throw new Error(`Refused over MCP: message ${id} is from a login-code service account (777000 or 489000) and may hold a login code.`);
       }
     }
   }
@@ -2174,10 +2210,23 @@ export async function clickButton(
   selector: ClickSelector,
   options: { password?: string; waitMs?: number } = {}
 ): Promise<ClickOutcome> {
-  const { waitMs = 1500 } = options;
   const entity = await resolveChat(client, chatIdentifier);
   const msg = await fetchRawMessage(client, entity, msgId);
   if (!msg) throw new Error(`Message #${msgId} not found`);
+  // Over MCP the outcome hides login codes (of a service message) and gift links too (URL, copy text, notes)
+  return maskedForMcp(msg, await pressButton(client, chatIdentifier, entity, msg, msgId, selector, options));
+}
+
+async function pressButton(
+  client: TelegramClient,
+  chatIdentifier: string,
+  entity: ResolvedEntity,
+  msg: Api.Message,
+  msgId: number,
+  selector: ClickSelector,
+  options: { password?: string; waitMs?: number }
+): Promise<ClickOutcome> {
+  const { waitMs = 1500 } = options;
 
   const markup = msg.replyMarkup;
   if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
@@ -3198,15 +3247,16 @@ function plainJsonValue(val: unknown): unknown {
   return val;
 }
 
-/** A message of the login service with its codes hidden: `message` and every text of `richMessage`. */
+/**
+ * A message of a login service with its codes hidden in all its content: `message`, `richMessage`,
+ * entity URLs, reply markup (texts, URLs, copy texts; bytes such as callback data hidden whole), a
+ * quote and a link preview.
+ */
 function maskLoginServiceJson(val: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...val };
-  if (typeof out.message === 'string') out.message = maskLoginCodes(out.message);
-  if (out.richMessage != null) {
-    out.richMessage = JSON.parse(JSON.stringify(out.richMessage, (_k, v) => plainJsonValue(v)),
-      (k, v) => (typeof v === 'string' && k !== 'className' && k !== '_' ? maskLoginCodes(v) : v));
-  }
-  return out;
+  const plain = JSON.parse(JSON.stringify(val, function (this: Record<string, unknown>, k: string, v: unknown) {
+    return this[k] instanceof Uint8Array ? LOGIN_CODE_HIDDEN : plainJsonValue(v);
+  })) as Record<string, unknown>;
+  return maskContent(plain, true);
 }
 
 /** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
@@ -3223,12 +3273,18 @@ export function serializeApiResult(result: unknown): string {
     if (val != null && MCP_REDACTED_KEY.test(_key)) return '[redacted]';
     const holder = tlTypeName(this);
     if (val != null && holder && MCP_REDACTED_BY_TYPE.some(([type, keys]) => type.test(holder) && keys.has(_key))) return '[redacted]';
-    // Login codes from the service account 777000 (history, search, dialogs, a short update)
+    // A gift-code link redeems the gift for whoever opens it, wherever it appears
+    if (typeof val === 'string') return maskGiftCodes(val);
+    // Login codes from the service accounts 777000 and 489000 (history, search, dialogs, a short update)
     const type = tlTypeName(val);
     const obj = val as Record<string, unknown>;
     if ((type === 'message' && isLoginServiceMessage(obj))
-      || (type === 'updateshortmessage' && String(obj.userId) === LOGIN_SERVICE_USER_ID)) {
+      || (type === 'updateshortmessage' && LOGIN_SERVICE_USER_IDS.has(String(obj.userId)))) {
       return maskLoginServiceJson(obj);
+    }
+    // A quote of a login-service message, in a message of another chat
+    if (type === 'messagereplyheader' && typeof obj.quoteText === 'string' && isLoginServicePeer(obj.replyToPeerId)) {
+      return { ...obj, quoteText: maskLoginCodes(obj.quoteText) };
     }
     return val;
   };
