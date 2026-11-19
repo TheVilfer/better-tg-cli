@@ -68,16 +68,24 @@ code. This file only covers behaviour that the flag list can't tell you.
 
 - Off a TTY (agents and pipes), output is compact: one line per item with the ID first, JSON on
   one line, and null or empty fields dropped. Set `TG_JSON_PRETTY=1` to indent JSON.
-- Message line format: `#id YYYY-MM-DD HH:MM Sender ↩replyTo 💬comments: [media] text`. Continuation lines
-  are indented. The sender is omitted when it is the chat itself, as in channel posts.
-- Chat line format: `id type [muted,archived] unread=N Title @username | preview`.
+- Message line format: `#id YYYY-MM-DD HH:MM [topic N] Sender ↩replyTo 💬comments: [media] text`.
+  Continuation lines are indented. The sender is omitted when it is the chat itself, as in channel
+  posts. Times are local; the `# Title (times in Europe/Berlin, UTC+1)` header names the zone.
+  `[topic N]` appears when a whole forum is read without `--topic`. A full page ends with
+  `… more: --before <id>`.
+- Chat line format: `id type [bot,muted,archived] unread=N Title @username | preview`. Bots have
+  type `user` and the flag `bot`; `--type bot` lists only bots, `--type user` still includes them.
+- Chat and user IDs are strings (`"-1004001"`), message IDs are numbers.
 - JSON shapes:
 
 | Command | Shape |
 |---|---|
 | `chats`, `contacts`, `members` | array |
-| `read`, `get` | `{chatTitle, messages[], threadChatId?, missing?}` |
-| `search` | array of `{chatTitle?, messages[]}`; global hits add `chatId` and `chatTitle` to each message |
+| `read`, `get` | `{chatTitle, messages[], chatId, threadChatId?, missing?, hasMore?, nextBefore?}`; `nextBefore` (a full page) goes to `--before` for the next one; in a forum each message has `topicId` |
+| `search` | array of `{chatTitle?, chatId?, messages[], hasMore?}`; every message has `id` and `chatId`, global hits also `chatTitle` |
+| `send`, `reply`, `send-file`, `edit`, `delete`, `react`, `forward`, `pin`, `unpin`, `mark-read` | `{ok: true, action, chatId, chatTitle, messageId \| messageIds, …}` plus the older fields of each command |
+| `check`, `write-access` | object with `writeMode` (`read-only`, `ask`, `on`); `check` adds `configured`, `authenticated`, `account` |
+| `sync` | `{output, added, chats: [{chatId, title, file, added, lastId}]}` |
 | `inbox` | `{totalUnread, chatsWithUnread, chats[]}` (totals cover all chats, `chats` is cut to `-n`) |
 | `info` | object |
 | `topics` | `{chatTitle, topics[]}` |
@@ -377,10 +385,28 @@ method's `--help` lists its own "Common errors" when the docs provide them.
 exactly match a dialog ID (the `id` from `chats`). `@username` resolves exactly. Anything else
 matches titles.
 
-- **Reads:** an exact title first, then a substring.
+- **Reads:** an exact title, or a substring that only one title contains. A substring of several
+  titles, or a title shared by several chats, is refused (exit 2) with the candidates, as for writes.
 - **Writes** (every command gated by write access) accept only an exact, unique title. A substring
   or a title shared by several chats is refused with up to 5 candidates (`id type title @username`).
   Retry with the ID.
+
+## Errors and exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | runtime error: Telegram refused, network, chat or message not found |
+| 2 | usage: unknown option, a value that does not parse, an ambiguous chat name |
+| 3 | write approval needed (mode `ask`) |
+| 4 | write access is disabled (`telegram write-access ask`) |
+| 5 | not logged in, or the session ended (`telegram onboard`) |
+
+With `--json` an error is one line on stdout, `{"error":{"code","message","hint"?,"candidates"?,
+"retryAfterSeconds"?}}`; `code` is stable (`chat_not_found`, `ambiguous_chat`, `invalid_argument`,
+`write_disabled`, `not_configured`, `session_expired`, `flood_wait`, `telegram_rpc` …). Exit 3 keeps
+its own line, `{"error":"approval_required",…}`. A bad number or value never becomes a default or
+an empty result: it exits 2 before anything is sent.
 
 ## Troubleshooting
 
