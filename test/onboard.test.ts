@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request } from 'node:http';
 import { rpcCode, type LoginDriver } from '../src/auth.js';
 import { RPCError } from 'teleproto/errors/index.js';
-import { startOnboarding, type OnboardEvent, type OnboardSession } from '../src/onboard.js';
+import { startOnboarding, type ModeChoice, type ModeResult, type OnboardEvent, type OnboardSession, type SavedMode } from '../src/onboard.js';
 import { errorMessage } from '../src/text.js';
 
 // Raw HTTP so the tests control Host and Origin exactly (fetch won't set Host)
@@ -240,6 +240,198 @@ describe('rpcCode', () => {
       await post('mode', { mode: 'read-only' });
       expect((await until('done')).mode).toBe('read-only');
       await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'read-only' });
+    });
+
+    /**
+     * A fake secret store: applyMode writes the mode and its end to it unless told to fail,
+     * currentMode reads it back. `lie`: says ok, keeps the old value. `start`: the value already there.
+     */
+    const store = (plan: { refuse?: boolean; lie?: boolean; start?: SavedMode; dialogMs?: number } = {}) => {
+      const st = { value: plan.start ?? ({ mode: 'read-only' } as SavedMode) };
+      return {
+        st,
+        currentMode: () => st.value,
+        applyMode: async (c: ModeChoice): Promise<ModeResult> => {
+          if (plan.refuse) return { ok: false, error: 'store_failed' };
+          if (plan.dialogMs && c.mode === 'on') await new Promise(r => setTimeout(r, plan.dialogMs)); // the person answers a dialog
+          // Like applyModeChoice: the end is fixed right before the write and reported as written
+          const until = c.mode !== 'read-only' && c.forSeconds ? new Date(Math.floor(Date.now() / 1000) * 1000 + c.forSeconds * 1000) : undefined;
+          if (!plan.lie) st.value = until ? { mode: c.mode, until } : { mode: c.mode };
+          return { ok: true, until };
+        },
+      };
+    };
+
+    it('says so when the store refuses the default mode right after the login, and shows the real mode', async () => {
+      const f = store({ refuse: true });
+      const { events, saved, post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      const s = await until('mode');
+      expect(s).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'read-only' });
+      expect(saved).toHaveLength(1); // the login itself is kept
+      expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'logged_in', 'waiting_mode']); // JSONL unchanged
+    });
+
+    it('does not trust an ok from a store that kept the old value', async () => {
+      const f = store({ lie: true });
+      const { post, until, state } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      expect(await until('mode')).toMatchObject({ error: 'store_failed', mode: 'read-only' });
+      const res = await post('mode', { mode: 'on', for: '1h' });
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe('store_failed');
+      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'read-only' });
+    });
+
+    it('reports done with the mode read back from the store', async () => {
+      const f = store();
+      const { events, post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      const s = await until('mode');
+      expect(s.mode).toBe('ask');
+      expect(s.error).toBeUndefined();
+      expect((await post('mode', { mode: 'on', for: '' })).status).toBe(202);
+      expect((await until('done')).mode).toBe('on');
+      expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'on' });
+    });
+
+    it('does not take an old "on" for good as the "on for an hour" that was picked', async () => {
+      // The mode name matches, the end does not: an hour later writes would still go through
+      const f = store({ lie: true, start: { mode: 'on' } });
+      const { post, until, state, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      const res = await post('mode', { mode: 'on', for: '1h' });
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe('store_failed');
+      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'on' });
+      expect(events.map(e => e.event)).not.toContain('done');
+    });
+
+    it('does not take an old "on for an hour" as the "on" for good that was picked', async () => {
+      const f = store({ lie: true, start: { mode: 'on', until: new Date(Date.now() + 3_600_000) } });
+      const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'on', for: '' })).status).toBe(409);
+    });
+
+    it('does not take an old "ask" with an end as the default "ask" right after the login', async () => {
+      const f = store({ lie: true, start: { mode: 'ask', until: new Date(Date.now() + 86_400_000) } });
+      const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      expect(await until('mode')).toMatchObject({ error: 'store_failed', mode: 'ask' });
+    });
+
+    it('does not take an older "on for an hour" whose end falls inside the time the dialog was open', async () => {
+      // A dialog opened at 12:00 and answered at 12:02: an old end of 13:00 is not 13:02.
+      // Here the store already holds "on" until an hour from now and the dialog takes 1.5 s.
+      const f = store({ lie: true, start: { mode: 'on', until: new Date(Math.floor(Date.now() / 1000) * 1000 + 3_600_000) }, dialogMs: 1500 });
+      const { post, until, state, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      const res = await post('mode', { mode: 'on', for: '1h' });
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe('store_failed');
+      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'on' });
+      expect(events.map(e => e.event)).not.toContain('mode');
+    });
+
+    it('does not take a timed choice as saved when applyMode does not say which end it wrote', async () => {
+      const f = store();
+      const silent = async (c: ModeChoice): Promise<ModeResult> => { const r = await f.applyMode(c); return r.ok ? { ok: true } : r; };
+      const { post, until } = await start({}, { applyMode: silent, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'on', for: '1h' })).status).toBe(409);
+    });
+
+    it('accepts an honest "on for an hour" after a long dialog', async () => {
+      const f = store({ start: { mode: 'on' }, dialogMs: 1500 });
+      const { post, until, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'on', for: '1h' })).status).toBe(202);
+      expect((await until('done')).mode).toBe('on');
+      expect(events.find(e => e.event === 'mode')).toMatchObject({ mode: 'on', until: expect.any(String) });
+    });
+
+    it('at the timeout reports the mode in the store then, even if another process changed it', async () => {
+      const f = store();
+      const { post, until, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask', modeWaitMs: 400 });
+      await post('invite', { invite: 'tok' });
+      expect((await until('mode')).mode).toBe('ask');
+      f.st.value = { mode: 'read-only' }; // `telegram write-access off` in another terminal
+      expect((await until('done')).mode).toBe('read-only');
+      expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'read-only' });
+    });
+
+    describe('the clock stops while a choice is being applied', () => {
+      afterEach(() => vi.useRealTimers());
+      // Only the clock the step uses is faked: node:http keeps its own timers, setImmediate stays real
+      const tick = () => new Promise(r => setImmediate(r));
+
+      /** applyMode that waits for the test, like an OS dialog the person has not answered yet */
+      async function dialog() {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        let answer!: (r: ModeResult) => void;
+        let asked = 0;
+        const t = await start({}, {
+          modeOnly: true,
+          modeWaitMs: 1000,
+          applyMode: () => { asked++; return new Promise<ModeResult>(r => (answer = r)); },
+        });
+        vi.advanceTimersByTime(300);
+        const res = t.post('mode', { mode: 'on', for: '' });
+        while (!asked) await tick();
+        // The dialog stays open far past the 10 minutes (here 1 s) of the step
+        vi.advanceTimersByTime(5000);
+        await tick();
+        const dones = () => t.events.filter(e => e.event === 'done');
+        expect(dones()).toEqual([]);
+        return { ...t, res, dones, answer: (r: ModeResult) => answer(r) };
+      }
+
+      it('an approval after the time ran out sends one done, with the new mode', async () => {
+        const d = await dialog();
+        d.answer({ ok: true });
+        expect((await d.res).status).toBe(202);
+        vi.advanceTimersByTime(60_000);
+        await tick();
+        expect(d.dones()).toEqual([{ event: 'done', mode: 'on' }]);
+        await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'on' });
+      });
+
+      it('a refusal resumes the wait with the time that was left, then one done', async () => {
+        const d = await dialog();
+        d.answer({ ok: false, error: 'not_confirmed' });
+        expect((await d.res).status).toBe(409);
+        expect((await d.state()).step).toBe('mode');
+        vi.advanceTimersByTime(699);
+        await tick();
+        expect(d.dones()).toEqual([]);
+        vi.advanceTimersByTime(1);
+        await tick();
+        expect(d.dones()).toEqual([{ event: 'done' }]);
+        vi.advanceTimersByTime(60_000);
+        expect(d.dones()).toHaveLength(1);
+      });
+
+      it('a choice that throws resumes the wait too', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        let fail!: (e: Error) => void;
+        let asked = 0;
+        const t = await start({}, { modeOnly: true, modeWaitMs: 1000, applyMode: () => { asked++; return new Promise<ModeResult>((_, j) => (fail = j)); } });
+        const res = t.post('mode', { mode: 'on', for: '' });
+        while (!asked) await tick();
+        vi.advanceTimersByTime(5000);
+        fail(new Error('dialog crashed'));
+        expect((await res).status).toBe(500);
+        expect((await t.state()).step).toBe('mode');
+        vi.advanceTimersByTime(1000);
+        await tick();
+        expect(t.events.filter(e => e.event === 'done')).toHaveLength(1);
+      });
     });
 
     it('serves the mode strings in all three languages', async () => {

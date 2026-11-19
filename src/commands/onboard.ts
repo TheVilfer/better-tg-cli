@@ -4,7 +4,7 @@ import { qrLoginDriver, saveLogin } from '../auth.js';
 import { fetchInviteCredentials } from '../broker.js';
 import { getSessionString, isConfigured } from '../config.js';
 import { ONBOARD_SITE, startOnboarding, type OnboardEvent } from '../onboard.js';
-import { applyModeChoice } from '../write-mode.js';
+import { applyModeChoice, savedMode } from '../write-mode.js';
 
 const HUMAN: Record<OnboardEvent['event'], (e: never) => string> = {
   url: (e: { url: string }) => `Open this page to log in (it stays on this computer): ${e.url}`,
@@ -79,6 +79,7 @@ export const onboardCommand = new Command('onboard')
       emit,
       site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
       applyMode: choice => applyModeChoice(choice),
+      currentMode: savedMode,
       // Writes are possible right away, each one after the user's yes in the chat; the page can change it
       defaultMode: 'ask',
     });

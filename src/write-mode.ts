@@ -1,7 +1,7 @@
 import { confirmByHuman } from './confirm.js';
 import { describeWriteState, encodeWriteState, parseWriteState, type WriteMode } from './write-state.js';
 import { deleteWriteValue, getWriteValue, hasHumanChannel, mayTrustUnconfirmedChoice, setWriteValue } from './write-store.js';
-import type { ModeChoice, ModeResult } from './onboard.js';
+import type { ModeChoice, ModeResult, SavedMode } from './onboard.js';
 
 /** The question in the macOS / Windows dialog or at the terminal (Russian, like the rest of them). */
 export function modeQuestion(mode: Exclude<WriteMode, 'read-only'>, forSeconds?: number): string {
@@ -40,8 +40,17 @@ export async function applyModeChoice(choice: ModeChoice, options: { alreadyConf
       return { ok: false, error: 'needs_terminal' };
     }
   }
-  if (!setWriteValue(encodeWriteState(choice.forSeconds, Date.now(), choice.mode))) return { ok: false, error: 'store_failed' };
-  return { ok: true, until: parseWriteState(getWriteValue()).until };
+  // The end is fixed after any dialog above and reported as written, so the caller can compare it
+  // with what the store holds afterwards
+  const value = encodeWriteState(choice.forSeconds, Date.now(), choice.mode);
+  if (!setWriteValue(value)) return { ok: false, error: 'store_failed' };
+  return { ok: true, until: parseWriteState(value).until };
+}
+
+/** The write mode the store holds now, and when it ends; read fresh, as another process may have changed it. */
+export function savedMode(): SavedMode {
+  const { mode, until } = parseWriteState(getWriteValue(true));
+  return until && mode !== 'read-only' ? { mode, until } : { mode };
 }
 
 export function currentModeLine(): string {

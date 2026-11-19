@@ -47,8 +47,9 @@ export const CLOUD_HINT =
   'No secret store here, which is normal on cloud agent computers (Grok Bot and similar). Do not try to install one: ' +
   'without a desktop session it can\'t work. `telegram write-access ask` works here as is; only `write-access on` prints a page link for the user.';
 
-export function getWriteValue(): string | null {
-  if (isWriteModeProtected()) return secretGet('writeEnabled');
+/** `fresh`: bypass this process's cache of the secret store (see secretGet) */
+export function getWriteValue(fresh = false): string | null {
+  if (isWriteModeProtected()) return secretGet('writeEnabled', fresh);
   if (!isFileFallbackAllowed()) return null;
   try {
     return readFileSync(configFile(FILE), 'utf8').trim() || null;

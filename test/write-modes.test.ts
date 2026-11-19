@@ -298,8 +298,11 @@ describe('choosing a mode', () => {
     expect(human.asked[0]).toMatch(/без вопросов/);
     expect(getWriteValue()).toBeNull();
     human.answer = true;
-    expect((await applyModeChoice({ mode: 'on', forSeconds: 3600 })).ok).toBe(true);
+    const r = await applyModeChoice({ mode: 'on', forSeconds: 3600 });
+    expect(r.ok).toBe(true);
     expect(parseWriteState(getWriteValue()).mode).toBe('on');
+    // It reports the end it wrote, to the second, so onboard can compare it with the store
+    expect(r.ok && r.until?.getTime()).toBe(parseWriteState(getWriteValue()).until?.getTime());
   });
 
   it('"ask" needs no dialog anywhere: the yes in the chat before each write is the confirmation', async () => {

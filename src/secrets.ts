@@ -33,12 +33,16 @@ export function isSecretStoreAvailable(): boolean {
   return activeProvider() !== 'none';
 }
 
-export function secretGet(key: string): string | null {
+/**
+ * `fresh`: skip any value cached in this process (DPAPI decrypts its file once per process), for a
+ * read-back that must see what another process wrote since. The other stores always ask anew.
+ */
+export function secretGet(key: string, fresh = false): string | null {
   const provider = activeProvider();
   if (provider === 'op') return opGet(key);
   if (provider === 'keychain') return keychainGet(key);
   if (provider === 'libsecret') return libsecretGet(key);
-  if (provider === 'dpapi') return dpapiGet(key);
+  if (provider === 'dpapi') return dpapiGet(key, fresh);
   return null;
 }
 

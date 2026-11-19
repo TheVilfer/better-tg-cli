@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { parseForDuration, parseWriteState } from '../write-state.js';
 import { confirmByHuman } from '../confirm.js';
 import { getWriteValue, hasHumanChannel, isWriteModeProtected, mayTrustUnconfirmedChoice } from '../write-store.js';
-import { applyModeChoice, currentModeLine, modeQuestion } from '../write-mode.js';
+import { applyModeChoice, currentModeLine, modeQuestion, savedMode } from '../write-mode.js';
 import { ONBOARD_SITE, startOnboarding } from '../onboard.js';
 import { openBrowser } from './onboard.js';
 import chalk from '../colors.js';
@@ -89,6 +89,7 @@ async function chooseOnPage(open: boolean) {
       }
     },
     applyMode: async choice => (picked = await applyModeChoice(choice)),
+    currentMode: savedMode,
   });
   const result = await session.done;
   await new Promise(r => setTimeout(r, 2500)); // let the page show "saved" before the server goes
