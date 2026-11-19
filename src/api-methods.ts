@@ -44,23 +44,22 @@ export function isApiReadMethod(name: string): boolean {
 
 /**
  * A read call that may spend Stars is a write: `channels.SearchPosts` with `allowPaidStars` pays for
- * a full-text search once the free quota is used up. The only read in the schema with that param
- * today; the check is by param, so a future one is covered too. Any value counts, 0 included.
+ * a full-text search once the free quota is used up. Checked by param, so a future paid read is
+ * covered too.
  */
 export function isApiReadCall(name: string, params?: Record<string, unknown>): boolean {
   return isApiReadMethod(name) && !hasPaidStars(params);
 }
 
-/** An own, non-null `allowPaidStars`: the field teleproto copies into the request (any value, 0 too). */
+/** An own, non-null `allowPaidStars` (0 included): the field teleproto copies into the request. */
 function hasPaidStars(params?: Record<string, unknown>): boolean {
-  return Boolean(params) && Object.hasOwn(params!, 'allowPaidStars') && params!.allowPaidStars !== undefined && params!.allowPaidStars !== null;
+  return !!params && Object.hasOwn(params, 'allowPaidStars') && params.allowPaidStars != null;
 }
 
 /**
- * Over MCP (TG_MCP or TG_READ_ONLY, set for every MCP call) a read that would pay Stars
- * (`channels.SearchPosts` with `allowPaidStars`) is refused in every write mode: the model must not
- * spend the user's Stars, even in mode "on". A terminal run keeps it as a write behind the guard.
- * Checked on the built params (prototype-free, see plainParams) and again on the request itself.
+ * Over MCP (TG_MCP or TG_READ_ONLY) a read that would pay Stars is refused in every write mode, "on"
+ * included: the model must not spend the user's Stars. In a terminal it stays a write behind the
+ * guard. Checked on the prototype-free params and again on the built request.
  */
 export function mcpPaidReadRefusal(name: string, params?: Record<string, unknown>): string | null {
   if (!process.env.TG_MCP && !process.env.TG_READ_ONLY) return null;
@@ -71,9 +70,8 @@ export function mcpPaidReadRefusal(name: string, params?: Record<string, unknown
 export const PAID_READ_REFUSAL = 'Refused over MCP: allowPaidStars makes this search spend Stars; run a paid search in a terminal.';
 
 /**
- * A deep copy of request params made of prototype-free objects, so no field can come from a
- * prototype (a JSON `"__proto__"` key stays an ordinary own key, which the TL constructor ignores).
- * Arrays stay arrays; other values are kept as they are.
+ * A deep copy of request params made of prototype-free objects, so no field can be inherited (a JSON
+ * `"__proto__"` key stays an own key, which the TL constructor ignores).
  */
 export function plainParams<T>(value: T): T {
   if (Array.isArray(value)) return value.map(v => plainParams(v)) as T;

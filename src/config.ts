@@ -78,9 +78,8 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
   const globalPath = getGlobalConfigPath();
   const fileConfig = readConfigFile(globalPath, warn);
 
-  // Build config: file values + the stored secrets, which take precedence over file values.
-  // writeEnabled is never part of it (the write mode is read from the store by write-store.ts), so a
-  // writeEnabled put into config.json5 by hand changes nothing.
+  // File values + the stored secrets, which win. writeEnabled is never taken from the file: the
+  // write mode lives in the store (write-store.ts).
   const config: TgConfig = {
     ...DEFAULT_CONFIG,
     ...fileConfig,
@@ -99,12 +98,10 @@ const CONFIG_SECRETS = ['apiHash', 'sessionString'] as const;
 type SecretKey = typeof CONFIG_SECRETS[number];
 
 /**
- * The one way every command, read or write, gets the session and api_hash: ONE strict store read per
- * key. Stored → that value. Missing → the file copy, if any. A failed read (locked Keychain,
- * 1Password offline) throws, read and write alike, so no command ever connects with a file copy that
- * may be another account than the stored one. Nothing is written to the store or the file here.
- * Returns where each secret came from and the keys whose file copy differs from the stored value
- * (both shown by `telegram check`).
+ * How every command, read or write, gets the session and api_hash: one strict store read per key.
+ * Stored → that value; missing → the file copy, if any; a failed read (locked Keychain, 1Password
+ * offline) throws, so no command connects with a file copy that may be another account. Writes
+ * nothing. Returns where each secret came from and which file copies differ (for `telegram check`).
  */
 function resolveSecrets(config: TgConfig, fileConfig: Partial<TgConfig>): SecretsInfo {
   const conflicts: string[] = [];
@@ -141,7 +138,7 @@ export function secretFileConflicts(config: TgConfig = loadConfig(() => {})): st
 }
 
 /** Where a secret of the given snapshot came from: the secret store, config.json5, or nowhere. */
-export function secretSource(key: SecretKey, config: TgConfig = loadConfig(() => {})): 'store' | 'file' | undefined {
+export function secretSource(key: SecretKey, config: TgConfig): 'store' | 'file' | undefined {
   return secretsInfo.get(config)?.sources[key];
 }
 
@@ -186,9 +183,8 @@ export function saveConfig(config: Partial<TgConfig>): void {
     }
   }
 
-  // Drop the file copy of a secret this call saves to the store. Other secrets in the file stay: an
-  // old profile's file copy may be its only one (nothing moves it to the store), and a save of an
-  // unrelated setting (the WSS transport, testServers) must not delete it.
+  // Drop the file copy of a secret this call saves to the store, and only that one: an old profile's
+  // file copy may be its only copy, so saving an unrelated setting (transport, testServers) keeps it.
   if (isSecretStoreAvailable()) {
     for (const key of Object.keys(existing)) {
       if (isSecretKey(key) && key in config && !(key in fileData)) {
@@ -254,18 +250,15 @@ export function getSessionString(): string | undefined {
 export function clearSessionString(): void {
   // Delete from secret store
   secretDelete('sessionString');
-  removeFileKey('sessionString');
-}
 
-/** Remove one key from config.json5 (a secret saveConfig no longer strips on unrelated saves). */
-function removeFileKey(key: string): void {
+  // Delete from file
   const path = getGlobalConfigPath();
   if (existsSync(path)) {
     try {
       const raw = readFileSync(path, 'utf8');
       const parsed = parseConfigText(raw);
-      if (isPlainObject(parsed) && key in parsed) {
-        delete parsed[key];
+      if (isPlainObject(parsed) && 'sessionString' in parsed) {
+        delete parsed.sessionString;
         writeFileSync(path, stringifyConfig(parsed), { encoding: 'utf8', mode: 0o600 });
       }
     } catch {

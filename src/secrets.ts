@@ -1,5 +1,4 @@
 import {
-  SECRET_KEYS,
   isKeychainAvailable,
   isSecretKey,
   keychainDelete,
@@ -18,7 +17,7 @@ import {
 import { isLibsecretAvailable, libsecretDelete, libsecretGet, libsecretGetStrict, libsecretSet } from './libsecret.js';
 import { dpapiDelete, dpapiGet, dpapiGetStrict, dpapiSet, isDpapiAvailable } from './dpapi.js';
 
-export { SECRET_KEYS, isSecretKey };
+export { isSecretKey };
 
 type Provider = 'op' | 'keychain' | 'libsecret' | 'dpapi' | 'none';
 

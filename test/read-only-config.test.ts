@@ -97,9 +97,8 @@ describe('the write mode is never taken from the config file', () => {
   });
 });
 
-// Review rounds 2–4: a read and the write after it must use the same account. One resolution for
-// both: one strict store read per key; stored wins, missing falls back to the file, a failed read
-// stops. Nothing is written on load.
+// A read and the write after it must use the same account: one strict store read per key; stored
+// wins, missing falls back to the file, a failed read stops. Nothing is written on load.
 describe('whoami → write resolve the same account', () => {
   const B = '{"apiId": 1, "apiHash": "file-hash", "sessionString": "session-B"}';
 
@@ -269,9 +268,8 @@ describe('whoami → write resolve the same account', () => {
   });
 });
 
-// Review round 5: getClient() and `telegram check` take everything from ONE loaded snapshot, so a
-// store that fails after the 1 s cache expired can't break a connection whose credentials it already
-// gave, and check says where the session really came from.
+// getClient() and `telegram check` take everything from one loaded snapshot, so a store that fails
+// after the 1 s cache expired cannot break a connection it already gave credentials for.
 describe('one snapshot per connection', () => {
   const later = (ms: number) => { const now = Date.now(); vi.spyOn(Date, 'now').mockReturnValue(now + ms); };
 

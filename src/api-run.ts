@@ -20,17 +20,17 @@ export async function runApiMethod(
 ): Promise<void> {
   const auditCommand = options.auditCommand ?? 'api';
 
-  // Prototype-free from here on: every check below sees exactly the fields the request gets.
+  // Prototype-free, so every check below sees exactly the fields the request gets. Refuse after
+  // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid search
+  // over MCP) apply.
   params = plainParams(params);
-  // Refuse after params are known so param-level checks (shared contact/geo media, phone-privacy,
-  // a paid search over MCP) apply.
   const refusal = apiRefusalReason(canonical, params) ?? mcpPaidReadRefusal(canonical, params);
   if (refusal) {
     console.error(chalk.red(refusal));
     process.exit(1);
   }
 
-  // By the whole call: a read that may spend Stars (allowPaidStars) needs write access like any write
+  // A read that may spend Stars (allowPaidStars) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
   if (isWrite) assertWriteEnabled();
 

@@ -1,15 +1,14 @@
 import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
+import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TelegramClient } from 'teleproto';
 import { invokeApi, serializeApiResult, disconnectClient } from '../src/client.js';
-import { resolveApiMethod, isApiReadMethod, apiRefusalReason } from '../src/api-methods.js';
+import { resolveApiMethod, isApiReadMethod, isApiReadCall, apiRefusalReason, mcpPaidReadRefusal, plainParams } from '../src/api-methods.js';
 import { apiMethodToken, planCall } from '../src/mcp.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
-import { spawnSync } from 'node:child_process';
-import { cliArgs } from './cli.js';
-import { isApiReadCall, mcpPaidReadRefusal, plainParams } from '../src/api-methods.js';
 import { seedWorld, type MockWorld } from '../src/mock/world.js';
+import { cliArgs } from './cli.js';
 
 const mock = (world: MockWorld = seedWorld()) => new MockClient(world) as unknown as TelegramClient;
 
@@ -159,7 +158,7 @@ describe('MCP routing of the api command', () => {
   });
 });
 
-describe('api hardening: Stars and login tokens (review findings 2, 3)', () => {
+describe('api: paid reads and login tokens', () => {
   it('a read that may spend Stars (allowPaidStars) is a write; the free form stays a read', () => {
     expect(isApiReadCall('channels.SearchPosts', { query: 'x' })).toBe(true);
     expect(isApiReadCall('channels.SearchPosts', { query: 'x', allowPaidStars: '10' })).toBe(false);
@@ -211,7 +210,7 @@ describe('api hardening: Stars and login tokens (review findings 2, 3)', () => {
     }
   });
 
-  // Round 2: a JSON "__proto__" key must not turn into an inherited allowPaidStars after the checks
+  // A JSON "__proto__" key must not turn into an inherited allowPaidStars after the checks
   const PROTO = '{"query":"x","__proto__":{"allowPaidStars":5}}';
 
   it('plainParams builds prototype-free objects, so no field is inherited', () => {
@@ -260,7 +259,7 @@ describe('api hardening: Stars and login tokens (review findings 2, 3)', () => {
     }
   });
 
-  it('over MCP the CLI also refuses the "__proto__" form only if it really pays (it does not)', () => {
+  it('over MCP a "__proto__" allowPaidStars pays nothing, so the CLI does not refuse it', () => {
     const r = run(['api', 'channels.SearchPosts', '--params', PROTO], { TG_READ_ONLY: '1', TG_MCP: '1' });
     expect(r.stderr).not.toMatch(/Refused over MCP|cannot run as a read/);
     expect(r.stderr).toMatch(/not configured|not authenticated|auth/i);

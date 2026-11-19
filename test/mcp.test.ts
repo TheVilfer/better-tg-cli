@@ -178,7 +178,7 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['--help'], 'invalid'],
   [['watch', 'me'], 'invalid'],
   [['watch', 'me', '-t', '30'], 'read'],
-  // A read method that would spend Stars never runs over MCP (review rounds 1 and 2), in every form of params
+  // A read method that would spend Stars never runs over MCP, in every form of params
   [['api', 'channels.SearchPosts', '--params', '{"query":"x"}'], 'read'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":"10"}'], 'never'],
   [['api', 'channels.SearchPosts', '-p', '{"allowPaidStars":10}'], 'never'],
@@ -189,7 +189,7 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['channels', 'search-posts', '--allow-paid-stars=10'], 'never'],
   [['channels', 'search-posts', '--json-params', '{"allowPaidStars":10}'], 'never'],
   [['api', 'channels.SearchPosts', '--params', '{"allow\\u0050aidStars":10}'], 'never'],
-  // The word itself in a query, a nested key or a null value is a free search (round 2)
+  // The word itself in a query, a nested key or a null value is a free search
   [['channels', 'search-posts', '--query', 'allowPaidStars'], 'read'],
   // commander consumes a valued option's next argument, dash or not: this is a search for the text
   [['channels', 'search-posts', '--query', '--allow-paid-stars=5'], 'read'],
@@ -199,7 +199,7 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['api', 'channels.SearchPosts', '--params', '{"query":"allowPaidStars"}'], 'read'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"x","offsetPeer":{"allowPaidStars":1}}'], 'read'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":null}'], 'read'],
-  // Inherited names of a plain object are not commands (round 2)
+  // Inherited names of a plain object are not commands
   [['constructor'], 'unknown'],
   [['__proto__'], 'unknown'],
   [['toString'], 'unknown'],
@@ -208,15 +208,15 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['constructor', '--help'], 'unknown'],
   [['constructor', 'get-history'], 'unknown'],
   [['messages', 'constructor'], 'unknown'],
-  // Reads that hand out a login link never run (finding 3)
+  // Reads that hand out a login link never run
   [['api', 'messages.GetEmojiURL', '--params', '{"langCode":"en"}'], 'never'],
   [['messages', 'get-emoji-url', '--lang-code', 'en'], 'never'],
-  // api classifies the resolved method, not the raw string (finding 5)
+  // api classifies the resolved method, not the raw string
   [['api', 'messages.GetNope'], 'unknown'],
   [['api', 'nope.GetHistory'], 'unknown'],
   [['api', ' account.DeleteAccount '], 'never'],
   [['api', 'MESSAGES.getHistory'], 'read'],
-  // A write group runs only its registered subcommands (finding 4)
+  // A write group runs only its registered subcommands
   [['topic', 'close', 'g', '1'], 'write'],
   [['topic', 'bogus', 'g'], 'unknown'],
   [['topic'], 'invalid'],

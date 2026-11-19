@@ -214,12 +214,12 @@ describe('the guard', () => {
 });
 
 // download, sync and avatar write local files only: free in a terminal, but over MCP (TG_MCP) they
-// follow the profile's write mode like any other write (review finding 6)
+// follow the profile's write mode like any other write
 describe('local file writes', () => {
   // Called through a wrapper: if the helper were missing, this must fail, not fall back to the default
   const local = (argv: string[]) => guard(argv, a => assertLocalWriteAllowed(a));
 
-  it('run as before from a terminal, whatever the mode', () => {
+  it('need no write access in a terminal, whatever the mode', () => {
     expect(local(['download', 'me', '1']).code).toBeNull();
     store.values.set('writeEnabled', 'ask');
     expect(local(['sync']).code).toBeNull();
@@ -249,7 +249,7 @@ describe('local file writes', () => {
     expect(local(['download', 'me', '1']).code).toBe(1);
   });
 
-  // Review round 5: a mock write needs no approval, so over MCP the model could pick any path
+  // A mock write needs no approval, so over MCP the model could pick any path
   it('over MCP in mock mode are refused, whatever the mode; a terminal and a misrouted read as without mock', () => {
     process.env.TG_MOCK = '1';
     expect(local(['sync', '--output', '/tmp/x']).code).toBeNull();

@@ -20,7 +20,7 @@ function getSecretBackendLabel(): string {
 }
 
 /** Where the session of this snapshot actually came from, not just which store is reachable. */
-export function sessionStorageLabel(config: TgConfig): string {
+function sessionStorageLabel(config: TgConfig): string {
   if (secretSource('sessionString', config) === 'file') {
     return 'config.json5 (plaintext file, used as is; it is not moved into the secret store)';
   }
@@ -47,7 +47,7 @@ export const checkCommand = new Command('check')
       configured = isConfigured(config);
       conflicts = secretFileConflicts(config);
     } catch (error) {
-      // e.g. the secret store could not be read (see resolveSecrets in config.ts)
+      // e.g. the secret store could not be read
       console.error(chalk.red(error instanceof Error ? error.message : String(error)));
       process.exit(1);
     }

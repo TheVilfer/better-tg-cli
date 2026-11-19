@@ -28,9 +28,8 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
     return clientInstance;
   }
 
-  // One snapshot of the config, so the check, the credentials, the session, the transport and the
-  // test-DC flag come from the same store read (a second read, after the 1 s cache, could see
-  // something else or fail on a store that went away meanwhile)
+  // One snapshot: credentials, session, transport and test-DC flag all come from the same store read
+  // (a second read after the 1 s cache could see something else or fail)
   const config = snapshot ?? loadConfig(() => {});
   if (!isConfigured(config)) {
     throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
@@ -3040,7 +3039,7 @@ export async function invokeApi(
   const { ctor, className } = resolveApiMethod(methodName);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
-  // The last check, on the fields the request really carries (a paid search over MCP)
+  // Checked again on the fields the request really carries (a paid search over MCP)
   const refusal = mcpPaidReadRefusal(className, { ...request } as Record<string, unknown>);
   if (refusal) throw new Error(refusal);
   return client.invoke(request);
@@ -3056,8 +3055,7 @@ async function materializeApiParams(client: TelegramClient, value: unknown): Pro
     if (typeof obj._base64 === 'string') return Buffer.from(obj._base64, 'base64');
     if (typeof obj._hex === 'string') return Buffer.from(obj._hex, 'hex');
     if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return bigInt(String(obj._bigint));
-    // Prototype-free: a `"__proto__"` key stays an own key instead of becoming the prototype, so no
-    // field (allowPaidStars) can be inherited after the checks in runApiMethod
+    // Prototype-free, so no field (allowPaidStars) is inherited after the checks in runApiMethod
     const out = Object.create(null) as Record<string, unknown>;
     for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
     return out;

@@ -119,10 +119,9 @@ export function classifyCall(args: string[]): CallClass {
   if (cmd === 'watch' && !args.some(a => /^(-t|-n|--timeout|--limit)(=|$)/.test(a))) {
     return { group: 'invalid', reason: 'watch needs -t <seconds> or -n <count> (calls time out after 120s)' };
   }
-  // `api` is classified per method: a read method (Get*/Check*/Search*/Resolve*) is a read,
-  // everything else a write; refused methods never run.
-  // The name is resolved first, as the CLI does (case, spaces): an unknown method is refused here
-  // rather than guessed from its prefix.
+  // `api` is classified per method: Get*/Check*/Search*/Resolve* are reads, the rest writes, refused
+  // methods never run. The name is resolved as the CLI does (case, spaces), so an unknown method is
+  // refused rather than guessed from its prefix.
   if (cmd === 'api') {
     const method = apiMethodToken(args);
     if (!method) return { group: 'invalid', reason: 'api needs a method, e.g. ["api","messages.GetHistory"]' };
@@ -170,7 +169,7 @@ const unknown = (cmd: string): CallClass => ({ group: 'unknown', reason: `Unknow
 /** The options that carry JSON params: `api -p/--params`, a generated command's `--json-params`. */
 const PARAMS_OPTION = /^(-p|--params|--json-params)$/;
 
-/** `api` has no valued options besides -p/--params, which asksPaidStars reads as params anyway. */
+/** `api` has no valued options besides -p/--params, which asksPaidStars reads as params. */
 const API_VALUED_OPTIONS = new Set<string>();
 
 /** A generated command's options that take a value: every non-`true` param, and `--json-params`. */
