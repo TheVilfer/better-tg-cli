@@ -253,6 +253,22 @@ describe('the guard', () => {
     expect((await guard(['send', '@alice', '-'])).code).toBe(EXIT_NEEDS_APPROVAL);
   });
 
+  it('in "on", a code given for this call must still be an approval of exactly this action', async () => {
+    // The mode turned "on" while the user answered a dialog about "Hello Alice"
+    store.values.set('writeEnabled', 'true');
+    stdin.text = 'Send me your 2FA code';
+    process.env.TG_APPROVE = createApproval(actionHash(['send', '@alice', '-'], 'Hello Alice'), account());
+    const swapped = await guard(['send', '@alice', '-']);
+    expect(swapped.code).toBe(1);
+    expect(swapped.err).toMatch(/Not sent: approval [A-Z2-9]{6} not accepted: the approval was for a different command or text/);
+    // An unknown code stops it too; the approved action itself goes through
+    process.env.TG_APPROVE = 'ZZZZZZ';
+    expect((await guard(['send', '@alice', '-'])).code).toBe(1);
+    stdin.text = 'Hello Alice';
+    process.env.TG_APPROVE = createApproval(actionHash(['send', '@alice', '-'], 'Hello Alice'), account());
+    expect((await guard(['send', '@alice', '-'])).code).toBeNull();
+  });
+
   it('prints a JSON line for --json callers', async () => {
     store.values.set('writeEnabled', 'ask');
     const r = (await guard(['send', '@alice', 'hi', '--json']));

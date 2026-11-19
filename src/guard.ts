@@ -4,7 +4,7 @@ import chalk from './colors.js';
 import { setStrictChatResolution } from './resolve-mode.js';
 import { isMock, isMockAsk } from './paths.js';
 import {
-  ANOTHER_ACCOUNT, approvalHash, consumeApproval, createApproval, EXIT_NEEDS_APPROVAL, MOCK_ACCOUNT, readsStdin,
+  approvalHash, consumeApproval, createApproval, EXIT_NEEDS_APPROVAL, MOCK_ACCOUNT, readsStdin,
   APPROVAL_TTL_MS, REJECT_HINT, STDIN_IN_APPROVAL_ENV, type RejectReason,
 } from './approval.js';
 import { describeParsedAction, parsedAction, peerArgs, type ParsedAction, type PeerInfo } from './approval-action.js';
@@ -43,8 +43,10 @@ export async function assertWriteEnabled(argv: string[] = process.argv.slice(2),
   if (process.env[DESCRIBE_ENV] === '1') return describeAndExit(argv, opts.readsStdin === true);
   if (isMock()) {
     // A mock write only changes a local file: getClient() hands out the mock under the same check,
-    // so there is nothing for a human to approve, unless TG_MOCK_ASK=1 rehearses the "ask" flow
+    // so there is nothing for a human to approve, unless TG_MOCK_ASK=1 rehearses the "ask" flow.
+    // A code given for this call still has to hold, as in mode "on".
     if (isMockAsk()) await requireApproval(argv, opts.readsStdin === true);
+    else if (process.env.TG_APPROVE) await requireGivenCode(argv, opts.readsStdin === true);
     return;
   }
   if (!isWriteModeProtected() && !isFileFallbackAllowed()) {
@@ -70,9 +72,9 @@ export async function assertWriteEnabled(argv: string[] = process.argv.slice(2),
   }
   if (state.mode === 'ask') await requireApproval(argv, opts.readsStdin === true);
   else {
-    // A code given for this call (the MCP dialog's yes) still binds it to the account it was
-    // approved in, even if the mode turned "on" meanwhile: another account must not inherit it
-    if (process.env.TG_APPROVE) await refuseOtherAccount(argv, opts.readsStdin === true);
+    // A code given for this call (the MCP dialog's yes) still binds it to the action and the
+    // account it was approved for, even if the mode turned "on" meanwhile
+    if (process.env.TG_APPROVE) await requireGivenCode(argv, opts.readsStdin === true);
     setWriteContext({ writeMode: 'on', ...unprotectedFlag() });
   }
 }
@@ -134,15 +136,23 @@ async function approvalScope(argv: string[], parsedReadsStdin: boolean): Promise
 /** The account an approval binds to: the profile's stored session (a fixed one for the mock account). */
 const currentAccount = (): string | undefined => (isMock() ? MOCK_ACCOUNT : getSessionString());
 
-/** Write mode "on" with a code for this call: refuse when it was approved in another account. */
-async function refuseOtherAccount(argv: string[], parsedReadsStdin: boolean): Promise<void> {
+/**
+ * A code given for this call outside mode "ask" (the mode turned "on" while the user answered the
+ * MCP dialog, or the mock account): it must still be a valid approval of exactly this action in this
+ * account. Any refusal stops the write: a "yes" to an older version of it is no "yes" to this one.
+ */
+async function requireGivenCode(argv: string[], parsedReadsStdin: boolean): Promise<void> {
+  const session = currentAccount();
   const { covered, hash } = await approvalScope(argv, parsedReadsStdin);
-  const used = consumeApproval(process.env.TG_APPROVE!, hash, currentAccount());
-  if (!used.ok && used.reason === ANOTHER_ACCOUNT) {
-    console.error(chalk.red(`Not sent: ${used.reason}. Run the command again.`));
+  const used = consumeApproval(process.env.TG_APPROVE!, hash, session);
+  if (!used.ok) {
+    console.error(chalk.red(`Not sent: approval ${process.env.TG_APPROVE!.trim().toUpperCase()} not accepted: ${used.reason} (${REJECT_HINT[used.kind]}).`));
+    console.error(chalk.gray(process.env.TG_MCP
+      ? 'Call telegram_write again without "approval".'
+      : 'Run the command again without TG_APPROVE.'));
     process.exit(1);
   }
-  if (used.ok && !covered) sealStdin();
+  if (!covered) sealStdin();
 }
 
 /** The body as the person should see it: an empty stdin the MCP server always hands over says nothing. */
