@@ -4,6 +4,7 @@ import { formatJson } from '../formatters/json.js';
 import { formatMediaLabel } from '../formatters/plain.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { assertLocalWriteAllowed } from '../guard.js';
 
 export const downloadCommand = new Command('download')
   .description('Download media (photo/document) from a message')
@@ -12,6 +13,7 @@ export const downloadCommand = new Command('download')
   .option('-o, --output <dir>', 'Output directory', './telegram-media')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageIdArg, options) => {
+    assertLocalWriteAllowed();
     const messageId = parseInt(messageIdArg, 10);
     if (Number.isNaN(messageId)) {
       console.error(chalk.red(`Invalid message id: ${messageIdArg}`));

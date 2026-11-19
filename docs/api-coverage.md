@@ -152,7 +152,9 @@ hard refusal applies.
 - **`help.*` / `upload.*` / top-level invoke wrappers** — transport and client plumbing.
 - **`stickers.*` (sticker-set authoring)** — niche authoring flow.
 - **Payments / Stars / gifts spending** — any *paying* method is refused even with write
-  access; read-only balances/transactions are allowed through `api`.
+  access; read-only balances/transactions are allowed through `api`. Over MCP any call
+  with `allowPaidStars` (a paid search, or a message, media, album or forward to a chat that
+  charges for it) is refused in every write mode; without it the call runs as usual.
 - **Account deletion, session termination (`auth.ResetAuthorizations`, `account.DeleteAccount`),
   2FA password changes, and anything sharing the phone number or geolocation** — refused
   outright, matching the rule `click` already follows.
@@ -180,7 +182,11 @@ location sharing, paying):
   `account.ResetWebAuthorization(s)`, `account.SetAuthorizationTTL`,
   `account.ChangeAuthorizationSettings`.
 - **2FA / password:** `account.UpdatePasswordSettings`, `account.ResetPassword`,
-  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`.
+  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`,
+  and the recovery email: `account.ConfirmPasswordEmail`, `ResendPasswordEmail`,
+  `CancelPasswordEmail`.
+- **Passkeys:** `account.InitPasskeyRegistration`, `account.RegisterPasskey`,
+  `account.DeletePasskey` (listing them with `account.GetPasskeys` stays a read).
 - **Phone / email changes & verification:** `account.ChangePhone`, `SendChangePhoneCode`,
   `ConfirmPhone`, `SendConfirmPhoneCode`, `SendVerifyPhoneCode`, `VerifyPhone`,
   `SendVerifyEmailCode`, `VerifyEmail`.
@@ -188,16 +194,29 @@ location sharing, paying):
   `account.SetPrivacy`, `account.UpdateBusinessLocation`, `channels.EditLocation`;
   and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,
   and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an
-  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`.
+  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`,
+  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it stays a read),
+  and `channels.CreateChannel` with `geoPoint` or `address` (a geo group; a plain channel is created).
 - **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,
-  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`.
+  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`, and the
+  Passport reads `account.GetAllSecureValues` / `GetSecureValue` / `GetAuthorizationForm` (`plainData` holds the phone
+  number and email in the clear).
 - **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,
-  `messages.CheckUrlAuthMatchCode`.
+  `messages.CheckUrlAuthMatchCode`, and the read-named `messages.GetEmojiURL` (a login link to
+  the translation platform).
 - **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA
   password — use `telegram transfer-owner`).
-- **Money:** every non-read `payments.*`, plus the read-named token minters
+- **Money:** every non-read `payments.*`, `messages.SendPaidReaction` (its `count` is the Stars
+  it spends), plus the read-named token minters
   `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,
   `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.
+
+**Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text
+search) needs write access in a terminal, like any write; without it, it stays a read.
+**Paying Stars over MCP:** a non-null `allowPaidStars` is refused over MCP for every method
+(`channels.SearchPosts`, `messages.SendMessage`, `SendMedia`, `SendMultiMedia`,
+`ForwardMessages`, …) in every write mode, `on` included, before anything reaches Telegram.
+`help.GetConfig` prints `autologinToken` as `[redacted]`.
 
 **Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,
 `account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,

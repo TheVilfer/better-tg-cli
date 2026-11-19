@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import {
+  assertDownloadTarget,
   getClient,
   getDialogs,
   getMessages,
@@ -7,13 +8,14 @@ import {
   disconnectClient,
   parseTimeOffset,
 } from '../client.js';
-import type { GetMessagesOptions, MessageInfo } from '../client.js';
+import type { ChatInfo, GetMessagesOptions, MessageInfo } from '../client.js';
 import type { TelegramClient } from 'teleproto';
 import { formatMediaLabel } from '../formatters/plain.js';
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
-import { join, relative } from 'path';
+import { writeFileSync, readFileSync, mkdirSync, existsSync, lstatSync } from 'fs';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { assertLocalWriteAllowed } from '../guard.js';
 
 /** Per-chat sync checkpoints, keyed by chat ID (titles can change or collide). */
 interface SyncMeta {
@@ -37,7 +39,7 @@ function readSyncMeta(outputDir: string): SyncMeta {
 }
 
 function writeSyncMeta(outputDir: string, meta: SyncMeta): void {
-  writeFileSync(join(outputDir, '.sync-meta.json'), JSON.stringify(meta, null, 2));
+  writeFileSync(exportPath(outputDir, join(outputDir, '.sync-meta.json')), JSON.stringify(meta, null, 2));
 }
 
 async function formatMessageLines(
@@ -57,7 +59,15 @@ async function formatMessageLines(
   if (msg.media) {
     if (downloadMedia) {
       try {
-        const result = await downloadMessageMedia(client, chatId, msg.id, chatMediaDir);
+        const result = await downloadMessageMedia(client, chatId, msg.id, chatMediaDir, path => {
+          exportPath(outputDir, path);
+          // A directory at the file's place would let teleproto choose the file inside it: stop the sync
+          try {
+            assertDownloadTarget(path);
+          } catch (e) {
+            throw new ExportPathError((e as Error).message);
+          }
+        });
         if (result) {
           const rel = relative(outputDir, result.filePath);
           lines.push(`> [${formatMediaLabel(result.media)}](${rel})`);
@@ -65,6 +75,7 @@ async function formatMessageLines(
           lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
         }
       } catch (mediaErr) {
+        if (mediaErr instanceof ExportPathError) throw mediaErr;
         lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
         console.error(
           chalk.yellow(
@@ -87,6 +98,80 @@ async function formatMessageLines(
 }
 
 /**
+ * The chats `--chat` names. In a terminal: exact titles (or the ID), else every title containing it.
+ * Over MCP the model chose the name, so it must be exactly one chat by ID, @username or exact title;
+ * otherwise this returns the reason to stop, before any file is created. `complete` says whether
+ * `all` is the whole dialog list: when it was cut, one exact title is not proven unique (another
+ * chat with that title may sit beyond the cut), so over MCP an ID is required.
+ */
+export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolean, complete = true): ChatInfo[] | string {
+  // An empty name would match every title (and must never fall back to exporting every chat)
+  if (!name.trim()) return '--chat needs a chat: an ID, @username or title';
+  // A numeric name is an ID, never a title ("123" must not pick a chat titled 123)
+  if (/^-?\d+$/.test(name.trim())) {
+    const byId = all.filter(c => c.id === name.trim());
+    return byId.length > 0 ? byId : `No chat has the ID ${name.trim()}`;
+  }
+  const needle = name.toLowerCase();
+  const exact = all.filter(c => c.title.toLowerCase() === needle);
+  if (!exactOnly) {
+    const chats = exact.length > 0 ? exact : all.filter(c => c.title.toLowerCase().includes(needle));
+    return chats.length > 0 ? chats : `No chat found matching "${name}"`;
+  }
+  const user = needle.replace(/^@/, '');
+  const matches = needle.startsWith('@') ? all.filter(c => c.username?.toLowerCase() === user) : exact;
+  const list = matches.slice(0, 5).map(c => `  ${c.id} ${c.type} ${c.title}${c.username ? ` @${c.username}` : ''}`).join('\n');
+  // A @username is unique on Telegram, so one match is proven even in a cut list; a title is not
+  if (matches.length === 1 && (complete || needle.startsWith('@'))) return matches;
+  if (matches.length === 1) {
+    return `"${name}" matches a chat among the first ${all.length} dialogs, but the list was cut, so another chat may have the same title; use an ID:\n${list}`;
+  }
+  if (matches.length === 0) return `No chat is exactly "${name}". Over MCP sync needs an ID, @username or the exact title.`;
+  return `"${name}" matches ${matches.length} chats; use an ID:\n${list}`;
+}
+
+/** Stops the whole sync: a write would leave the export folder through a symbolic link. */
+export class ExportPathError extends Error {}
+
+/**
+ * `path` itself, or a stop if it is not strictly inside `dir` or if any existing component below
+ * `dir` (the file included) is a symbolic link: writeFileSync and mkdir follow links, so a link
+ * planted in the export folder would send the Markdown, media or checkpoints elsewhere.
+ */
+export function exportPath(dir: string, path: string): string {
+  insideDir(dir, path);
+  let cur = resolve(dir);
+  for (const part of relative(cur, resolve(path)).split(sep)) {
+    cur = join(cur, part);
+    let link: boolean;
+    try {
+      link = lstatSync(cur).isSymbolicLink();
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') break; // nothing below it exists either
+      throw e;
+    }
+    if (link) throw new ExportPathError(`Refusing to write through a symbolic link in ${dir}: ${cur}`);
+  }
+  return path;
+}
+
+/** The Markdown file of a chat: its title and ID, so equal titles never share (or resume) a file. */
+export function chatFileName(chat: Pick<ChatInfo, 'id' | 'title'>): string {
+  const safeTitle = chat.title.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '-');
+  return `${safeTitle} (${chat.id.replace(/[^\w-]/g, '_')}).md`;
+}
+
+/** The header line that names the chat a Markdown file belongs to (checked by --resume). */
+const chatIdLine = (id: string) => `Chat ID: ${id}`;
+
+/** `path` itself, or a stop if it is not strictly inside `dir` (a chat title must never pick the folder). */
+export function insideDir(dir: string, path: string): string {
+  const rel = relative(resolve(dir), resolve(path));
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error(`Refusing to write outside ${dir}: ${path}`);
+  return path;
+}
+
+/**
  * getMessages options for one chat. When resuming from a checkpoint, minId is the
  * lower bound: the default --days window and the 1000-message cap would otherwise
  * drop the gap for good once the checkpoint jumps to the newest ID.
@@ -104,6 +189,9 @@ export function buildSyncFetchOptions(o: {
   return { limit: o.all ? Number.MAX_SAFE_INTEGER : 1000, minDate: o.minDate, maxDate: o.maxDate };
 }
 
+/** How many dialogs `--chat` searches; a list this long may have been cut. */
+const SYNC_DIALOG_LIMIT = 500;
+
 export const syncCommand = new Command('sync')
   .description('Sync messages to markdown files')
   .option('--days <number>', 'Number of days to sync', '7')
@@ -115,15 +203,12 @@ export const syncCommand = new Command('sync')
   .option('--media', 'Also download photos and documents alongside markdown')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
   .action(async (options) => {
+    assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
 
     try {
       const client = await getClient();
       const outputDir = options.output;
-
-      if (!existsSync(outputDir)) {
-        mkdirSync(outputDir, { recursive: true });
-      }
 
       // Determine date range
       let minDate: Date | undefined;
@@ -142,25 +227,32 @@ export const syncCommand = new Command('sync')
         maxDate = parseTimeOffset(options.until);
       }
 
-      // Checkpoints are always written, but only read with --resume
-      const meta = readSyncMeta(outputDir);
-
       let chats;
-      if (options.chat) {
-        const allChats = await getDialogs(client, 500);
-        const needle = options.chat.toLowerCase();
-        const exact = allChats.filter(c => c.id === options.chat || c.title.toLowerCase() === needle);
-        chats = exact.length > 0 ? exact : allChats.filter(c => c.title.toLowerCase().includes(needle));
-
-        if (chats.length === 0) {
-          spinner.fail(`No chat found matching "${options.chat}"`);
+      // Present but empty is a mistake to stop at, never "every chat"
+      if (options.chat !== undefined) {
+        const overMcp = !!process.env.TG_MCP;
+        const dialogs = await getDialogs(client, SYNC_DIALOG_LIMIT);
+        const selected = selectSyncChats(dialogs, options.chat, overMcp, dialogs.length < SYNC_DIALOG_LIMIT);
+        if (typeof selected === 'string') {
+          spinner.fail(selected);
           await disconnectClient();
+          if (overMcp) process.exit(1);
           return;
         }
+        chats = selected;
       } else {
         // Sync all chats with recent activity
         chats = await getDialogs(client, 100);
       }
+
+      if (!existsSync(outputDir)) {
+        mkdirSync(outputDir, { recursive: true });
+      }
+      // Before any file is written: the checkpoints must not be a link out of the folder
+      exportPath(outputDir, join(outputDir, '.sync-meta.json'));
+
+      // Checkpoints are always written, but only read with --resume
+      const meta = readSyncMeta(outputDir);
 
       spinner.text = `Syncing ${chats.length} chats...`;
 
@@ -170,12 +262,18 @@ export const syncCommand = new Command('sync')
         try {
           spinner.text = `Syncing "${chat.title}"...`;
 
-          const safeTitle = chat.title.replace(/[/\\?%*:|"<>]/g, '-');
-          const filePath = join(outputDir, `${safeTitle}.md`);
-          const chatMediaDir = join(outputDir, safeTitle, 'media');
+          const filePath = exportPath(outputDir, join(outputDir, chatFileName(chat)));
+          // By chat ID: a title such as ".." would otherwise put the media outside outputDir
+          const chatMediaDir = exportPath(outputDir, join(outputDir, 'media', chat.id.replace(/[^\w-]/g, '_')));
 
-          // Incremental sync: only messages newer than the last checkpoint
-          const minId = options.resume && existsSync(filePath) ? meta[chat.id]?.lastMessageId : undefined;
+          // Incremental sync. A known checkpoint always bounds the fetch from below, so the gap
+          // since the last run is fetched in full even when it goes to a new file (an export made
+          // before the file name carried the chat ID, or a file at this name that names another
+          // chat, which is then replaced). Appending is a separate question: only to a file whose
+          // header names this chat.
+          const existing = options.resume && existsSync(filePath) ? readFileSync(filePath, 'utf-8') : undefined;
+          const append = existing !== undefined && existing.split('\n', 8).includes(chatIdLine(chat.id));
+          const minId = options.resume ? meta[chat.id]?.lastMessageId : undefined;
 
           const fetchOptions = buildSyncFetchOptions({ all: !!options.all, since: !!options.since, minDate, maxDate, minId });
 
@@ -194,21 +292,23 @@ export const syncCommand = new Command('sync')
           }
 
           let content: string;
-          if (minId) {
+          if (append && minId) {
             // Append new messages to the existing file
             content = readFileSync(filePath, 'utf-8').trimEnd() + '\n\n' + body.join('\n');
           } else {
-            const header: string[] = [`# ${chat.title}`, `\nType: ${chat.type}`];
+            const header: string[] = [`# ${chat.title}`, `\n${chatIdLine(chat.id)}`, `Type: ${chat.type}`];
             if (chat.username) {
               header.push(`Username: @${chat.username}`);
             }
             header.push(`\nSynced: ${new Date().toISOString()}`);
+            // Resumed into a new file: the earlier messages are in a previous export
+            if (minId) header.push(`Continues after message #${minId} (earlier messages are in a previous export)`);
             header.push(`Messages: ${messages.length}`);
             header.push('\n---\n');
             content = [...header, ...body].join('\n');
           }
 
-          writeFileSync(filePath, content);
+          writeFileSync(exportPath(outputDir, filePath), content);
 
           meta[chat.id] = {
             title: chat.title,
@@ -219,6 +319,7 @@ export const syncCommand = new Command('sync')
           synced++;
           newMessages += messages.length;
         } catch (error) {
+          if (error instanceof ExportPathError) throw error;
           // Skip chats that fail
           console.error(chalk.yellow(`\nWarning: Could not sync "${chat.title}": ${error instanceof Error ? error.message : error}`));
         }

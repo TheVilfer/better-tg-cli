@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import { configFile } from './paths.js';
+import type { StrictRead } from './keychain.js';
 
 /**
  * Windows secret store: every secret sits in one file (`secrets.dpapi` in the config dir),
@@ -95,6 +96,15 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
         return null;
       }
     },
+    /** Like get, but a file that cannot be decrypted or parsed is an error, not a missing key. */
+    getStrict(key: string): StrictRead {
+      try {
+        return { ok: true, value: load()[key] ?? null };
+      } catch {
+        // A fixed text: a JSON.parse message would quote the decrypted content, i.e. the secrets
+        return { ok: false, reason: 'Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed' };
+      }
+    },
     set(key: string, value: string): boolean {
       try {
         save({ ...load(true), [key]: value });
@@ -128,5 +138,7 @@ export function isDpapiAvailable(): boolean {
 }
 
 export const dpapiGet = (key: string, fresh = false) => (isDpapiAvailable() ? store.get(key, fresh) : null);
+export const dpapiGetStrict = (key: string): StrictRead =>
+  (isDpapiAvailable() ? store.getStrict(key) : { ok: false, reason: 'Windows DPAPI is not available' });
 export const dpapiSet = (key: string, value: string) => isDpapiAvailable() && store.set(key, value);
 export const dpapiDelete = (key: string) => isDpapiAvailable() && store.delete(key);

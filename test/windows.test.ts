@@ -34,6 +34,23 @@ describe('DPAPI secret store', () => {
     expect(existsSync(file)).toBe(false); // nothing left, no file
   });
 
+  it('a strict read tells a missing key from a file it cannot decrypt (loadConfig needs it)', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    expect(dpapiStore(() => file, fake).getStrict('k')).toEqual({ ok: true, value: null }); // no file yet
+    dpapiStore(() => file, fake).set('k', 'v');
+    expect(dpapiStore(() => file, fake).getStrict('k')).toEqual({ ok: true, value: 'v' });
+    expect(dpapiStore(() => file, fake).getStrict('other')).toEqual({ ok: true, value: null });
+    const broken = dpapiStore(() => file, { protect: () => { throw new Error('no'); }, unprotect: () => { throw new Error('no'); } });
+    const reason = 'Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed';
+    expect(broken.getStrict('k')).toEqual({ ok: false, reason });
+    // Decrypted but damaged JSON: JSON.parse would quote the content; the reason must not
+    const damaged = dpapiStore(() => file, {
+      protect: b64 => b64,
+      unprotect: () => Buffer.from('{"sessionString": "SECRET-MARKER', 'utf8').toString('base64'),
+    });
+    expect(damaged.getStrict('k')).toEqual({ ok: false, reason });
+  });
+
   it('a fresh read sees what another process wrote since; a plain one keeps the cache', () => {
     // The onboard page reads the write mode back at the end; `write-access off` may have run meanwhile
     const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');

@@ -6,7 +6,7 @@ import { primeStdin } from './text.js';
 import { VERSION } from './version.js';
 import { Command } from 'commander';
 import { isMock, profile } from './paths.js';
-import { startMcpServer } from './mcp.js';
+import { commandPaths, startMcpServer } from './mcp.js';
 import { mcpToken, startMcpHttpServer } from './mcp-http.js';
 import { isSecretStoreAvailable } from './secrets.js';
 import { BACKGROUND_CHECK_COMMAND, maybeNotifyUpdate, runBackgroundCheck } from './update.js';
@@ -230,7 +230,7 @@ program
   .option('--token', 'Print the HTTP bearer token (created on first use, kept in the secret store)')
   .option('--rotate-token', 'Replace the HTTP bearer token; clients using the old one stop working')
   .action((options: { http?: boolean; host: string; port: string; readOnly?: boolean; token?: boolean; rotateToken?: boolean }) => {
-    const commands = program.commands.map(c => c.name());
+    const commands = commandPaths(program.commands);
     if (options.token || options.rotateToken) {
       const token = mcpToken({ create: true, rotate: options.rotateToken });
       if (!token) {

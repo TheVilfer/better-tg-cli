@@ -4,8 +4,9 @@ import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
-import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
-import { resolveGeneratedCommand } from './generated-registry.js';
+import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_STARS_REFUSAL } from './api-methods.js';
+import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
+import { paramsOf } from './commands/generated.js';
 import { actionHash, createApproval, describeAction, readsStdin } from './approval.js';
 import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
@@ -32,20 +33,198 @@ export const READ_COMMANDS = new Set([
   'permissions', 'stats', 'scheduled', 'sessions', 'stars', 'invites', 'schema',
 ]);
 
-/** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
- * agents' config (skill) and the server itself. */
-export const EXCLUDED_COMMANDS = new Set(['auth', 'logout', 'transfer-owner', 'update', 'skill', 'onboard', 'mcp', 'help-all']);
+/** Allowlist of writes: commands that change the account or write local data files (download,
+ * sync, avatar). A command in no list is refused, so a new command stays off MCP until it is
+ * classified here. */
+export const WRITE_COMMANDS = new Set([
+  'send', 'reply', 'send-file', 'edit', 'delete', 'forward', 'react', 'click', 'poll', 'vote',
+  'pin', 'unpin', 'mark-read', 'mark-unread', 'typing', 'mute', 'unmute', 'archive', 'unarchive',
+  'pin-chat', 'unpin-chat', 'delete-dialog', 'folder-add', 'folder-remove', 'block', 'unblock',
+  'add-contact', 'del-contact', 'join', 'leave', 'invite-link', 'create-group', 'create-channel',
+  'kick', 'promote', 'edit-permissions', 'topic', 'set-name', 'set-bio', 'set-username',
+  'set-avatar', 'avatar', 'download', 'sync',
+]);
 
-/** Commands registered on the CLI (set by index.ts); anything else is refused. */
+/** Write groups run only these full command paths, each a registered leaf (a command with no
+ * subcommands of its own): a new subcommand at any depth stays off MCP until it is listed here,
+ * instead of inheriting its parent. */
+export const WRITE_SUBCOMMANDS = new Set([
+  'topic create', 'topic edit', 'topic close', 'topic reopen', 'topic pin', 'topic unpin',
+]);
+
+/** Never over MCP: interactive logins, irreversible or self-updating commands, writes into other
+ * agents' config (skill), the server itself and help-all (served by telegram_help). */
+export const NEVER_COMMANDS = new Set(['auth', 'logout', 'transfer-owner', 'update', 'skill', 'onboard', 'mcp', 'help-all']);
+
+/** Classified per call rather than by name: `api` by its TL method, `help` is a listing. */
+export const PER_CALL_COMMANDS = new Set(['api', 'help']);
+
+/** Commands registered on the CLI (set by index.ts), with `group sub` paths for groups; a write
+ * must also be registered. */
 let knownCommands = new Set<string>();
 
 export function setKnownCommands(names: Iterable<string>): void {
   knownCommands = new Set(names);
 }
 
-/** Every other known command changes the account or writes local files (download, sync, avatar). */
 export function isWriteCommand(name: string): boolean {
-  return knownCommands.has(name) && !READ_COMMANDS.has(name) && !EXCLUDED_COMMANDS.has(name);
+  return WRITE_COMMANDS.has(name) && knownCommands.has(name);
+}
+
+interface NamedCommand { name(): string; readonly commands: readonly NamedCommand[] }
+
+/** Every command path of a commander program at any depth (`topic`, `topic create`, …), for setKnownCommands. */
+export function commandPaths(commands: readonly NamedCommand[], prefix = ''): string[] {
+  return commands.flatMap(c => {
+    const path = prefix + c.name();
+    return [path, ...commandPaths(c.commands, `${path} `)];
+  });
+}
+
+/** A registered path with registered subcommands of its own. */
+const hasChildren = (path: string): boolean => [...knownCommands].some(p => p.startsWith(`${path} `));
+/** A group that MCP can write through: it has listed subcommand paths. */
+const isWriteGroup = (cmd: string): boolean => [...WRITE_SUBCOMMANDS].some(p => p.startsWith(`${cmd} `));
+
+/**
+ * The group of a whole call (`args[0]` is the command): `read` and `write` run through their tool,
+ * `never` and `unknown` never run, `invalid` is a malformed call. Decided by the full argv, not the
+ * name alone: a bare `--help`, the TL method behind `api` and generated commands, the arguments of
+ * `write-access`.
+ */
+export type CallClass =
+  | { group: 'read' | 'write'; label: string; help?: boolean }
+  | { group: 'never' | 'unknown' | 'invalid'; reason: string };
+
+export function classifyCall(args: string[]): CallClass {
+  const [cmd] = args;
+  if (!cmd || cmd.startsWith('-')) return { group: 'invalid', reason: 'args[0] must be a command name, not a flag' };
+  // A pure help request just prints help (commander never runs the action), so it is a safe read —
+  // including a write, never or refused method's help (e.g. `["account","delete-account","--help"]`).
+  // Only for a name the CLI really has, so an unknown name is refused like any other unknown call.
+  if (isPureHelpRequest(args)) {
+    const named = READ_COMMANDS.has(cmd) || WRITE_COMMANDS.has(cmd) || NEVER_COMMANDS.has(cmd) || PER_CALL_COMMANDS.has(cmd)
+      || isGeneratedNamespace(cmd) || Boolean(rootMethodClassName(cmd));
+    return named ? { group: 'read', label: cmd, help: true } : unknown(cmd);
+  }
+  // A never command name that is actually a generated API method (e.g. `["auth","send-code"]`,
+  // where `auth` is both the login command and a TL namespace) is classified below.
+  if (NEVER_COMMANDS.has(cmd) && !resolveGeneratedCommand(args)) {
+    return { group: 'never', reason: `"${cmd}" is not available over MCP; the user runs it in a terminal` };
+  }
+  // MCP only shows the write mode; any argument would change it
+  if (cmd === 'write-access' && args.length > 1) {
+    return { group: 'never', reason: 'Write access is changed in a terminal (`telegram write-access ask|on|off`), not over MCP' };
+  }
+  if (cmd === 'watch' && !args.some(a => /^(-t|-n|--timeout|--limit)(=|$)/.test(a))) {
+    return { group: 'invalid', reason: 'watch needs -t <seconds> or -n <count> (calls time out after 120s)' };
+  }
+  // `api` is classified per method: Get*/Check*/Search*/Resolve* are reads, the rest writes, refused
+  // methods never run. The name is resolved as the CLI does (case, spaces), so an unknown method is
+  // refused rather than guessed from its prefix.
+  if (cmd === 'api') {
+    const method = apiMethodToken(args);
+    if (!method) return { group: 'invalid', reason: 'api needs a method, e.g. ["api","messages.GetHistory"]' };
+    let className: string;
+    try {
+      className = resolveApiMethod(method).className;
+    } catch (e) {
+      return { group: 'unknown', reason: `${e instanceof Error ? e.message : String(e)} See telegram_help.` };
+    }
+    return byMethod(className, `api ${className}`, args, API_VALUED_OPTIONS);
+  }
+  // Generated top-level API commands — `telegram <namespace> <method>`, `telegram <root-method>`,
+  // and a method on a clash namespace (`stats get-broadcast-stats`) — classified by the underlying
+  // TL method, exactly like `api`. `resolveGeneratedCommand` returns null when the operand is not a
+  // method name (e.g. `["stats","@chat"]`), so those fall through to the curated classification.
+  const className = resolveGeneratedCommand(args);
+  if (className) {
+    const second = args[1];
+    return byMethod(className, second && !second.startsWith('-') ? `${cmd} ${second}` : cmd, args, generatedValuedOptions(className));
+  }
+  // `help` / `help <command>` is a harmless listing (its help.* methods were handled above).
+  if (cmd === 'help' || READ_COMMANDS.has(cmd)) return { group: 'read', label: cmd };
+  if (isWriteGroup(cmd) || (isWriteCommand(cmd) && hasChildren(cmd))) {
+    // Walk down the registered subcommands as commander does; only a listed leaf runs
+    let path = cmd;
+    let i = 1;
+    while (i < args.length && !args[i].startsWith('-') && knownCommands.has(`${path} ${args[i]}`)) path += ` ${args[i++]}`;
+    if (hasChildren(path)) {
+      const next = args[i];
+      if (next === undefined || next.startsWith('-')) {
+        const subs = [...knownCommands].filter(p => p.startsWith(`${path} `) && !p.slice(path.length + 1).includes(' ')).map(p => p.slice(path.length + 1));
+        return { group: 'invalid', reason: `${path} needs a subcommand: ${subs.join(', ')}` };
+      }
+      return unknown(`${path} ${next}`);
+    }
+    if (path === cmd && args[1] && !args[1].startsWith('-')) return unknown(`${cmd} ${args[1]}`);
+    return WRITE_SUBCOMMANDS.has(path) && isWriteCommand(cmd) ? { group: 'write', label: path } : unknown(path);
+  }
+  if (isWriteCommand(cmd)) return { group: 'write', label: cmd };
+  return unknown(cmd);
+}
+
+const unknown = (cmd: string): CallClass => ({ group: 'unknown', reason: `Unknown command "${cmd}"; see telegram_help` });
+
+/** The options that carry JSON params: `api -p/--params`, a generated command's `--json-params`. */
+const PARAMS_OPTION = /^(-p|--params|--json-params)$/;
+
+/** `api` has no valued options besides -p/--params, which asksPaidStars reads as params. */
+const API_VALUED_OPTIONS = new Set<string>();
+
+/** A generated command's options that take a value: every non-`true` param, and `--json-params`. */
+function generatedValuedOptions(className: string): Set<string> {
+  const out = new Set(['--json-params']);
+  for (const p of paramsOf(className)) if (!p.trueFlag) out.add(`--${p.kebab}`);
+  return out;
+}
+
+/**
+ * Whether a call asks to pay Stars: the generated `--allow-paid-stars` option, or a top-level
+ * `allowPaidStars` in the JSON of a params option. Only option names and the params object count,
+ * so a query that merely contains the word (`--query allowPaidStars`) stays a free read. The value
+ * of an option in `valued` is skipped as commander would consume it, so `--query
+ * '--allow-paid-stars=5'` is a search for that text, not a payment. A write may read its params
+ * from stdin (`-p -`), which this does not see; the CLI refuses that on the parsed params.
+ */
+function asksPaidStars(args: string[], valued: Set<string>): boolean {
+  for (let i = 1; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--') break;
+    if (/^--allow-paid-stars(=|$)/.test(a)) return true;
+    let json: string | undefined;
+    const inline = /^(-p|--params|--json-params)=(.*)$/s.exec(a);
+    if (inline) json = inline[2];
+    else if (PARAMS_OPTION.test(a)) json = args[++i]; // the value is the next argument
+    else if (/^-p./s.test(a)) json = a.slice(2); // `-p{…}`
+    else {
+      if (valued.has(a)) i++; // its value is data, whatever it looks like
+      continue;
+    }
+    if (json !== undefined && hasPaidKey(json)) return true;
+  }
+  return false;
+}
+
+function hasPaidKey(json: string): boolean {
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return false;
+    // Parsed, so an escaped key such as "allow\u0050aidStars" counts; null is no payment, as in the CLI
+    return Object.hasOwn(parsed, 'allowPaidStars') && (parsed as Record<string, unknown>).allowPaidStars !== null;
+  } catch {
+    return false;
+  }
+}
+
+function byMethod(method: string, label: string, args: string[], valued: Set<string>): CallClass {
+  const refusal = apiRefusalReason(method);
+  if (refusal) return { group: 'never', reason: refusal };
+  // A call that would spend Stars (a paid search, a paid message or forward) never runs over MCP, in
+  // any write mode. Params read from stdin (`-p -`) are not visible here; the CLI refuses those on the
+  // parsed params and on the built request, see mcpPaidStarsRefusal.
+  if (asksPaidStars(args, valued)) return { group: 'never', reason: PAID_STARS_REFUSAL };
+  return { group: isApiReadMethod(method) ? 'read' : 'write', label };
 }
 
 export const TOOLS = [
@@ -109,73 +288,17 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   if (!Array.isArray(args) || !args.length || !args.every(a => typeof a === 'string')) {
     return 'args must be a non-empty array of strings, command first';
   }
-  const [cmd] = args as string[];
-  if (cmd.startsWith('-')) return 'args[0] must be a command name, not a flag';
-  // A pure help request just prints help (commander never runs the action), so it is a safe read —
-  // including a write or refused method's help (e.g. `["account","delete-account","--help"]`).
-  if (isPureHelpRequest(args as string[])) {
-    return tool === 'telegram_read'
-      ? { argv: args as string[], readOnly: true }
-      : `"${cmd} --help" only prints help; use telegram_read`;
-  }
-  // An excluded command name that is actually a generated API method (e.g. `["auth","send-code"]`,
-  // where `auth` is both the login command and a TL namespace) is classified below, not excluded.
-  if (EXCLUDED_COMMANDS.has(cmd) && !resolveGeneratedCommand(args as string[])) {
-    return `"${cmd}" is not available over MCP; the user runs it in a terminal`;
-  }
-  if (cmd === 'write-access' && args.length > 1) {
-    return 'Write access is changed in a terminal (`telegram write-access ask|on|off`), not over MCP';
-  }
-  if (cmd === 'watch' && !args.some(a => /^(-t|-n|--timeout|--limit)(=|$)/.test(a))) {
-    return 'watch needs -t <seconds> or -n <count> (calls time out after 120s)';
-  }
-  // `api` is classified per method: a read method (Get*/Check*/Search*/Resolve*) goes through
-  // telegram_read, everything else through telegram_write; refused methods never run.
-  if (cmd === 'api') {
-    const method = apiMethodToken(args as string[]);
-    if (!method) return 'api needs a method, e.g. ["api","messages.GetHistory"]';
-    const refusal = apiRefusalReason(method);
-    if (refusal) return refusal;
-    const read = isApiReadMethod(method);
-    if (tool === 'telegram_read') {
-      return read ? { argv: args as string[], readOnly: true } : `"api ${method}" changes something; use telegram_write`;
-    }
-    if (read) return `"api ${method}" is read-only; use telegram_read`;
-    const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
-    return { argv: args as string[], readOnly: false, stdin };
-  }
-  // Generated top-level API commands — `telegram <namespace> <method>`, `telegram <root-method>`,
-  // and a method on a clash namespace (`stats get-broadcast-stats`) — classified by the underlying
-  // TL method, exactly like `api`. `resolveGeneratedCommand` returns null when the operand is not a
-  // method name (e.g. `["stats","@chat"]`), so those fall through to the curated classification.
-  {
-    const className = resolveGeneratedCommand(args as string[]);
-    if (className) {
-      const second = (args as string[])[1];
-      const label = second && !second.startsWith('-') ? `${cmd} ${second}` : cmd;
-      const refusal = apiRefusalReason(className);
-      if (refusal) return refusal;
-      const read = isApiReadMethod(className);
-      if (tool === 'telegram_read') {
-        return read ? { argv: args as string[], readOnly: true } : `"${label}" changes something; use telegram_write`;
-      }
-      if (read) return `"${label}" is read-only; use telegram_read`;
-      const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
-      return { argv: args as string[], readOnly: false, stdin };
-    }
-  }
-  // `help` / `help <command>` is a harmless listing (its help.* methods were handled above).
-  if (cmd === 'help') return tool === 'telegram_read' ? { argv: args as string[], readOnly: true } : '"help" is read-only; use telegram_read';
-  const known = READ_COMMANDS.has(cmd) || isWriteCommand(cmd);
+  const argv = args as string[];
+  const call = classifyCall(argv);
+  if ('reason' in call) return call.reason;
   if (tool === 'telegram_read') {
-    if (!READ_COMMANDS.has(cmd)) {
-      return known ? `"${cmd}" changes something; use telegram_write` : `Unknown command "${cmd}"; see telegram_help`;
-    }
-    return { argv: args as string[], readOnly: true };
+    return call.group === 'read' ? { argv, readOnly: true } : `"${call.label}" changes something; use telegram_write`;
   }
-  if (READ_COMMANDS.has(cmd)) return `"${cmd}" is read-only; use telegram_read`;
+  if (call.group === 'read') {
+    return call.help ? `"${argv[0]} --help" only prints help; use telegram_read` : `"${call.label}" is read-only; use telegram_read`;
+  }
   const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
-  return { argv: args as string[], readOnly: false, stdin };
+  return { argv, readOnly: false, stdin };
 }
 
 /**
@@ -218,7 +341,8 @@ const cap = (s: string) =>
   s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
 
 function childEnv(plan: Plan): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1' };
+  // TG_MCP: local file writes (download, sync, avatar) follow the write mode, see assertLocalWriteAllowed
+  const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1', TG_MCP: '1' };
   if (plan.readOnly) env.TG_READ_ONLY = '1';
   // Only the approval for this call, never one inherited from the server's own environment
   delete env.TG_APPROVE;
