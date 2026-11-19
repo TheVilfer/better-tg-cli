@@ -119,6 +119,47 @@ function walkObjects(value: unknown, visit: (obj: Record<string, unknown>, key: 
 const GEO_TYPE = /geo|venue|pageblockmap/i;
 
 /**
+ * Input media an MCP call may send (lowercase): a new or existing photo or document, a poll and a
+ * plain dice. Everything else is refused before teleproto sees it, MessageMedia* included: teleproto
+ * converts a `MessageMediaContact`, a `Message` or a venue into the matching InputMedia inside
+ * `client.invoke`, after the last check of the CLI.
+ */
+const MCP_INPUT_MEDIA = new Set([
+  'inputmediauploadedphoto', 'inputmediauploadeddocument', 'inputmediaphoto', 'inputmediadocument',
+  'inputmediapoll', 'inputmediadice',
+]);
+
+/** Fields of type InputMedia in the schema (`order` of bots.ReorderPreviewMedias is left out: that method is off the allowlist). */
+const INPUT_MEDIA_KEYS = new Set(['media', 'attachedMedia', 'solutionMedia', 'extendedMedia', 'invoiceMedia', 'newMedia']);
+
+/** The first value in an InputMedia field, at any depth, that is not on MCP_INPUT_MEDIA. */
+function mcpMediaRefusal(value: unknown): string | null {
+  const refuse = (type: string) => `Refused over MCP: ${type} is not a media type MCP sends; it may send an uploaded or existing photo or document, a poll or a dice.`;
+  const visit = (v: unknown): string | null => {
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        const r = visit(x);
+        if (r) return r;
+      }
+      return null;
+    }
+    if (!v || typeof v !== 'object' || v instanceof Uint8Array) return null;
+    for (const [k, x] of Object.entries(v)) {
+      if (INPUT_MEDIA_KEYS.has(k) && x != null && x !== false) {
+        for (const m of Array.isArray(x) ? x : [x]) {
+          const type = m && typeof m === 'object' ? typeNameOf(m) : undefined;
+          if (!type || !MCP_INPUT_MEDIA.has(type.toLowerCase())) return refuse(type ?? `a ${typeof m} in "${k}"`);
+        }
+      }
+      const r = visit(x);
+      if (r) return r;
+    }
+    return null;
+  };
+  return visit(value);
+}
+
+/**
  * Params an allowlisted method may carry that go beyond what MCP allows, refused over MCP (TG_MCP
  * or TG_READ_ONLY) in every write mode. Checked on the prototype-free params in runApiMethod and
  * again on the built request in invokeApi; null in a terminal or when nothing matches.
@@ -140,6 +181,8 @@ export function mcpParamRefusal(name: string, params?: Record<string, unknown>):
     return null;
   });
   if (nested) return nested;
+  const media = mcpMediaRefusal(params);
+  if (media) return media;
   // An empty referer imports nothing
   if (lower === 'contacts.resolveusername' && isSet(params, 'referer') && params.referer !== '') {
     return 'Refused over MCP: referer imports an affiliate link; resolve the username without it.';

@@ -98,12 +98,11 @@ export const MCP_API_ALLOWLIST: readonly McpApiGroup[] = [
   },
   {
     access: 'write',
-    title: 'Send, edit, delete and forward messages',
-    reason: 'What `send`, `reply`, `edit`, `delete`, `forward` and `typing` do (contact or geo media, map blocks, paid messages, priced suggested posts and stakes are refused).',
+    title: 'Send, edit and delete messages',
+    reason: 'What `send`, `reply`, `edit`, `delete` and `typing` do (media only as a photo, document, poll or dice; map blocks, paid messages, priced suggested posts and stakes are refused). A raw forward is not allowed: Telegram copies the source media, so `forward` checks it first.',
     methods: [
       'messages.SendMessage', 'messages.SendMedia', 'messages.SendMultiMedia', 'messages.EditMessage',
-      'messages.DeleteMessages', 'channels.DeleteMessages', 'messages.ForwardMessages',
-      'messages.SetTyping',
+      'messages.DeleteMessages', 'channels.DeleteMessages', 'messages.SetTyping',
     ],
   },
   {

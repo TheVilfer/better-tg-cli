@@ -349,9 +349,18 @@ describe('no allowlisted method can carry another request', () => {
 const STAKE = { _: 'inputMediaStakeDice', gameHash: 'h', tonAmount: '1', clientSeed: { _base64: 'AA==' } };
 const PRICED_POST = { _: 'suggestedPost', price: { _: 'starsAmount', amount: '5', nanos: 0 } };
 const MAP_BLOCK = { _: 'inputRichMessage', blocks: [{ _: 'inputPageBlockMap', geo: { _: 'inputGeoPoint', lat: 1, long: 2 }, zoom: 1, w: 1, h: 1 }] };
+const DICE = { _: 'inputMediaDice', emoticon: '🎲' };
+const CONTACT_MEDIA = { _: 'messageMediaContact', phoneNumber: '15550000009', firstName: 'Bob', lastName: '', vcard: '', userId: '0' };
+const EXTERNAL_PHOTO = { _: 'inputMediaPhotoExternal', url: 'https://example.com/a.jpg' };
 const REFUSED_PARAMS: [string, Record<string, unknown>, string[], RegExp][] = [
   ['messages.SendMessage', { peer: '@c', message: 'x', suggestedPost: PRICED_POST }, ['--peer', '@c', '--message', 'x', '--suggested-post', JSON.stringify(PRICED_POST)], /suggested post with a price/],
-  ['messages.ForwardMessages', { fromPeer: '@c', toPeer: '@d', id: [1], suggestedPost: PRICED_POST }, ['--from-peer', '@c', '--to-peer', '@d', '--id', '1', '--json-params', JSON.stringify({ suggestedPost: PRICED_POST })], /suggested post with a price/],
+  ['messages.SendMedia', { peer: '@c', message: '', media: DICE, suggestedPost: PRICED_POST }, ['--peer', '@c', '--message', '', '--media', JSON.stringify(DICE), '--json-params', JSON.stringify({ suggestedPost: PRICED_POST })], /suggested post with a price/],
+  // Only the safe input media go through: a MessageMedia* object is converted into InputMedia by
+  // teleproto inside client.invoke (a contact card keeps its phone number), so it is refused before
+  ['messages.SendMedia', { peer: '@c', message: '', media: CONTACT_MEDIA }, ['--peer', '@c', '--message', '', '--media', JSON.stringify(CONTACT_MEDIA)], /messageMediaContact is not a media type MCP sends/i],
+  ['messages.EditMessage', { peer: '@c', id: 1, media: CONTACT_MEDIA }, ['--peer', '@c', '--id', '1', '--media', JSON.stringify(CONTACT_MEDIA)], /messageMediaContact is not a media type MCP sends/i],
+  ['messages.SendMultiMedia', { peer: '@c', multiMedia: [{ _: 'inputSingleMedia', media: EXTERNAL_PHOTO, randomId: '1', message: '' }] }, ['--peer', '@c', '--json-params', JSON.stringify({ multiMedia: [{ _: 'inputSingleMedia', media: EXTERNAL_PHOTO, randomId: '1', message: '' }] })], /inputMediaPhotoExternal is not a media type MCP sends/i],
+  ['messages.SendMedia', { peer: '@c', message: '', media: { _: 'inputMediaWebPage', url: 'https://example.com' } }, ['--peer', '@c', '--message', '', '--media', '{"_":"inputMediaWebPage","url":"https://example.com"}'], /inputMediaWebPage is not a media type MCP sends/i],
   ['messages.SendMedia', { peer: '@c', message: '', media: STAKE }, ['--peer', '@c', '--message', '', '--media', JSON.stringify(STAKE)], /stake/],
   ['messages.SendMultiMedia', { peer: '@c', multiMedia: [{ _: 'inputSingleMedia', media: STAKE, randomId: '1', message: '' }] }, ['--peer', '@c', '--json-params', JSON.stringify({ multiMedia: [{ _: 'inputSingleMedia', media: STAKE, randomId: '1', message: '' }] })], /stake/],
   ['messages.SendMessage', { peer: '@c', message: 'x', allowPaidFloodskip: true }, ['--peer', '@c', '--message', 'x', '--allow-paid-floodskip'], /allowPaidFloodskip/],

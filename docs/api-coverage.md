@@ -228,7 +228,7 @@ Over MCP only the allowlist below runs.
 ## 5. Raw API over MCP: the allowlist
 
 Over MCP (the `telegram_read` and `telegram_write` tools) a raw call, `api <method>` or a
-generated `<namespace> <method>` command, runs only if its method is one of these **92**
+generated `<namespace> <method>` command, runs only if its method is one of these **91**
 of the 823 TL methods. Any other method is refused before anything runs: "not available over
 MCP; run it in a terminal". The rules in section 4 still apply on top (geo or contact media,
 a phone-privacy exception, `allowPaidStars`), and a read runs through the read tool, a write
@@ -276,9 +276,9 @@ The list lives in `src/mcp-api-allowlist.ts`; this section is generated from it.
 
 `messages.GetMessagesReactions`, `messages.GetMessageReactionsList`, `messages.GetUnreadReactions`, `messages.GetAvailableReactions`
 
-**Write: Send, edit, delete and forward messages.** What `send`, `reply`, `edit`, `delete`, `forward` and `typing` do (contact or geo media, map blocks, paid messages, priced suggested posts and stakes are refused).
+**Write: Send, edit and delete messages.** What `send`, `reply`, `edit`, `delete` and `typing` do (media only as a photo, document, poll or dice; map blocks, paid messages, priced suggested posts and stakes are refused). A raw forward is not allowed: Telegram copies the source media, so `forward` checks it first.
 
-`messages.SendMessage`, `messages.SendMedia`, `messages.SendMultiMedia`, `messages.EditMessage`, `messages.DeleteMessages`, `channels.DeleteMessages`, `messages.ForwardMessages`, `messages.SetTyping`
+`messages.SendMessage`, `messages.SendMedia`, `messages.SendMultiMedia`, `messages.EditMessage`, `messages.DeleteMessages`, `channels.DeleteMessages`, `messages.SetTyping`
 
 **Write: Reactions and read marks.** What `react`, `mark-read` and `mark-unread` do (a paid reaction is a different method and stays refused).
 

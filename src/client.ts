@@ -421,6 +421,11 @@ function classifyButton(btn: RawButton, index: number, row: number, col: number)
  * `read`/`search`/`watch`/`click` show the actual reply instead of "(no text)".
  */
 export function messageText(msg: Api.Message): string {
+  const text = plainMessageText(msg);
+  return isOverMcp() && isLoginServiceMessage(msg) ? maskLoginCodes(text) : text;
+}
+
+function plainMessageText(msg: Api.Message): string {
   if (msg.message) return msg.message;
   if (msg.richMessage) {
     try {
@@ -430,6 +435,37 @@ export function messageText(msg: Api.Message): string {
     }
   }
   return '';
+}
+
+/** The MCP server sets TG_MCP on every call and TG_READ_ONLY on the read tool. */
+const isOverMcp = (): boolean => !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
+
+/** Telegram's service account: it delivers login codes to every logged-in client. */
+const LOGIN_SERVICE_USER_ID = '777000';
+
+const isLoginServicePeer = (peer: unknown): boolean =>
+  !!peer && typeof peer === 'object' && 'userId' in peer && String((peer as { userId: unknown }).userId) === LOGIN_SERVICE_USER_ID;
+
+/**
+ * A message from (or in the chat with, or forwarded from) Telegram's service account 777000. Works
+ * on a TL `Message` and on its JSON form.
+ */
+function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown }): boolean {
+  const fwd = msg.fwdFrom as { fromId?: unknown } | null | undefined;
+  return isLoginServicePeer(msg.peerId) || isLoginServicePeer(msg.fromId) || isLoginServicePeer(fwd?.fromId);
+}
+
+export const LOGIN_CODE_HIDDEN = '[login code hidden]';
+
+/**
+ * Hide login codes in a service message and keep the rest of the text: the word after "code:"
+ * (`Login code: 52813`, `This is your login code: aB3dE9fG`, `Код для входа в Telegram: 52813`) and
+ * any other run of letters and digits with a digit in it, four characters or longer.
+ */
+export function maskLoginCodes(text: string): string {
+  return text
+    .replace(/((?:code|код)[^\n:：]{0,40}[:：]\s*)[A-Za-z0-9_-]+/giu, `$1${LOGIN_CODE_HIDDEN}`)
+    .replace(/(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_-])/g, LOGIN_CODE_HIDDEN);
 }
 
 /**
@@ -1956,6 +1992,25 @@ export async function forwardMessages(
   const from = await resolveChat(client, fromChat);
   const to = await resolveChat(client, toChat);
 
+  // Over MCP: Telegram copies the source media, so a contact card or a location the model never
+  // saw (MCP hides them when reading) would reach the recipient. Check the sources first.
+  // A message that could not be fetched is refused too: it cannot be checked.
+  if (isOverMcp()) {
+    const sources = await client.getMessages(from, { ids: msgIds });
+    for (const [i, id] of msgIds.entries()) {
+      const m = sources[i];
+      if (!(m instanceof Api.Message) || m.id !== id) {
+        throw new Error(`Refused over MCP: message ${id} was not found or cannot be checked before forwarding. Forward it in a terminal.`);
+      }
+      if (isSharedLocationOrContact(m.media) || hasRichLocation(m)) {
+        throw new Error(`Refused over MCP: message ${id} holds a contact card or a location; forwarding it would share them. Forward it in a terminal.`);
+      }
+      if (isLoginServiceMessage(m)) {
+        throw new Error(`Refused over MCP: message ${id} is from Telegram's login service (777000) and may hold a login code.`);
+      }
+    }
+  }
+
   // forwardMessages throws if the forward fails; on success every requested id
   // was forwarded. The returned array under-reports (a GramJS quirk), so we
   // report the requested count instead.
@@ -1971,6 +2026,19 @@ export async function forwardMessages(
     fromTitle: getChatTitle(from),
     toTitle: getChatTitle(to),
   };
+}
+
+/** Media that carries a phone number or a place: a contact card, a geo point, live location or a venue. */
+function isSharedLocationOrContact(media: Api.TypeMessageMedia | undefined): boolean {
+  return media instanceof Api.MessageMediaContact || media instanceof Api.MessageMediaGeo
+    || media instanceof Api.MessageMediaGeoLive || media instanceof Api.MessageMediaVenue;
+}
+
+/** A map block (or any geo or venue object) inside a rich message. */
+function hasRichLocation(msg: Api.Message): boolean {
+  const rich = (msg as { richMessage?: unknown }).richMessage;
+  if (rich == null) return false;
+  return /"(?:className|_)":"[^"]*(geo|venue|pageBlockMap)/i.test(JSON.stringify(rich, (_k, v) => plainJsonValue(v)));
 }
 
 // --- Pin / Unpin ---
@@ -3102,18 +3170,66 @@ async function materializeApiParams(client: TelegramClient, value: unknown): Pro
  */
 const MCP_REDACTED_KEY = /^(phone|phoneNumber|vcard|birthday|businessLocation|note|location|address)$|geo/i;
 
+/**
+ * Keys redacted over MCP only on some constructors (lowercase name → keys): the place ID and its
+ * directory (Foursquare, Google Places) of a venue, which find the hidden address again, and the
+ * slug of a Premium gift code, which is the redeem link itself.
+ */
+const MCP_REDACTED_BY_TYPE: [RegExp, Set<string>][] = [
+  [/venue/, new Set(['venueId', 'provider'])],
+  [/^messageactiongiftcode$/, new Set(['slug'])],
+  // A giveaway's result and a boost carry the slug of the gift code they hand out
+  [/./, new Set(['giftCodeSlug', 'usedGiftSlug'])],
+];
+
+/** The constructor name of a value in a raw result: `className` (TL `toJSON`) or the JSON `_`. */
+function tlTypeName(val: unknown): string | undefined {
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return undefined;
+  const v = val as { className?: unknown; _?: unknown };
+  const name = typeof v.className === 'string' ? v.className : typeof v._ === 'string' ? v._ : undefined;
+  return name?.toLowerCase();
+}
+
+/** Big integers as strings and bytes as base64, the plain part of the result replacer. */
+function plainJsonValue(val: unknown): unknown {
+  if (typeof val === 'bigint') return val.toString();
+  if (bigInt.isInstance(val)) return val.toString();
+  if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+  return val;
+}
+
+/** A message of the login service with its codes hidden: `message` and every text of `richMessage`. */
+function maskLoginServiceJson(val: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...val };
+  if (typeof out.message === 'string') out.message = maskLoginCodes(out.message);
+  if (out.richMessage != null) {
+    out.richMessage = JSON.parse(JSON.stringify(out.richMessage, (_k, v) => plainJsonValue(v)),
+      (k, v) => (typeof v === 'string' && k !== 'className' && k !== '_' ? maskLoginCodes(v) : v));
+  }
+  return out;
+}
+
 /** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
 export function serializeApiResult(result: unknown): string {
-  const overMcp = !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
+  const overMcp = isOverMcp();
   const pretty = isTTY || process.env.TG_JSON_PRETTY === '1';
-  const replacer = (_key: string, val: unknown): unknown => {
-    if (typeof val === 'bigint') return val.toString();
-    if (bigInt.isInstance(val)) return val.toString();
-    if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+  const replacer = function (this: unknown, _key: string, val: unknown): unknown {
+    const plain = plainJsonValue(val);
+    if (plain !== val) return plain;
     // help.GetConfig may carry a token that logs into Telegram's web pages as this account
     if (_key === 'autologinToken' && val) return '[redacted]';
+    if (!overMcp) return val;
     // Over MCP: phone numbers, birthdays, private notes and locations stay out of the model's context
-    if (overMcp && val != null && MCP_REDACTED_KEY.test(_key)) return '[redacted]';
+    if (val != null && MCP_REDACTED_KEY.test(_key)) return '[redacted]';
+    const holder = tlTypeName(this);
+    if (val != null && holder && MCP_REDACTED_BY_TYPE.some(([type, keys]) => type.test(holder) && keys.has(_key))) return '[redacted]';
+    // Login codes from the service account 777000 (history, search, dialogs, a short update)
+    const type = tlTypeName(val);
+    const obj = val as Record<string, unknown>;
+    if ((type === 'message' && isLoginServiceMessage(obj))
+      || (type === 'updateshortmessage' && String(obj.userId) === LOGIN_SERVICE_USER_ID)) {
+      return maskLoginServiceJson(obj);
+    }
     return val;
   };
   const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);

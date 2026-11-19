@@ -83,13 +83,13 @@ it('control: an ordinary write runs in mode "on" (so the spies above would see a
   expect(invokeApi).toHaveBeenCalledTimes(1);
 });
 
-// A paid message, media, album or forward (allowPaidStars) over MCP, in write mode "on":
+// A paid message, media or album (allowPaidStars) over MCP, in write mode "on" (a raw forward is
+// off the MCP allowlist altogether):
 // [class name, namespace, generated method, the free params]
 const PAID: [string, string, string, Record<string, unknown>][] = [
   ['messages.SendMessage', 'messages', 'send-message', { peer: '@c', message: 'hi' }],
-  ['messages.SendMedia', 'messages', 'send-media', { peer: '@c', message: '', media: { _: 'inputMediaEmpty' } }],
+  ['messages.SendMedia', 'messages', 'send-media', { peer: '@c', message: '', media: { _: 'inputMediaDice', emoticon: '🎲' } }],
   ['messages.SendMultiMedia', 'messages', 'send-multi-media', { peer: '@c', multiMedia: [] }],
-  ['messages.ForwardMessages', 'messages', 'forward-messages', { fromPeer: '@a', toPeer: '@c', id: [1] }],
   ['channels.SearchPosts', 'channels', 'search-posts', { query: 'x', offsetPeer: { _: 'inputPeerEmpty' }, limit: 10 }],
 ];
 
