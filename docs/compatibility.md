@@ -4,9 +4,9 @@
 
 How Better-TG-CLI behaves inside each agent client, and how we know it. A client is
 **supported** only after install, reading, write approval and refusal were all seen working
-in the same configuration with one named client version, on a named date (`live`), in every
-configuration the client lists. Everything else comes from the client's
-docs or source and says what we expect, not what we saw.
+with one named client version on a named date (`live`), in every configuration the client
+lists. Everything else comes from the client's docs or source and says what we expect, not
+what we saw.
 
 Supported: **0** of 22. Untested: 22. Not possible yet: 0.
 

@@ -12,11 +12,13 @@ const ISSUE_CLIENTS = [
 ];
 
 const byId = (id: string) => CLIENTS.find(c => c.id === id)!;
-const LIVE = { level: 'live', version: '9.9.9', date: '2026-11-20' } as const;
+const at = (version: string) => ({ level: 'live', version, date: '2026-11-20' }) as const;
+const LIVE = at('9.9.9');
+/** The cell with a live entry added. */
+const live = <T extends { evidence: unknown[] }>(c: T) => ({ ...c, evidence: [...c.evidence, LIVE] });
 
 /** A copy of a real record with every outcome cell given a live entry (or with `patch` on top). */
 function withLive(base: ClientRecord, patch: Partial<ClientRecord> = {}): ClientRecord {
-  const live = <T extends { evidence: unknown[] }>(c: T) => ({ ...c, evidence: [...c.evidence, LIVE] });
   return {
     ...base,
     install: live(base.install),
@@ -48,7 +50,7 @@ describe('compatibility matrix', () => {
     }
   });
 
-  it('nothing is supported without a live run', () => {
+  it('no client in the data is supported without a live run', () => {
     for (const c of CLIENTS) {
       if (statusOf(c) === 'supported') {
         for (const cell of Object.values(outcomeCells(c))) {
@@ -61,7 +63,6 @@ describe('compatibility matrix', () => {
 
   it('a live entry on elicitation or on a read that is not "works" does not make a client supported', () => {
     const base = byId('codex');
-    const live = <T extends { evidence: unknown[] }>(c: T) => ({ ...c, evidence: [...c.evidence, LIVE] });
     // Install, read and the advertised form seen live, but no write was approved or refused live
     const formOnly: ClientRecord = { ...base, install: live(base.install), read: live(base.read), elicitation: live(base.elicitation) };
     expect(validate([formOnly])).toEqual([]);
@@ -80,7 +81,6 @@ describe('compatibility matrix', () => {
 
   it('checks seen live in different configurations do not add up to supported', () => {
     const base = byId('opencode');
-    const at = (version: string) => ({ level: 'live', version, date: '2026-11-20' }) as const;
     // Install and read live in V1 and V2, approval only in V1, refusal only in V2 (cases)
     const byCase: ClientRecord = {
       ...base,
@@ -229,7 +229,7 @@ describe('compatibility matrix', () => {
     expect(validate([unlabelled]).join('\n')).toMatch(/a case without a label/);
   });
 
-  it('per-interface facts the review asked for', () => {
+  it('records per-interface config paths, environments, GUI and headless cases', () => {
     const warp = casesOf(byId('warp').config).map(k => k.when + ' ' + k.value).join('\n');
     expect(warp).toMatch(/CLI \(macOS\) `~\/\.warp_cli\/\.mcp\.json`/);
     expect(byId('aside').stdioEnv.value).toBe('unknown');

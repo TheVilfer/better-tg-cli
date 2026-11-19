@@ -7,8 +7,8 @@
  * date). A cell nobody could confirm is `unknown` and has no evidence.
  *
  * `docs/compatibility.md` is generated from this file (`bun scripts/compat-matrix.ts`), and
- * `test/compat-matrix.test.ts` fails when the two drift. `connect` and `doctor` read the same
- * records, joined on `id` (the same ids as `knownAgents()` in `src/skill-install.ts`).
+ * `test/compat-matrix.test.ts` fails when the two drift. Ids match `knownAgents()` in
+ * `src/skill-install.ts`, so `connect` and `doctor` can join on them.
  */
 
 export type EvidenceLevel = 'live' | 'src' | 'doc' | 'report';
@@ -94,37 +94,41 @@ export interface ClientRecord {
 /** The day the research behind the doc/src/report entries was done. */
 const CHECKED = '2026-11-19';
 
-const doc = (ref: string, version?: string): Evidence => ({ level: 'doc', ref, checked: CHECKED, ...(version ? { version } : {}) });
-const src = (ref: string, version?: string): Evidence => ({ level: 'src', ref, checked: CHECKED, ...(version ? { version } : {}) });
-const report = (ref: string, version?: string): Evidence => ({ level: 'report', ref, checked: CHECKED, ...(version ? { version } : {}) });
+const ev = (level: 'doc' | 'src' | 'report') => (ref: string, version?: string): Evidence =>
+  ({ level, ref, checked: CHECKED, ...(version ? { version } : {}) });
+const doc = ev('doc');
+const src = ev('src');
+const report = ev('report');
+
+/** `{ note }` when there is one, so records without a note have no `note` key. */
+const withNote = (note?: string) => (note ? { note } : {});
 
 function cell<V extends string>(value: V, evidence: Evidence[], note?: string): Cell<V> {
-  return note ? { value, note, evidence } : { value, evidence };
+  return { value, ...withNote(note), evidence };
 }
 /** Does not apply (no GUI, no headless mode, remote only): needs no evidence. */
 function na<V extends string>(): Cell<V | 'n/a'> {
   return { value: 'n/a', evidence: [] };
 }
 function unknown<V extends string = string>(note?: string): Cell<V> {
-  return note ? { value: 'unknown', note, evidence: [] } : { value: 'unknown', evidence: [] };
+  return { value: 'unknown', ...withNote(note), evidence: [] };
 }
 /** One configuration of a `varies` cell. */
 function when<V extends string>(label: string, value: V | 'unknown' | 'n/a', evidence: Evidence[] = [], note?: string): Case<V> {
-  return note ? { when: label, value, note, evidence } : { when: label, value, evidence };
+  return { when: label, value, ...withNote(note), evidence };
 }
 /** A configuration nobody could confirm. */
 function whenUnknown(label: string, note?: string): Case<never> {
-  return note ? { when: label, value: 'unknown', note, evidence: [] } : { when: label, value: 'unknown', evidence: [] };
+  return when<never>(label, 'unknown', [], note);
 }
 /** A cell whose answer depends on the interface, version or mode. */
 function varies<V extends string>(cases: NoInfer<Case<V>>[], note?: string): Cell<V> {
-  return note ? { value: 'varies', note, evidence: [], cases } : { value: 'varies', evidence: [], cases };
+  return { value: 'varies', ...withNote(note), evidence: [], cases };
 }
 /** The configurations of a cell; a plain cell is one case with an empty label. */
 export function casesOf<V extends string>(cell: Cell<V>): Case<V>[] {
   if (cell.cases) return cell.cases;
-  const value = cell.value === 'varies' ? 'unknown' : cell.value;
-  return [cell.note ? { when: '', value, note: cell.note, evidence: cell.evidence } : { when: '', value, evidence: cell.evidence }];
+  return [when<V>('', cell.value === 'varies' ? 'unknown' : cell.value, cell.evidence, cell.note)];
 }
 
 /**
@@ -683,14 +687,14 @@ const notLive = (evidence: Evidence[]) => evidence.filter(e => e.level !== 'live
 function fromCases<V extends string>(cases: Case<V>[]): Cell<V> {
   if (cases.length === 1 && !cases[0].when) {
     const { value, note, evidence } = cases[0];
-    return note ? { value, note, evidence } : { value, evidence };
+    return { value, ...withNote(note), evidence };
   }
   return varies(cases);
 }
 
 function derive<V extends string, W extends string>(from: Case<V>, value: W | 'unknown', note?: string): Case<W> {
   const evidence = value === 'unknown' ? [] : notLive(from.evidence);
-  // Seen only live: the derived claim needs a live entry of its own
+  // Backed only by live entries: the derived claim needs a live entry of its own
   if (value !== 'unknown' && !evidence.length) return when<W>(from.when, 'unknown', [], 'Record it live.');
   return when<W>(from.when, value, evidence, note);
 }
@@ -707,7 +711,7 @@ export function approvalOf(c: ClientRecord): Cell<Approval> {
   return fromCases(casesOf(c.elicitation).map(e => {
     if (e.value === 'unknown') return when<Approval>(e.when, 'unknown', [], 'Depends on whether the client advertises elicitation.');
     if (e.value === 'n/a') return when<Approval>(e.when, 'n/a');
-    return e.value === 'none' ? derive<Elicitation, Approval>(e, 'G2') : derive<Elicitation, Approval>(e, 'G1', c.approvalNote);
+    return e.value === 'none' ? derive(e, 'G2') : derive(e, 'G1', c.approvalNote);
   }));
 }
 
@@ -722,7 +726,7 @@ export function refusalOf(c: ClientRecord): Cell<Refusal> {
   return fromCases(casesOf(approvalOf(c)).map(a =>
     a.value === 'G1' ? derive<Approval, Refusal>(a, 'refused')
       : a.value === 'G2' ? derive<Approval, Refusal>(a, 'chat')
-        : when<Refusal>(a.when, a.value === 'n/a' ? 'n/a' : 'unknown')));
+        : when<Refusal>(a.when, a.value)));
 }
 
 export type Status = 'supported' | 'untested' | 'unsupported';
@@ -736,6 +740,8 @@ export function outcomeCells(c: ClientRecord): Record<(typeof LIVE_REQUIRED)[num
 
 const hasLive = (cell: { evidence: Evidence[] }) => cell.evidence.some(e => e.level === 'live');
 const liveVersions = (k: Case) => new Set(k.evidence.flatMap(e => (e.level === 'live' ? [e.version] : [])));
+/** The case of `cell` for a configuration label; a plain cell covers every label. */
+const caseFor = (cell: Cell, label: string) => (cell.cases ? cell.cases.find(k => k.when === label) : casesOf(cell)[0]);
 
 /**
  * Supported only when, in every configuration the record lists, install, read, approval and
@@ -750,10 +756,9 @@ export function statusOf(c: ClientRecord): Status {
   const cells = Object.values(outcomeCells(c));
   const labels = [...new Set(cells.flatMap(cell => (cell.cases ?? []).map(k => k.when)))];
   const supportedIn = (label: string) => {
-    const found = cells.map(cell => (cell.cases ? cell.cases.find(k => k.when === label) : casesOf(cell)[0]));
+    const found = cells.map(cell => caseFor(cell, label));
     if (found.some(k => !k)) return false;
-    const read = c.read.cases ? c.read.cases.find(k => k.when === label) : casesOf(c.read)[0];
-    if (read?.value !== 'works') return false;
+    if (caseFor(c.read, label)?.value !== 'works') return false;
     // One client version seen live in all four
     const [first, ...rest] = (found as Case[]).map(liveVersions);
     return [...first].some(v => rest.every(s => s.has(v)));
@@ -810,7 +815,7 @@ export function validate(clients: ClientRecord[]): string[] {
     const envCases = casesOf(c.stdioEnv);
     for (const k of casesOf(c.read)) {
       if (k.value !== 'expected') continue;
-      const env = c.stdioEnv.cases ? (k.when ? envCases.filter(e => e.when === k.when) : envCases) : envCases;
+      const env = c.stdioEnv.cases && k.when ? envCases.filter(e => e.when === k.when) : envCases;
       if (!env.length || env.some(e => e.value === 'unknown')) {
         problems.push(`${c.id}.read${k.when ? ` [${k.when}]` : ''}: "expected" while its stdio environment is unknown`);
       }

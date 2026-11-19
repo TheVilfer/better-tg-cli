@@ -3,7 +3,7 @@
  * CLIENTS, LF line endings. Written by `bun scripts/compat-matrix.ts`; checked by
  * test/compat-matrix.test.ts.
  */
-import { CLIENTS, ROUTE_NOTE, UPDATE_NOTICE, approvalOf, casesOf, refusalOf, statusOf, type Case, type Cell, type ClientRecord, type Evidence, type EvidenceLevel } from './data.js';
+import { CLIENTS, ROUTE_NOTE, UPDATE_NOTICE, approvalOf, casesOf, refusalOf, statusOf, type Case, type Cell, type ClientRecord, type Evidence, type EvidenceLevel, type Status } from './data.js';
 
 export const DOC_PATH = 'docs/compatibility.md';
 
@@ -87,7 +87,7 @@ function clientSection(c: ClientRecord): string[] {
 }
 
 export function renderCompatibility(clients: ClientRecord[] = CLIENTS): string {
-  const count = (s: ReturnType<typeof statusOf>) => clients.filter(c => statusOf(c) === s).length;
+  const count = (s: Status) => clients.filter(c => statusOf(c) === s).length;
   const out: string[] = [
     '# Agent compatibility',
     '',
@@ -95,9 +95,9 @@ export function renderCompatibility(clients: ClientRecord[] = CLIENTS): string {
     '',
     'How Better-TG-CLI behaves inside each agent client, and how we know it. A client is',
     '**supported** only after install, reading, write approval and refusal were all seen working',
-    'in the same configuration with one named client version, on a named date (`live`), in every',
-    'configuration the client lists. Everything else comes from the client\'s',
-    'docs or source and says what we expect, not what we saw.',
+    'with one named client version on a named date (`live`), in every configuration the client',
+    'lists. Everything else comes from the client\'s docs or source and says what we expect, not',
+    'what we saw.',
     '',
     `Supported: **${count('supported')}** of ${clients.length}. Untested: ${count('untested')}. Not possible yet: ${count('unsupported')}.`,
     '',
