@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { EXIT_NEEDS_APPROVAL } from '../src/approval.js';
 import type { SetupResult } from '../src/setup-contract.js';
 import {
@@ -22,19 +22,41 @@ const fixtures = JSON.parse(readFileSync('test/fixtures/setup-contract.json', 'u
 const home = mkdtempSync(join(tmpdir(), 'tg-contract-'));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 const fakeOp = process.platform !== 'win32';
+const fakeOpBin = join(home, 'bin', 'op');
 const opLog = join(home, 'op-calls.log');
+// The log path reaches the script through the environment, never through its text, so a quote in
+// TMPDIR cannot break the script (a broken fake `op` would hand the children the system store)
 if (fakeOp) {
   mkdirSync(join(home, 'bin'));
-  writeFileSync(join(home, 'bin', 'op'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${opLog}'\n[ "$1" = whoami ] && exit 0\nexit 1\n`, { mode: 0o755 });
+  writeFileSync(fakeOpBin, '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CONTRACT_OP_LOG"\n[ "$1" = whoami ] && exit 0\nexit 1\n', { mode: 0o755 });
 }
-const baseEnv = (): NodeJS.ProcessEnv => {
-  const env: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(TG|OP)_/.test(k)));
+const ALLOWED_OP_CALL = /^(whoami|read op:\/\/contract-vault\/tg-cli-contract-test-(apiHash|sessionString|writeEnabled)\/credential)$/;
+const opCalls = (log: string) => existsSync(log) ? readFileSync(log, 'utf8').trimEnd().split('\n') : [];
+const baseEnv = (log = opLog): NodeJS.ProcessEnv => {
+  // Windows treats variable names case-insensitively, so `op_service_account_token` is one too
+  const env: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(TG|OP)_/i.test(k)));
   Object.assign(env, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_NO_UPDATE_CHECK: '1', TG_PROFILE: 'contract-test' });
   if (fakeOp) {
-    Object.assign(env, { PATH: join(home, 'bin') + delimiter + (process.env.PATH ?? ''), OP_SERVICE_ACCOUNT_TOKEN: 'ops_contract_test', TG_OP_VAULT: 'contract-vault' });
+    Object.assign(env, {
+      PATH: join(home, 'bin') + delimiter + (process.env.PATH ?? ''), CONTRACT_OP_LOG: log,
+      OP_SERVICE_ACCOUNT_TOKEN: 'ops_contract_test', TG_OP_VAULT: 'contract-vault',
+    });
   }
   return env;
 };
+// Before any child runs: with the children's PATH, `op` (looked up by `which`, src/onepassword.ts)
+// is the fake one and its whoami succeeds; otherwise the CLI would fall back to the Keychain
+beforeAll(() => {
+  if (!fakeOp) return;
+  const env = baseEnv(join(home, 'preflight.log'));
+  const which = spawnSync('sh', ['-c', 'which op'], { encoding: 'utf8', env });
+  expect(which.stdout.trim()).toBe(fakeOpBin);
+  expect(spawnSync('op', ['whoami'], { env }).status).toBe(0);
+});
+// After each test: whatever its children asked, it was only the fake store
+afterEach(() => {
+  for (const call of opCalls(opLog)) expect(call).toMatch(ALLOWED_OP_CALL);
+});
 const cli = (args: string[], env: NodeJS.ProcessEnv = baseEnv()) =>
   spawnSync(process.execPath, [...cliArgs(), ...args], { encoding: 'utf8', env, timeout: 30_000 });
 
@@ -172,13 +194,14 @@ describe('current consumers keep their output', () => {
     expect(messages[3].result.isError).toBe(true);
   }, 30_000);
 
-  // Runs last: every child above asked only the fake store, never the Keychain or a real vault
-  it.runIf(fakeOp)('the children asked only the fake secret store', () => {
-    expect(existsSync(opLog)).toBe(true);
-    const calls = readFileSync(opLog, 'utf8').trimEnd().split('\n');
+  // Self-contained: runs a command that reads secrets and checks its own log
+  it.runIf(fakeOp)('a child asks only the fake secret store', () => {
+    const log = join(home, 'whoami-op-calls.log');
+    const r = cli(['whoami'], baseEnv(log));
+    expect(r.status, r.stderr).not.toBe(0);
+    const calls = opCalls(log);
     expect(calls).toContain('whoami');
-    for (const call of calls) {
-      expect(call).toMatch(/^(whoami|read op:\/\/contract-vault\/tg-cli-contract-test-(apiHash|sessionString|writeEnabled)\/credential)$/);
-    }
-  });
+    expect(calls.some(c => c.startsWith('read '))).toBe(true);
+    for (const call of calls) expect(call).toMatch(ALLOWED_OP_CALL);
+  }, 30_000);
 });
