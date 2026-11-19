@@ -99,12 +99,12 @@ describe('compatibility matrix', () => {
       install: { value: 'config', evidence: [at('1.19.6'), at('2.0.0')] },
       read: { value: 'works', evidence: [at('1.19.6'), at('2.0.0')] },
       approval: { value: 'G2', evidence: [at('1.19.6')] },
-      refusal: { value: 'refused', evidence: [at('2.0.0')] },
+      refusal: { value: 'chat', evidence: [at('2.0.0')] },
     };
     expect(validate([byVersion])).toEqual([]);
     expect(statusOf(byVersion)).toBe('untested');
     // One version that passed all four is enough
-    expect(statusOf({ ...byVersion, refusal: { value: 'refused', evidence: [at('1.19.6')] } })).toBe('supported');
+    expect(statusOf({ ...byVersion, refusal: { value: 'chat', evidence: [at('1.19.6')] } })).toBe('supported');
     // Every configuration must pass all four in one version
     const bothCases: ClientRecord = {
       ...byCase,
@@ -115,6 +115,38 @@ describe('compatibility matrix', () => {
     };
     expect(statusOf(bothCases)).toBe('supported');
     expect(statusOf({ ...bothCases, read: { value: 'works', evidence: [at('1.19.6')] } })).toBe('untested');
+  });
+
+  it('live entries are not enough: install, approval and refusal need real values that match', () => {
+    const base = byId('codex');
+    const allLive = (patch: Partial<Record<'install' | 'approval' | 'refusal', string>>): ClientRecord => ({
+      ...base,
+      install: { value: patch.install ?? 'config', evidence: [LIVE] },
+      read: { value: 'works', evidence: [LIVE] },
+      approval: { value: patch.approval ?? 'G1', evidence: [LIVE] },
+      refusal: { value: patch.refusal ?? 'refused', evidence: [LIVE] },
+    } as ClientRecord);
+    // The record from the review: validate() accepts it, and it must not count as supported
+    const naOutcomes = allLive({ approval: 'n/a', refusal: 'n/a' });
+    expect(validate([naOutcomes])).toEqual([]);
+    expect(statusOf(naOutcomes)).toBe('untested');
+    expect(statusOf(allLive({}))).toBe('supported');
+    expect(statusOf(allLive({ approval: 'G2', refusal: 'chat' }))).toBe('supported');
+    expect(statusOf(allLive({ install: 'n/a' }))).toBe('untested');
+    expect(statusOf(allLive({ approval: 'unknown' }))).toBe('untested');
+    expect(statusOf(allLive({ refusal: 'n/a' }))).toBe('untested');
+    // The refusal must be the one the approval level gives
+    expect(statusOf(allLive({ approval: 'G1', refusal: 'chat' }))).toBe('untested');
+    expect(statusOf(allLive({ approval: 'G2', refusal: 'refused' }))).toBe('untested');
+    // Per configuration: one case with n/a outcomes fails the client
+    const perCase: ClientRecord = {
+      ...allLive({}),
+      approval: { value: 'varies', evidence: [], cases: [
+        { when: 'V1', value: 'G1', evidence: [LIVE] }, { when: 'V2', value: 'n/a', evidence: [LIVE] }] },
+      refusal: { value: 'varies', evidence: [], cases: [
+        { when: 'V1', value: 'refused', evidence: [LIVE] }, { when: 'V2', value: 'n/a', evidence: [LIVE] }] },
+    };
+    expect(statusOf(perCase)).toBe('untested');
   });
 
   it('a client is not possible yet only when no install route exists', () => {

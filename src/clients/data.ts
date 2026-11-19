@@ -745,12 +745,17 @@ const caseFor = (cell: Cell, label: string) => (cell.cases ? cell.cases.find(k =
 
 /**
  * Supported only when, in every configuration the record lists, install, read, approval and
- * refusal were all seen live in that same configuration with the same client version, and reading
- * was seen working. A configuration is a case label; a plain cell covers every label, and a
+ * refusal were all seen live in that same configuration with the same client version, install is
+ * a real route, reading was seen working, approval is G1 or G2 and refusal is the one that level
+ * gives (G1 refused, G2 chat). A configuration is a case label; a plain cell covers every label, and a
  * `varies` cell without a case for a label fails it. Checks seen in different versions or
  * configurations never add up. Derived approval and refusal never carry a live entry, so both must
  * be recorded. Unsupported when there is no way to install it today. Everything else is untested.
  */
+const ROUTES = new Set<string>(['plugin', 'extension', 'mcpb', 'catalog', 'config', 'ui', 'tunnel', 'beta'] satisfies Install[]);
+/** The refusal each approval level gives (see `refusalOf`). */
+const REFUSAL_OF: Record<'G1' | 'G2', Refusal> = { G1: 'refused', G2: 'chat' };
+
 export function statusOf(c: ClientRecord): Status {
   if (casesOf(c.install).every(k => k.value === 'none')) return 'unsupported';
   const cells = Object.values(outcomeCells(c));
@@ -758,7 +763,11 @@ export function statusOf(c: ClientRecord): Status {
   const supportedIn = (label: string) => {
     const found = cells.map(cell => caseFor(cell, label));
     if (found.some(k => !k)) return false;
-    if (caseFor(c.read, label)?.value !== 'works') return false;
+    const [install, read, approval, refusal] = found as Case[];
+    // A real install route, reading seen working, a write approval level and the "no" it gives
+    if (!ROUTES.has(install.value) || read.value !== 'works') return false;
+    if (approval.value !== 'G1' && approval.value !== 'G2') return false;
+    if (refusal.value !== REFUSAL_OF[approval.value]) return false;
     // One client version seen live in all four
     const [first, ...rest] = (found as Case[]).map(liveVersions);
     return [...first].some(v => rest.every(s => s.has(v)));
