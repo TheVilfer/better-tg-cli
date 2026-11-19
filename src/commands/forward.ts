@@ -15,7 +15,7 @@ export const forwardCommand = new Command('forward')
   .option('--drop-author', 'Hide the original sender (no "forwarded from" header)')
   .option('--json', 'Output as JSON')
   .action(async (fromChat, messageIds, toChat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     const ids = messageIds
       .split(',')

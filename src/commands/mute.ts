@@ -10,7 +10,7 @@ export const muteCommand = new Command('mute')
   .option('-d, --duration <duration>', 'Duration (1h, 8h, 1d, 1w, or forever)', 'forever')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Muting "${chat}"...`).start();
 
     try {

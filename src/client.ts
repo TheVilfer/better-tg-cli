@@ -12,20 +12,32 @@ import { existsSync, lstatSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
 import { basename, join } from 'path';
 import { isTTY } from './spinner.js';
-import { approvedForAnotherSession } from './approval.js';
+import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
+import { loginHint } from './login-hint.js';
+
+/** First words of the error getClient() throws for a session Telegram no longer accepts (onboard looks for it). */
+export const SESSION_EXPIRED = 'Session expired or was revoked.';
 
 let clientInstance: TelegramClient | null = null;
+/** The session clientInstance was connected with */
+let clientSession: string | undefined;
+
+const ANOTHER_ACCOUNT_ERROR = 'Another account logged in after this write was approved. Nothing was sent; run the command again for a new approval.';
 
 /** `snapshot`: a config the caller already loaded (`telegram check`), used instead of a new read. */
 export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   if (clientInstance?.connected) {
+    // The write guard may have connected (to look up the recipients) before it checked the approval
+    if (clientSession !== undefined && approvedForAnotherSession(clientSession)) throw new Error(ANOTHER_ACCOUNT_ERROR);
     return clientInstance;
   }
 
   if (isMock()) {
+    if (approvedForAnotherSession(MOCK_ACCOUNT)) throw new Error(ANOTHER_ACCOUNT_ERROR);
     // Imported on demand so a normal run never loads the mock
     const { createMockClient } = await import('./mock/client.js');
     clientInstance = createMockClient();
+    clientSession = MOCK_ACCOUNT;
     return clientInstance;
   }
 
@@ -33,14 +45,14 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   // (a second read after the 1 s cache could see something else or fail)
   const config = snapshot ?? loadConfig(() => {});
   if (!isConfigured(config)) {
-    throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
+    throw new Error(`Not configured. ${loginHint()}`);
   }
 
   const { apiId, apiHash } = getCredentials(config);
   const sessionString = config.sessionString || '';
   // A write approved in mode "ask" connects only as the account it was approved for
   if (approvedForAnotherSession(sessionString)) {
-    throw new Error('Another account logged in after this write was approved. Nothing was sent; run the command again for a new approval.');
+    throw new Error(ANOTHER_ACCOUNT_ERROR);
   }
 
   // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
@@ -50,14 +62,10 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
     t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(testServers, t)),
     { setting: transportSetting(undefined, config) },
   );
+  clientSession = sessionString;
 
   if (!await clientInstance.isUserAuthorized()) {
-    const invited = config.credentialSource === 'invite';
-    throw new Error(
-      invited
-        ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'
-        : 'Not authenticated. Run "telegram onboard" or "telegram auth --qr" to log in.'
-    );
+    throw new Error(`${SESSION_EXPIRED} ${loginHint()}`);
   }
 
   return clientInstance;
@@ -83,6 +91,7 @@ export async function disconnectClient(): Promise<void> {
     }
     clientInstance = null;
   }
+  clientSession = undefined;
   resolvedChatCache.clear();
   dialogsCache = null;
 }

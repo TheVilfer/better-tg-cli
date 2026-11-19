@@ -9,7 +9,7 @@ export const unmuteCommand = new Command('unmute')
   .argument('<chat>', 'Chat name, username, or ID')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Unmuting "${chat}"...`).start();
 
     try {

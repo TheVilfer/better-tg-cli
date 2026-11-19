@@ -12,7 +12,7 @@ function makeBlockCommand(name: 'block' | 'unblock', blocked: boolean): Command 
     .argument('<user>', 'Username (@user), name, or ID')
     .option('--json', 'Output as JSON')
     .action(async (user, options) => {
-      assertWriteEnabled();
+      await assertWriteEnabled();
       const spinner = ora(`${blocked ? 'Blocking' : 'Unblocking'} "${user}"...`).start();
       try {
         const client = await getClient();

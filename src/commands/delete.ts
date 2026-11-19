@@ -13,7 +13,7 @@ export const deleteCommand = new Command('delete')
   .option('--just-me', 'Delete only for you (do not revoke for everyone)')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageIds, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const ids = messageIds.split(',').map((s: string) => parseInt(s.trim(), 10)).filter((n: number) => Number.isInteger(n));
     if (ids.length === 0) {
       console.error('Provide at least one numeric message ID');

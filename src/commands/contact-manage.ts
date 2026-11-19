@@ -13,7 +13,7 @@ export const addContactCommand = new Command('add-contact')
   .argument('[lastName]', 'Last name (optional)')
   .option('--json', 'Output as JSON')
   .action(async (user, firstName, lastName, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Adding contact "${firstName}"...`).start();
     try {
       const client = await getClient();
@@ -36,7 +36,7 @@ export const delContactCommand = new Command('del-contact')
   .argument('<user>', 'Username (@user), name, or ID')
   .option('--json', 'Output as JSON')
   .action(async (user, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Removing contact "${user}"...`).start();
     try {
       const client = await getClient();

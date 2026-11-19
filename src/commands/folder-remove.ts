@@ -10,7 +10,7 @@ export const folderRemoveCommand = new Command('folder-remove')
   .argument('<chat>', 'Chat name, username, or ID')
   .option('--json', 'Output as JSON')
   .action(async (folder, chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Removing "${chat}" from folder "${folder}"...`).start();
 
     try {

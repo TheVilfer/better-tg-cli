@@ -32,7 +32,7 @@ export async function runApiMethod(
 
   // A read that may spend Stars (allowPaidStars) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
-  if (isWrite) assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true });
+  if (isWrite) await assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true });
 
   const spinner = ora(`Calling ${canonical}...`).start();
   try {

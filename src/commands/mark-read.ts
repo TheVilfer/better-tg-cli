@@ -11,7 +11,7 @@ export const markReadCommand = new Command('mark-read')
   .argument('<chat>', 'Chat name, username (@user), or ID')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Marking "${chat}" as read...`).start();
     try {
       const client = await getClient();

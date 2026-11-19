@@ -7,6 +7,7 @@ import { VERSION } from './version.js';
 import { Command } from 'commander';
 import { isMock, profile } from './paths.js';
 import { commandPaths, startMcpServer } from './mcp.js';
+import { trackActiveCommand } from './approval-action.js';
 import { mcpToken, startMcpHttpServer } from './mcp-http.js';
 import { isSecretStoreAvailable } from './secrets.js';
 import { BACKGROUND_CHECK_COMMAND, maybeNotifyUpdate, runBackgroundCheck } from './update.js';
@@ -291,6 +292,9 @@ program
 // Our `help` command (commander's built-in was disabled above). Also hosts the help.* API methods
 // as subcommands (registerGeneratedCommands attaches `help get-config` etc. on demand).
 program.addCommand(buildHelpCommand(program));
+
+// The write guard reads the parsed command to show and bind an approval (src/approval-action.ts)
+trackActiveCommand(program);
 
 // Mock mode has no session to create, drop or unlock; these would otherwise prompt or touch the secret store
 const NOT_IN_MOCK = new Set(['auth', 'onboard', 'logout', 'write-access', 'update']);

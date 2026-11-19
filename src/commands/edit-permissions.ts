@@ -26,7 +26,7 @@ export const editPermissionsCommand = new Command('edit-permissions')
   .option('--until <duration>', 'Temporary restriction (e.g. 1h, 1d, 1w); per-user only')
   .option('--json', 'Output as JSON')
   .action(async (chat, user, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     const denied = new Set<BannedRight>();
     if (options.mute) permissionPresets.MUTE_RIGHTS.forEach(r => denied.add(r));

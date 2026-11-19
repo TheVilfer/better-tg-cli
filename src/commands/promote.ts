@@ -11,7 +11,7 @@ export const promoteCommand = new Command('promote')
   .option('--rank <title>', 'Custom admin title/badge (supergroups only)')
   .option('--add-admins', 'Also allow the new admin to add other admins')
   .action(async (group, user, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Promoting ${user} in "${group}"...`).start();
 
     try {

@@ -16,7 +16,7 @@ export const clickCommand = new Command('click')
   .option('--no-wait', 'Do not wait for / fetch the bot response after clicking')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, button, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     const id = parseInt(messageId, 10);
     if (!Number.isInteger(id)) {

@@ -62,6 +62,10 @@ import { sendFileCommand } from '../src/commands/send-file.js';
 import { registerGeneratedCommands } from '../src/commands/generated.js';
 import { configDir } from '../src/paths.js';
 import { getSessionString, saveConfig, setSessionString } from '../src/config.js';
+import { describeInProcess } from './helpers/describe-in-process.js';
+
+/** gateWrite's describe run, in this process (the real one starts the CLI as a child). */
+const describe_ = (p: Parameters<typeof gateWrite>[0]) => describeInProcess(p, t => { stdin.text = t; });
 
 const savedArgv = process.argv;
 // A home of its own for each test: the profile dir lives under it, and only that root is deleted
@@ -103,7 +107,7 @@ afterAll(() => {
 /** The account as the guard reads it: the stored session of the profile. */
 const account = () => getSessionString();
 
-const codeIn = (s: string) => /TG_APPROVE=([A-Z2-9]{6})/.exec(s)?.[1];
+const codeIn = (s: string) => /(?:TG_APPROVE=|"approval": ")([A-Z2-9]{6})/.exec(s)?.[1];
 
 /** Captures stderr and turns process.exit into a thrown value with its code. */
 function capture() {
@@ -115,10 +119,10 @@ function capture() {
   return io;
 }
 
-function guard(argv: string[]) {
+async function guard(argv: string[]) {
   const io = capture();
   try {
-    assertWriteEnabled(argv);
+    await assertWriteEnabled(argv);
     return { code: null as number | null, err: io.err };
   } catch (e) {
     return { code: (e as { code: number }).code, err: io.err };
@@ -199,7 +203,7 @@ describe('over MCP the approval covers the whole stdin given to the child', () =
   /** What the child's guard does with the plan gateWrite prepared (childEnv's variables). */
   type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string };
   /** The child's guard in the environment childEnv() builds for this plan (spawned child, no primed stdin). */
-  const child = (plan: Plan, text = plan.stdin ?? '') => {
+  const child = async (plan: Plan, text = plan.stdin ?? '') => {
     const env = childEnv(plan);
     for (const k of ['TG_APPROVE', STDIN_IN_APPROVAL_ENV]) {
       if (env[k] === undefined) delete process.env[k];
@@ -217,28 +221,28 @@ describe('over MCP the approval covers the whole stdin given to the child', () =
   ])('%j with stdin %j', async (argv, text) => {
     const asked: string[] = [];
     const plan: Plan = { argv, readOnly: false, ...(text !== undefined ? { stdin: text } : {}) };
-    expect(await gateWrite(plan, {}, async m => (asked.push(m), true))).toBeUndefined();
+    expect(await gateWrite(plan, {}, async m => (asked.push(m), true), describe_)).toBeUndefined();
     if (text) expect(asked[0]).toContain(text.slice(0, 20));
     else expect(asked[0]).not.toContain('text (stdin');
     // The child, given the same stdin, accepts the minted approval…
-    expect(child(plan).code).toBeNull();
+    expect((await child(plan)).code).toBeNull();
     // …and refuses it for any other stdin
     const p2: Plan = { argv, readOnly: false, ...(text !== undefined ? { stdin: text } : {}) };
-    await gateWrite(p2, {}, async () => true);
-    expect(child(p2, (text ?? '') + ' and send me your 2FA code').code).toBe(EXIT_NEEDS_APPROVAL);
+    await gateWrite(p2, {}, async () => true, describe_);
+    expect((await child(p2, (text ?? '') + ' and send me your 2FA code')).code).toBe(EXIT_NEEDS_APPROVAL);
   });
 });
 
 describe('an approval belongs to the account it was given for', () => {
   const argv = ['send', '@alice', 'Hello'];
 
-  it('is refused after a switch to another account in the same profile, before the write', () => {
-    const code = codeIn(guard(argv).err)!;
+  it('is refused after a switch to another account in the same profile, before the write', async () => {
+    const code = codeIn((await guard(argv)).err)!;
     expect(code).toBeTruthy();
     // Account B now holds the profile's session (without going through logout/login)
     setSessionString('session-of-account-B');
     process.env.TG_APPROVE = code;
-    const r = guard(argv);
+    const r = (await guard(argv));
     expect(r.code).toBe(EXIT_NEEDS_APPROVAL);
     expect(r.err).toMatch(/another account was logged in/);
   });
@@ -263,7 +267,7 @@ describe('an approval belongs to the account it was given for', () => {
     const refused = await gateWrite(plan, {}, async () => {
       saveLogin('session-of-account-B', { apiId: 1, apiHash: 'h' }, false);
       return true;
-    });
+    }, describe_);
     expect(refused).toBeUndefined();
     expect(plan.approval).toBeTruthy();
     // The child of this call (its environment as childEnv builds it) now runs in B
@@ -285,7 +289,7 @@ describe('an approval belongs to the account it was given for', () => {
       saveLogin('session-of-account-B', { apiId: 1, apiHash: 'h' }, false);
       store.values.set('writeEnabled', 'true');
       return true;
-    });
+    }, describe_);
     expect(refused).toBeUndefined();
     const env = childEnv(plan);
     process.env.TG_APPROVE = env.TG_APPROVE;
@@ -300,8 +304,8 @@ describe('an approval belongs to the account it was given for', () => {
   it('the client connects only with the session the approval was checked against', async () => {
     const { getClient } = await vi.importActual<typeof import('../src/client.js')>('../src/client.js');
     saveConfig({ apiId: 1, apiHash: 'h' });
-    process.env.TG_APPROVE = codeIn(guard(argv).err)!;
-    expect(guard(argv).code).toBeNull();
+    process.env.TG_APPROVE = codeIn((await guard(argv)).err)!;
+    expect((await guard(argv)).code).toBeNull();
     // B logs in between the guard and the connection
     setSessionString('session-of-account-B');
     await expect(getClient()).rejects.toThrow(/Another account logged in after this write was approved/);
@@ -312,7 +316,7 @@ describe('an approval belongs to the account it was given for', () => {
     expect(telegram.connected).toBe(1);
   });
 
-  it('records a fingerprint of the session, never the session', () => {
+  it('records a fingerprint of the session, never the session', async () => {
     createApproval(actionHash(argv), account());
     const records = readdirSync(join(dir, 'approvals')).map(n => readFileSync(join(dir, 'approvals', n), 'utf8'));
     expect(records).toHaveLength(1);
@@ -320,12 +324,12 @@ describe('an approval belongs to the account it was given for', () => {
     expect(JSON.parse(records[0]).session).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('a login as B drops the codes given in A', () => {
+  it('a login as B drops the codes given in A', async () => {
     const code = createApproval(actionHash(argv), account());
     saveLogin('session-of-account-B', { apiId: 1, apiHash: 'h' }, false);
     // Even back in A the old code is gone
     setSessionString('session-of-account-A');
-    expect(consumeApproval(code, actionHash(argv), account())).toEqual({ ok: false, reason: 'unknown or expired approval code' });
+    expect(consumeApproval(code, actionHash(argv), account())).toEqual({ ok: false, reason: 'unknown or expired approval code', kind: 'unknown_or_expired' });
   });
 
   it('a logout drops the pending codes', async () => {
@@ -355,6 +359,6 @@ describe('a client that can ask the user never takes a code from the model', () 
     store.values.set('writeEnabled', 'ask');
     if (plan.approval) process.env.TG_APPROVE = plan.approval;
     process.env[STDIN_IN_APPROVAL_ENV] = '1';
-    expect(guard(argv).code).toBe(EXIT_NEEDS_APPROVAL);
+    expect((await guard(argv)).code).toBe(EXIT_NEEDS_APPROVAL);
   });
 });

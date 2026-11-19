@@ -15,7 +15,7 @@ export const reactCommand = new Command('react')
   .option('--remove', 'Remove your reaction from the message')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, emoji, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     const id = parseInt(messageId, 10);
     if (!Number.isInteger(id)) {

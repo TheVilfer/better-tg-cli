@@ -14,7 +14,7 @@ export const setNameCommand = new Command('set-name')
   .argument('[lastName]', 'New last name (optional)')
   .option('--json', 'Output as JSON')
   .action(async (firstName, lastName, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora('Updating name...').start();
     try {
       const client = await getClient();
@@ -37,7 +37,7 @@ export const setBioCommand = new Command('set-bio')
   .argument('<text>', 'New bio text')
   .option('--json', 'Output as JSON')
   .action(async (text, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora('Updating bio...').start();
     try {
       const client = await getClient();
@@ -59,7 +59,7 @@ export const setUsernameCommand = new Command('set-username')
   .argument('<username>', 'New username (without @)')
   .option('--json', 'Output as JSON')
   .action(async (username, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const clean = username.replace(/^@/, '');
     const spinner = ora(`Setting username to @${clean}...`).start();
     try {
@@ -82,7 +82,7 @@ export const setAvatarCommand = new Command('set-avatar')
   .argument('<path>', 'Path to an image file')
   .option('--json', 'Output as JSON')
   .action(async (path, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const filePath = resolve(path);
     if (!existsSync(filePath)) {
       console.error(`File not found: ${filePath}`);

@@ -13,7 +13,7 @@ export const downloadCommand = new Command('download')
   .option('-o, --output <dir>', 'Output directory', './telegram-media')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageIdArg, options) => {
-    assertLocalWriteAllowed();
+    await assertLocalWriteAllowed();
     const messageId = parseInt(messageIdArg, 10);
     if (Number.isNaN(messageId)) {
       console.error(chalk.red(`Invalid message id: ${messageIdArg}`));

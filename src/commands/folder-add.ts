@@ -10,7 +10,7 @@ export const folderAddCommand = new Command('folder-add')
   .argument('<chat>', 'Chat name, username, or ID')
   .option('--json', 'Output as JSON')
   .action(async (folder, chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Adding "${chat}" to folder "${folder}"...`).start();
 
     try {

@@ -13,7 +13,7 @@ export const typingCommand = new Command('typing')
   .argument('[action]', `One of: ${ACTIONS.join(', ')}`, 'typing')
   .option('--json', 'Output as JSON')
   .action(async (chat, action, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     if (!ACTIONS.includes(action)) {
       console.error(`Action must be one of: ${ACTIONS.join(', ')}`);
       process.exit(1);

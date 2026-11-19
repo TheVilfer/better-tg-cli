@@ -203,7 +203,7 @@ export const syncCommand = new Command('sync')
   .option('--media', 'Also download photos and documents alongside markdown')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
   .action(async (options) => {
-    assertLocalWriteAllowed();
+    await assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
 
     try {
