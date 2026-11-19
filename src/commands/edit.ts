@@ -18,7 +18,7 @@ export const editCommand = new Command('edit')
   .option('--html', 'Parse the new text as HTML')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, textArg, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const text = readTextArg(textArg);
     const id: number = messageId;
     const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;

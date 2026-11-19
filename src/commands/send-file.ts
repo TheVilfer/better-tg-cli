@@ -29,7 +29,7 @@ export const sendFileCommand = new Command('send-file')
     if (!existsSync(absPath)) fail(usageError(`File not found: ${absPath}`));
     if (!statSync(absPath).isFile()) fail(usageError(`Not a regular file: ${absPath}`));
 
-    assertWriteEnabled(undefined, { readsStdin: options.caption === '-' });
+    await assertWriteEnabled(undefined, { readsStdin: options.caption === '-' });
     if (options.caption) options.caption = readTextArg(options.caption);
 
     const spinner = ora(`Uploading "${absPath}" to "${target}"...`).start();

@@ -14,7 +14,7 @@ export const typingCommand = new Command('typing')
   .addArgument(new Argument('[action]', 'What the chat sees').choices(ACTIONS).default('typing'))
   .option('--json', 'Output as JSON')
   .action(async (chat, action, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Sending "${action}" status to "${chat}"...`).start();
     try {
       const client = await getClient();

@@ -15,7 +15,7 @@ export const inlineCommand = new Command('inline')
   .option('--json', 'Output as JSON')
   .action(async (bot, query, options) => {
     // The query and the user's ID go to an external bot, so it needs write access like a send
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Querying ${bot} "${query}"...`).start();
     try {
       const client = await getClient();

@@ -15,7 +15,7 @@ export const downloadCommand = new Command('download')
   .option('-o, --output <dir>', 'Output directory', './telegram-media')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId: number, options) => {
-    assertLocalWriteAllowed();
+    await assertLocalWriteAllowed();
 
     const spinner = ora(`Downloading media from message #${messageId}...`).start();
 

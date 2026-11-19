@@ -101,10 +101,16 @@ code. This file only covers behaviour that the flag list can't tell you.
   terminal, otherwise a macOS or Windows dialog (it times out as "no" after 2 minutes). `--for`
   goes back to read-only automatically. `write-access off` needs no confirmation. The `onboard`
   page lets the user pick another mode. The mode lives in the secret store, not in the config file.
-- In mode `ask` a write exits with code 3 and prints the action and a code (with `--json`, a line
-  `{"error":"approval_required","code":…,"action":…}` on stdout). After the user says yes to that
-  exact action, rerun it with `TG_APPROVE=<code>`. The code works once, for 10 minutes, and only for
-  the same arguments and stdin text.
+- In mode `ask` a write exits with code 3 and prints the action and a code. The action reads as
+  words: what happens, the recipient by name, type, @username and ID (looked up first; a chat that is
+  not found stops the write with its candidates and no code), the topic or replied-to message, the
+  full text, and the raw command last. With `--json`, one line on stdout:
+  `{"error":"approval_required","code":…,"action":{"description","recipients","argv","stdin"?},"expiresInMinutes":10,"retry":{"argv":[…],"env":{"TG_APPROVE":…}},"rejected"?:{"code","reason","message"}}`.
+  After the user says yes to that exact action, rerun it with `TG_APPROVE=<code>` (stderr also gives
+  the PowerShell form). The code works once, for 10 minutes, for the same action: command, recipient
+  (by ID, so `@username` and the ID are the same), options and the exact stdin text and files. Flag
+  order and `--json` may differ. `rejected.reason` says why an old code failed: `unknown_or_expired`,
+  `different_action`, `another_account` or `not_genuine`. A code is used up even when it does not match.
 - Without a secret store (cloud agent computers, headless Linux) the mode is kept in a 0600 file in
   the profile and labelled "unprotected": an agent could edit it, just as it can read the session
   file there. Without a terminal, `write-access on` there opens a local page for the user.
@@ -366,7 +372,16 @@ method's `--help` lists its own "Common errors" when the docs provide them.
 - **Tools:**
   - `telegram_help {grep?}`;
   - `telegram_read {args}`, marked `readOnlyHint`;
-  - `telegram_write {args, stdin?}`, marked `destructiveHint`.
+  - `telegram_write {args, stdin?, approval?}`, marked `destructiveHint`. In mode `ask` without a
+    client dialog it returns a normal (non-error) result with `structuredContent`
+    `{status:"approval_required", code, action, expiresInMinutes, rejected?, retry:{tool, arguments}}`;
+    `retry.arguments` is the exact call to make after the user's yes.
+  - `telegram_setup {}`: for "Not configured", an expired session or "Write access is disabled". The
+    server opens the onboarding page on this computer (or, when logged in but read-only, only its mode
+    choice) and returns the link for the user: `structuredContent` `{status:"open_page", step:"login"|"mode", url, sessionExpired?, readOnly?}`
+    or `{status:"ready", mode}`. The user logs in and picks the mode there ("ask" or "on" only after a
+    system dialog or terminal prompt; a `--read-only` server offers no mode); the tool takes no arguments.
+    Nothing reports when they finish: wait for the user's message, then check `whoami` and `write-access`.
 
   `args` is the CLI argv with the command first, for example `["read","@x","-n","20"]`. `stdin`
   fills a `-` text argument.
@@ -389,11 +404,13 @@ method's `--help` lists its own "Common errors" when the docs provide them.
     other args: with extra args (`["send","@x","--","--help"]`) the call is classified normally.
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
     Showing its status is a read: `["write-access"]` or `["write-access","--json"]` (a generated
-    `auth.*` method is refused, not run).
+    `auth.*` method is refused, not run). The refusals point at `telegram_setup` and the one
+    terminal command the user can run instead.
 - **Results:** the text is the CLI's stdout; when that is one JSON value (a `--json` result or
   error) it is the whole text, and stderr (diagnostics such as the mock banner) stays out of it.
   `structuredContent` carries `{exitCode, stderr?}`, so a failure keeps its kind (1 runtime, 2 usage,
-  4 write access off, 5 not logged in). The approval result (exit 3) is unchanged.
+  4 write access off, 5 not logged in). A write waiting for approval (exit 3) has its own result,
+  `{status:"approval_required", …}` (above), and is not an error.
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
 - **Execution:** each call is a separate CLI process with no stdin (a worker thread inside Claude
@@ -446,10 +463,15 @@ shell. Candidates are `{id, title, type}`. Exit 3 keeps its own line,
 result: it exits 2 before anything is sent (and before an approval is asked for). Numbers are
 limited to Telegram's 32-bit range; a time or duration that computes to no real date is refused.
 
-Telegram ending the session (`AUTH_KEY_UNREGISTERED`, `SESSION_REVOKED`, `SESSION_EXPIRED`,
-`USER_DEACTIVATED` …) is `session_expired`, exit 5, whether at connect or on a later call; a network
-failure (`network`) or a rate limit (`flood_wait`, with `retryAfterSeconds`) is exit 1, so retry
-those instead of logging in again.
+Telegram ending the session (`AUTH_KEY_UNREGISTERED`, `AUTH_KEY_DUPLICATED`, `SESSION_REVOKED`,
+`SESSION_EXPIRED`, `USER_DEACTIVATED` …) is `session_expired`, exit 5, whether at connect or on a
+later call; a network failure (`network`) or a rate limit (`flood_wait`, with `retryAfterSeconds`)
+is exit 1, so retry those instead of logging in again.
+
+In mode `ask` a write that could not run as shown (a recipient, file, message or button that cannot
+be found or read) gets no code: `Not sent, nothing to approve: …`, with the code and exit code of
+the error behind it (an ambiguous name stays exit 2) or `nothing_to_approve`, exit 1. A code that
+does not hold for this call is `approval_not_accepted` (or `approval_other_account`), exit 1.
 
 ## Troubleshooting
 
@@ -457,7 +479,9 @@ those instead of logging in again.
   secret path, closes when done, `--timeout` 15 min by default) where the user gets a login key from
   better-tg-cli.com (it comes back to the page by itself), or enters their own keys, then scans a QR
   code and types their 2FA password. Events: `url`, `waiting_invite`, `waiting_scan`, `need_password`,
-  `done` (exit 0), `error`, `timeout` (exit 1); `already_logged_in` exits 0 without changes.
+  `done` (exit 0), `error`, `timeout` (exit 1); `already_logged_in` exits 0 without changes. A stored
+  session Telegram no longer accepts gives `session_expired` and a new login on the same page (no
+  `logout` first); no network gives `error` and changes nothing. Over MCP, call `telegram_setup`.
   `--no-open` only prints the URL. You never get tokens, codes or passwords, and you must not ask
   for them or fill in the page. Without a browser on this machine (SSH), the user runs
   `telegram auth --qr` (own keys) or `telegram auth --login-key --qr` in their terminal; that is
@@ -472,9 +496,12 @@ those instead of logging in again.
   as `(no text)`.
 - `Write access is disabled`: the profile is read-only, or a `--for` window expired. Run
   `telegram write-access ask`, then ask the user before each write. `on` only when the user asks for
-  it; they confirm it in a dialog.
+  it; they confirm it in a dialog. Over MCP, call `telegram_setup` and give the user the link.
 - `Approval needed` (exit 3): mode `ask`. Show the action to the user, and after a yes rerun with
-  `TG_APPROVE=<code>`.
+  `TG_APPROVE=<code>`. If it comes back with `rejected`, the command differs from what was approved
+  (or the code was used or expired): ask again for the new action.
+- Secret store unavailable: the message gives one step for this OS (unlock the macOS login keychain,
+  check Windows PowerShell for DPAPI, unlock the Linux keyring), then `telegram check`. Never install a keyring.
 - `FLOOD_WAIT` (rate limit): waits of up to 60 s are retried automatically, and stderr says
   `Telegram rate limit on <method>: waiting Ns`. Longer waits fail with the wait in the error
   message. `TG_FLOOD_WAIT_MAX=<seconds>` changes the limit: `0` fails fast, a larger value suits

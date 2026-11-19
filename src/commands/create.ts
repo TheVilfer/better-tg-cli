@@ -13,7 +13,7 @@ export const createGroupCommand = new Command('create-group')
   .argument('<users...>', 'Users to add (@username or ID), at least one')
   .option('--json', 'Output as JSON')
   .action(async (title, users, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Creating group "${title}"...`).start();
     try {
       const client = await getClient();
@@ -36,7 +36,7 @@ export const createChannelCommand = new Command('create-channel')
   .option('--broadcast', 'Create a broadcast channel (default: supergroup)')
   .option('--json', 'Output as JSON')
   .action(async (title, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Creating ${options.broadcast ? 'channel' : 'supergroup'} "${title}"...`).start();
     try {
       const client = await getClient();

@@ -213,7 +213,7 @@ export const syncCommand = new Command('sync')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
   .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}], failed?:[{chatId, title, code, error}]} (exit 1 if any chat failed)')
   .action(async (options) => {
-    assertLocalWriteAllowed();
+    await assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
 
     try {

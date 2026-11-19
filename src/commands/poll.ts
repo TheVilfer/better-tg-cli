@@ -25,7 +25,7 @@ export const pollCommand = new Command('poll')
     if (options.quiz && (correct == null || correct < 0 || correct >= answers.length)) {
       fail(usageError(`Quiz mode needs --correct <n>, the 1-based number of the right answer (1 to ${answers.length})`));
     }
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Sending poll to "${chat}"...`).start();
     try {
       const client = await getClient();
@@ -53,7 +53,7 @@ export const voteCommand = new Command('vote')
   .argument('<options...>', 'Option number(s) to vote for, 1-based (e.g. 2, or 1 3 for multiple)', eachOf(positiveInt))
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, optionNums, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const id: number = messageId;
     const indexes = (optionNums as number[]).map(n => n - 1);
     const spinner = ora(`Voting in poll #${id}...`).start();

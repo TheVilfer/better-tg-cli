@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { loginHint } from '../login-hint.js';
 import { getClient, getMe, disconnectClient } from '../client.js';
 import { isConfigured, loadConfig, secretFileConflicts, secretSource, type TgConfig } from '../config.js';
 import { configDir, isMock, profile } from '../paths.js';
@@ -75,8 +76,8 @@ export const checkCommand = new Command('check')
     if (!configured) {
       const p = profile();
       const message = p
-        ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram auth [--test-dc]`
-        : 'Not configured. Run "telegram onboard" or "telegram auth --qr" first.';
+        ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram onboard [--test-dc] (a person at their own terminal can use \`TG_PROFILE=${p} telegram auth --qr\` instead)`
+        : `Not configured. ${loginHint()}`;
       if (json) {
         console.log(JSON.stringify({ configured: false, authenticated: false, ...base, error: { code: 'not_configured', message } }));
       } else {
@@ -123,8 +124,9 @@ export const checkCommand = new Command('check')
         process.exit(details.exitCode);
       }
       spinner.fail(chalk.red('Session invalid or expired'));
-      console.error(error instanceof Error ? error.message : error);
-      console.log('\nRun "telegram auth" to re-authenticate.');
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(message);
+      if (!message.includes(loginHint())) console.log(`\n${loginHint()}`);
       process.exit(details.exitCode);
     }
   });

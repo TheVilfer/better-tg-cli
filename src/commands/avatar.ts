@@ -13,7 +13,7 @@ export const avatarCommand = new Command('avatar')
   .option('-o, --output <dir>', 'Output directory', '.')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertLocalWriteAllowed();
+    await assertLocalWriteAllowed();
     const outputDir = resolve(options.output);
     const spinner = ora(`Downloading avatar for "${chat}"...`).start();
     try {

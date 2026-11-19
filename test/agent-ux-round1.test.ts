@@ -283,8 +283,16 @@ describe('10 usage errors exit 2, and are found before the write guard', () => {
     };
     expect(real(['write-access', 'ask']).code).toBe(0);
     expect(JSON.parse(real(['write-access', '--json']).out).writeMode).toBe('ask');
-    // A well-formed write does reach the guard and asks for an approval
-    expect(real(['send', 'me', 'hi', '--json']).code).toBe(3);
+    // A well-formed write does reach the guard and asks for an approval (set-name names no
+    // recipient, so the guard looks nothing up and this profile needs no login)
+    const named = real(['set-name', 'Bob', '--json']);
+    expect(named.code, named.out + named.err).toBe(3);
+    expect(oneJson(named.out).error).toBe('approval_required');
+    // A write with a recipient reaches the guard too, which looks it up first: without a login
+    // that stops with exit 5 and its JSON error, still no approval
+    const send = real(['send', 'me', 'hi', '--json']);
+    expect(send.code, send.out + send.err).toBe(5);
+    expect(oneJson(send.out).error.code).toBe('not_configured');
     for (const args of [
       ['click', 'Team', '3', '--json'],
       ['send-file', 'me', join(profile, 'no-such-file.png'), '--json'],

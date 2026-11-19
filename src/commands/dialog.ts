@@ -13,7 +13,7 @@ function makePinCommand(name: 'pin-chat' | 'unpin-chat', pinned: boolean): Comma
     .argument('<chat>', 'Chat name, username (@user), or ID')
     .option('--json', 'Output as JSON')
     .action(async (chat, options) => {
-      assertWriteEnabled();
+      await assertWriteEnabled();
       const spinner = ora(`${pinned ? 'Pinning' : 'Unpinning'} "${chat}"...`).start();
       try {
         const client = await getClient();
@@ -39,7 +39,7 @@ export const markUnreadCommand = new Command('mark-unread')
   .option('--read', 'Clear the unread mark instead of setting it')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const unread = !options.read;
     const spinner = ora(`Marking "${chat}" ${unread ? 'unread' : 'read'}...`).start();
     try {
@@ -62,7 +62,7 @@ export const deleteDialogCommand = new Command('delete-dialog')
   .option('--revoke', 'In a private chat, also delete the messages for the other person')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Deleting dialog "${chat}"...`).start();
     try {
       const client = await getClient();

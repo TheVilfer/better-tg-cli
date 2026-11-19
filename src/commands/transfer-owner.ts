@@ -13,7 +13,7 @@ export const transferOwnerCommand = new Command('transfer-owner')
   .argument('<user>', 'New owner username (e.g., @username)')
   .option('-y, --yes', 'Skip the typed confirmation prompt')
   .action(async (group, user, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     console.log(chalk.yellow(`\nYou are about to transfer ownership of "${group}" to ${user}.`));
     console.log(chalk.gray('You will lose your creator role. Only the new owner can transfer it back.\n'));

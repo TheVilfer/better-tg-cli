@@ -12,7 +12,7 @@ export const joinCommand = new Command('join')
   .argument('<target>', '@username, t.me link, or invite link (t.me/+hash)')
   .option('--json', 'Output as JSON')
   .action(async (target, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Joining "${target}"...`).start();
     try {
       const client = await getClient();
@@ -33,7 +33,7 @@ export const leaveCommand = new Command('leave')
   .argument('<chat>', 'Chat name, username (@user), or ID')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Leaving "${chat}"...`).start();
     try {
       const client = await getClient();
@@ -54,7 +54,7 @@ export const inviteLinkCommand = new Command('invite-link')
   .argument('<chat>', 'Chat name, username (@user), or ID')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Getting invite link for "${chat}"...`).start();
     try {
       const client = await getClient();
@@ -76,7 +76,7 @@ function makeArchiveCommand(name: 'archive' | 'unarchive', archived: boolean): C
     .argument('<chat>', 'Chat name, username (@user), or ID')
     .option('--json', 'Output as JSON')
     .action(async (chat, options) => {
-      assertWriteEnabled();
+      await assertWriteEnabled();
       const spinner = ora(`${archived ? 'Archiving' : 'Unarchiving'} "${chat}"...`).start();
       try {
         const client = await getClient();

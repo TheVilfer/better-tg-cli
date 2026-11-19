@@ -43,7 +43,7 @@ export const editPermissionsCommand = new Command('edit-permissions')
       fail(usageError('Specify what to restrict (--mute, --ban, --deny <list>) or --lift to remove restrictions.'));
     }
 
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     let untilDate = 0;
     if (options.until) {

@@ -19,7 +19,7 @@ export const replyCommand = new Command('reply')
   .option('--silent', 'Send without a notification sound')
   .option('--json', 'Output as JSON')
   .action(async (chat, msgId, messageArg, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const message = readTextArg(messageArg);
     const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
     const spinner = ora('Sending reply...').start();

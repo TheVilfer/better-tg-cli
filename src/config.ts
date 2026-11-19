@@ -6,6 +6,7 @@ import {
   isSecretKey,
   isSecretStoreAvailable,
   secretDelete,
+  secretGet,
   secretGetStrict,
   secretSet,
 } from './secrets.js';
@@ -245,6 +246,19 @@ export function setSessionString(session: string): void {
 export function getSessionString(): string | undefined {
   const config = loadConfig(() => {});
   return config.sessionString;
+}
+
+/**
+ * The stored session as it is now, past every cache of this process: the one-second config cache
+ * and a store's own (DPAPI decrypts its file once per process). Another process may have logged in.
+ */
+export function freshSessionString(): string | undefined {
+  cachedConfig = null;
+  if (isSecretStoreAvailable()) {
+    const stored = secretGet('sessionString', true);
+    if (stored) return stored;
+  }
+  return getSessionString();
 }
 
 export function clearSessionString(): void {

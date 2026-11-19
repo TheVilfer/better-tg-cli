@@ -19,7 +19,7 @@ export const reactCommand = new Command('react')
   .action(async (chat, messageId, emoji, options) => {
     const id: number = messageId;
     if (!emoji && !options.remove) fail(usageError('Provide an emoji to react with, or use --remove to clear your reaction'));
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     const spinner = ora(options.remove ? `Removing reaction on #${id}...` : `Reacting ${emoji} to #${id}...`).start();
 

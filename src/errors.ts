@@ -1,4 +1,5 @@
 import type { Spinner } from './spinner.js';
+import { loginHint } from './login-hint.js';
 
 /**
  * Exit codes of every command (the setup contract, docs/setup-contract.md, keeps its own table
@@ -107,16 +108,16 @@ function humanText(summary: string, candidates?: ChatCandidate[], hint?: Hint): 
 }
 
 /**
- * RPC errors that mean this login is gone (the key was dropped, the session revoked or expired,
- * the account deactivated), wherever they come: at connect or from any later call. Exit 5.
+ * RPC errors that mean this login is gone (the key was dropped or duplicated, the session revoked or
+ * expired, the account deactivated), wherever they come: at connect or from any later call. Exit 5.
+ * SESSION_PASSWORD_NEEDED is not one: a 2FA password still to enter is no reason to replace the
+ * session (onboard/telegram_setup would), so it stays a plain telegram_rpc error, exit 1.
  */
 export const SESSION_ERRORS: ReadonlySet<string> = new Set([
-  'AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'AUTH_KEY_PERM_EMPTY',
-  'SESSION_EXPIRED', 'SESSION_REVOKED', 'SESSION_PASSWORD_NEEDED',
+  'AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'AUTH_KEY_PERM_EMPTY', 'AUTH_KEY_DUPLICATED',
+  'SESSION_EXPIRED', 'SESSION_REVOKED',
   'USER_DEACTIVATED', 'USER_DEACTIVATED_BAN',
 ]);
-
-export const SESSION_ENDED_HINT = 'Log in again: telegram onboard (or telegram auth --qr in a terminal).';
 
 /** The RPC error name of a session that ended, if `error` is one. */
 export function sessionEndedBy(error: unknown): string | undefined {
@@ -150,7 +151,7 @@ export function errorDetails(error: unknown): ErrorDetails & { exitCode: number 
     const message = typeof rpc.message === 'string' ? rpc.message : rpc.errorMessage;
     const wait = typeof rpc.seconds === 'number' ? rpc.seconds : /^FLOOD_(PREMIUM_)?WAIT_(\d+)/.exec(rpc.errorMessage)?.[2];
     const ended = sessionEndedBy(rpc);
-    if (ended) return { code: 'session_expired', message: `Telegram ended this session (${ended})`, exitCode: EXIT.NOT_LOGGED_IN, hint: SESSION_ENDED_HINT };
+    if (ended) return { code: 'session_expired', message: `Telegram ended this session (${ended})`, exitCode: EXIT.NOT_LOGGED_IN, hint: loginHint() };
     if (wait !== undefined && /FLOOD/.test(rpc.errorMessage)) {
       const seconds = Number(wait);
       return { code: 'flood_wait', message, exitCode: EXIT.ERROR, retryAfterSeconds: seconds, hint: `Telegram rate limit: wait ${seconds} s, then run the command again.` };

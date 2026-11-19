@@ -16,7 +16,7 @@ async function run(
   ok: (result: unknown) => string,
   options: { json?: boolean },
 ): Promise<void> {
-  assertWriteEnabled();
+  await assertWriteEnabled();
   const spinner = ora(spinnerText).start();
   try {
     const client = await getClient();

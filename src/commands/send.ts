@@ -49,7 +49,7 @@ export const sendCommand = new Command('send')
   .option('--topic <id>', 'Post into this forum topic (ID from `telegram topics`)', positiveInt)
   .option('--json', 'Output as JSON')
   .action(async (target, messageArg, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const message = readTextArg(messageArg);
     const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
     const schedule = options.schedule ? parseScheduleToEpoch(options.schedule) : undefined;

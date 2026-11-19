@@ -16,7 +16,7 @@ export const pinCommand = new Command('pin')
   .option('--one-side', 'In a private chat, pin only on your side')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     const id: number = messageId;
 
@@ -48,7 +48,7 @@ export const unpinCommand = new Command('unpin')
   .argument('[messageId]', 'Message ID to unpin; omit to unpin all messages', positiveInt)
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
     const id: number | undefined = messageId;
 

@@ -12,7 +12,7 @@ export const kickCommand = new Command('kick')
   .argument('<user>', 'Username to kick (e.g., @username)')
   .option('--json', 'Output as JSON')
   .action(async (group, user, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Kicking ${user} from "${group}"...`).start();
 
     try {

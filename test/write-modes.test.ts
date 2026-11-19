@@ -36,14 +36,18 @@ vi.mock('../src/secrets.js', () => ({
 const stdin = vi.hoisted(() => ({ text: '' }));
 vi.mock('../src/text.js', async orig => ({ ...(await orig<typeof import('../src/text.js')>()), readStdinOnce: () => stdin.text }));
 // Who can confirm: a terminal / dialog or nobody
-const human = vi.hoisted(() => ({ channel: false, answer: true, asked: [] as string[] }));
+const human = vi.hoisted(() => ({ channel: false, answer: true, asked: [] as string[], noFallback: false }));
 vi.mock('../src/confirm.js', () => ({
   confirmByHuman: async (q: string) => (human.asked.push(q), human.answer),
   windowsConfirmScript: () => '',
 }));
 vi.mock('../src/write-store.js', async orig => {
   const real = await orig<typeof import('../src/write-store.js')>();
-  return { ...real, hasHumanChannel: () => human.channel, mayTrustUnconfirmedChoice: () => !human.channel && !store.available };
+  return {
+    ...real, hasHumanChannel: () => human.channel, mayTrustUnconfirmedChoice: () => !human.channel && !store.available,
+    // A desktop where the store should work but does not answer (no file fallback), when a test asks for it
+    isFileFallbackAllowed: (...a: Parameters<typeof real.isFileFallbackAllowed>) => (a.length || !human.noFallback ? real.isFileFallbackAllowed(...a) : false),
+  };
 });
 
 import { describeWriteState, encodeWriteState, parseWriteState } from '../src/write-state.js';
@@ -53,9 +57,11 @@ import { auditLog } from '../src/audit.js';
 import { applyModeChoice } from '../src/write-mode.js';
 import { getWriteValue, isFileFallbackAllowed } from '../src/write-store.js';
 import { configDir } from '../src/paths.js';
+import { forgetFileSnapshots } from '../src/file-snapshot.js';
 import { elicitApproved, gateWrite } from '../src/mcp.js';
 import { getSessionString } from '../src/config.js';
 import { EXIT } from '../src/errors.js';
+import { describeInProcess } from './helpers/describe-in-process.js';
 
 // A home of its own for each test: the profile dir lives under it, and only that root is deleted
 let root: string | undefined;
@@ -75,6 +81,7 @@ beforeEach(() => {
   human.channel = false;
   human.answer = true;
   human.asked = [];
+  human.noFallback = false;
   stdin.text = '';
 });
 afterEach(() => {
@@ -95,14 +102,14 @@ afterAll(() => {
 const account = () => getSessionString();
 
 /** Runs the guard, turning process.exit into a value; returns the exit code (or null) and stderr. */
-function guard(argv: string[], check: (argv: string[]) => void = assertWriteEnabled) {
+async function guard(argv: string[], check: (argv: string[]) => Promise<void> | void = assertWriteEnabled) {
   let err = '';
   let out = '';
   vi.spyOn(console, 'error').mockImplementation((...a) => { err += a.join(' ') + '\n'; });
   vi.spyOn(console, 'log').mockImplementation((...a) => { out += a.join(' ') + '\n'; });
   vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw Object.assign(new Error('exit'), { code }); }) as never);
   try {
-    check(argv);
+    await check(argv);
     return { code: null as number | null, err, out };
   } catch (e) {
     return { code: (e as { code: number }).code, err, out };
@@ -111,19 +118,22 @@ function guard(argv: string[], check: (argv: string[]) => void = assertWriteEnab
   }
 }
 
-const codeIn = (s: string) => /TG_APPROVE=([A-Z2-9]{6})/.exec(s)?.[1];
+/** The code in an approval message: the CLI form (TG_APPROVE=…) or the MCP one ("approval": "…"). */
+const codeIn = (s: string) => /(?:TG_APPROVE=|"approval": ")([A-Z2-9]{6})/.exec(s)?.[1];
+/** gateWrite's describe run, in this process (the real one starts the CLI as a child). */
+const describe_ = (p: Parameters<typeof gateWrite>[0]) => describeInProcess(p, t => { stdin.text = t; });
 
 describe('write state', () => {
   const now = Date.UTC(2026, 10, 4, 12);
 
-  it('keeps the meaning of the values existing installs have', () => {
+  it('keeps the meaning of the values existing installs have', async () => {
     expect(parseWriteState('true', now)).toEqual({ mode: 'on', enabled: true });
     expect(parseWriteState(null, now)).toEqual({ mode: 'read-only', enabled: false });
     expect(parseWriteState(encodeWriteState(3600, now), now)).toMatchObject({ mode: 'on', enabled: true });
     expect(encodeWriteState(undefined, now)).toBe('true');
   });
 
-  it('adds ask, with and without an end', () => {
+  it('adds ask, with and without an end', async () => {
     expect(parseWriteState('ask', now)).toEqual({ mode: 'ask', enabled: true });
     const value = encodeWriteState(3600, now, 'ask');
     expect(value).toMatch(/^ask:until:\d+$/);
@@ -135,7 +145,7 @@ describe('write state', () => {
 });
 
 describe('approvals', () => {
-  it('are single-use, bound to the exact command and text, and expire', () => {
+  it('are single-use, bound to the exact command and text, and expire', async () => {
     const now = Date.now();
     const hash = actionHash(['send', '@alice', '-'], 'Hi');
     const code = createApproval(hash, account(), 'chat', now);
@@ -151,7 +161,7 @@ describe('approvals', () => {
     expect(consumeApproval(old, hash, account(), now + APPROVAL_TTL_MS + 1)).toMatchObject({ ok: false });
   });
 
-  it('store a hash, never the message, one 0600 file per code', () => {
+  it('store a hash, never the message, one 0600 file per code', async () => {
     const code = createApproval(actionHash(['send', '@alice', '-'], 'very secret text'), account());
     const file = join(dir, 'approvals', `${code}.json`);
     expect(readFileSync(file, 'utf8')).not.toContain('secret');
@@ -159,29 +169,30 @@ describe('approvals', () => {
     expect(readdirSync(join(dir, 'approvals'))).toEqual([`${code}.json`]);
   });
 
-  it('reject a record dropped into the store by hand (forged, e.g. as "elicitation")', () => {
+  it('reject a record dropped into the store by hand (forged, e.g. as "elicitation")', async () => {
     const hash = actionHash(['send', '@alice', 'hi']);
     createApproval(hash, account()); // creates the store and the signing key
     writeFileSync(join(dir, 'approvals', 'FAKE22.json'), JSON.stringify({ hash, expiresAt: Date.now() + 60_000, via: 'elicitation', mac: '00'.repeat(32) }));
-    expect(consumeApproval('FAKE22', hash, account())).toEqual({ ok: false, reason: 'the approval record is not genuine' });
+    expect(consumeApproval('FAKE22', hash, account())).toEqual({ ok: false, reason: 'the approval record is not genuine', kind: 'not_genuine' });
     const code = createApproval(hash, account());
     const rec = JSON.parse(readFileSync(join(dir, 'approvals', `${code}.json`), 'utf8'));
     writeFileSync(join(dir, 'approvals', `${code}.json`), JSON.stringify({ ...rec, via: 'elicitation' })); // relabelled
     expect(consumeApproval(code, hash, account())).toMatchObject({ ok: false });
   });
 
-  it('cover the contents of files named in the arguments, also as --opt=path', () => {
+  it('cover the contents of files named in the arguments, also as --opt=path', async () => {
     mkdirSync(dir, { recursive: true });
     const f = join(dir, 'doc.txt');
     writeFileSync(f, 'v1');
     const a = actionHash(['send-file', '@alice', f]);
     const b = actionHash(['send-file', '@alice', `--file=${f}`]);
     writeFileSync(f, 'v2'); // same size, changed contents
+    forgetFileSnapshots(); // a new process (the retry) reads the file again
     expect(actionHash(['send-file', '@alice', f])).not.toBe(a);
     expect(actionHash(['send-file', '@alice', `--file=${f}`])).not.toBe(b);
   });
 
-  it('show the whole text, with control and bidi characters escaped', () => {
+  it('show the whole text, with control and bidi characters escaped', async () => {
     const long = 'x'.repeat(5000);
     expect(describeAction(['send', '@alice', '-'], long)).toContain(long);
     const shown = describeAction(['send', '@alice', '-'], 'pay \u202Eevil');
@@ -191,32 +202,48 @@ describe('approvals', () => {
 });
 
 describe('the guard', () => {
-  it('refuses writes in read-only and names both ways to allow them', () => {
-    const r = guard(['send', '@alice', 'hi']);
+  it('refuses writes in read-only and names both ways to allow them', async () => {
+    const r = (await guard(['send', '@alice', 'hi']));
     expect(r.code).toBe(EXIT.WRITE_DISABLED);
     expect(r.err).toMatch(/write-access ask/);
     expect(r.out).toBe('');
   });
 
-  it('read-only with --json: exit 4 and one JSON error line on stdout naming the next step', () => {
-    const r = guard(['send', '@alice', 'hi', '--json']);
+  it('read-only with --json: exit 4 and one JSON error line on stdout naming the next step', async () => {
+    const r = await guard(['send', '@alice', 'hi', '--json']);
     expect(r.code).toBe(4);
     expect(JSON.parse(r.out)).toEqual({
       error: { code: 'write_disabled', message: 'Write access is disabled (read-only)', hint: 'telegram write-access ask' },
     });
   });
 
-  it('lets writes through in "on" and records the mode in the audit log', () => {
+  it('over MCP, read-only names what the user does: telegram_setup or one terminal command (5.1)', async () => {
+    process.env.TG_MCP = '1';
+    const r = (await guard(['send', '@alice', 'hi']));
+    expect(r.code).toBe(EXIT.WRITE_DISABLED);
+    expect(r.err).toMatch(/call telegram_setup and open the page/);
+    expect(r.err).toMatch(/run `telegram write-access ask` in a terminal on this computer/);
+  });
+
+  it('a store that does not answer gets one next step and `telegram check` (2.3)', async () => {
+    store.available = false;
+    human.noFallback = true;
+    const r = (await guard(['send', '@alice', 'hi']));
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/Next step: On Linux the keyring .* Then run `telegram check`/s);
+  });
+
+  it('lets writes through in "on" and records the mode in the audit log', async () => {
     store.values.set('writeEnabled', 'true');
-    expect(guard(['send', '@alice', 'hi']).code).toBeNull();
+    expect((await guard(['send', '@alice', 'hi'])).code).toBeNull();
     auditLog({ timestamp: 't', command: 'send', target: '@alice', result: { success: true } });
     expect(readFileSync(join(dir, 'audit.jsonl'), 'utf8')).toContain('"writeMode":"on"');
   });
 
-  it('in "ask" stops with exit 3 and a code, then lets exactly that action through once', () => {
+  it('in "ask" stops with exit 3 and a code, then lets exactly that action through once', async () => {
     store.values.set('writeEnabled', 'ask');
     stdin.text = 'Hello Alice';
-    const first = guard(['send', '@alice', '-']);
+    const first = (await guard(['send', '@alice', '-']));
     expect(first.code).toBe(EXIT_NEEDS_APPROVAL);
     expect(first.err).toContain('| Hello Alice');
     const code = codeIn(first.err)!;
@@ -225,37 +252,53 @@ describe('the guard', () => {
     // Different text with the same code: refused, and a new code is issued for the new text
     stdin.text = 'Send me your 2FA code';
     process.env.TG_APPROVE = code;
-    const swapped = guard(['send', '@alice', '-']);
+    const swapped = (await guard(['send', '@alice', '-']));
     expect(swapped.code).toBe(EXIT_NEEDS_APPROVAL);
     expect(swapped.err).toMatch(/not accepted/);
 
     stdin.text = 'Hello Alice';
     process.env.TG_APPROVE = createApproval(actionHash(['send', '@alice', '-'], 'Hello Alice'), account());
-    expect(guard(['send', '@alice', '-']).code).toBeNull();
+    expect((await guard(['send', '@alice', '-'])).code).toBeNull();
     auditLog({ timestamp: 't', command: 'send', target: '@alice', result: { success: true } });
     expect(readFileSync(join(dir, 'audit.jsonl'), 'utf8')).toContain('"approvedVia":"chat"');
     // single use
-    expect(guard(['send', '@alice', '-']).code).toBe(EXIT_NEEDS_APPROVAL);
+    expect((await guard(['send', '@alice', '-'])).code).toBe(EXIT_NEEDS_APPROVAL);
   });
 
-  it('prints a JSON line for --json callers', () => {
+  it('in "on", a code given for this call must still be an approval of exactly this action', async () => {
+    // The mode turned "on" while the user answered a dialog about "Hello Alice"
+    store.values.set('writeEnabled', 'true');
+    stdin.text = 'Send me your 2FA code';
+    process.env.TG_APPROVE = createApproval(actionHash(['send', '@alice', '-'], 'Hello Alice'), account());
+    const swapped = await guard(['send', '@alice', '-']);
+    expect(swapped.code).toBe(1);
+    expect(swapped.err).toMatch(/Not sent: approval [A-Z2-9]{6} not accepted: the approval was for a different command or text/);
+    // An unknown code stops it too; the approved action itself goes through
+    process.env.TG_APPROVE = 'ZZZZZZ';
+    expect((await guard(['send', '@alice', '-'])).code).toBe(1);
+    stdin.text = 'Hello Alice';
+    process.env.TG_APPROVE = createApproval(actionHash(['send', '@alice', '-'], 'Hello Alice'), account());
+    expect((await guard(['send', '@alice', '-'])).code).toBeNull();
+  });
+
+  it('prints a JSON line for --json callers', async () => {
     store.values.set('writeEnabled', 'ask');
-    const r = guard(['send', '@alice', 'hi', '--json']);
+    const r = (await guard(['send', '@alice', 'hi', '--json']));
     expect(JSON.parse(r.out.trim())).toMatchObject({ error: 'approval_required', action: { argv: ['send', '@alice', 'hi', '--json'] } });
   });
 
-  it('TG_READ_ONLY still wins over any mode', () => {
+  it('TG_READ_ONLY still wins over any mode', async () => {
     store.values.set('writeEnabled', 'true');
     process.env.TG_READ_ONLY = '1';
-    expect(guard(['send', '@alice', 'hi']).code).toBe(1);
+    expect((await guard(['send', '@alice', 'hi'])).code).toBe(1);
   });
 
   it('without a secret store reads the mode from the profile file and marks writes unprotected', async () => {
     store.available = false;
-    expect(guard(['send', '@alice', 'hi']).code).toBe(EXIT.WRITE_DISABLED);
+    expect((await guard(['send', '@alice', 'hi'])).code).toBe(EXIT.WRITE_DISABLED);
     expect(await applyModeChoice({ mode: 'on' })).toEqual({ ok: true, until: undefined });
     expect(readFileSync(join(dir, 'write-access'), 'utf8').trim()).toBe('true');
-    expect(guard(['send', '@alice', 'hi']).code).toBeNull();
+    expect((await guard(['send', '@alice', 'hi'])).code).toBeNull();
     auditLog({ timestamp: 't', command: 'send', target: '@alice', result: { success: true } });
     expect(readFileSync(join(dir, 'audit.jsonl'), 'utf8')).toContain('"unprotected":true');
   });
@@ -267,72 +310,72 @@ describe('local file writes', () => {
   // Called through a wrapper: if the helper were missing, this must fail, not fall back to the default
   const local = (argv: string[]) => guard(argv, a => assertLocalWriteAllowed(a));
 
-  it('need no write access in a terminal, whatever the mode', () => {
-    expect(local(['download', 'me', '1']).code).toBeNull();
+  it('need no write access in a terminal, whatever the mode', async () => {
+    expect((await local(['download', 'me', '1'])).code).toBeNull();
     store.values.set('writeEnabled', 'ask');
-    expect(local(['sync']).code).toBeNull();
+    expect((await local(['sync'])).code).toBeNull();
   });
 
-  it('over MCP are refused in read-only', () => {
+  it('over MCP are refused in read-only', async () => {
     process.env.TG_MCP = '1';
     for (const argv of [['download', 'me', '1'], ['sync'], ['avatar', 'me']]) {
-      const r = local(argv);
+      const r = (await local(argv));
       expect(r.code, argv.join(' ')).toBe(EXIT.WRITE_DISABLED);
       expect(r.err).toMatch(/Write access is disabled/);
     }
   });
 
-  it('over MCP in "ask" need an approval of that exact call, once', () => {
+  it('over MCP in "ask" need an approval of that exact call, once', async () => {
     process.env.TG_MCP = '1';
     store.values.set('writeEnabled', 'ask');
-    const first = local(['download', 'me', '1', '-o', '/tmp/x']);
+    const first = (await local(['download', 'me', '1', '-o', '/tmp/x']));
     expect(first.code).toBe(EXIT_NEEDS_APPROVAL);
     process.env.TG_APPROVE = codeIn(first.err)!;
-    expect(local(['download', 'me', '1', '-o', '/tmp/x']).code).toBeNull();
-    expect(local(['download', 'me', '1', '-o', '/tmp/x']).code).toBe(EXIT_NEEDS_APPROVAL);
+    expect((await local(['download', 'me', '1', '-o', '/tmp/x'])).code).toBeNull();
+    expect((await local(['download', 'me', '1', '-o', '/tmp/x'])).code).toBe(EXIT_NEEDS_APPROVAL);
   });
 
-  it('a misrouted read never writes a file', () => {
+  it('a misrouted read never writes a file', async () => {
     process.env.TG_READ_ONLY = '1';
-    expect(local(['download', 'me', '1']).code).toBe(1);
+    expect((await local(['download', 'me', '1'])).code).toBe(1);
   });
 
   // A mock write needs no approval, so over MCP the model could pick any path
-  it('over MCP in mock mode are refused, whatever the mode; a terminal and a misrouted read as without mock', () => {
+  it('over MCP in mock mode are refused, whatever the mode; a terminal and a misrouted read as without mock', async () => {
     process.env.TG_MOCK = '1';
-    expect(local(['sync', '--output', '/tmp/x']).code).toBeNull();
+    expect((await local(['sync', '--output', '/tmp/x'])).code).toBeNull();
     process.env.TG_MCP = '1';
     for (const mode of [undefined, 'ask', 'true']) {
       if (mode) store.values.set('writeEnabled', mode);
       for (const argv of [['download', 'me', '1'], ['sync', '--output', '/tmp/x'], ['avatar', 'me']]) {
-        const r = local(argv);
+        const r = (await local(argv));
         expect(r.code, `${mode} ${argv.join(' ')}`).toBe(1);
         expect(r.err).toMatch(/mock mode \(TG_MOCK\).*write no local files/);
       }
     }
     process.env.TG_READ_ONLY = '1';
-    const read = local(['download', 'me', '1']);
+    const read = (await local(['download', 'me', '1']));
     expect(read.code).toBe(1);
     expect(read.err).toMatch(/cannot run as a read/);
   });
 });
 
 describe('the file fallback', () => {
-  it('is never used on macOS or Windows, where a missing store means a broken or disabled one', () => {
+  it('is never used on macOS or Windows, where a missing store means a broken or disabled one', async () => {
     expect(isFileFallbackAllowed('darwin')).toBe(false);
     expect(isFileFallbackAllowed('win32')).toBe(false);
   });
 
-  it('on Linux, is used wherever the Secret Service cannot work: no secret-tool, or no session bus (#74)', () => {
+  it('on Linux, is used wherever the Secret Service cannot work: no secret-tool, or no session bus (#74)', async () => {
     expect(isFileFallbackAllowed('linux', { secretTool: false, bus: false })).toBe(true); // Grok Bot today
     expect(isFileFallbackAllowed('linux', { secretTool: true, bus: false })).toBe(true); // secret-tool installed, still no keyring
     expect(isFileFallbackAllowed('linux', { secretTool: false, bus: true })).toBe(true);
     expect(isFileFallbackAllowed('linux', { secretTool: true, bus: true })).toBe(false); // desktop with a keyring: fail closed
   });
 
-  it('tells agents on cloud computers not to install a keyring', () => {
+  it('tells agents on cloud computers not to install a keyring', async () => {
     store.available = false;
-    const r = guard(['send', '@alice', 'hi']);
+    const r = (await guard(['send', '@alice', 'hi']));
     expect(r.code).toBe(EXIT.WRITE_DISABLED);
     expect(r.err).toMatch(/Do not try to install one/);
   });
@@ -380,20 +423,20 @@ describe('MCP in mode "ask"', () => {
     store.values.set('writeEnabled', 'ask');
     const asked: string[] = [];
     const p = plan();
-    expect(await gateWrite(p, {}, async m => (asked.push(m), true))).toBeUndefined();
+    expect(await gateWrite(p, {}, async m => (asked.push(m), true), describe_)).toBeUndefined();
     expect(asked[0]).toContain('| Hi');
     expect(consumeApproval(p.approval!, actionHash(p.argv, 'Hi'), account())).toEqual({ ok: true, via: 'elicitation' });
   });
 
   it('sends nothing when the user declines, and refuses codes from the model when it can ask', async () => {
     store.values.set('writeEnabled', 'ask');
-    expect(await gateWrite(plan(), {}, async () => false)).toMatch(/did not approve/);
+    expect(await gateWrite(plan(), {}, async () => false, describe_)).toMatch(/did not approve/);
     const p = plan();
     expect(await gateWrite(p, { approval: 'ABCDEF' }, async () => true)).toMatch(/not accepted here/);
     expect(p.approval).toBeUndefined();
   });
 
-  it('reads an elicitation answer: the ticked box, or a plain Allow from a prompt-only client', () => {
+  it('reads an elicitation answer: the ticked box, or a plain Allow from a prompt-only client', async () => {
     expect(elicitApproved({ action: 'accept', content: { approve: true } })).toBe(true);
     // Hermes Agent shows Allow Once / Deny and accepts with empty content
     expect(elicitApproved({ action: 'accept', content: {} })).toBe(true);

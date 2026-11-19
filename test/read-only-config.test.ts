@@ -293,7 +293,7 @@ describe('one snapshot per connection', () => {
     const seen: { setting?: string } = {};
     vi.doMock('teleproto', async orig => ({
       ...(await orig<typeof import('teleproto')>()),
-      TelegramClient: class { constructor(...a: unknown[]) { built.push(a); } isUserAuthorized = async () => true; invoke = async () => ({}); },
+      TelegramClient: class { constructor(...a: unknown[]) { built.push(a); } invoke = async () => ({}); },
     }));
     vi.doMock('teleproto/sessions/index.js', () => ({ StringSession: class { constructor(public s: string) {} } }));
     vi.doMock('../src/client-options.js', () => ({ clientParams: (testServers: boolean, t: string) => ({ testServers, t }) }));
