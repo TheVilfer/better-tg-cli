@@ -80,8 +80,8 @@ these commands do, all run on `next`:
 `install.sh` is the user installer (release binary into `~/.local/bin`, see `docs/install.md`),
 pinned to the package version; on Linux it falls back to the `.tar.gz` that `build-binary.sh` adds
 next to `.tar.xz`. Users fetch it from `releases/latest/download/install.sh`: the release workflow
-attaches it to stable releases only, after the archives and SHA256SUMS are up, so it never points
-at unpublished files (never link `main/install.sh`). The old checkout-and-`npm -g` installer is
+adds it to the asset list of `gh release create` for stable releases only (gh uploads every asset
+to a draft, then publishes), so "latest" never lacks it or points at unpublished files (never link `main/install.sh`). The old checkout-and-`npm -g` installer is
 `scripts/dev-install.sh`.
 
 A fix that cannot wait for `next` goes as a PR into `main` like a release, followed by the same

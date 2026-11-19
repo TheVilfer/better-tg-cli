@@ -39,8 +39,8 @@ Node, npm, Bun or git, and it never edits shell profiles or installs system pack
 5. It writes `install.json` next to the binary.
 
 The pinned version is the `VERSION=` line at the top of the script. `scripts/gen-version.mjs` keeps
-it equal to `package.json`. The release workflow attaches `install.sh` to each stable GitHub
-Release once its archives and `SHA256SUMS` are published, and GitHub points
+it equal to `package.json`. The release workflow puts `install.sh` into each stable GitHub
+Release in the same call that uploads its archives and `SHA256SUMS` and publishes it, and GitHub points
 `releases/latest/download/` at the newest stable release only. So the URL above always serves a
 script whose binaries exist, never a release candidate. Each release's own copy stays at
 `releases/download/vX.Y.Z/install.sh` for an exact version.

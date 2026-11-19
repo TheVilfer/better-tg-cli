@@ -165,6 +165,14 @@ jobs:
           path: release
       - name: Checksums
         run: cd release && sha256sum *.tar.xz *.tar.gz *.zip *.mcpb > SHA256SUMS && cat SHA256SUMS
+      - name: Check the install.sh pin
+        # The public entry point is releases/latest/download/install.sh, and GitHub moves "latest"
+        # to stable releases only, so a stable release must ship an install.sh pinned to its tag.
+        # A candidate's install.sh still pins the previous stable version, so it gets none.
+        if: needs.verify.outputs.prerelease != 'true'
+        run: |
+          pin="$(sed -n "s/^VERSION='\(.*\)'$/\1/p" install.sh)"
+          test "v$pin" = "$GITHUB_REF_NAME" || { echo "install.sh pins $pin, tag is $GITHUB_REF_NAME" >&2; exit 1; }
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -175,23 +183,15 @@ jobs:
           previous="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
           flags=()
           [ -z "$previous" ] || flags+=(--notes-start-tag "$previous")
-          [ "$PRERELEASE" != true ] || flags+=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" release/* \
+          assets=(release/*)
+          # A stable release gets install.sh in the same call (pin checked above): gh uploads every
+          # asset to a draft and publishes it only then, so "latest" never points at a release
+          # without install.sh. Candidates get none.
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); else assets+=(install.sh); fi
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Better-TG-CLI $GITHUB_REF_NAME" \
             --generate-notes "${flags[@]}"
-      - name: Attach install.sh
-        # Only once the release with its archives and SHA256SUMS is published: the public entry
-        # point is releases/latest/download/install.sh, and GitHub moves "latest" to stable
-        # releases only. A candidate's install.sh still pins the previous stable version, so it
-        # gets none.
-        if: needs.verify.outputs.prerelease != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          pin="$(sed -n "s/^VERSION='\(.*\)'$/\1/p" install.sh)"
-          test "v$pin" = "$GITHUB_REF_NAME" || { echo "install.sh pins $pin, tag is $GITHUB_REF_NAME" >&2; exit 1; }
-          gh release upload "$GITHUB_REF_NAME" install.sh --repo "$GITHUB_REPOSITORY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sha256sums

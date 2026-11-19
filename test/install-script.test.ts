@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { SetupResult } from '../src/setup-contract.js';
+import { setupExitCode, setupResultErrors } from './setup-contract-check.js';
 import { assetName, canMakeXz, makeReleaseFixtures, releaseBase, type ReleaseFixtureOptions } from './helpers/release-fixtures.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -173,36 +175,20 @@ function run(s: Sandbox, env: Record<string, string> = {}, shell = SHELLS[0], st
 const ids = (r: RunResult) => r.json.problems.map(p => p.id);
 
 /**
- * The rules of the setup contract, schema 1 (#110), applied to the whole stdout object. Its one
- * optional command-specific field is `data` (here: where the binary went). Swap this for the
- * shared check in test/setup-contract-check.ts once setup-contract is merged.
+ * Every run's whole stdout object goes through the shared schema 1 checker (#110), and the exit
+ * code must be the one setupExitCode() gives for it. On top of that, what the shared checker
+ * leaves open for this command: `data` is always there with the installer's fields, and the
+ * script never proposes a `fix.run` (nothing it could name is on the allowlist).
  */
 function contractErrors(r: RunResult): string[] {
-  const result = r.json as RunResult['json'] & Record<string, unknown>;
-  const errors: string[] = [];
-  if ('data' in result && (!result.data || typeof result.data !== 'object' || Array.isArray(result.data))) errors.push('data must be an object');
-  if (result.schema !== 1) errors.push('schema must be 1');
-  if (typeof result.ok !== 'boolean') errors.push('ok must be a boolean');
-  if (!Array.isArray(result.problems)) return [...errors, 'problems must be an array'];
-  const extra = Object.keys(result).filter(k => !['schema', 'ok', 'problems', 'data'].includes(k));
-  if (extra.length) errors.push(`unexpected field ${extra[0]}`);
-  const seen = new Set<string>();
-  for (const p of result.problems) {
-    if (Object.keys(p).join() !== 'id,severity,message,fix') errors.push(`${p.id}: fields ${Object.keys(p)}`);
-    if (!/^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(p.id)) errors.push(`${p.id}: id must be snake_case`);
-    if (seen.has(p.id)) errors.push(`${p.id}: duplicate`);
-    seen.add(p.id);
-    if (!['error', 'warning', 'info'].includes(p.severity)) errors.push(`${p.id}: severity`);
-    if (!p.message.trim() || p.message.includes('\n')) errors.push(`${p.id}: message must be one line`);
-    const kinds = Object.keys(p.fix).filter(k => k !== 'url');
-    if (kinds.length !== 1 || !['human', 'unavailable'].includes(kinds[0])) errors.push(`${p.id}: fix ${Object.keys(p.fix)}`);
-    if ('url' in p.fix && (kinds[0] !== 'human' || !p.fix.url.startsWith('https://'))) errors.push(`${p.id}: url`);
-  }
-  const hasError = result.problems.some(p => p.severity === 'error');
-  if (result.ok === hasError) errors.push('ok must be true exactly when no problem is an error');
-  // setupExitCode(): 0 ok, 2 when every error waits for a person, else 1
-  const want = !hasError ? 0 : result.problems.filter(p => p.severity === 'error').every(p => 'human' in p.fix) ? 2 : 1;
+  const errors = setupResultErrors(r.json);
+  if (errors.length) return errors;
+  const result = r.json as unknown as SetupResult & { data?: Record<string, unknown> };
+  const want = setupExitCode(result);
   if (r.status !== want) errors.push(`exit ${r.status}, contract says ${want}`);
+  if (!result.data) errors.push('data must be present');
+  else if (Object.keys(result.data).join() !== 'manager,version,tag,target,dir,path,onPath,active') errors.push(`data fields ${Object.keys(result.data)}`);
+  for (const p of result.problems) if ('run' in p.fix) errors.push(`${p.id}: the installer never emits fix.run`);
   return errors;
 }
 const leftovers = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter(f => f.startsWith('.')) : []);
