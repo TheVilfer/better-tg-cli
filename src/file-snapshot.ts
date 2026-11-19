@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 /**
  * The bytes of a local file as this process first read them. The write guard hashes a file an
@@ -15,27 +15,30 @@ export interface FileSnapshot {
   bytes: Buffer;
 }
 
-const taken = new Map<string, Buffer>();
+/** By the absolute path as given: a symlink retargeted after the first read must not lead to other bytes */
+const taken = new Map<string, FileSnapshot>();
 
-/** Reads the file once per process (by real path); throws a readable error when it can't. */
+/** Reads the file once per process (by the path as given, made absolute); throws a readable error when it can't. */
 export function fileSnapshot(path: string): FileSnapshot {
+  const key = resolve(path);
+  const known = taken.get(key);
+  if (known) return known;
   let real: string;
   try {
-    real = realpathSync(path);
+    real = realpathSync(key);
   } catch {
     throw new Error(`File not found: ${path}`);
   }
-  let bytes = taken.get(real);
-  if (!bytes) {
-    try {
-      if (!statSync(real).isFile()) throw new Error('not a regular file');
-      bytes = readFileSync(real);
-    } catch (e) {
-      throw new Error(`Cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    taken.set(real, bytes);
+  let bytes: Buffer;
+  try {
+    if (!statSync(real).isFile()) throw new Error('not a regular file');
+    bytes = readFileSync(real);
+  } catch (e) {
+    throw new Error(`Cannot read ${path}: ${e instanceof Error ? e.message : String(e)}`);
   }
-  return { path: real, name: basename(path), bytes };
+  const snap = { path: real, name: basename(path), bytes };
+  taken.set(key, snap);
+  return snap;
 }
 
 /** Drops the snapshots, as a new process starts without them (tests that play two processes in one). */

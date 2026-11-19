@@ -310,9 +310,23 @@ export function apiChatRefs(value: unknown, path = 'params'): { path: string; va
   if (Array.isArray(value)) return value.flatMap((v, i) => apiChatRefs(v, `${path}[${i}]`));
   if (!value || typeof value !== 'object') return [];
   const obj = value as Record<string, unknown>;
-  if (typeof obj._chat === 'string') return [{ path, value: obj._chat }];
-  if ('_base64' in obj || '_hex' in obj || '_bigint' in obj) return [];
+  const marker = apiMarker(obj);
+  if (marker === 'chat') return [{ path, value: obj._chat as string }];
+  if (marker) return [];
   return Object.entries(obj).flatMap(([k, v]) => apiChatRefs(v, `${path}.${k}`));
+}
+
+/**
+ * What a params object stands for, by the one rule both the approval (apiChatRefs) and the request
+ * (materializeApiParams in client.ts) use: a chat to resolve, bytes, a big integer, or (undefined)
+ * a plain object whose fields are walked.
+ */
+export function apiMarker(obj: Record<string, unknown>): 'chat' | 'base64' | 'hex' | 'bigint' | undefined {
+  if (typeof obj._chat === 'string') return 'chat';
+  if (typeof obj._base64 === 'string') return 'base64';
+  if (typeof obj._hex === 'string') return 'hex';
+  if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return 'bigint';
+  return undefined;
 }
 
 /** Every string an action carries (arguments and option values), for the file-content binding. */

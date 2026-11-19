@@ -97,3 +97,27 @@ describe('click presses only the button the person approved', () => {
     expect(await clickButton(await getClient(), '2001', 2, { index: 1 }, { waitMs: 0 })).toMatchObject({ action: 'callback' });
   });
 });
+
+describe('review findings on the binding itself', () => {
+  it.skipIf(process.platform === 'win32')('a symlink retargeted after the check still uploads the checked bytes', async () => {
+    const { symlinkSync, unlinkSync } = await import('node:fs');
+    const a = join(dir, 'approved.txt');
+    const b = join(dir, 'other.txt');
+    const link = join(dir, 'link.txt');
+    writeFileSync(a, 'approved bytes');
+    writeFileSync(b, 'other bytes!!!');
+    symlinkSync(a, link);
+    fileSnapshot(link); // the guard
+    unlinkSync(link);
+    symlinkSync(b, link);
+    const { client, got } = recorder();
+    await sendFileMessage(client, 'me', link);
+    expect(await bytesOf(got[0])).toBe('approved bytes');
+  });
+
+  it('every chat the request resolves is one the approval found, whatever marker-like fields sit next to it', async () => {
+    const { apiChatRefs } = await import('../src/approval-action.js');
+    const params = { _base64: 1, peer: { _chat: '@x' }, list: [{ _hex: null, to: { _chat: '@y' } }] };
+    expect(apiChatRefs(params).map(r => r.value)).toEqual(['@x', '@y']);
+  });
+});

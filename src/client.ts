@@ -14,7 +14,7 @@ import { isTTY } from './spinner.js';
 import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
 import { loginHint } from './login-hint.js';
 import { fileSnapshot, uploadable } from './file-snapshot.js';
-import { INVITE_LINK } from './approval-action.js';
+import { apiMarker, INVITE_LINK } from './approval-action.js';
 
 /** First words of the error getClient() throws for a session Telegram no longer accepts (onboard looks for it). */
 export const SESSION_EXPIRED = 'Session expired or was revoked.';
@@ -3156,10 +3156,13 @@ async function materializeApiParams(client: TelegramClient, value: unknown): Pro
   }
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
-    if (typeof obj._chat === 'string') return resolveChat(client, obj._chat);
-    if (typeof obj._base64 === 'string') return Buffer.from(obj._base64, 'base64');
-    if (typeof obj._hex === 'string') return Buffer.from(obj._hex, 'hex');
-    if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return bigInt(String(obj._bigint));
+    // The same rule the approval used to find the chats in these params (apiChatRefs)
+    switch (apiMarker(obj)) {
+      case 'chat': return resolveChat(client, obj._chat as string);
+      case 'base64': return Buffer.from(obj._base64 as string, 'base64');
+      case 'hex': return Buffer.from(obj._hex as string, 'hex');
+      case 'bigint': return bigInt(String(obj._bigint));
+    }
     // Prototype-free, so no field (allowPaidStars) is inherited after the checks in runApiMethod
     const out = Object.create(null) as Record<string, unknown>;
     for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
