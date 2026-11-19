@@ -31,8 +31,8 @@ export function isKeychainAvailable(): boolean {
 }
 
 /**
- * A store read that tells a missing item from a failed read. Used only where a wrong "missing"
- * would make the caller overwrite a stored secret (migrateSecretsToStore).
+ * A store read that tells a missing item from a failed read. loadConfig uses it for the session and
+ * api_hash: a wrong "missing" would make it fall back to a file copy that may be another account.
  */
 export type StrictRead = { ok: true; value: string | null } | { ok: false; reason: string };
 

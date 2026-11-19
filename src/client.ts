@@ -6,7 +6,7 @@ import { connectClient } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
-import { getCredentials, getSessionString, setSessionString, isConfigured, loadConfig } from './config.js';
+import { getCredentials, setSessionString, isConfigured, loadConfig } from './config.js';
 import bigInt from 'big-integer';
 import { existsSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
@@ -27,19 +27,22 @@ export async function getClient(): Promise<TelegramClient> {
     return clientInstance;
   }
 
-  if (!isConfigured()) {
+  // One snapshot of the config, so the check, the credentials and the session come from the same
+  // store read (a second read, after the 1 s cache, could see something else)
+  const config = loadConfig(() => {});
+  if (!isConfigured(config)) {
     throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
   }
 
-  const { apiId, apiHash } = getCredentials();
-  const sessionString = getSessionString() || '';
+  const { apiId, apiHash } = getCredentials(config);
+  const sessionString = config.sessionString || '';
 
   // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
   // A fresh StringSession per attempt: a failed TCP try must not leave state behind for WSS.
   clientInstance = await connectClient(t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(undefined, t)));
 
   if (!await clientInstance.isUserAuthorized()) {
-    const invited = loadConfig(() => {}).credentialSource === 'invite';
+    const invited = config.credentialSource === 'invite';
     throw new Error(
       invited
         ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'

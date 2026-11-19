@@ -43,10 +43,14 @@ export function secretGet(key: string): string | null {
   return null;
 }
 
-/** secretGet that tells a missing key ({ok: true, value: null}) from a failed read ({ok: false}). */
-export function secretGetStrict(key: string): StrictRead {
+/**
+ * secretGet that tells a missing key ({ok: true, value: null}) from a failed read ({ok: false}).
+ * `fileHasValue`: config.json5 holds this key too. 1Password can only tell "missing" by its error
+ * text, so it may say "missing" only when nothing else could be used instead (see opGetStrict).
+ */
+export function secretGetStrict(key: string, fileHasValue = false): StrictRead {
   const provider = activeProvider();
-  if (provider === 'op') return opGetStrict(key);
+  if (provider === 'op') return opGetStrict(key, fileHasValue);
   if (provider === 'keychain') return keychainGetStrict(key);
   if (provider === 'libsecret') return libsecretGetStrict(key);
   if (provider === 'dpapi') return dpapiGetStrict(key);
@@ -69,80 +73,4 @@ export function secretDelete(key: string): boolean {
   if (provider === 'libsecret') return libsecretDelete(key);
   if (provider === 'dpapi') return dpapiDelete(key);
   return false;
-}
-
-let migrationDone = false;
-let migrationReadError: string | null = null;
-
-/**
- * Set when the migration could not read a key it found in the file: the file copy may be another
- * account than the stored one, so neither may be used until the store reads again (loadConfig throws).
- */
-export function secretMigrationError(): string | null {
-  return migrationReadError;
-}
-
-/**
- * Secrets that may move from an old config file into the store. Not `writeEnabled`: the write mode
- * was never saved to the file (only `write-access` sets it, straight in the store), so one found
- * there was put in by hand, and taking it would let a config-file edit turn writes on.
- */
-const MIGRATED_KEYS = ['apiHash', 'sessionString'];
-
-/**
- * Migrate secret fields from a config object into the active secret store, only where the store has
- * no value: the store always wins, as it does when the config is read (loadConfig overlays it), so a
- * read and a later write resolve the same account. A file copy that differs from the stored value is
- * left in the file with a warning (resolving that conflict is issue #116); one equal to it is dropped.
- * If any store read fails (locked Keychain, 1Password offline), nothing is written or removed for any
- * key and the file is left as it is; the failure is kept for secretMigrationError(), so a write stops instead of using the file copy.
- * The conflict warning goes to stderr by default, whatever the caller does with parse warnings.
- * Returns a new config object with migrated (or duplicate) secrets removed.
- */
-export function migrateSecretsToStore(
-  config: Record<string, unknown>,
-  warn: (message: string) => void = m => console.error(m),
-): Record<string, unknown> {
-  if (migrationDone || !isSecretStoreAvailable()) return config;
-  migrationDone = true;
-
-  let needsRewrite = false;
-  const cleaned = { ...config };
-  // Read every key before changing anything: if one read fails, the file stays exactly as it is
-  const reads = new Map<string, StrictRead>();
-  for (const key of MIGRATED_KEYS) {
-    const value = config[key];
-    if (typeof value !== 'string' || value === '') continue;
-    const read = secretGetStrict(key);
-    if (!read.ok) {
-      migrationReadError = `Could not read ${key} from the secret store (${read.reason}). ` +
-        `config.json5 holds a ${key} too, which may belong to another account, so nothing was changed. ` +
-        'Fix access to the secret store (unlock the Keychain, sign in to 1Password) and run the command again.';
-      return config;
-    }
-    reads.set(key, read);
-  }
-
-  for (const key of MIGRATED_KEYS) {
-    const value = config[key];
-    if (typeof value !== 'string' || value === '') continue;
-    const read = reads.get(key);
-    const stored = read?.ok ? read.value : null;
-    if (stored) {
-      if (stored === value) {
-        delete cleaned[key];
-        needsRewrite = true;
-      } else {
-        warn(`config.json5 has a ${key} that differs from the secret store; using the stored one and leaving the file copy as it is.`);
-      }
-      continue;
-    }
-    if (secretSet(key, value)) {
-      delete cleaned[key];
-      needsRewrite = true;
-    }
-  }
-
-  if (!needsRewrite) return config;
-  return cleaned;
 }

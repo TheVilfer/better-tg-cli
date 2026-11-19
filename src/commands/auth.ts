@@ -30,8 +30,16 @@ export const authCommand = new Command('auth')
       console.log(`1Password vault set to: ${opts.opVault}`);
     }
 
-    // Never overwrite a working login; after `telegram logout` there is no session and auth proceeds
-    if (isConfigured() && getSessionString()) {
+    // Never overwrite a working login; after `telegram logout` there is no session and auth proceeds.
+    // A store that cannot be read stops here: it may hold a working login that must not be replaced.
+    let loggedIn: boolean;
+    try {
+      loggedIn = isConfigured() && !!getSessionString();
+    } catch (error) {
+      console.error(`Authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+    if (loggedIn) {
       console.log('Already logged in. Run "telegram check" to verify your session.');
       console.log('To log in as someone else, run "telegram logout" first.');
       return;

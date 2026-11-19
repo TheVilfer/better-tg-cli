@@ -3,13 +3,10 @@ import { dirname, join } from 'node:path';
 import { configFile } from './paths.js';
 import { parseConfigText, stringifyConfig } from './config-format.js';
 import {
-  SECRET_KEYS,
   isSecretKey,
   isSecretStoreAvailable,
-  migrateSecretsToStore,
   secretDelete,
-  secretGet,
-  secretMigrationError,
+  secretGetStrict,
   secretSet,
 } from './secrets.js';
 
@@ -33,6 +30,7 @@ const DEFAULT_CONFIG: TgConfig = {
 
 // Cache loaded config to avoid repeated file I/O
 let cachedConfig: TgConfig | null = null;
+let cachedConflicts: string[] = [];
 let cachedConfigTime: number = 0;
 const CONFIG_CACHE_TTL_MS = 1000; // 1 second cache
 
@@ -75,47 +73,65 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
   const globalPath = getGlobalConfigPath();
   const fileConfig = readConfigFile(globalPath, warn);
 
-  // Migrate secrets from file → secret store on first load (one-time per process). Never in a read
-  // (TG_READ_ONLY, the MCP read tool): a read changes nothing in the profile, neither file nor store.
-  if (!process.env.TG_READ_ONLY && isSecretStoreAvailable()) {
-    // Its conflict warning goes to stderr on its own: callers such as getSessionString() silence
-    // `warn`, and the user must still see that the file holds a different account.
-    const cleaned = migrateSecretsToStore(fileConfig as Record<string, unknown>);
-    if (cleaned !== fileConfig) {
-      // Secrets were migrated — rewrite the file without them
-      try {
-        const content = stringifyConfig(cleaned);
-        writeFileSync(globalPath, content, { encoding: 'utf8', mode: 0o600 });
-      } catch {
-        // Non-fatal: secrets are already in keychain, file cleanup can retry next time
-      }
-    }
-    // A key the store could not read: the file copy may be another account, so stop here rather
-    // than connect with it (a read skips the migration and is not affected).
-    const readError = secretMigrationError();
-    if (readError) throw new Error(readError);
-  }
-
-  // Build config: file values + secret store overlay for secrets
+  // Build config: file values + the stored secrets, which take precedence over file values.
+  // writeEnabled is never part of it (the write mode is read from the store by write-store.ts), so a
+  // writeEnabled put into config.json5 by hand changes nothing.
   const config: TgConfig = {
     ...DEFAULT_CONFIG,
     ...fileConfig,
   };
-
-  // Overlay secret store values (takes precedence over file values)
-  if (isSecretStoreAvailable()) {
-    for (const key of SECRET_KEYS) {
-      const val = secretGet(key);
-      if (val) (config as Record<string, unknown>)[key] = val;
-    }
-  }
+  delete (config as Record<string, unknown>).writeEnabled;
+  const conflicts = resolveSecrets(config, fileConfig);
 
   cachedConfig = config;
+  cachedConflicts = conflicts;
   cachedConfigTime = now;
 
   return cachedConfig;
 }
 
+/** The secrets of a config: the store holds them, config.json5 may hold an older copy. */
+const CONFIG_SECRETS = ['apiHash', 'sessionString'] as const;
+
+/**
+ * The one way every command, read or write, gets the session and api_hash: ONE strict store read per
+ * key. Stored → that value. Missing → the file copy, if any. A failed read (locked Keychain,
+ * 1Password offline) throws, read and write alike, so no command ever connects with a file copy that
+ * may be another account than the stored one. Nothing is written to the store or the file here.
+ * Returns the keys whose file copy differs from the stored value (shown by `telegram check`).
+ */
+function resolveSecrets(config: TgConfig, fileConfig: Partial<TgConfig>): string[] {
+  const conflicts: string[] = [];
+  if (!isSecretStoreAvailable()) return conflicts;
+  const target = config as Record<string, unknown>;
+  for (const key of CONFIG_SECRETS) {
+    const fileValue = fileConfig[key];
+    const fileHasValue = typeof fileValue === 'string' && fileValue !== '';
+    const read = secretGetStrict(key, fileHasValue);
+    if (!read.ok) {
+      throw new Error(`Could not read ${key} from the secret store (${read.reason}), so nothing was used or changed. ` +
+        'Fix access to the secret store (unlock the Keychain, sign in to 1Password) and run the command again. ' +
+        `If the store is meant to be empty here (a profile kept in config.json5, a new 1Password vault), remove ${key} ` +
+        'from config.json5 or unset the 1Password vault, then log in again.');
+    }
+    if (read.value) {
+      if (fileHasValue && fileValue !== read.value) conflicts.push(key);
+      target[key] = read.value;
+    }
+  }
+  return conflicts;
+}
+
+/**
+ * Secrets whose copy in config.json5 differs from the stored one. The stored value is used; the file
+ * copy is left as it is (moving or resolving it is #116).
+ */
+export function secretFileConflicts(): string[] {
+  loadConfig(() => {});
+  return [...cachedConflicts];
+}
+
+/** Save settings; a key given as `undefined` is removed from config.json5 in the same write. */
 export function saveConfig(config: Partial<TgConfig>): void {
   const path = getGlobalConfigPath();
   const dir = dirname(path);
@@ -127,8 +143,11 @@ export function saveConfig(config: Partial<TgConfig>): void {
 
   // Route secrets to secret store when available
   const fileData: Partial<TgConfig> = {};
+  const removed = new Set<string>();
   for (const [key, value] of Object.entries(config)) {
-    if (isSecretKey(key) && isSecretStoreAvailable() && typeof value === 'string') {
+    if (value === undefined) {
+      removed.add(key);
+    } else if (isSecretKey(key) && isSecretStoreAvailable() && typeof value === 'string') {
       if (!secretSet(key, value)) {
         // Secret store write failed — fall back to file storage
         (fileData as Record<string, unknown>)[key] = value;
@@ -153,9 +172,9 @@ export function saveConfig(config: Partial<TgConfig>): void {
     }
   }
 
-  // Drop the file copy of a secret this call saves to the store. Other secrets in the file stay: one
-  // left there by the migration is a conflicting account or a failed store write, and a save of an
-  // unrelated setting (the WSS transport, testServers) must not delete its only copy.
+  // Drop the file copy of a secret this call saves to the store. Other secrets in the file stay: an
+  // old profile's file copy may be its only one (nothing moves it to the store), and a save of an
+  // unrelated setting (the WSS transport, testServers) must not delete it.
   if (isSecretStoreAvailable()) {
     for (const key of Object.keys(existing)) {
       if (isSecretKey(key) && key in config && !(key in fileData)) {
@@ -164,6 +183,7 @@ export function saveConfig(config: Partial<TgConfig>): void {
     }
   }
 
+  for (const key of removed) delete (existing as Record<string, unknown>)[key];
   const merged = { ...existing, ...fileData };
   const content = stringifyConfig(merged);
 
@@ -185,8 +205,7 @@ export function getConfigPath(): string {
  */
 export const INVITE_HASH_PLACEHOLDER = 'invite-no-hash-stored';
 
-export function isConfigured(): boolean {
-  const config = loadConfig(() => {});
+export function isConfigured(config: TgConfig = loadConfig(() => {})): boolean {
   if ((config.apiId ?? 0) <= 0) return false;
   return (config.apiHash ?? '') !== '' || config.credentialSource === 'invite';
 }
@@ -194,16 +213,15 @@ export function isConfigured(): boolean {
 /** Save only the api_id of the broker's app; drop any stored api_hash. */
 export function setInviteCredentials(apiId: number): void {
   if (isSecretStoreAvailable()) secretDelete('apiHash');
-  saveConfig({ apiId, credentialSource: 'invite' });
-  removeFileKey('apiHash');
+  // One write: the new source and the dropped file api_hash never exist apart
+  saveConfig({ apiId, credentialSource: 'invite', apiHash: undefined });
 }
 
 export function setCredentials(apiId: number, apiHash: string): void {
   saveConfig({ apiId, apiHash, credentialSource: 'own' });
 }
 
-export function getCredentials(): { apiId: number; apiHash: string } {
-  const config = loadConfig(() => {});
+export function getCredentials(config: TgConfig = loadConfig(() => {})): { apiId: number; apiHash: string } {
   return {
     apiId: config.apiId ?? 0,
     apiHash: config.apiHash || (config.credentialSource === 'invite' ? INVITE_HASH_PLACEHOLDER : ''),

@@ -94,8 +94,9 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
     getStrict(key: string): StrictRead {
       try {
         return { ok: true, value: load()[key] ?? null };
-      } catch (e) {
-        return { ok: false, reason: `Windows DPAPI read failed: ${e instanceof Error ? e.message : String(e)}` };
+      } catch {
+        // A fixed text: a JSON.parse message would quote the decrypted content, i.e. the secrets
+        return { ok: false, reason: 'Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed' };
       }
     },
     set(key: string, value: string): boolean {

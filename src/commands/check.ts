@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { getClient, getMe, disconnectClient } from '../client.js';
-import { isConfigured, loadConfig } from '../config.js';
+import { isConfigured, loadConfig, secretFileConflicts } from '../config.js';
 import { configDir, isMock, profile } from '../paths.js';
 import { mockStatePath } from '../mock/world.js';
 import { isSecretStoreAvailable } from '../secrets.js';
@@ -32,7 +32,7 @@ export const checkCommand = new Command('check')
     try {
       configured = isConfigured();
     } catch (error) {
-      // e.g. the secret store could not be read while config.json5 holds a secret (see loadConfig)
+      // e.g. the secret store could not be read (see resolveSecrets in config.ts)
       console.error(chalk.red(error instanceof Error ? error.message : String(error)));
       process.exit(1);
     }
@@ -42,6 +42,11 @@ export const checkCommand = new Command('check')
         ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram auth [--test-dc]`
         : 'Not configured. Run "telegram onboard" or "telegram auth --qr" first.'));
       process.exit(1);
+    }
+
+    // Before connecting: with a dead stored session this is the hint that the file holds another one
+    for (const key of secretFileConflicts()) {
+      console.log(chalk.yellow(`config.json5 also holds a ${key} that differs from the secret store; the stored one is used.`));
     }
 
     const spinner = ora('Checking session...').start();

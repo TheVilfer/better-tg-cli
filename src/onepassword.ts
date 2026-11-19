@@ -117,39 +117,27 @@ export function opGet(key: string): string | null {
 }
 
 /**
- * `op read` exits 1 both for a missing item and for any other failure (network, auth, rate limit),
- * and its messages are not a stable interface. So a failed read is "missing" only when the vault
- * listing succeeds and has no item of that name; anything else is a failed read.
+ * `op read` exits 1 both for a missing item and for any other failure (network, auth, rate limit).
+ * Its "… isn't an item in the … vault" text is the only sign of a missing item, and it is not a
+ * stable interface (it has also been reported for items that exist). So it counts as missing only
+ * when config.json5 has no value for the key (`fileHasValue` false): then "missing" can only mean
+ * "not configured", never "use the file copy instead of the stored one". Any other failure, or any
+ * failure while the file holds a value, is a failed read. The reason never carries op's output.
  */
-export function opGetStrict(key: string): StrictRead {
+export function opGetStrict(key: string, fileHasValue = false): StrictRead {
   if (!isOnePasswordAvailable()) return { ok: false, reason: '1Password is not available' };
-  const run = (args: string[]) => spawnSync(getOpBinary()!, args, {
+  const r = spawnSync(getOpBinary()!, ['read', `op://${resolveVault()!}/${itemName(key)}/credential`], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     timeout: 60_000,
     env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
   });
-  const failed = (r: ReturnType<typeof run>, what: string): StrictRead => {
-    const why = (r.error?.message || r.stderr || '').trim().split('\n')[0];
-    return { ok: false, reason: `1Password ${what} failed (exit ${r.status ?? 'none'}${why ? `: ${why}` : ''})` };
-  };
-  const vault = resolveVault()!;
-  const name = itemName(key);
-  const r = run(['read', `op://${vault}/${name}/credential`]);
   if (r.status === 0 && !r.error) return { ok: true, value: r.stdout.trim() || null };
-  const list = run(['item', 'list', '--vault', vault, '--format', 'json']);
-  if (list.status !== 0 || list.error) return failed(r, 'read');
-  let items: unknown;
-  try {
-    items = JSON.parse(list.stdout || '[]');
-  } catch {
-    return failed(r, 'read');
+  if (!fileHasValue && !r.error && r.status === 1 && /isn['\u2019]t an item/.test(r.stderr ?? '')) {
+    return { ok: true, value: null };
   }
-  if (!Array.isArray(items)) return failed(r, 'read');
-  // The item exists but has no readable credential: not a missing key, so treat it as a failure
-  if (items.some(i => (i as { title?: unknown })?.title === name)) return failed(r, 'read');
-  return { ok: true, value: null };
+  return { ok: false, reason: `1Password read failed (exit ${r.status ?? 'none'})` };
 }
 
 interface OpField { id?: string; label?: string; type?: string; value?: string }
