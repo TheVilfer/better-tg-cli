@@ -1,5 +1,12 @@
 # Install script (macOS, Linux)
 
+**Threat model.** The install folder belongs to the user who runs the script. The installer protects
+against mistakes (a telegram that is not ours, our own runs at the same time, a run killed halfway,
+a cut-off download), not against another process or user that can write into that folder: such a
+process can already replace the binary at any time. Two things follow and are out of scope on
+purpose: a folder shared by several users (UIDs), and files crafted to fool the shell's byte
+comparisons, such as a NUL byte in `install.json`, the lock or the `--version` output.
+
 ```bash
 curl -q --proto '=https' --tlsv1.2 -fsSL https://github.com/TheVilfer/better-tg-cli/releases/latest/download/install.sh | sh
 ```
@@ -19,11 +26,16 @@ out=$(
 status=$?
 case "$status:$out" in
   '0:{"schema":1,"ok":true,'*) echo "installed: $out" ;;   # now read data.path from $out
-  *) echo "not installed (exit $status): $out" >&2 ;;
+  *)
+    echo "not installed (exit $status): $out" >&2
+    [ "$status" != 0 ] || status=1   # exit 0 without "ok":true is still a failure
+    exit "$status"
+    ;;
 esac
 ```
 
-The subshell keeps the exit code of `curl` or `sh` past the cleanup. Installed means exit code 0
+The subshell keeps the exit code of `curl` or `sh` past the cleanup, and the failure branch exits
+with it (or with 1 when the exit code was 0 but the output was not `"ok":true`). Installed means exit code 0
 **and** `"ok":true` in the one JSON line on stdout (see [Output](#output)); only then use
 `data.path`. No JSON line at all means the script did not run to the end, so nothing is installed.
 `-q` keeps `~/.curlrc` from changing these options; `--proto '=https'` keeps every redirect on HTTPS.
@@ -66,7 +78,8 @@ The script owns a path only through its `install.json`: a `telegram` there count
 the `install.json` beside it is exactly the one line this script writes (below): the same field
 order, `"schema":1,"package":"better-tg-cli","manager":"user-binary"` and that exact `path`, and a
 well-formed value in every other field (`version`, `tag`, `target`, `archive`, a 64-digit
-`sha256`, `installedAt`), with nothing after the line. Anything
+`sha256`, `installedAt`), with nothing after the line. The fields must agree: `tag` is `v` plus
+`version`, and `archive` is `better-tg-cli-<version>-<target>.tar.xz` (or `.tar.gz`). Anything
 else (a file from another tool, a symlink, a directory, an `install.json` of something else, a
 record nested inside another file, a cut-off or edited manifest) is left alone, and the script
 stops with `install_path_taken` and exit code 2. A `telegram` that shows up while the script is
@@ -74,18 +87,25 @@ downloading is not written over either. Running the script again over its own in
 
 One run at a time installs into a folder. The lock is the file `.better-tg-cli.lock`, holding one
 line `pid=<pid> stage=<staging folder>` and created with a hard link, so it never exists without
-its owner. A second run stops with `install_in_progress`. A run that was killed leaves a lock
-with a dead PID: the next run takes it over (a second file, `.better-tg-cli.lock.takeover`, lets
-only one run do that), removes the files it writes from the one staging folder that lock names,
-and writes both files again. A lock in any other form, or a takeover file left by a killed run,
-is never deleted: the script stops with `install_lock_unknown` and exit code 2. The script removes
-only what it created itself.
+its owner. A second run stops with `install_in_progress`. A run that was killed leaves its lock
+behind, with a PID that is no longer running: the script never takes such a lock over. It stops
+with `install_lock_stale` and exit code 2; if no install is running, delete the lock it names and
+run the script again. A lock in any other form stops the script with `install_lock_unknown`.
+A killed run also leaves its staging folder (`.better-tg-cli.stage.*`) next to the binary; later
+runs name it in an `install_stage_left` warning (when its own lock line names a PID that is not
+running) and never delete it. The script removes only what
+it created itself.
 
 Files are placed with hard links, which fail when the name is taken, so the target folder must be
 on a file system that supports them (any local disk does); otherwise the script stops with
 `hard_links_unavailable`. An upgrade moves the binary in first and `install.json` second, so a run killed between
 the two leaves a manifest that names the older version (and an older `sha256`), never one that
-claims more than is installed. Running the script again fixes it.
+claims more than is installed. Deleting the lock that killed run left and running the script
+again fixes it. Right before replacing the binary, an upgrade checks that the `telegram` there is
+still the regular file whose ownership it checked (same inode, size and modification time as
+`ls` prints it, to the minute);
+otherwise it stops with `install_path_taken`. That narrows, not closes, a race with another writer
+into the folder, which is outside the threat model.
 
 ```json
 {"schema":1,"package":"better-tg-cli","manager":"user-binary","path":"/home/me/.local/bin/telegram","version":"0.39.6","tag":"v0.39.6","target":"linux-x64","archive":"better-tg-cli-0.39.6-linux-x64.tar.gz","sha256":"…","installedAt":"2026-11-19T12:00:00Z"}
@@ -120,7 +140,8 @@ nothing; only a copy cut inside the first line, `#!/bin/sh`, still exits 0, with
 | `install_dir_invalid` | 2 | The folder cannot be created or written; pick another `TG_INSTALL_DIR`. |
 | `install_path_taken` | 2 | Something not installed by this script is there; it stays untouched. |
 | `install_in_progress` | 1 | Another run is installing into the same folder right now. |
-| `install_lock_unknown` | 2 | The lock (or takeover) file is not one this script wrote, or a takeover was killed; it is left as is. |
+| `install_lock_stale` | 2 | A run that was cut short left its lock (its PID is not running); delete that lock and run again. |
+| `install_lock_unknown` | 2 | The lock file is not one this script wrote; it is left as is. |
 | `hard_links_unavailable` | 1 | The folder's file system has no hard links; pick a `TG_INSTALL_DIR` on a local disk. |
 | `downloader_missing` | 1 | No `curl` (`wget` is not used). |
 | `checksum_tool_missing` | 1 | Neither `sha256sum`, `shasum` nor `openssl`. |
@@ -133,6 +154,7 @@ nothing; only a copy cut inside the first line, `#!/bin/sh`, still exits 0, with
 | `unpack_failed`, `install_write_failed` | 1 | Unpacking or writing failed (space, permissions). |
 | `binary_check_failed` | 1 | The new binary does not run here or reports another version; nothing was replaced. |
 | `dev_install_found` | 0 | Warning: a checkout from the old installer is in `~/.agents/skills/telegram`; it is left as is. |
+| `install_stage_left` | 0 | Warning: staging folders of runs that were cut short are in the folder; they are not deleted. |
 | `install_dir_not_on_path` | 0 | Warning: run the binary by its absolute path. |
 | `other_telegram_on_path` | 0 | Warning: other `telegram` copies are on `PATH`, maybe ahead of this one. |
 

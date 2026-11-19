@@ -45,6 +45,8 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$FAKE_DL_EXIT" ] && exit "$FAKE_DL_EXIT"
 case "$url" in *.tar.*) [ -n "$FAKE_PLANT" ] && printf 'planted\\n' > "$FAKE_PLANT" ;; esac
+# FAKE_PLANT_DIR: a file another process swaps for a folder while the archive downloads
+case "$url" in *.tar.*) [ -n "$FAKE_PLANT_DIR" ] && { rm -f "$FAKE_PLANT_DIR"; mkdir "$FAKE_PLANT_DIR"; } ;; esac
 # FAKE_OVERLAP: a folder held while the archive downloads; two runs inside the lock at once log it
 if [ -n "$FAKE_OVERLAP" ]; then
   case "$url" in *.tar.*) mkdir "$FAKE_OVERLAP" 2>/dev/null || echo OVERLAP >> "$FAKE_LOG"; sleep 0.3; rmdir "$FAKE_OVERLAP" 2>/dev/null ;; esac
@@ -587,6 +589,9 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     ['a manifest with a damaged middle', (bin: string) => goodManifest(bin).replace('"tag":"v0.1.0"', '"tag":"v0.1.0","x":{}')],
     ['a manifest with a bad sum', (bin: string) => goodManifest(bin).replace(/"sha256":"[0-9a-f]+"/, '"sha256":"zz"')],
     ['a well-formed manifest followed by a blank line', (bin: string) => `${goodManifest(bin)}\n`],
+    ['a tag that is not v + version', (bin: string) => goodManifest(bin).replace('"tag":"v0.1.0"', '"tag":"v0.2.0"')],
+    ['an archive named after another version', (bin: string) => goodManifest(bin).replace('better-tg-cli-0.1.0-', 'better-tg-cli-0.2.0-')],
+    ['an archive named after another target', (bin: string) => goodManifest(bin).replace('-linux-x64.tar.gz', '-darwin-arm64.tar.gz')],
   ])('ownership: %s does not count', (_what, manifest) => {
     const s = sandbox();
     release(s);
@@ -617,7 +622,6 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
   });
 
   const LOCK = '.better-tg-cli.lock';
-  const MUTEX = '.better-tg-cli.lock.takeover';
   const lockLine = (pid: number, stage: string) => `pid=${pid} stage=.better-tg-cli.stage.${stage}\n`;
 
   it('one run at a time per folder: a live lock stops the run and stays', () => {
@@ -635,36 +639,46 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(leftovers(s.installDir)).toEqual([LOCK]);
   });
 
-  it('a lock left by a killed run is taken over; only its own staging folder is cleared', () => {
-    const s = sandbox();
-    release(s);
-    const d = s.installDir;
-    mkdirSync(d, { recursive: true });
-    // A dead PID and its staging folder, as kill -9 leaves them
-    writeFileSync(join(d, LOCK), lockLine(999999, 'AbC123'));
-    mkdirSync(join(d, '.better-tg-cli.stage.AbC123'));
-    writeFileSync(join(d, '.better-tg-cli.stage.AbC123', 'telegram'), 'half\n');
-    writeFileSync(join(d, '.better-tg-cli.stage.AbC123', 'install.json'), '{}\n');
-    // A folder with our naming that the lock does not name: never touched
-    mkdirSync(join(d, '.better-tg-cli.stage.Other1'));
-    writeFileSync(join(d, '.better-tg-cli.stage.Other1', 'keep'), 'keep\n');
-    const r = run(s);
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr).toContain('cut short');
-    expect(leftovers(d)).toEqual(['.better-tg-cli.stage.Other1']);
-    expect(readFileSync(join(d, '.better-tg-cli.stage.Other1', 'keep'), 'utf8')).toBe('keep\n');
-  });
-
-  it('the staging folder named by a dead lock stays when it holds a file the script never writes', () => {
+  it('a lock left by a killed run is never taken over: a person deletes it', () => {
     const s = sandbox();
     release(s);
     const d = s.installDir;
     mkdirSync(join(d, '.better-tg-cli.stage.AbC123'), { recursive: true });
+    // A dead PID and its staging folder, as kill -9 leaves them
     writeFileSync(join(d, LOCK), lockLine(999999, 'AbC123'));
-    writeFileSync(join(d, '.better-tg-cli.stage.AbC123', 'notes.txt'), 'mine\n');
+    writeFileSync(join(d, '.better-tg-cli.stage.AbC123', 'telegram'), 'half\n');
+    const r = run(s);
+    expect(r.status).toBe(2);
+    expect(ids(r)).toEqual(['install_lock_stale']);
+    expect(r.json.problems[0].fix.human).toBe(`No install is running? Delete ${join(d, LOCK)} and run again.`);
+    expect(r.requests).toEqual([]);
+    expect(readFileSync(join(d, LOCK), 'utf8')).toBe(lockLine(999999, 'AbC123'));
+    expect(readFileSync(join(d, '.better-tg-cli.stage.AbC123', 'telegram'), 'utf8')).toBe('half\n');
+    expect(leftovers(d).sort()).toEqual([LOCK, '.better-tg-cli.stage.AbC123']);
+  });
+
+  it('staging folders of killed runs are reported and never deleted; a live or starting run\'s is not', () => {
+    const s = sandbox();
+    release(s);
+    const d = s.installDir;
+    const stage = (name: string) => join(d, `.better-tg-cli.stage.${name}`);
+    mkdirSync(stage('Dead01'), { recursive: true });
+    writeFileSync(join(stage('Dead01'), 'lock'), lockLine(999999, 'Dead01'));
+    writeFileSync(join(stage('Dead01'), 'telegram'), 'half\n');
+    mkdirSync(stage('NoLock'));
+    mkdirSync(stage('Live01'));
+    writeFileSync(join(stage('Live01'), 'lock'), lockLine(process.pid, 'Live01'));
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
-    expect(readFileSync(join(d, '.better-tg-cli.stage.AbC123', 'notes.txt'), 'utf8')).toBe('mine\n');
+    expect(ids(r)).toEqual(['install_stage_left', 'install_dir_not_on_path']);
+    const msg = r.json.problems[0].message;
+    expect(msg).toContain(stage('Dead01'));
+    // No lock line yet (or any more): maybe a live run starting or cleaning up
+    expect(msg).not.toContain(stage('NoLock'));
+    expect(msg).not.toContain(stage('Live01'));
+    expect(r.json.problems[0].severity).toBe('warning');
+    expect(readFileSync(join(stage('Dead01'), 'telegram'), 'utf8')).toBe('half\n');
+    expect(leftovers(d).sort()).toEqual(['.better-tg-cli.stage.Dead01', '.better-tg-cli.stage.Live01', '.better-tg-cli.stage.NoLock']);
   });
 
   it.each([
@@ -691,34 +705,10 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(leftovers(s.installDir)).toEqual([LOCK]);
   });
 
-  it('a takeover left half done by a killed run is refused; a live one means busy', () => {
-    const s = sandbox();
-    release(s);
-    const d = s.installDir;
-    mkdirSync(d, { recursive: true });
-    writeFileSync(join(d, LOCK), lockLine(999999, 'AbC123'));
-    writeFileSync(join(d, MUTEX), lockLine(999998, 'Dead02'));
-    const dead = run(s);
-    expect(dead.status).toBe(2);
-    expect(ids(dead)).toEqual(['install_lock_unknown']);
-    expect(dead.json.problems[0].fix.human).toContain(join(d, MUTEX));
-
-    writeFileSync(join(d, MUTEX), lockLine(process.pid, 'Live02'));
-    const busy = run(s);
-    expect(busy.status).toBe(1);
-    expect(ids(busy)).toEqual(['install_in_progress']);
-    expect(readFileSync(join(d, LOCK), 'utf8')).toBe(lockLine(999999, 'AbC123'));
-    expect(leftovers(d).sort()).toEqual([LOCK, MUTEX]);
-  });
-
-  it.each([
-    ['into an empty folder', false],
-    ['over a lock left by a killed run', true],
-  ])('parallel runs %s: one installs, the others stop, nothing is left behind', async (_what, stale) => {
+  it('parallel runs into an empty folder: one installs, the others stop, nothing is left behind', async () => {
     const s = sandbox();
     release(s);
     mkdirSync(s.installDir, { recursive: true });
-    if (stale) writeFileSync(join(s.installDir, LOCK), lockLine(999999, 'AbC123'));
     const results = await runParallel(s, 6, { FAKE_OVERLAP: join(s.root, 'inside-lock') });
     const outcomes = results.map(r => {
       const json = JSON.parse(r.stdout);
@@ -726,6 +716,8 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       return json.ok ? 'ok' : json.problems.map((p: { id: string }) => p.id).join();
     });
     for (const o of outcomes) expect(['ok', 'install_in_progress']).toContain(o);
+    // The losers' staging folders, appearing and going while the winner looks, are never reported
+    for (const r of results) expect(r.stdout).not.toContain('install_stage_left');
     expect(outcomes).toContain('ok');
     // No two runs were ever inside the lock at the same time
     expect(readFileSync(s.log, 'utf8')).not.toContain('OVERLAP');
@@ -733,10 +725,8 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(spawnSync(join(s.installDir, 'telegram'), ['--version'], { encoding: 'utf8' }).stdout).toBe(`${VERSION}\n`);
   });
 
-  it.each([
-    ['the lock', LOCK, false],
-    ['the takeover file', MUTEX, true],
-  ])('%s released while a run looks at it: the run tries again and installs', (_what, name, stale) => {
+  it('the lock released while a run looks at it: the run tries again and installs', () => {
+    const name = LOCK;
     const realLn = which('ln');
     const s = sandbox({
       extraBin: {
@@ -747,8 +737,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     release(s);
     const d = s.installDir;
     mkdirSync(d, { recursive: true });
-    writeFileSync(join(d, LOCK), lockLine(stale ? 999999 : process.pid, 'AbC123'));
-    if (stale) writeFileSync(join(d, MUTEX), lockLine(process.pid, 'Live02'));
+    writeFileSync(join(d, LOCK), lockLine(process.pid, 'AbC123'));
     const r = run(s, { FAKE_LN_MARK: join(s.root, 'ln-once') });
     expect(r.status, r.stderr).toBe(0);
     expect(existsSync(join(s.root, 'ln-once'))).toBe(true);
@@ -766,7 +755,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(leftovers(s.installDir)).toEqual([]);
   });
 
-  it('an upgrade killed between the two renames heals on the next run', () => {
+  it('an upgrade killed between the two renames heals once its lock is deleted', () => {
     const realMv = which('mv');
     const s = sandbox({
       extraBin: {
@@ -796,15 +785,76 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(reports()).toBe(VERSION);
     expect(manifest().version).toBe(oldVersion);
 
+    // Its lock stays: the next run stops and names it, a person deletes it
+    const stopped = run(s);
+    expect(stopped.status).toBe(2);
+    expect(ids(stopped)).toEqual(['install_lock_stale']);
+    const stage = leftovers(s.installDir).find(f => f.startsWith('.better-tg-cli.stage.'));
+    expect(stage).toBeDefined();
+    rmSync(join(s.installDir, LOCK));
+
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
+    expect(ids(r)).toEqual(['install_stage_left', 'install_dir_not_on_path']);
+    expect(r.json.problems[0].message).toContain(join(s.installDir, stage!));
     expect(manifest()).toMatchObject({ version: VERSION, sha256: expect.any(String) });
     expect(reports()).toBe(VERSION);
     // The manifest's sum describes the binary in place again
     const archive = readFileSync(join(s.release, assetName(VERSION, 'linux-x64', 'tar.gz')));
     expect(manifest().sha256).toBe(createHash('sha256').update(archive).digest('hex'));
     expect(sha()).not.toBe('');
+    // The killed run's staging folder is reported, never deleted
+    expect(leftovers(s.installDir)).toEqual([stage]);
+  });
+
+  it.each([
+    ['rewritten in place', 'FAKE_PLANT'],
+    ['swapped for a folder', 'FAKE_PLANT_DIR'],
+  ])('an upgrade stops when the telegram it checked was %s while downloading', (_what, fake) => {
+    const s = sandbox();
+    release(s);
+    const bin = join(s.installDir, 'telegram');
+    expect(run(s).status).toBe(0);
+    const r = run(s, { [fake]: bin });
+    expect(r.status).toBe(2);
+    expect(ids(r)).toEqual(['install_path_taken']);
+    expect(r.json.problems[0].message).toContain('changed while downloading');
+    if (fake === 'FAKE_PLANT') expect(readFileSync(bin, 'utf8')).toBe('planted\n');
+    else {
+      expect(lstatSync(bin).isDirectory()).toBe(true);
+      expect(readdirSync(bin)).toEqual([]);
+    }
     expect(leftovers(s.installDir)).toEqual([]);
+  });
+
+  // The automation example in docs/install.md, run as written with a fake curl that serves a
+  // script of the test's choice: its exit code must tell installed from not installed
+  describe('the docs example', () => {
+    const doc = readFileSync(join(ROOT, 'docs', 'install.md'), 'utf8');
+    const example = doc.match(/```sh\n(out=\$\([\s\S]*?)```/)?.[1] ?? '';
+    const fakeCurl = `#!/bin/sh\nout=''\nwhile [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; --proto) shift 2 ;; *) shift ;; esac; done\n[ "$FAKE_CURL_EXIT" = 0 ] || exit "$FAKE_CURL_EXIT"\nprintf '%s' "$FAKE_SCRIPT" > "$out"\n`;
+    const okJson = '{"schema":1,"ok":true,"problems":[],"data":{}}';
+    it.each(SHELLS.flatMap(shell => [
+      [shell, 'curl fails', '22', '', 22],
+      [shell, 'the script installs', '0', `echo '${okJson}'`, 0],
+      [shell, 'the script exits 0 without JSON', '0', 'echo oops', 1],
+      [shell, 'the script arrives empty', '0', '', 1],
+      [shell, 'the script exits 0 with ok:false', '0', `echo '{"schema":1,"ok":false,"problems":[]}'`, 1],
+      [shell, 'the script needs a human', '0', `echo '{"schema":1,"ok":false,"problems":[]}'; exit 2`, 2],
+    ] as const))('%s: %s', (shell, _what, curlExit, script, want) => {
+      expect(example).toContain('exit "$status"');
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), 'btg-doc-')));
+      sandboxes.push(dir);
+      writeFileSync(join(dir, 'curl'), fakeCurl, { mode: 0o755 });
+      const r = spawnSync(shell, ['-c', example], {
+        encoding: 'utf8',
+        env: { PATH: `${dir}:${process.env.PATH}`, TMPDIR: dir, FAKE_CURL_EXIT: curlExit, FAKE_SCRIPT: script },
+      });
+      expect(r.status, r.stderr).toBe(want);
+      if (want === 0) expect(r.stdout).toContain('installed: ');
+      // The message shows the original status; 1 is only what the example exits with for a 0
+      else expect(r.stderr).toContain(`not installed (exit ${want === 1 ? 0 : want})`);
+    });
   });
 
 });

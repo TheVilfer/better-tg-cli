@@ -20,6 +20,11 @@
 # When onPath is false, run the CLI by that absolute path. No JSON line at all means it failed.
 # Exit codes: 0 installed, 1 error, 2 a human is needed (for example the path is taken).
 #
+# Threat model: the install folder belongs to the user who runs the script. The installer protects
+# against mistakes (a telegram that is not ours, our own runs at the same time, a run killed
+# halfway, a cut-off download), not against another process or user that can write into that
+# folder: such a process can already replace the binary at any time.
+#
 # Environment: TG_INSTALL_DIR  folder for the binary (default ~/.local/bin)
 # Developer install from a git checkout: scripts/dev-install.sh
 
@@ -41,7 +46,6 @@ ACTIVE=''
 TMP=''
 STAGE_DIR=''
 LOCK=''
-MUTEX=''
 LOCK_LINE=''
 
 log() { printf '  %s\n' "$*" >&2; }
@@ -86,13 +90,12 @@ fail() {
 }
 
 # Removes only what this run created: its own mktemp folder, the fixed file names it writes into
-# its staging folder, and the lock files that still hold its own line. Runs twice on INT/TERM.
+# its own staging folder, and the lock while it still holds this run's line. Runs twice on INT/TERM.
 cleanup() {
   [ -n "$TMP" ] && rm -rf "$TMP"
   [ -n "$STAGE_DIR" ] && clear_stage "$STAGE_DIR"
-  release_lock "$MUTEX"
   release_lock "$LOCK"
-  TMP=''; STAGE_DIR=''; MUTEX=''; LOCK=''
+  TMP=''; STAGE_DIR=''; LOCK=''
 }
 
 # The old install.sh (now scripts/dev-install.sh) took TG_SKILL_DIR and installed from a git
@@ -169,7 +172,7 @@ resolve_dir() {
 }
 
 # A private staging folder next to the target (same file system, so the final steps are renames
-# or hard links). Its name goes into the lock, so a later run knows exactly what to clear.
+# or hard links). Its name goes into the lock, so a person can tell which folder a killed run left.
 make_stage() {
   STAGE_DIR=$(mktemp -d "$DIR/.better-tg-cli.stage.XXXXXX" 2>/dev/null) || STAGE_DIR=''
   [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ] && [ ! -L "$STAGE_DIR" ] ||
@@ -185,8 +188,8 @@ make_stage() {
   fi
 }
 
-# clear_stage <dir>: the files this script writes into a staging folder, then the folder itself.
-# A folder holding anything else stays.
+# clear_stage <dir>: the files this run wrote into its own staging folder, then the folder itself.
+# A folder holding anything else stays. Never called for another run's folder.
 clear_stage() {
   [ -d "$1" ] && [ ! -L "$1" ] || return 0
   rm -f "$1/telegram" "$1/install.json" "$1/lock" "$1/probe" "$1/version"
@@ -220,7 +223,8 @@ owner_of() {
     gone "$1" && return 1
   done
   BIN=''
-  fail install_lock_unknown "$1 is not a lock this script wrote; it is left as is." "$unknown"
+  fail install_lock_unknown "$1 is not a lock this script wrote; it is left as is." \
+    "$(fix_human "If no install into $DIR is running, delete $1 yourself, then run the script again. Or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
 }
 
 release_lock() {
@@ -229,61 +233,43 @@ release_lock() {
 }
 
 # One run at a time per folder. The lock is a file published with a hard link, which fails when
-# the name exists, so it appears with its owner line already inside. A lock whose PID is gone was
-# left by a killed run: a second hard-linked file serialises taking it over, and the run holding
-# it checks the lock is still that same dead one before replacing it. Anything unknown is refused.
-# A lock released while this run looks at it is simply tried again.
+# the name exists, so it appears with its owner line already inside. A lock whose PID is not running
+# (or cannot be signalled) was left by a killed run: it is never taken over, a person deletes it.
+# Anything unknown is refused too. A lock released while this run looks at it is simply tried again.
 take_lock() {
   lock="$DIR/.better-tg-cli.lock"
-  mutex="$DIR/.better-tg-cli.lock.takeover"
-  unknown="$(fix_human "If no install into $DIR is running, delete $lock and $mutex yourself, then run the script again. Or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
   busy="$(fix_unavailable "Wait for that run to finish, then run the script again if needed.")"
   for _ in 1 2 3 4 5; do
-    try_lock && return
+    place_new "$STAGE_DIR/lock" "$lock" && { LOCK="$lock"; return; }
+    owner_of "$lock" || continue
+    pid=${OWNER#pid=}; pid=${pid%% *}
+    BIN=''
+    if kill -0 "$pid" 2>/dev/null; then
+      fail install_in_progress "Another run of this script (pid $pid) is installing into $DIR right now; nothing was changed." "$busy"
+    fi
+    fail install_lock_stale "The lock $lock names pid $pid, which is not running: a run was cut short. Nothing was changed." \
+      "$(fix_human "No install is running? Delete $lock and run again." "$DOCS")"
   done
   BIN=''
   fail install_in_progress "Other runs of this script keep taking and releasing the lock in $DIR; nothing was changed." "$busy"
 }
 
-# 0 the lock is ours, 1 it changed meanwhile (try again); stops the run when busy or unknown
-try_lock() {
-  place_new "$STAGE_DIR/lock" "$lock" && { LOCK="$lock"; return 0; }
-  owner_of "$lock" || return 1
-  stale=$OWNER
-  pid=${stale#pid=}; pid=${pid%% *}
-  if kill -0 "$pid" 2>/dev/null; then
-    BIN=''
-    fail install_in_progress "Another run of this script (pid $pid) is installing into $DIR right now; nothing was changed." "$busy"
-  fi
-
-  if ! place_new "$STAGE_DIR/lock" "$mutex"; then
-    owner_of "$mutex" || return 1
-    hpid=${OWNER#pid=}; hpid=${hpid%% *}
-    BIN=''
-    if kill -0 "$hpid" 2>/dev/null; then
-      fail install_in_progress "Another run of this script (pid $hpid) is taking over a lock in $DIR right now; nothing was changed." "$busy"
-    fi
-    fail install_lock_unknown "A run that took over the lock in $DIR was killed and left $mutex; it is left as is." "$unknown"
-  fi
-  MUTEX="$mutex"
-  # Under the takeover lock: the dead lock may be gone, or replaced by a run that came first
-  now=$(read_lock "$lock")
-  if [ "$now" != "$stale" ]; then
-    release_lock "$MUTEX"
-    MUTEX=''
-    gone "$lock" && return 1
-    BIN=''
-    fail install_in_progress "Another run of this script took over the lock in $DIR first; nothing was changed." "$busy"
-  fi
-  log "a previous run into $DIR was cut short; this run replaces telegram and install.json"
-  clear_stage "$DIR/${stale#* stage=}"
-  # A rename replaces the dead lock in one step; the staging folder keeps no copy of the line
-  mv -f "$STAGE_DIR/lock" "$lock" 2>/dev/null ||
-    fail install_write_failed "Cannot replace the lock $lock." "$(fix_unavailable "Check free space and permissions of $DIR.")"
-  LOCK="$lock"
-  release_lock "$MUTEX"
-  MUTEX=''
-  return 0
+# Staging folders of runs that were killed are reported, never deleted: those whose lock line names
+# a PID that is not running. A folder without one may be a live run that is starting or cleaning up.
+report_stages() {
+  left=''
+  for d in "$DIR"/.better-tg-cli.stage.*; do
+    [ "$d" = "$STAGE_DIR" ] && continue
+    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    l=$(read_lock "$d/lock") || continue
+    pid=${l#pid=}; pid=${pid%% *}
+    kill -0 "$pid" 2>/dev/null && continue
+    left="${left:+$left, }$d"
+  done
+  [ -n "$left" ] || return 0
+  add_problem install_stage_left warning "Staging folders left by runs that were cut short: $left. They are left as is." \
+    "$(fix_human "If no install into $DIR is running, delete them yourself." "$DOCS")"
+  log "left by runs that were cut short (not deleted): $left"
 }
 
 # Refuses a path taken by something not ours. Sets FRESH_BIN / FRESH_JSON when nothing is there yet.
@@ -295,19 +281,25 @@ check_ownership() {
   { [ -e "$manifest" ] || [ -L "$manifest" ]; } && FRESH_JSON=0
   if [ -e "$BIN" ] || [ -L "$BIN" ]; then
     FRESH_BIN=0
-    if [ -L "$BIN" ] || [ -d "$BIN" ] || ! is_ours "$manifest"; then
+    if [ -L "$BIN" ] || [ ! -f "$BIN" ] || ! is_ours "$manifest"; then
       BIN_TAKEN="$BIN"; BIN=''
       fail install_path_taken "$BIN_TAKEN already exists and was not installed by this script; it is left as is." "$taken"
     fi
+    BIN_ID=$(file_id "$BIN")
   elif [ "$FRESH_JSON" = 0 ] && ! is_ours "$manifest"; then
     BIN=''
     fail install_path_taken "$manifest belongs to something else; it is left as is." "$taken"
   fi
 }
 
+# file_id <path>: inode, size and mtime (as ls prints it, to the minute) of the file itself; ls -d
+# never lists a folder's contents
+file_id() { LC_ALL=C ls -lind "$1" 2>/dev/null | awk '{ print $1, $6, $7, $8, $9 }'; }
+
 # install.json is ours only in the exact one-line form this script writes, for this very path, with
-# every field well formed: a record nested in another file, an edited, longer or cut-off one does
-# not count
+# every field well formed and agreeing with the others (tag = v + version, archive named after
+# version and target): a record nested in another file, an edited, longer or cut-off one does not
+# count
 MANIFEST_V='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'
 MANIFEST_T='(darwin|linux)-(x64|arm64)'
 MANIFEST_REST="\"$MANIFEST_V\",\"tag\":\"v$MANIFEST_V\",\"target\":\"$MANIFEST_T\",\"archive\":\"better-tg-cli-$MANIFEST_V-$MANIFEST_T\.tar\.(xz|gz)\",\"sha256\":\"[0-9a-f]{64}\",\"installedAt\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\"}"
@@ -317,7 +309,12 @@ is_ours() {
   is_line "$1" "$line" || return 1
   prefix=$(printf '{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":%s,"version":' "$(json_str "$BIN")")
   case "$line" in "$prefix"*) ;; *) return 1 ;; esac
-  printf '%s\n' "${line#"$prefix"}" | LC_ALL=C grep -Eqx "$MANIFEST_REST"
+  rest=${line#"$prefix"}
+  printf '%s\n' "$rest" | LC_ALL=C grep -Eqx "$MANIFEST_REST" || return 1
+  v=$(printf '%s\n' "$rest" | sed 's/^"\([^"]*\)".*/\1/')
+  t=$(printf '%s\n' "$rest" | sed 's/.*,"target":"\([^"]*\)".*/\1/')
+  case "$rest" in "\"$v\",\"tag\":\"v$v\",\"target\":\"$t\",\"archive\":\"better-tg-cli-$v-$t.tar."[xg]'z","sha256":'*) return 0 ;; esac
+  return 1
 }
 
 pick_tools() {
@@ -471,6 +468,13 @@ install_files() {
   if [ "$FRESH_BIN" = 0 ]; then
     # An upgrade: the binary first. A run killed in between leaves the new binary with the old
     # manifest, which only looks out of date, and the next run rewrites both.
+    # The file whose ownership was checked must still be the one there: a regular file with the
+    # same inode, size and mtime. This narrows, not closes, a race with another writer into the
+    # folder, which is outside the threat model (see the header).
+    if [ -L "$BIN" ] || [ ! -f "$BIN" ] || [ "$(file_id "$BIN")" != "$BIN_ID" ]; then
+      BIN_TAKEN="$BIN"; BIN=''
+      fail install_path_taken "$BIN_TAKEN changed while downloading; it is left as is." "$taken"
+    fi
     mv -f "$staged" "$BIN" 2>/dev/null ||
       fail install_write_failed "Cannot move the binary into $BIN; the previous install is unchanged." "$write_failed"
     mv -f "$STAGE_DIR/install.json" "$DIR/install.json" 2>/dev/null ||
@@ -507,6 +511,7 @@ main() {
   resolve_dir
   make_stage
   take_lock
+  report_stages
   check_ownership
   pick_tools
 
