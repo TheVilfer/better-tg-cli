@@ -1653,6 +1653,10 @@ export function parseDuration(duration: string): { seconds: number; isForever: b
     default: throw new Error(`Unknown duration unit: ${unit}`);
   }
 
+  // Telegram takes the end as an int of Unix seconds: a longer one would wrap to some other date
+  if (!Number.isSafeInteger(seconds) || Math.floor(Date.now() / 1000) + seconds > MAX_INT32) {
+    throw new Error(`Duration ${duration} is too long; use "forever" for no end`);
+  }
   return { seconds, isForever: false };
 }
 

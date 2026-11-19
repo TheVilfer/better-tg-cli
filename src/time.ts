@@ -1,5 +1,14 @@
-/** "30m", "1h", "7d", "2w" back from now, or an absolute date ("2026-09-01", "2026-09-01T12:00"). */
+/**
+ * "30m", "1h", "7d", "2w" back from now, or an absolute date ("2026-09-01", "2026-09-01T12:00").
+ * A value that computes to no real date ("999999999999999999d") is an error, never "Invalid Date".
+ */
 export function parseTimeOffset(offset: string): Date {
+  const date = computeTimeOffset(offset);
+  if (!Number.isFinite(date.getTime())) throw new Error(`Invalid time: ${offset} is out of range`);
+  return date;
+}
+
+function computeTimeOffset(offset: string): Date {
   const now = new Date();
   const match = offset.match(/^(\d+)([mhdw])$/);
   if (!match) {

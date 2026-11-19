@@ -229,3 +229,27 @@ describe('4 forward --json tells source IDs from destination IDs', () => {
     expect(copies.map((m: { text: string }) => m.text).sort()).toEqual(originals.map((m: { text: string }) => m.text).sort());
   }, 30_000);
 });
+
+describe('9 numbers and dates never silently become other values', () => {
+  it.each([
+    [['get', 'Team', '9007199254740993', '--json']],
+    [['get', 'Team', '3,2147483648', '--json']],
+    [['delete', 'Team', '9007199254740993', '--json']],
+    [['read', 'Team', '--before', '2147483648', '--json']],
+    [['read', 'Team', '--since', '999999999999999999d', '--json']],
+    [['read', 'Team', '--until', '99999999999999w', '--json']],
+    [['search', 'x', '--since', '999999999999999999m', '--json']],
+    [['send', 'me', 'hi', '--schedule', '99999999d', '--json']],
+    [['mute', 'Team', '-d', '99999999w', '--json']],
+  ])('%j is a usage error, exit 2', args => {
+    const r = cli(args);
+    expect(r.code, r.out + r.err).toBe(2);
+    expect(oneJson(r.out).error.code).toBe('invalid_argument');
+  }, 30_000);
+
+  it('write-access --for refuses a duration with no real end date', async () => {
+    const { parseForDuration } = await import('../src/write-state.js');
+    expect(() => parseForDuration('99999999999999999w')).toThrow(/too long/);
+    expect(parseForDuration('2h')).toBe(7200);
+  });
+});

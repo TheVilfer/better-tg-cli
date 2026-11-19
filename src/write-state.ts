@@ -34,7 +34,12 @@ export function parseForDuration(value: string): number {
   const m = value.match(/^(\d+)([mhdw])$/);
   if (!m || parseInt(m[1], 10) <= 0) throw new Error(`Invalid --for "${value}". Use e.g. 30m, 2h, 1d, 1w`);
   const mult = { m: 60, h: 3600, d: 86400, w: 604800 }[m[2] as 'm' | 'h' | 'd' | 'w'];
-  return parseInt(m[1], 10) * mult;
+  const seconds = parseInt(m[1], 10) * mult;
+  // The end must be a real date (it is stored and shown)
+  if (!Number.isSafeInteger(seconds) || !Number.isFinite(new Date(Date.now() + seconds * 1000).getTime())) {
+    throw new Error(`Invalid --for "${value}": too long`);
+  }
+  return seconds;
 }
 
 /** The stored value for "on" (default) or "ask", optionally ending after `forSeconds`. */

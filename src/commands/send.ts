@@ -7,9 +7,13 @@ import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { readTextArg } from '../text.js';
 import { fail } from '../errors.js';
-import { positiveInt } from '../args.js';
+import { INT32_MAX, positiveInt } from '../args.js';
 
 export function parseScheduleToEpoch(value: string): number {
+  return inIntRange(computeSchedule(value), value);
+}
+
+function computeSchedule(value: string): number {
   const rel = value.match(/^(\d+)([mhd])$/);
   if (rel) {
     const n = parseInt(rel[1], 10);
@@ -19,6 +23,12 @@ export function parseScheduleToEpoch(value: string): number {
   const abs = Date.parse(value);
   if (!Number.isNaN(abs)) return Math.floor(abs / 1000);
   throw new InvalidArgumentError('Use "30m", "2h", "1d" or an ISO date like 2026-12-01T09:00.');
+}
+
+/** A schedule date is an `int` (Unix seconds): past that it would be some other date. */
+function inIntRange(epoch: number, value: string): number {
+  if (!Number.isSafeInteger(epoch) || epoch > INT32_MAX) throw new InvalidArgumentError(`--schedule ${value} is too far ahead.`);
+  return epoch;
 }
 
 /** --schedule is checked while parsing (exit 2, before the write guard) and resolved when sending. */
