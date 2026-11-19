@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -145,6 +145,11 @@ describe('a session is "expired" only when Telegram says so (7)', () => {
     expect(await sessionState()).toBe('expired');
     machine.stateError = Object.assign(new Error('RPCError 401: SESSION_REVOKED'), { errorMessage: 'SESSION_REVOKED' });
     expect(await sessionState()).toBe('expired');
+    machine.stateError = Object.assign(new Error('RPCError 406: AUTH_KEY_DUPLICATED'), { errorMessage: 'AUTH_KEY_DUPLICATED' });
+    expect(await sessionState()).toBe('expired');
+    // 2FA still to enter is a 401 too, but no reason to replace the session
+    machine.stateError = Object.assign(new Error('RPCError 401: SESSION_PASSWORD_NEEDED'), { errorMessage: 'SESSION_PASSWORD_NEEDED' });
+    await expect(sessionState()).rejects.toThrow(/SESSION_PASSWORD_NEEDED/);
     machine.stateError = new Error('connect ETIMEDOUT 149.154.167.50:443');
     await expect(sessionState()).rejects.toThrow(/ETIMEDOUT/);
     machine.stateError = Object.assign(new Error('FLOOD_WAIT_30'), { errorMessage: 'FLOOD_WAIT', seconds: 30 });
@@ -156,6 +161,14 @@ describe('a session is "expired" only when Telegram says so (7)', () => {
     setSessionString('session-B'); // another process logged in
     expect(() => machine.page!.save('session-C', { apiId: 1, apiHash: '0'.repeat(32) }, false)).toThrow(/Another login was saved in this profile/);
     expect(loadConfig(() => {}).sessionString).toBe('session-B');
+  });
+
+  it('also when the other login was written behind this process\'s config cache', async () => {
+    await openSetupPage({ emit: () => {}, fromModel: true });
+    expect(loadConfig(() => {}).sessionString).toBe('session-A'); // cached now
+    const path = join(configDir(), 'config.json5');
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), sessionString: 'session-B' }));
+    expect(() => machine.page!.save('session-C', { apiId: 1, apiHash: '0'.repeat(32) }, false)).toThrow(/Another login was saved/);
   });
 
   it('a new login over an old one stays on the profile\'s test servers', async () => {

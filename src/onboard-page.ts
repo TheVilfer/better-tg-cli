@@ -305,16 +305,17 @@ const MODE_NAMES = { 'read-only': 'roName', ask: 'askName', on: 'onName' };
 // from the server, known or not.
 // span: the term of the refused choice ('1h', '1d', '1w', or none for no end), so the command in the
 // hint asks for that term, never more
-function explain(code, detail, mode, span) {
+function explain(code, detail, mode, span, pick) {
   if (code === 'offline') return [modeOnly ? L.goneMode : step === 'mode' ? L.goneSaved : L.gone];
   if (!Object.hasOwn(L.errors, code)) return [L.failed, [code, detail].filter(Boolean).join(': ')];
-  let text = L.errors[code].replace('{cmd}', 'telegram write-access on' + (/^[1-9][0-9]*[mhdw]$/.test(span || '') ? ' --for ' + span : ''));
+  // The command for the mode that was picked ("ask" or "on"), with its term
+  let text = L.errors[code].replace('{cmd}', 'telegram write-access ' + (pick === 'ask' ? 'ask' : 'on') + (/^[1-9][0-9]*[mhdw]$/.test(span || '') ? ' --for ' + span : ''));
   // Nothing changed: name the mode read back from the store, never a guess (it may be "on" already)
   if ((code === 'store_failed' || code === 'needs_terminal') && mode && MODE_NAMES[mode]) text += ' ' + L.inEffect.replace('{mode}', L[MODE_NAMES[mode]]);
   return [text, detail];
 }
-const fail = (code, detail, mode, kind, sent, span) => {
-  const [t, small] = explain(code, detail, mode, span);
+const fail = (code, detail, mode, kind, sent, span, pick) => {
+  const [t, small] = explain(code, detail, mode, span, pick);
   msg(t, small, code === 'offline' ? 'net' : kind, sent);
 };
 
@@ -326,14 +327,14 @@ async function post(route, body) {
   // A body cut short leaves only the status
   let data = {};
   try { data = JSON.parse(await res.text()); } catch { /* keep the status */ }
-  throw { code: data.error || 'HTTP ' + res.status, detail: data.message, span: data.for };
+  throw { code: data.error || 'HTTP ' + res.status, detail: data.message, span: data.for, pick: data.pick };
 }
 async function act(route, body, btn) {
   msg(''); if (btn) btn.disabled = true;
   // Once the page has moved past the step of the click, its late answer (or loss) changes nothing:
   // the state already shows the outcome
   const at = step;
-  try { await post(route, body); } catch (e) { if (step === at) fail(e.code, e.detail, undefined, 'act', true, e.span); } finally { if (btn) btn.disabled = false; }
+  try { await post(route, body); } catch (e) { if (step === at) fail(e.code, e.detail, undefined, 'act', true, e.span, e.pick); } finally { if (btn) btn.disabled = false; }
   // The state may hold more (the mode in effect after a store failure) and the next step
   await poll();
 }
@@ -386,7 +387,7 @@ async function poll() {
   if (s.step === 'scan' && s.qrSvg !== last) { $('qr').innerHTML = s.qrSvg; last = s.qrSvg; }
   if (s.step === 'password') { $('hint').textContent = s.hint || '—'; if (s.error) fail(s.error, '', undefined, 'state'); }
   // A mode that was not saved, including the default one right after the login
-  if (s.step === 'mode' && s.error) fail(s.error, '', s.mode, 'state', false, s.errorFor);
+  if (s.step === 'mode' && s.error) fail(s.error, '', s.mode, 'state', false, s.errorFor, s.errorPick);
   if (s.step === 'error') $('errtext').textContent = s.error || '';
   if (s.step === 'done') {
     const u = s.user || {};

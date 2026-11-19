@@ -30,6 +30,8 @@ export interface OnboardState {
   error?: string;
   /** With a mode error: the term of the refused choice ('1h', '1d', '1w'), absent for no end */
   errorFor?: string;
+  /** The mode of that refused choice, so the page names the command for it */
+  errorPick?: WriteMode;
   user?: LoginUser;
   /** The write mode in effect: the default after the login, then the one picked on the page */
   mode?: WriteMode;
@@ -131,7 +133,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   let applying = false;
   let finished = false;
 
-  const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined, errorFor: undefined }, patch);
+  const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined, errorFor: undefined, errorPick: undefined }, patch);
 
   /** The mode in the store now (read once), or `expected` when there is no way to read it back */
   const readBack = (expected: WriteMode | undefined): SavedMode | undefined =>
@@ -316,8 +318,9 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
         if (error) {
           state.error = error;
           state.errorFor = span || undefined;
+          state.errorPick = mode;
           state.mode = saved?.mode;
-          return json(res, 409, { error, ...(span ? { for: span } : {}) });
+          return json(res, 409, { error, pick: mode, ...(span ? { for: span } : {}) });
         }
         options.emit({ event: 'mode', mode, ...(result.ok && result.until ? { until: result.until.toISOString() } : {}) });
         finish(mode);
