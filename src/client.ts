@@ -2127,14 +2127,15 @@ export async function forwardMessages(
   msgIds: number[],
   toChat: string,
   options: { silent?: boolean; dropAuthor?: boolean } = {}
-): Promise<{ count: number; fromTitle: string; toTitle: string }> {
+): Promise<{ count: number; fromTitle: string; toTitle: string; forwardedIds: number[] }> {
   const from = await resolveChat(client, fromChat);
   const to = await resolveChat(client, toChat);
 
   // forwardMessages throws if the forward fails; on success every requested id
-  // was forwarded. The returned array under-reports (a GramJS quirk), so we
-  // report the requested count instead.
-  await client.forwardMessages(to, {
+  // was forwarded. The returned array under-reports (a GramJS quirk), so the
+  // count is the requested one; forwardedIds are only the copies Telegram's
+  // answer confirms (their IDs in the destination chat).
+  const sent = await client.forwardMessages(to, {
     messages: msgIds,
     fromPeer: from,
     silent: options.silent,
@@ -2145,6 +2146,7 @@ export async function forwardMessages(
     count: msgIds.length,
     fromTitle: getChatTitle(from),
     toTitle: getChatTitle(to),
+    forwardedIds: (sent ?? []).filter((m): m is Api.Message => m instanceof Api.Message).map(m => m.id),
   };
 }
 

@@ -15,7 +15,7 @@ export const forwardCommand = new Command('forward')
   .argument('<toChat>', 'Destination chat name, username (@user), or ID')
   .option('--silent', 'Forward without a notification sound')
   .option('--drop-author', 'Hide the original sender (no "forwarded from" header)')
-  .option('--json', 'Output as JSON')
+  .option('--json', 'Output as JSON: messageIds are the source IDs (in fromChatId), forwardedIds the copies in chatId')
   .action(async (fromChat, messageIds, toChat, options) => {
     assertWriteEnabled();
 
@@ -43,6 +43,7 @@ export const forwardCommand = new Command('forward')
       if (options.json) {
         const to = await chatRef(client, toChat);
         const from = await chatRef(client, fromChat);
+        // messageIds: the originals, in fromChatId; forwardedIds: the copies, in chatId (the destination)
         console.log(formatJson({ ok: true, action: 'forward', ...to, fromChatId: from.chatId, ...result, messageIds: ids }));
       } else {
         console.log(chalk.green(`✓ Forwarded ${result.count} message(s) from "${result.fromTitle}" to "${result.toTitle}"`));

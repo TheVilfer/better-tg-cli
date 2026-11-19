@@ -213,3 +213,19 @@ describe('11 hasMore only when a next page was seen', () => {
     expect(JSON.parse(cli(['search', '', '--chat', 'Team', '-n', String(inChat), '--json']).out)[0].hasMore).toBeUndefined();
   }, 30_000);
 });
+
+describe('4 forward --json tells source IDs from destination IDs', () => {
+  it('messageIds stay the originals; forwardedIds are the copies in the destination chat', () => {
+    const state = join(home, `fwd-${n++}.json`);
+    const r = cli(['forward', 'Team', '2,3', 'me', '--json'], {}, state);
+    expect(r.code, r.err).toBe(0);
+    const result = oneJson(r.out);
+    expect(result).toMatchObject({ ok: true, action: 'forward', chatId: '1000', fromChatId: '-1004001', messageIds: [2, 3] });
+    expect(result.forwardedIds).toHaveLength(2);
+    expect(result.forwardedIds).not.toEqual([2, 3]);
+    // The copies really are these IDs in the destination chat
+    const copies = JSON.parse(cli(['get', 'me', ...result.forwardedIds.map(String), '--json'], {}, state).out).messages;
+    const originals = JSON.parse(cli(['get', 'Team', '2', '3', '--json'], {}, state).out).messages;
+    expect(copies.map((m: { text: string }) => m.text).sort()).toEqual(originals.map((m: { text: string }) => m.text).sort());
+  }, 30_000);
+});
