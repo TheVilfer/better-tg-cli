@@ -57,7 +57,8 @@ Node, npm, Bun or git, and it never edits shell profiles or installs system pack
 4. It copies the binary into a private staging folder next to the target and runs `--version` on
    it: the output must be exactly the pinned version and the exit status 0. Only then it moves the
    binary into place. A binary that does not run here replaces nothing.
-5. It writes `install.json` next to the binary.
+5. It writes `install.json` next to the binary, with the SHA-256 of the archive (`sha256`) and of
+   the binary itself (`binarySha256`).
 
 The pinned version is the `VERSION=` line at the top of the script. `scripts/gen-version.mjs` keeps
 it equal to `package.json`. The release workflow puts `install.sh` into each stable GitHub
@@ -78,11 +79,14 @@ The script owns a path only through its `install.json`: a `telegram` there count
 the `install.json` beside it is exactly the one line this script writes (below): the same field
 order, `"schema":1,"package":"better-tg-cli","manager":"user-binary"` and that exact `path`, and a
 well-formed value in every other field (`version`, `tag`, `target`, `archive`, a 64-digit
-`sha256`, `installedAt`), with nothing after the line. The fields must agree: `tag` is `v` plus
+`sha256` and `binarySha256`, `installedAt`), with nothing after the line. The fields must agree: `tag` is `v` plus
 `version`, and `archive` is `better-tg-cli-<version>-<target>.tar.xz` (or `.tar.gz`). Anything
 else (a file from another tool, a symlink, a directory, an `install.json` of something else, a
 record nested inside another file, a cut-off or edited manifest) is left alone, and the script
-stops with `install_path_taken` and exit code 2. A `telegram` that shows up while the script is
+stops with `install_path_taken` and exit code 2. Before an upgrade replaces `telegram`, the script
+hashes the file in place with the same tool it checks the archive with: its SHA-256 must equal
+`binarySha256`. Another file copied over `telegram` next to a genuine `install.json` is refused the
+same way (checked before anything is downloaded, and again right before the replacement). A `telegram` that shows up while the script is
 downloading is not written over either. Running the script again over its own install replaces it.
 
 One run at a time installs into a folder. The lock is the file `.better-tg-cli.lock`, holding one
@@ -99,16 +103,18 @@ it created itself.
 Files are placed with hard links, which fail when the name is taken, so the target folder must be
 on a file system that supports them (any local disk does); otherwise the script stops with
 `hard_links_unavailable`. An upgrade moves the binary in first and `install.json` second, so a run killed between
-the two leaves a manifest that names the older version (and an older `sha256`), never one that
-claims more than is installed. Deleting the lock that killed run left and running the script
-again fixes it. Right before replacing the binary, an upgrade checks that the `telegram` there is
+the two leaves a manifest that names the older version (and older sums), never one that claims
+more than is installed. Its `binarySha256` no longer matches the new binary, so after the lock that
+killed run left is deleted, the next run stops with `install_path_taken` and keeps both files. If
+you know no other program wrote that `telegram`, delete it (or move it away) and run the script
+again: the manifest still owns the path, so it installs and records both sums anew. Right before replacing the binary, an upgrade checks that the `telegram` there is
 still the regular file whose ownership it checked (same inode, size and modification time as
 `ls` prints it, to the minute);
 otherwise it stops with `install_path_taken`. That narrows, not closes, a race with another writer
 into the folder, which is outside the threat model.
 
 ```json
-{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":"/home/me/.local/bin/telegram","version":"0.39.6","tag":"v0.39.6","target":"linux-x64","archive":"better-tg-cli-0.39.6-linux-x64.tar.gz","sha256":"…","installedAt":"2026-11-19T12:00:00Z"}
+{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":"/home/me/.local/bin/telegram","version":"0.39.6","tag":"v0.39.6","target":"linux-x64","archive":"better-tg-cli-0.39.6-linux-x64.tar.gz","sha256":"…","binarySha256":"…","installedAt":"2026-11-19T12:00:00Z"}
 ```
 
 ## Output
@@ -138,7 +144,7 @@ nothing; only a copy cut inside the first line, `#!/bin/sh`, still exits 0, with
 | `platform_unsupported` | 1 | No release build for this system or CPU (Windows, FreeBSD, 32-bit, musl). |
 | `old_installer_variable` | 2 | `TG_SKILL_DIR` is set: that belongs to the old developer installer, now `scripts/dev-install.sh`. Nothing is changed. |
 | `install_dir_invalid` | 2 | The folder cannot be created or written; pick another `TG_INSTALL_DIR`. |
-| `install_path_taken` | 2 | Something not installed by this script is there; it stays untouched. |
+| `install_path_taken` | 2 | Something not installed by this script is there, or a `telegram` whose SHA-256 is not the `binarySha256` in `install.json`; it stays untouched. |
 | `install_in_progress` | 1 | Another run is installing into the same folder right now. |
 | `install_lock_stale` | 2 | A run that was cut short left its lock (its PID is not running); delete that lock and run again. |
 | `install_lock_unknown` | 2 | The lock file is not one this script wrote; it is left as is. |

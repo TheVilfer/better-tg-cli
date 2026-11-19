@@ -177,6 +177,7 @@ function run(s: Sandbox, env: Record<string, string> = {}, shell = SHELLS[0], st
   return result;
 }
 
+const sha256Of = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 const ids = (r: RunResult) => r.json.problems.map(p => p.id);
 
 /**
@@ -221,6 +222,9 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       const manifest = JSON.parse(readFileSync(join(s.installDir, 'install.json'), 'utf8'));
       expect(manifest).toMatchObject({ package: 'better-tg-cli', manager: 'user-binary', path: bin, version: VERSION, tag: `v${VERSION}`, target: 'linux-x64', archive: assetName(VERSION, 'linux-x64', 'tar.gz') });
       expect(manifest.sha256).toMatch(/^[0-9a-f]{64}$/);
+      // The sum of the installed binary itself, which an upgrade checks before replacing it
+      expect(manifest.binarySha256).toBe(sha256Of(readFileSync(bin)));
+      expect(Object.keys(manifest)).toEqual(['schema', 'package', 'manager', 'path', 'version', 'tag', 'target', 'archive', 'sha256', 'binarySha256', 'installedAt']);
       // SHA256SUMS first, then exactly the archive it lists, over https only
       const base = releaseBase(VERSION);
       expect(r.requests.map(l => l.split(' ').pop())).toEqual([`${base}/SHA256SUMS`, `${base}/${assetName(VERSION, 'linux-x64', 'tar.gz')}`]);
@@ -291,6 +295,28 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
     expect(r.json.ok).toBe(true);
+    const bin = join(s.installDir, 'telegram');
+    expect(JSON.parse(readFileSync(join(s.installDir, 'install.json'), 'utf8')).binarySha256).toBe(sha256Of(readFileSync(bin)));
+  });
+
+  it('refuses a foreign file copied over its telegram, next to a genuine install.json, and downloads nothing', () => {
+    const s = sandbox();
+    release(s);
+    expect(run(s).status).toBe(0);
+    const bin = join(s.installDir, 'telegram');
+    const manifest = readFileSync(join(s.installDir, 'install.json'), 'utf8');
+    writeFileSync(join(s.root, 'other'), '#!/bin/sh\necho someone else\n', { mode: 0o755 });
+    // Copied over it: the same path and a regular file, only the content is not ours
+    spawnSync('cp', [join(s.root, 'other'), bin]);
+    writeFileSync(s.log, '');
+    const r = run(s);
+    expect(r.status).toBe(2);
+    expect(ids(r)).toEqual(['install_path_taken']);
+    expect(r.json.problems[0].message).toContain('binarySha256');
+    expect(readFileSync(bin, 'utf8')).toBe('#!/bin/sh\necho someone else\n');
+    expect(readFileSync(join(s.installDir, 'install.json'), 'utf8')).toBe(manifest);
+    expect(r.requests).toEqual([]);
+    expect(leftovers(s.installDir)).toEqual([]);
   });
 
   it('refuses a telegram it did not install and downloads nothing', () => {
@@ -566,8 +592,9 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(run(s).status).toBe(2);
   });
 
-  const goodManifest = (bin: string) =>
-    `{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"0.1.0","tag":"v0.1.0","target":"linux-x64","archive":"better-tg-cli-0.1.0-linux-x64.tar.gz","sha256":"${'a'.repeat(64)}","installedAt":"2026-11-19T12:00:00Z"}\n`;
+  // content: the telegram it describes (binarySha256)
+  const goodManifest = (bin: string, content = 'someone else\n') =>
+    `{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"0.1.0","tag":"v0.1.0","target":"linux-x64","archive":"better-tg-cli-0.1.0-linux-x64.tar.gz","sha256":"${'a'.repeat(64)}","binarySha256":"${sha256Of(content)}","installedAt":"2026-11-19T12:00:00Z"}\n`;
 
   it('ownership: the exact manifest an earlier version wrote counts', () => {
     const s = sandbox();
@@ -575,7 +602,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const bin = join(s.installDir, 'telegram');
     mkdirSync(s.installDir, { recursive: true });
     writeFileSync(bin, 'old\n');
-    writeFileSync(join(s.installDir, 'install.json'), goodManifest(bin));
+    writeFileSync(join(s.installDir, 'install.json'), goodManifest(bin, 'old\n'));
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
     expect(JSON.parse(readFileSync(join(s.installDir, 'install.json'), 'utf8')).version).toBe(VERSION);
@@ -588,6 +615,9 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     ['a manifest without tag, target, archive and sha256', (bin: string) => `{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"0.1.0","installedAt":"2026-11-19T12:00:00Z"}\n`],
     ['a manifest with a damaged middle', (bin: string) => goodManifest(bin).replace('"tag":"v0.1.0"', '"tag":"v0.1.0","x":{}')],
     ['a manifest with a bad sum', (bin: string) => goodManifest(bin).replace(/"sha256":"[0-9a-f]+"/, '"sha256":"zz"')],
+    ['a manifest without binarySha256', (bin: string) => goodManifest(bin).replace(/"binarySha256":"[0-9a-f]+",/, '')],
+    ['a manifest with a malformed binarySha256', (bin: string) => goodManifest(bin).replace(/"binarySha256":"([0-9a-f]+)"/, '"binarySha256":"$1a"')],
+    ['a manifest whose binarySha256 describes another file', (bin: string) => goodManifest(bin, 'another file\n')],
     ['a well-formed manifest followed by a blank line', (bin: string) => `${goodManifest(bin)}\n`],
     ['a tag that is not v + version', (bin: string) => goodManifest(bin).replace('"tag":"v0.1.0"', '"tag":"v0.2.0"')],
     ['an archive named after another version', (bin: string) => goodManifest(bin).replace('better-tg-cli-0.1.0-', 'better-tg-cli-0.2.0-')],
@@ -755,7 +785,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(leftovers(s.installDir)).toEqual([]);
   });
 
-  it('an upgrade killed between the two renames heals once its lock is deleted', () => {
+  it('an upgrade killed between the two renames is refused until a person moves telegram away', () => {
     const realMv = which('mv');
     const s = sandbox({
       extraBin: {
@@ -776,7 +806,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const bin = join(s.installDir, 'telegram');
     const manifest = () => JSON.parse(readFileSync(join(s.installDir, 'install.json'), 'utf8'));
     const reports = () => spawnSync(bin, ['--version'], { encoding: 'utf8' }).stdout.trim();
-    const sha = () => createHash('sha256').update(readFileSync(bin)).digest('hex');
+    const sha = () => sha256Of(readFileSync(bin));
 
     const killed = spawnScript(s, { FAKE_MV_KILL: '1' }, SHELLS[0], false, SCRIPT);
     expect(killed.signal).toBe('SIGKILL');
@@ -793,16 +823,28 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(stage).toBeDefined();
     rmSync(join(s.installDir, LOCK));
 
+    // The binary in place is not the one the old manifest records: refused, nothing touched
+    const newBin = readFileSync(bin);
+    const oldManifest = readFileSync(join(s.installDir, 'install.json'), 'utf8');
+    const refused = run(s);
+    expect(refused.status).toBe(2);
+    expect(ids(refused)).toEqual(['install_stage_left', 'install_path_taken']);
+    expect(refused.json.problems[1].message).toContain('binarySha256');
+    expect(readFileSync(bin).equals(newBin)).toBe(true);
+    expect(readFileSync(join(s.installDir, 'install.json'), 'utf8')).toBe(oldManifest);
+
+    // A person moves telegram away: the manifest still owns the path, so the next run installs
+    rmSync(bin);
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
     expect(ids(r)).toEqual(['install_stage_left', 'install_dir_not_on_path']);
     expect(r.json.problems[0].message).toContain(join(s.installDir, stage!));
     expect(manifest()).toMatchObject({ version: VERSION, sha256: expect.any(String) });
     expect(reports()).toBe(VERSION);
-    // The manifest's sum describes the binary in place again
+    // The manifest's sums describe the archive and the binary in place again
     const archive = readFileSync(join(s.release, assetName(VERSION, 'linux-x64', 'tar.gz')));
-    expect(manifest().sha256).toBe(createHash('sha256').update(archive).digest('hex'));
-    expect(sha()).not.toBe('');
+    expect(manifest().sha256).toBe(sha256Of(archive));
+    expect(manifest().binarySha256).toBe(sha());
     // The killed run's staging folder is reported, never deleted
     expect(leftovers(s.installDir)).toEqual([stage]);
   });

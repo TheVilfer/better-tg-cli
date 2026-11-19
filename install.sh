@@ -12,8 +12,8 @@
 #
 # What it does: downloads SHA256SUMS and the archive of one pinned stable release (VERSION below),
 # checks the archive's sum before unpacking or running anything, installs `telegram` into
-# ~/.local/bin (or $TG_INSTALL_DIR) and writes install.json next to it. A `telegram` there that this
-# script did not install is never overwritten.
+# ~/.local/bin (or $TG_INSTALL_DIR) and writes install.json next to it, with the SHA-256 of the
+# binary itself. A `telegram` there that is not the binary install.json records is never overwritten.
 #
 # Output: one JSON object on stdout (setup contract, schema 1); progress goes to stderr.
 #   {"schema":1,"ok":true,"problems":[],"data":{"path":"/abs/telegram","onPath":false,...}}
@@ -286,9 +286,20 @@ check_ownership() {
       fail install_path_taken "$BIN_TAKEN already exists and was not installed by this script; it is left as is." "$taken"
     fi
     BIN_ID=$(file_id "$BIN")
+    check_bin_sum "$taken"
   elif [ "$FRESH_JSON" = 0 ] && ! is_ours "$manifest"; then
     BIN=''
     fail install_path_taken "$manifest belongs to something else; it is left as is." "$taken"
+  fi
+}
+
+# check_bin_sum <fix JSON>: the telegram in place must be the very binary install.json records
+# (its SHA-256), not another file copied over it or one left by an upgrade killed between its renames
+check_bin_sum() {
+  have=$(sha256 "$BIN")
+  if [ -z "$have" ] || [ "$have" != "$BIN_SUM" ]; then
+    BIN_TAKEN="$BIN"; BIN=''
+    fail install_path_taken "$BIN_TAKEN does not match the binary $DIR/install.json records (binarySha256); it is left as is." "$1"
   fi
 }
 
@@ -298,11 +309,11 @@ file_id() { LC_ALL=C ls -lind "$1" 2>/dev/null | awk '{ print $1, $6, $7, $8, $9
 
 # install.json is ours only in the exact one-line form this script writes, for this very path, with
 # every field well formed and agreeing with the others (tag = v + version, archive named after
-# version and target): a record nested in another file, an edited, longer or cut-off one does not
+# version and target). Sets BIN_SUM to its binarySha256. A record nested in another file, an edited, longer or cut-off one does not
 # count
 MANIFEST_V='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'
 MANIFEST_T='(darwin|linux)-(x64|arm64)'
-MANIFEST_REST="\"$MANIFEST_V\",\"tag\":\"v$MANIFEST_V\",\"target\":\"$MANIFEST_T\",\"archive\":\"better-tg-cli-$MANIFEST_V-$MANIFEST_T\.tar\.(xz|gz)\",\"sha256\":\"[0-9a-f]{64}\",\"installedAt\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\"}"
+MANIFEST_REST="\"$MANIFEST_V\",\"tag\":\"v$MANIFEST_V\",\"target\":\"$MANIFEST_T\",\"archive\":\"better-tg-cli-$MANIFEST_V-$MANIFEST_T\.tar\.(xz|gz)\",\"sha256\":\"[0-9a-f]{64}\",\"binarySha256\":\"[0-9a-f]{64}\",\"installedAt\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\"}"
 is_ours() {
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
   IFS= read -r line <"$1" || return 1
@@ -313,6 +324,7 @@ is_ours() {
   printf '%s\n' "$rest" | LC_ALL=C grep -Eqx "$MANIFEST_REST" || return 1
   v=$(printf '%s\n' "$rest" | sed 's/^"\([^"]*\)".*/\1/')
   t=$(printf '%s\n' "$rest" | sed 's/.*,"target":"\([^"]*\)".*/\1/')
+  BIN_SUM=$(printf '%s\n' "$rest" | sed 's/.*,"binarySha256":"\([0-9a-f]*\)".*/\1/')
   case "$rest" in "\"$v\",\"tag\":\"v$v\",\"target\":\"$t\",\"archive\":\"better-tg-cli-$v-$t.tar."[xg]'z","sha256":'*) return 0 ;; esac
   return 1
 }
@@ -459,15 +471,18 @@ install_files() {
       "$(fix_unavailable "A noexec mount or an unsupported system can cause this. Try TG_INSTALL_DIR on another file system, or npm install -g better-tg-cli with Node 20+.")"
   fi
 
-  printf '{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":%s,"version":%s,"tag":%s,"target":%s,"archive":%s,"sha256":%s,"installedAt":%s}\n' \
+  bsum=$(sha256 "$staged")
+  [ -n "$bsum" ] || fail install_write_failed "Cannot compute the SHA-256 of the staged telegram." "$write_failed"
+  printf '{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":%s,"version":%s,"tag":%s,"target":%s,"archive":%s,"sha256":%s,"binarySha256":%s,"installedAt":%s}\n' \
     "$(json_str "$BIN")" "$(json_str "$VERSION")" "$(json_str "$TAG")" "$(json_str "$TARGET")" "$(json_str "$ARCHIVE")" \
-    "$(json_str "$1")" "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >"$STAGE_DIR/install.json" ||
+    "$(json_str "$1")" "$(json_str "$bsum")" "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >"$STAGE_DIR/install.json" ||
     fail install_write_failed "Cannot write install.json in $DIR." "$write_failed"
 
   taken="$(fix_human "Move it away yourself, or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
   if [ "$FRESH_BIN" = 0 ]; then
     # An upgrade: the binary first. A run killed in between leaves the new binary with the old
-    # manifest, which only looks out of date, and the next run rewrites both.
+    # manifest, which never claims more than is installed; its binarySha256 no longer matches, so
+    # the next run refuses to replace it until a person moves telegram away.
     # The file whose ownership was checked must still be the one there: a regular file with the
     # same inode, size and mtime. This narrows, not closes, a race with another writer into the
     # folder, which is outside the threat model (see the header).
@@ -475,6 +490,8 @@ install_files() {
       BIN_TAKEN="$BIN"; BIN=''
       fail install_path_taken "$BIN_TAKEN changed while downloading; it is left as is." "$taken"
     fi
+    # Its content too, right before it is replaced
+    check_bin_sum "$taken"
     mv -f "$staged" "$BIN" 2>/dev/null ||
       fail install_write_failed "Cannot move the binary into $BIN; the previous install is unchanged." "$write_failed"
     mv -f "$STAGE_DIR/install.json" "$DIR/install.json" 2>/dev/null ||
@@ -512,8 +529,9 @@ main() {
   make_stage
   take_lock
   report_stages
-  check_ownership
+  # The tools first: the ownership check hashes the telegram in place
   pick_tools
+  check_ownership
 
   TMP=$(mktemp -d 2>/dev/null || mktemp -d -t better-tg-cli) || TMP=''
   [ -n "$TMP" ] && [ -d "$TMP" ] || fail install_write_failed "Cannot create a temporary folder." \
