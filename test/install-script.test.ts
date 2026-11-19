@@ -88,7 +88,7 @@ afterEach(() => {
   for (const dir of sandboxes.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function sandbox(opts: { downloader?: 'curl' | 'wget' | 'none'; xz?: boolean; extraBin?: Record<string, string> } = {}): Sandbox {
+function sandbox(opts: { downloader?: 'curl' | 'wget' | 'none'; xz?: boolean; omit?: string[]; extraBin?: Record<string, string> } = {}): Sandbox {
   // realpath: macOS tmpdir is a symlink (/var → /private/var), the script reports resolved paths
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'btg-install-')));
   sandboxes.push(root);
@@ -109,7 +109,7 @@ function sandbox(opts: { downloader?: 'curl' | 'wget' | 'none'; xz?: boolean; ex
   if (dl === 'wget') fakes.wget = FAKE_WGET;
   // A faked tool is never linked: writing the fake would go through the link into the real one
   for (const tool of TOOLS) {
-    if ((tool === 'xz' && opts.xz === false) || tool in fakes) continue;
+    if ((tool === 'xz' && opts.xz === false) || opts.omit?.includes(tool) || tool in fakes) continue;
     const path = which(tool);
     if (path) symlinkSync(path, join(s.bin, tool));
   }
@@ -489,6 +489,88 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       expect(rg.status, rg.stderr).toBe(0);
       expect(rg.requests.at(-1)).toMatch(/\.tar\.gz$/);
     }
+  });
+
+  // sha256sum on macOS does not escape names; GNU sha256sum and shasum do
+  const hashers = ([['the first hasher found', []], ['shasum alone', ['sha256sum']], ['openssl alone', ['sha256sum', 'shasum']]] as [string, string[]][])
+    .filter(([, omit]) => TOOLS.filter(t => ['sha256sum', 'shasum', 'openssl'].includes(t) && !omit.includes(t)).some(t => which(t)));
+  it.each(hashers)(
+    'a backslash in TG_INSTALL_DIR, installed twice (%s)',
+    (_name, omit) => {
+      const s = sandbox({ omit });
+      release(s);
+      const dir = join(s.root, 'back\\slash');
+      const first = run(s, { TG_INSTALL_DIR: dir });
+      expect(first.status, first.stderr).toBe(0);
+      const bin = join(dir, 'telegram');
+      const manifest = JSON.parse(readFileSync(join(dir, 'install.json'), 'utf8'));
+      expect(manifest.path).toBe(bin);
+      expect(manifest.binarySha256).toBe(sha256Of(readFileSync(bin)));
+      const again = run(s, { TG_INSTALL_DIR: dir });
+      expect(again.status, again.stderr).toBe(0);
+      expect(again.json.problems.map(p => p.id)).toEqual(['install_dir_not_on_path']);
+    },
+  );
+
+  it('without gzip, tar unpacks the .tar.gz by itself', () => {
+    if (!/bsdtar/.test(spawnSync('tar', ['--version'], { encoding: 'utf8' }).stdout)) return;
+    const s = sandbox({ omit: ['gzip'] });
+    release(s);
+    const r = run(s);
+    expect(r.status, r.stderr).toBe(0);
+    expect(spawnSync(join(s.installDir, 'telegram'), ['--version'], { encoding: 'utf8' }).stdout.trim()).toBe(VERSION);
+  });
+
+  it('a tar that leaves a file behind but fails: unpack_failed, the file is never run', () => {
+    // Creates telegram (which would log RAN when run), then exits like tar on a full disk
+    const fakeTar = `#!/bin/sh
+[ "$1" = --version ] && { echo 'tar (GNU tar) 1.35'; exit 0; }
+out=''
+while [ $# -gt 0 ]; do [ "$1" = -C ] && out=$2; shift; done
+printf '#!/bin/sh\\necho RAN >> "%s"\\necho ${VERSION}\\n' "$FAKE_LOG" > "$out/telegram"
+chmod 755 "$out/telegram"
+echo 'tar: telegram: Wrote only 512 of 10240 bytes' >&2
+exit 2
+`;
+    const s = sandbox({ extraBin: { tar: fakeTar } });
+    release(s);
+    const r = run(s);
+    expect(r.status).toBe(1);
+    expect(ids(r)).toEqual(['unpack_failed']);
+    expect(r.requests).not.toContain('RAN');
+    expect(existsSync(join(s.installDir, 'telegram'))).toBe(false);
+    expect(existsSync(join(s.installDir, 'install.json'))).toBe(false);
+  });
+
+  it('an empty PATH component is the current folder: its telegram is the active one', () => {
+    const s = sandbox();
+    release(s);
+    // The script runs with cwd = s.root
+    writeFileSync(join(s.root, 'telegram'), '#!/bin/sh\necho cwd\n');
+    chmodSync(join(s.root, 'telegram'), 0o755);
+    const bin = join(s.installDir, 'telegram');
+    for (const path of [`:${s.bin}:${s.installDir}`, `${s.bin}::${s.installDir}`]) {
+      const r = run(s, { PATH: path });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.json.data).toMatchObject({ onPath: true, active: join(s.root, 'telegram') });
+      expect(r.json.problems).toEqual([expect.objectContaining({ id: 'other_telegram_on_path', message: expect.stringMatching(/comes first/) })]);
+    }
+  });
+
+  it('a trailing empty PATH component comes last; glob characters in PATH stay literal', () => {
+    const s = sandbox();
+    release(s);
+    writeFileSync(join(s.root, 'telegram'), '#!/bin/sh\necho cwd\n');
+    chmodSync(join(s.root, 'telegram'), 0o755);
+    const bin = join(s.installDir, 'telegram');
+    mkdirSync(join(s.root, 'g1'));
+    writeFileSync(join(s.root, 'g1', 'telegram'), '#!/bin/sh\necho glob\n');
+    chmodSync(join(s.root, 'g1', 'telegram'), 0o755);
+    const r = run(s, { PATH: `${s.bin}:${s.installDir}:${join(s.root, 'g*')}:` });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.json.data.active).toBe(bin);
+    expect(r.json.problems).toEqual([expect.objectContaining({ id: 'other_telegram_on_path', message: expect.stringContaining(join(s.root, 'telegram')) })]);
+    expect(r.json.problems[0].message).not.toContain('g1');
   });
 
   it('warns when another telegram is on PATH, and when it comes first', () => {
@@ -874,6 +956,9 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       [shell, 'the script needs a human', '0', `echo '{"schema":1,"ok":false,"problems":[]}'; exit 2`, 2],
     ] as const))('%s: %s', (shell, _what, curlExit, script, want) => {
       expect(example).toContain('exit "$status"');
+      // No JSON line is an unknown result, never stated as "nothing is installed"
+      expect(doc).not.toMatch(/so nothing is installed/);
+      expect(doc).toMatch(/No JSON line at all[^.]*the result is\s+unknown/);
       const dir = realpathSync(mkdtempSync(join(tmpdir(), 'btg-doc-')));
       sandboxes.push(dir);
       writeFileSync(join(dir, 'curl'), fakeCurl, { mode: 0o755 });

@@ -17,7 +17,8 @@
 #
 # Output: one JSON object on stdout (setup contract, schema 1); progress goes to stderr.
 #   {"schema":1,"ok":true,"problems":[],"data":{"path":"/abs/telegram","onPath":false,...}}
-# When onPath is false, run the CLI by that absolute path. No JSON line at all means it failed.
+# When onPath is false, run the CLI by that absolute path. No JSON line at all: the result is
+# unknown (the run was cut short); check the files as docs/install.md says.
 # Exit codes: 0 installed, 1 error, 2 a human is needed (for example the path is taken).
 #
 # Threat model: the install folder belongs to the user who runs the script. The installer protects
@@ -338,11 +339,16 @@ pick_tools() {
   fi
 }
 
+# sha256 <file>: its SHA-256 as 64 lowercase hex characters, or nothing. The file goes in on stdin:
+# given a name with a backslash, sha256sum and shasum escape it and put a \ before the sum.
 sha256() {
+  [ -f "$1" ] || return 0
   case "$SUM" in
-    openssl) openssl dgst -sha256 "$1" 2>/dev/null | awk '{print $NF}' ;;
-    *) $SUM "$1" 2>/dev/null | awk '{print $1}' ;;
+    openssl) h=$(openssl dgst -sha256 <"$1" 2>/dev/null | awk '{print $NF}') ;;
+    *) h=$($SUM <"$1" 2>/dev/null | awk '{print $1}') ;;
   esac
+  printf '%s\n' "$h" | LC_ALL=C grep -Eqx '[0-9a-f]{64}' && printf '%s' "$h"
+  return 0
 }
 
 # download <url> <file>; fails with a problem of its own
@@ -384,13 +390,23 @@ expected_sum() {
   awk -v f="$1" '{ n = $2; sub(/^\*/, "", n); if (n == f) { print $1; exit } }' "$TMP/SHA256SUMS"
 }
 
+# Every step must succeed before the file counts: tar that ran out of space can leave a partial
+# telegram behind and exit non-zero. No pipe (a POSIX pipe keeps only the last exit code), so the
+# archive is decompressed into a file first.
 unpack() {
   out="$TMP/x"
   mkdir -p "$out" || return 1
   case "$ARCHIVE" in
-    *.tar.xz) if has xz; then xz -dc "$TMP/$ARCHIVE" | tar -xf - -C "$out" telegram; else tar -xJf "$TMP/$ARCHIVE" -C "$out" telegram; fi ;;
-    *.tar.gz) if has gzip; then gzip -dc "$TMP/$ARCHIVE" | tar -xf - -C "$out" telegram; else tar -xzf "$TMP/$ARCHIVE" -C "$out" telegram; fi ;;
+    *.tar.xz) if has xz; then xz -dc "$TMP/$ARCHIVE" >"$TMP/a.tar" || return 1; fi; flag=J ;;
+    *.tar.gz) if has gzip; then gzip -dc "$TMP/$ARCHIVE" >"$TMP/a.tar" || return 1; fi; flag=z ;;
+    *) return 1 ;;
   esac
+  if [ -f "$TMP/a.tar" ]; then
+    tar -xf "$TMP/a.tar" -C "$out" telegram || return 1
+    rm -f "$TMP/a.tar"
+  else
+    tar "-x${flag}f" "$TMP/$ARCHIVE" -C "$out" telegram || return 1
+  fi
   [ -f "$out/telegram" ] && [ ! -L "$out/telegram" ]
 }
 
@@ -413,12 +429,17 @@ place_new() {
 scan_path() {
   ON_PATH=0
   others=''
-  old_ifs=$IFS
-  IFS=:
-  for d in $PATH; do
-    IFS=$old_ifs
-    [ -n "$d" ] || continue
-    real=$(cd "$d" 2>/dev/null && pwd -P) || continue
+  # Split by hand: an empty component (leading, trailing or ::) is the current folder, which the
+  # shell searches like any other, and nothing in PATH is ever glob-expanded
+  rest="${PATH-}:"
+  [ -n "${PATH+x}" ] || rest=''
+  while [ -n "$rest" ]; do
+    d=${rest%%:*}
+    rest=${rest#*:}
+    [ -n "$d" ] || d=.
+    # ./ keeps CDPATH out of a relative component
+    case "$d" in /*) ;; *) d="./$d" ;; esac
+    real=$(CDPATH='' cd -P "$d" 2>/dev/null && pwd -P) || continue
     if [ "$real" = "$DIR" ]; then
       ON_PATH=1
       [ -n "$ACTIVE" ] || ACTIVE="$BIN"
@@ -430,7 +451,6 @@ scan_path() {
       [ -n "$ACTIVE" ] || ACTIVE="$real/telegram"
     fi
   done
-  IFS=$old_ifs
 
   if [ "$ON_PATH" = 0 ]; then
     add_problem install_dir_not_on_path warning "$DIR is not on PATH; run the CLI as $BIN." \

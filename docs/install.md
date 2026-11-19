@@ -27,7 +27,7 @@ status=$?
 case "$status:$out" in
   '0:{"schema":1,"ok":true,'*) echo "installed: $out" ;;   # now read data.path from $out
   *)
-    echo "not installed (exit $status): $out" >&2
+    echo "not installed (exit $status): $out" >&2   # empty $out: unknown, see below
     [ "$status" != 0 ] || status=1   # exit 0 without "ok":true is still a failure
     exit "$status"
     ;;
@@ -37,7 +37,14 @@ esac
 The subshell keeps the exit code of `curl` or `sh` past the cleanup, and the failure branch exits
 with it (or with 1 when it was 0 but the output was not `"ok":true`). Installed means exit code 0
 **and** `"ok":true` in the one JSON line on stdout (see [Output](#output)); only then use
-`data.path`. No JSON line at all means the script did not run to the end, so nothing is installed.
+`data.path`. No JSON line at all means the script did not run to the end, and the result is
+unknown: a run cut short after placing the binary (killed, the terminal closed) leaves it on disk
+without printing anything. Treat it as not installed, or check by hand: the expected path is
+`$TG_INSTALL_DIR/telegram` (default `~/.local/bin/telegram`), and it is a finished install only when
+`install.json` next to it names that path and its `binarySha256` is the SHA-256 of that file
+(`sha256sum`, or `shasum -a 256`, of the binary). Running the script again is safe: it either
+finishes with the JSON line or refuses and says why, and it never overwrites a file it cannot prove
+is its own.
 `-q` keeps `~/.curlrc` from changing these options; `--proto '=https'` keeps every redirect on HTTPS.
 
 `install.sh` installs the standalone `telegram` binary of one stable release. It needs no sudo,
@@ -133,7 +140,9 @@ itself:
 Exit codes: 0 installed (warnings may be present), 1 error, 2 a human is needed. The script never
 emits `fix.run`. No JSON line means the script itself did not arrive or run to the end (the whole
 script is one block opened on its second line, so a cut-off copy is a syntax error and runs
-nothing; only a copy cut inside the first line, `#!/bin/sh`, still exits 0, with no output).
+nothing; only a copy cut inside the first line, `#!/bin/sh`, still exits 0, with no output). A run
+killed later may already have placed the binary, so no JSON line is an unknown result, not a
+proof that nothing was installed; the check by hand is described at the top of this page.
 
 | `id` | Exit | Meaning |
 |---|---|---|
