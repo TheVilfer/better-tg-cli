@@ -2,6 +2,7 @@
 // tools the script uses plus fake `uname`, `curl` and `wget`; the fakes serve files only for the
 // pinned release URL, so the test also proves which tag the script asks for.
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,14 +18,15 @@ const which = (cmd: string) => {
   return r.status === 0 ? r.stdout.trim() : null;
 };
 // Every external command install.sh may call, besides the faked ones
-const TOOLS = ['awk', 'cat', 'chmod', 'cp', 'cut', 'date', 'grep', 'gzip', 'head', 'ls', 'mkdir', 'mktemp', 'mv', 'rm', 'sed', 'tar', 'tr', 'sha256sum', 'shasum', 'openssl', 'xz', 'sysctl'];
+const TOOLS = ['awk', 'cat', 'chmod', 'cp', 'cut', 'date', 'grep', 'gzip', 'head', 'ln', 'ls', 'mkdir', 'mktemp', 'mv', 'rm', 'sed', 'tar', 'tr', 'sha256sum', 'shasum', 'openssl', 'xz', 'sysctl'];
 // Linux CI runs /bin/sh as dash already; elsewhere try dash too when it is installed
 const SHELLS = [...new Set(['/bin/sh', which('dash')].filter((s): s is string => !!s))];
 
 const FAKE_UNAME = `#!/bin/sh
 case "$1" in -s) echo "$FAKE_OS" ;; -m) echo "$FAKE_ARCH" ;; *) echo "$FAKE_OS" ;; esac
 `;
-// curl -fsSL ... -w '%{http_code}' -o FILE URL
+// curl -q -fsSL ... -w '%{http_code}' -o FILE URL. FAKE_PLANT: a file another process creates
+// while the archive downloads
 const FAKE_CURL = `#!/bin/sh
 printf 'curl %s\\n' "$*" >> "$FAKE_LOG"
 out=''; fmt=''; url=''
@@ -32,27 +34,39 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -o) out=$2; shift 2 ;;
     -w) fmt=$2; shift 2 ;;
-    --proto | --retry | --connect-timeout) shift 2 ;;
+    --proto | --proto-redir | --retry | --connect-timeout) shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
 done
 [ -n "$FAKE_DL_EXIT" ] && exit "$FAKE_DL_EXIT"
+case "$url" in *.tar.*) [ -n "$FAKE_PLANT" ] && printf 'planted\\n' > "$FAKE_PLANT" ;; esac
 name=\${url#"$FAKE_BASE"/}
 if [ "$name" != "$url" ] && [ -f "$FAKE_RELEASE/$name" ]; then cp "$FAKE_RELEASE/$name" "$out"; [ -n "$fmt" ] && printf 200; exit 0; fi
 [ -n "$fmt" ] && printf 404
 exit 22
 `;
-// wget -q -O FILE URL
+// GNU Wget 1.x: wget --no-config ... -S -o LOG -O FILE URL, with the log format install.sh reads.
+// FAKE_WGET_HOP: a redirect URL logged before the real request. FAKE_WGET_KIND=busybox: no GNU.
 const FAKE_WGET = `#!/bin/sh
+if [ "$FAKE_WGET_KIND" = busybox ]; then
+  case "$1" in --version | --help) echo 'BusyBox v1.36.1 (2023-01-01) multi-call binary.'; exit 1 ;; esac
+fi
+case "$1" in
+  --version) echo 'GNU Wget 1.21.3 built on linux-gnu.'; exit 0 ;;
+  --help) echo '       --no-config                 do not read any config file'; exit 0 ;;
+esac
 printf 'wget %s\\n' "$*" >> "$FAKE_LOG"
-out=''; url=''
+out=''; log=/dev/null; url=''
 while [ $# -gt 0 ]; do
-  case "$1" in -O) out=$2; shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac
+  case "$1" in -O) out=$2; shift 2 ;; -o) log=$2; shift 2 ;; -*) shift ;; *) url=$1; shift ;; esac
 done
 [ -n "$FAKE_DL_EXIT" ] && exit "$FAKE_DL_EXIT"
+printf -- '--2026-11-19 12:00:00--  %s\\n  HTTP/1.1 302 Found\\n' "$url" > "$log"
+[ -n "$FAKE_WGET_HOP" ] && printf -- '--2026-11-19 12:00:01--  %s\\n' "$FAKE_WGET_HOP" >> "$log"
 name=\${url#"$FAKE_BASE"/}
 if [ "$name" != "$url" ] && [ -f "$FAKE_RELEASE/$name" ]; then cp "$FAKE_RELEASE/$name" "$out"; exit 0; fi
+printf 'ERROR 404: Not Found.\\n' >> "$log"
 exit 8
 `;
 
@@ -73,7 +87,7 @@ interface RunResult {
     schema: number;
     ok: boolean;
     problems: { id: string; severity: string; message: string; fix: Record<string, string> }[];
-    install: { manager: string; version: string; tag: string; target: string | null; dir: string | null; path: string | null; onPath: boolean | null; active: string | null };
+    data: { manager: string; version: string; tag: string; target: string | null; dir: string | null; path: string | null; onPath: boolean | null; active: string | null };
   };
   requests: string[];
 }
@@ -119,10 +133,9 @@ function release(s: Sandbox, opts: Partial<ReleaseFixtureOptions> = {}) {
   makeReleaseFixtures(s.release, { version: VERSION, targets: ['linux-x64', 'linux-arm64', 'darwin-arm64', 'darwin-x64'], formats: ['tar.gz'], ...opts });
 }
 
-/** `stdin`: feed the script on standard input, as `curl … | sh` does */
-function run(s: Sandbox, env: Record<string, string> = {}, shell = SHELLS[0], stdin = false): RunResult {
-  const r = spawnSync(shell, stdin ? [] : [SCRIPT], {
-    input: stdin ? readFileSync(SCRIPT, 'utf8') : undefined,
+function spawnScript(s: Sandbox, env: Record<string, string>, shell: string, stdin: boolean, script: string) {
+  return spawnSync(shell, stdin ? [] : [script], {
+    input: stdin ? readFileSync(script, 'utf8') : undefined,
     encoding: 'utf8',
     cwd: s.root,
     env: {
@@ -137,6 +150,11 @@ function run(s: Sandbox, env: Record<string, string> = {}, shell = SHELLS[0], st
       ...env,
     },
   });
+}
+
+/** `stdin`: feed the script on standard input, as `curl … | sh` does. `script`: another copy of it */
+function run(s: Sandbox, env: Record<string, string> = {}, shell = SHELLS[0], stdin = false, script = SCRIPT): RunResult {
+  const r = spawnScript(s, env, shell, stdin, script);
   const lines = r.stdout.split('\n').filter(Boolean);
   expect(lines, `stdout must be one JSON line; stderr:\n${r.stderr}`).toHaveLength(1);
   const result: RunResult = {
@@ -148,23 +166,25 @@ function run(s: Sandbox, env: Record<string, string> = {}, shell = SHELLS[0], st
   };
   // Every run, success or failure, prints a valid contract result with a matching exit code
   expect(contractErrors(result), lines[0]).toEqual([]);
-  if (!result.json.ok) expect(result.json.install.path).toBeNull();
+  if (!result.json.ok) expect(result.json.data.path).toBeNull();
   return result;
 }
 
 const ids = (r: RunResult) => r.json.problems.map(p => p.id);
 
 /**
- * The rules of the setup contract, schema 1 (#110), for the part of the result it defines. The
- * installer adds one field of its own, `install` (where the binary went), which #110 lists as an
- * open point; swap this for setupResultErrors() from src/setup-contract.ts once that lands.
+ * The rules of the setup contract, schema 1 (#110), applied to the whole stdout object. Its one
+ * optional command-specific field is `data` (here: where the binary went). Swap this for the
+ * shared check in test/setup-contract-check.ts once setup-contract is merged.
  */
 function contractErrors(r: RunResult): string[] {
-  const { install, ...result } = r.json as RunResult['json'] & Record<string, unknown>;
+  const result = r.json as RunResult['json'] & Record<string, unknown>;
   const errors: string[] = [];
-  if (!install || typeof install !== 'object') errors.push('install must be an object');
+  if ('data' in result && (!result.data || typeof result.data !== 'object' || Array.isArray(result.data))) errors.push('data must be an object');
   if (result.schema !== 1) errors.push('schema must be 1');
-  const extra = Object.keys(result).filter(k => !['schema', 'ok', 'problems'].includes(k));
+  if (typeof result.ok !== 'boolean') errors.push('ok must be a boolean');
+  if (!Array.isArray(result.problems)) return [...errors, 'problems must be an array'];
+  const extra = Object.keys(result).filter(k => !['schema', 'ok', 'problems', 'data'].includes(k));
   if (extra.length) errors.push(`unexpected field ${extra[0]}`);
   const seen = new Set<string>();
   for (const p of result.problems) {
@@ -202,7 +222,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       expect(r.json).toMatchObject({
         schema: 1,
         ok: true,
-        install: { manager: 'user-binary', version: VERSION, tag: `v${VERSION}`, target: 'linux-x64', dir: s.installDir, path: bin, onPath: false, active: null },
+        data: { manager: 'user-binary', version: VERSION, tag: `v${VERSION}`, target: 'linux-x64', dir: s.installDir, path: bin, onPath: false, active: null },
       });
       // Not on PATH: a warning that tells to use the absolute path, no shell-profile edits
       expect(r.json.problems).toEqual([expect.objectContaining({ id: 'install_dir_not_on_path', severity: 'warning', fix: { human: expect.stringContaining(bin) } })]);
@@ -213,7 +233,8 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       // SHA256SUMS first, then exactly the archive it lists, over https only
       const base = releaseBase(VERSION);
       expect(r.requests.map(l => l.split(' ').pop())).toEqual([`${base}/SHA256SUMS`, `${base}/${assetName(VERSION, 'linux-x64', 'tar.gz')}`]);
-      for (const l of r.requests) expect(l).toContain("--proto =https");
+      // curl -q first: ~/.curlrc is never read; https on every redirect too
+      for (const l of r.requests) expect(l).toMatch(/^curl -q .*--proto =https --proto-redir =https --tlsv1\.2 /);
       expect(leftovers(s.installDir)).toEqual([]);
       expect(readdirSync(s.root).filter(f => !['home', 'tools', 'release', 'requests.log'].includes(f))).toEqual([]);
       expect(r.stderr).toContain(`Installed telegram ${VERSION}`);
@@ -226,7 +247,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const r = run(s, { PATH: `${s.bin}:${s.installDir}` });
     expect(r.status, r.stderr).toBe(0);
     expect(r.json.problems).toEqual([]);
-    expect(r.json.install).toMatchObject({ onPath: true, active: join(s.installDir, 'telegram') });
+    expect(r.json.data).toMatchObject({ onPath: true, active: join(s.installDir, 'telegram') });
   });
 
   it('honours TG_INSTALL_DIR, resolving it to an absolute path; quotes and spaces stay valid JSON', () => {
@@ -235,7 +256,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const dir = join(s.root, `my "tg" dir`);
     const r = run(s, { TG_INSTALL_DIR: dir });
     expect(r.status, r.stderr).toBe(0);
-    expect(r.json.install.path).toBe(join(dir, 'telegram'));
+    expect(r.json.data.path).toBe(join(dir, 'telegram'));
     expect(JSON.parse(readFileSync(join(dir, 'install.json'), 'utf8')).path).toBe(join(dir, 'telegram'));
     // Same check again: a reinstall recognises its own manifest with an escaped path
     expect(run(s, { TG_INSTALL_DIR: dir }).status).toBe(0);
@@ -246,7 +267,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     release(s);
     const r = run(s, {}, shell, true);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.json.install.path).toBe(join(s.installDir, 'telegram'));
+    expect(r.json.data.path).toBe(join(s.installDir, 'telegram'));
   });
 
   it.each([{}, { LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' }])('a non-ASCII install folder (%o), installed twice', locale => {
@@ -255,7 +276,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const dir = join(s.root, 'Программы', 'телеграм');
     const first = run(s, { TG_INSTALL_DIR: dir, ...locale });
     expect(first.status, first.stderr).toBe(0);
-    expect(first.json.install.path).toBe(join(dir, 'telegram'));
+    expect(first.json.data.path).toBe(join(dir, 'telegram'));
     expect(JSON.parse(readFileSync(join(dir, 'install.json'), 'utf8')).path).toBe(join(dir, 'telegram'));
     const again = run(s, { TG_INSTALL_DIR: dir, ...locale });
     expect(again.status, again.stderr).toBe(0);
@@ -385,7 +406,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const r = run(s, { FAKE_OS: os, FAKE_ARCH: arch });
     expect(r.status).toBe(1);
     expect(r.json.problems).toEqual([expect.objectContaining({ id: 'platform_unsupported', fix: { unavailable: expect.any(String) } })]);
-    expect(r.json.install.target).toBeNull();
+    expect(r.json.data.target).toBeNull();
     expect(r.requests).toEqual([]);
   });
 
@@ -398,7 +419,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     release(s);
     const r = run(s, { FAKE_OS: os, FAKE_ARCH: arch });
     expect(r.status, r.stderr).toBe(0);
-    expect(r.json.install.target).toBe(target);
+    expect(r.json.data.target).toBe(target);
     expect(r.requests.at(-1)).toContain(`${target}.tar`);
   });
 
@@ -416,7 +437,8 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
     expect(r.requests).toHaveLength(2);
-    expect(r.requests[0]).toMatch(/^wget /);
+    // No wgetrc (it could turn certificate checks off), TLS 1.2+, every request logged for the check
+    for (const l of r.requests) expect(l).toMatch(/^wget --no-config --secure-protocol=TLSv1_2 .* -S -o /);
   });
 
   it('a failed certificate check is reported, never bypassed', () => {
@@ -474,27 +496,192 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
 
     const after = run(s, { PATH: `${s.bin}:${s.installDir}:${old}` });
     expect(after.status).toBe(0);
-    expect(after.json.install.active).toBe(join(s.installDir, 'telegram'));
+    expect(after.json.data.active).toBe(join(s.installDir, 'telegram'));
     expect(after.json.problems).toEqual([expect.objectContaining({ id: 'other_telegram_on_path', severity: 'warning', message: expect.stringContaining(join(old, 'telegram')) })]);
 
     const before = run(s, { PATH: `${s.bin}:${old}:${s.installDir}` });
     expect(before.status).toBe(0);
-    expect(before.json.install.active).toBe(join(old, 'telegram'));
+    expect(before.json.data.active).toBe(join(old, 'telegram'));
     expect(before.json.problems[0].message).toMatch(/comes first/);
     // Nothing is removed
     expect(readFileSync(join(old, 'telegram'), 'utf8')).toContain('old');
   });
 
-  it('runs nothing when the download of the script itself is cut short', () => {
+  describe.each(SHELLS)('a download of the script cut short, under %s', shell => {
+    const text = readFileSync(SCRIPT, 'utf8');
+    it.each([
+      ['before the last line', text.lastIndexOf('main "$@"')],
+      ['before the closing brace', text.lastIndexOf('}')],
+      ['in the middle', Math.floor(text.length / 2)],
+      ['right after the opening brace', text.indexOf('\n{\n') + 3],
+    ])('%s: a syntax error, nothing run, no JSON', (_where, at) => {
+      const s = sandbox();
+      release(s);
+      const cut = join(s.root, 'cut.sh');
+      writeFileSync(cut, text.slice(0, at));
+      for (const stdin of [false, true]) {
+        const r = spawnScript(s, {}, shell, stdin, cut);
+        // No JSON line is the failure signal; the exit code is not 0 either
+        expect(r.status).not.toBe(0);
+        expect(r.stdout).toBe('');
+      }
+      expect(readFileSync(s.log, 'utf8')).toBe('');
+      expect(existsSync(s.installDir)).toBe(false);
+    });
+  });
+
+  it('TG_SKILL_DIR (the old developer installer) stops before writing anything', () => {
     const s = sandbox();
     release(s);
-    const text = readFileSync(SCRIPT, 'utf8');
-    const cut = join(s.root, 'cut.sh');
-    writeFileSync(cut, text.slice(0, text.lastIndexOf('main "$@"')));
-    const r = spawnSync('/bin/sh', [cut], { encoding: 'utf8', env: { PATH: s.bin, HOME: s.home, FAKE_LOG: s.log } });
-    expect(r.status).toBe(0);
-    expect(r.stdout).toBe('');
-    expect(readFileSync(s.log, 'utf8')).toBe('');
+    const r = run(s, { TG_SKILL_DIR: join(s.home, 'checkout') });
+    expect(r.status).toBe(2);
+    expect(r.json.problems).toEqual([expect.objectContaining({ id: 'old_installer_variable', fix: expect.objectContaining({ human: expect.stringContaining('scripts/dev-install.sh') }) })]);
+    expect(r.requests).toEqual([]);
     expect(existsSync(s.installDir)).toBe(false);
+    expect(existsSync(join(s.home, 'checkout'))).toBe(false);
+  });
+
+  it('an old developer checkout is reported before installing, and left alone', () => {
+    const s = sandbox();
+    release(s);
+    const old = join(s.home, '.agents', 'skills', 'telegram');
+    mkdirSync(join(old, '.git'), { recursive: true });
+    writeFileSync(join(old, 'package.json'), '{\n  "name": "better-tg-cli",\n  "version": "0.30.0"\n}\n');
+    const r = run(s);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.json.problems.map(p => p.id)).toEqual(['dev_install_found', 'install_dir_not_on_path']);
+    expect(r.json.problems[0].fix.human).toContain(join(old, 'scripts', 'dev-install.sh'));
+    expect(r.stderr.indexOf('developer install')).toBeLessThan(r.stderr.indexOf('Downloading'));
+    expect(existsSync(join(old, 'package.json'))).toBe(true);
+  });
+
+  it('a telegram that appears while downloading is not written over', () => {
+    const s = sandbox();
+    release(s);
+    const bin = join(s.installDir, 'telegram');
+    const r = run(s, { FAKE_PLANT: bin });
+    expect(r.status).toBe(2);
+    expect(ids(r)).toEqual(['install_path_taken']);
+    expect(readFileSync(bin, 'utf8')).toBe('planted\n');
+    // Our manifest must not claim the planted file, or the next run would replace it
+    expect(existsSync(join(s.installDir, 'install.json'))).toBe(false);
+    expect(leftovers(s.installDir)).toEqual([]);
+    expect(run(s).status).toBe(2);
+  });
+
+  it.each([
+    ['a record nested in another file', (bin: string) => `{"tool":"other","old":{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"1","installedAt":"x"}}\n`],
+    ['a cut-off manifest', (bin: string) => `{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"0.1.0","tag":"v0.`],
+    ['a manifest with a second line', (bin: string) => `{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"1","installedAt":"x"}\n{}\n`],
+  ])('ownership: %s does not count', (_what, manifest) => {
+    const s = sandbox();
+    release(s);
+    const bin = join(s.installDir, 'telegram');
+    mkdirSync(s.installDir, { recursive: true });
+    writeFileSync(bin, 'someone else\n');
+    writeFileSync(join(s.installDir, 'install.json'), manifest(bin));
+    const r = run(s);
+    expect(r.status).toBe(2);
+    expect(ids(r)).toEqual(['install_path_taken']);
+    expect(readFileSync(bin, 'utf8')).toBe('someone else\n');
+    expect(r.requests).toEqual([]);
+  });
+
+  it.each([
+    ['the right version but a failing exit status', { versionExit: 1 }],
+    ['the right version and then another line', { reports: `${VERSION}\nextra` }],
+  ])('a binary that prints %s replaces nothing', (_what, opts) => {
+    const s = sandbox();
+    release(s, opts);
+    const r = run(s);
+    expect(r.status).toBe(1);
+    expect(ids(r)).toEqual(['binary_check_failed']);
+    expect(existsSync(join(s.installDir, 'telegram'))).toBe(false);
+    expect(existsSync(join(s.installDir, 'install.json'))).toBe(false);
+    expect(leftovers(s.installDir)).toEqual([]);
+  });
+
+  it('one run at a time per folder; a lock left by a killed run is taken over', () => {
+    const s = sandbox();
+    release(s);
+    const lock = join(s.installDir, '.better-tg-cli.lock');
+    mkdirSync(lock, { recursive: true });
+    // A live PID: this test process
+    writeFileSync(join(lock, 'pid'), `${process.pid}\n`);
+    const busy = run(s);
+    expect(busy.status).toBe(1);
+    expect(ids(busy)).toEqual(['install_in_progress']);
+    expect(busy.requests).toEqual([]);
+    expect(existsSync(lock)).toBe(true);
+
+    // A dead PID and its staging folder, as kill -9 leaves them
+    writeFileSync(join(lock, 'pid'), '999999\n');
+    mkdirSync(join(s.installDir, '.better-tg-cli.stage.AbC123'));
+    writeFileSync(join(s.installDir, '.better-tg-cli.stage.AbC123', 'telegram'), 'half\n');
+    const r = run(s);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain('cut short');
+    expect(leftovers(s.installDir)).toEqual([]);
+  });
+
+  it('an upgrade killed between the two renames heals on the next run', () => {
+    const realMv = which('mv');
+    const s = sandbox({
+      extraBin: {
+        // Kills the installer right before it renames install.json, after the binary went in
+        mv: `#!/bin/sh\nfor a; do last=$a; done\nif [ -n "$FAKE_MV_KILL" ]; then case "$last" in */install.json) kill -9 $PPID; exit 1 ;; esac; fi\nexec ${realMv} "$@"\n`,
+      },
+    });
+    release(s);
+    // The previous version, from a copy of the script pinned to it
+    const oldVersion = '0.0.9';
+    const oldScript = join(s.root, 'old-install.sh');
+    writeFileSync(oldScript, readFileSync(SCRIPT, 'utf8').replace(/^VERSION='[^']*'$/m, `VERSION='${oldVersion}'`));
+    const oldRelease = join(s.root, 'release-old');
+    makeReleaseFixtures(oldRelease, { version: oldVersion, targets: ['linux-x64'], formats: ['tar.gz'] });
+    const old = run(s, { FAKE_BASE: releaseBase(oldVersion), FAKE_RELEASE: oldRelease }, SHELLS[0], false, oldScript);
+    expect(old.status, old.stderr).toBe(0);
+
+    const bin = join(s.installDir, 'telegram');
+    const manifest = () => JSON.parse(readFileSync(join(s.installDir, 'install.json'), 'utf8'));
+    const reports = () => spawnSync(bin, ['--version'], { encoding: 'utf8' }).stdout.trim();
+    const sha = () => createHash('sha256').update(readFileSync(bin)).digest('hex');
+
+    const killed = spawnScript(s, { FAKE_MV_KILL: '1' }, SHELLS[0], false, SCRIPT);
+    expect(killed.signal).toBe('SIGKILL');
+    expect(killed.stdout).toBe('');
+    // New binary, old manifest: it looks out of date, never newer than it is
+    expect(reports()).toBe(VERSION);
+    expect(manifest().version).toBe(oldVersion);
+
+    const r = run(s);
+    expect(r.status, r.stderr).toBe(0);
+    expect(manifest()).toMatchObject({ version: VERSION, sha256: expect.any(String) });
+    expect(reports()).toBe(VERSION);
+    // The manifest's sum describes the binary in place again
+    const archive = readFileSync(join(s.release, assetName(VERSION, 'linux-x64', 'tar.gz')));
+    expect(manifest().sha256).toBe(createHash('sha256').update(archive).digest('hex'));
+    expect(sha()).not.toBe('');
+    expect(leftovers(s.installDir)).toEqual([]);
+  });
+
+  it('refuses a wget that is not GNU Wget 1.x', () => {
+    const s = sandbox({ downloader: 'wget' });
+    release(s);
+    const r = run(s, { FAKE_WGET_KIND: 'busybox' });
+    expect(r.status).toBe(1);
+    expect(ids(r)).toEqual(['downloader_missing']);
+    expect(r.json.problems[0].message).toContain('BusyBox');
+    expect(r.requests).toEqual([]);
+  });
+
+  it('wget: a redirect off HTTPS throws the download away', () => {
+    const s = sandbox({ downloader: 'wget' });
+    release(s);
+    const r = run(s, { FAKE_WGET_HOP: 'http://mirror.example/SHA256SUMS' });
+    expect(r.status).toBe(1);
+    expect(ids(r)).toEqual(['insecure_redirect']);
+    expect(r.requests).toHaveLength(1);
+    expect(existsSync(join(s.installDir, 'telegram'))).toBe(false);
   });
 });

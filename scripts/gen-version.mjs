@@ -29,7 +29,8 @@ for (const file of ['../.claude-plugin/plugin.json', '../server.json', '../gemin
   if (next !== text) writeFileSync(url, next);
 }
 
-// install.sh downloads exactly this stable release (it is served from main, which is the last release)
+// install.sh downloads exactly this stable release (each stable release ships it as an asset, and
+// releases/latest/download/install.sh is the public entry point)
 {
   const url = new URL('../install.sh', import.meta.url);
   const text = readFileSync(url, 'utf8');

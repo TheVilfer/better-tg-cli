@@ -2,7 +2,9 @@
 # Better-TG-CLI installer for macOS and Linux: one standalone `telegram` binary from a release.
 # No sudo, Node, git or shell-profile edits.
 #
-#   curl -fsSL https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/install.sh | sh
+#   curl -q --proto '=https' --tlsv1.2 -fsSL https://github.com/TheVilfer/better-tg-cli/releases/latest/download/install.sh | sh
+#
+# Scripts and agents: download it to a file first and run it only when curl exited 0 (docs/install.md).
 #
 # What it does: downloads SHA256SUMS and the archive of one pinned stable release (VERSION below),
 # checks the archive's sum before unpacking or running anything, installs `telegram` into
@@ -10,13 +12,16 @@
 # script did not install is never overwritten.
 #
 # Output: one JSON object on stdout (setup contract, schema 1); progress goes to stderr.
-#   {"schema":1,"ok":true,"problems":[],"install":{"path":"/abs/telegram","onPath":false,...}}
-# When onPath is false, run the CLI by that absolute path.
+#   {"schema":1,"ok":true,"problems":[],"data":{"path":"/abs/telegram","onPath":false,...}}
+# When onPath is false, run the CLI by that absolute path. No JSON line at all means it failed.
 # Exit codes: 0 installed, 1 error, 2 a human is needed (for example the path is taken).
 #
 # Environment: TG_INSTALL_DIR  folder for the binary (default ~/.local/bin)
 # Developer install from a git checkout: scripts/dev-install.sh
 
+# The whole script is one { } block: a download cut short anywhere is a syntax error, never a
+# partial run
+{
 # The pinned release. Set by scripts/gen-version.mjs from package.json; do not edit.
 VERSION='0.39.6'
 REPO='TheVilfer/better-tg-cli'
@@ -33,8 +38,8 @@ BIN=''
 ON_PATH=''
 ACTIVE=''
 TMP=''
-STAGE=''
-STAGE_JSON=''
+STAGE_DIR=''
+LOCK=''
 
 log() { printf '  %s\n' "$*" >&2; }
 has() { command -v "$1" >/dev/null 2>&1; }
@@ -64,7 +69,7 @@ finish() {
   installed="$BIN"
   [ "$1" = true ] || installed=''
 
-  printf '{"schema":1,"ok":%s,"problems":[%s],"install":{"manager":"user-binary","version":%s,"tag":%s,"target":%s,"dir":%s,"path":%s,"onPath":%s,"active":%s}}\n' \
+  printf '{"schema":1,"ok":%s,"problems":[%s],"data":{"manager":"user-binary","version":%s,"tag":%s,"target":%s,"dir":%s,"path":%s,"onPath":%s,"active":%s}}\n' \
     "$1" "$PROBLEMS" "$(json_str "$VERSION")" "$(json_str "$TAG")" "$(json_or_null "$TARGET")" \
     "$(json_or_null "$DIR")" "$(json_or_null "$installed")" "$on" "$(json_or_null "$ACTIVE")"
   exit "$2"
@@ -79,8 +84,24 @@ fail() {
 
 cleanup() {
   [ -n "$TMP" ] && rm -rf "$TMP"
-  [ -n "$STAGE" ] && rm -f "$STAGE"
-  [ -n "$STAGE_JSON" ] && rm -f "$STAGE_JSON"
+  [ -n "$STAGE_DIR" ] && rm -rf "$STAGE_DIR"
+  [ -n "$LOCK" ] && rm -rf "$LOCK"
+}
+
+# The old install.sh (now scripts/dev-install.sh) took TG_SKILL_DIR and installed from a git
+# checkout. This script does something else, so an old invocation stops before writing anything.
+check_old_installer() {
+  if [ -n "${TG_SKILL_DIR:-}" ]; then
+    fail old_installer_variable "TG_SKILL_DIR is set, but this script no longer installs from a git checkout; nothing was changed." \
+      "$(fix_human "For the developer install (checkout, npm link, skill links) run scripts/dev-install.sh from the checkout. To switch to the release binary, unset TG_SKILL_DIR and follow 'Moving from the old install.sh'." "$DOCS")"
+  fi
+  old="${HOME:-}/.agents/skills/telegram"
+  if [ -n "${HOME:-}" ] && [ -d "$old/.git" ] && [ -f "$old/package.json" ] &&
+    grep -qE '"name": *"(better-tg-cli|better-telegram-cli|@skillhq/telegram)"' "$old/package.json" 2>/dev/null; then
+    add_problem dev_install_found warning "A developer install from the old install.sh is in $old: its checkout, npm link and skill links stay on their version." \
+      "$(fix_human "To update that install run $old/scripts/dev-install.sh. To keep only this binary, follow 'Moving from the old install.sh'." "$DOCS")"
+    log "found a developer install in $old; it is left as is (see $DOCS)"
+  fi
 }
 
 detect_target() {
@@ -118,7 +139,7 @@ detect_target() {
   TARGET="$os-$arch"
 }
 
-# Sets DIR (absolute, symlinks resolved) and BIN, and refuses a path taken by something not ours
+# Sets DIR (absolute, symlinks resolved) and BIN
 resolve_dir() {
   dir="${TG_INSTALL_DIR:-}"
   if [ -z "$dir" ]; then
@@ -138,33 +159,85 @@ resolve_dir() {
     "$(fix_human "Set TG_INSTALL_DIR to a folder you can write to (no sudo needed), for example TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin.")"
   DIR="$abs"
   BIN="$DIR/telegram"
+}
 
+# One run at a time per folder: an atomic mkdir holding the PID. A lock whose PID is gone is left
+# by a run that was killed; this run takes it over, clears that run's staging folder and writes
+# both files again.
+take_lock() {
+  lock="$DIR/.better-tg-cli.lock"
+  if ! mkdir "$lock" 2>/dev/null; then
+    if [ -L "$lock" ] || [ ! -d "$lock" ]; then
+      BIN=''
+      fail install_path_taken "$lock belongs to something else; it is left as is." \
+        "$(fix_human "Move it away yourself, or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
+    fi
+    pid=$(cat "$lock/pid" 2>/dev/null)
+    case "$pid" in '' | *[!0-9]*) pid='' ;; esac
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      BIN=''
+      fail install_in_progress "Another run of this script (pid $pid) is installing into $DIR right now; nothing was changed." \
+        "$(fix_unavailable "Wait for that run to finish, then run the script again if needed.")"
+    fi
+    log "a previous run into $DIR was cut short; this run replaces telegram and install.json"
+    rm -rf "$lock"
+    mkdir "$lock" 2>/dev/null || {
+      BIN=''
+      fail install_in_progress "Another run of this script started installing into $DIR at the same time; nothing was changed." \
+        "$(fix_unavailable "Wait for that run to finish, then run the script again if needed.")"
+    }
+    for d in "$DIR"/.better-tg-cli.stage.*; do
+      [ -d "$d" ] && [ ! -L "$d" ] && rm -rf "$d"
+    done
+  fi
+  LOCK="$lock"
+  printf '%s\n' "$$" >"$LOCK/pid"
+}
+
+# Refuses a path taken by something not ours. Sets FRESH_BIN / FRESH_JSON when nothing is there yet.
+check_ownership() {
   taken="$(fix_human "Move it away yourself, or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin (then run telegram by the path this script prints)." "$DOCS")"
   manifest="$DIR/install.json"
+  FRESH_BIN=1
+  FRESH_JSON=1
+  { [ -e "$manifest" ] || [ -L "$manifest" ]; } && FRESH_JSON=0
   if [ -e "$BIN" ] || [ -L "$BIN" ]; then
+    FRESH_BIN=0
     if [ -L "$BIN" ] || [ -d "$BIN" ] || ! is_ours "$manifest"; then
       BIN_TAKEN="$BIN"; BIN=''
       fail install_path_taken "$BIN_TAKEN already exists and was not installed by this script; it is left as is." "$taken"
     fi
-  elif [ -e "$manifest" ] || [ -L "$manifest" ]; then
-    if [ -L "$manifest" ] || ! is_ours "$manifest"; then
-      BIN=''
-      fail install_path_taken "$manifest belongs to something else; it is left as is." "$taken"
-    fi
+  elif [ "$FRESH_JSON" = 0 ] && ! is_ours "$manifest"; then
+    BIN=''
+    fail install_path_taken "$manifest belongs to something else; it is left as is." "$taken"
   fi
 }
 
-# install.json is ours when this script wrote it for this very path
+# install.json is ours only in the exact one-line form this script writes, for this very path:
+# a record nested in another file, a longer file or a cut-off one does not count
 is_ours() {
-  [ -f "$1" ] && [ ! -L "$1" ] &&
-    grep -qF '"package":"better-tg-cli"' "$1" &&
-    grep -qF '"manager":"user-binary"' "$1" &&
-    grep -qF "\"path\":$(json_str "$BIN")" "$1"
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  prefix=$(printf '{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":%s,"version":' "$(json_str "$BIN")")
+  line=$(cat "$1" 2>/dev/null) || return 1
+  case "$line" in *'
+'*) return 1 ;; esac
+  case "$line" in "$prefix"*',"installedAt":"'*'"}') return 0 ;; esac
+  return 1
+}
+
+# GNU Wget 1.x can be told to skip its config files (which may turn certificate checks off) and
+# logs every request, so redirects can be checked; BusyBox wget and wget2 cannot promise either
+wget_usable() {
+  LC_ALL=C wget --version 2>/dev/null | head -n 1 | grep -q '^GNU Wget 1\.' &&
+    LC_ALL=C wget --help 2>/dev/null | grep -q -- '--no-config'
 }
 
 pick_tools() {
   if has curl; then DL=curl
-  elif has wget; then DL=wget
+  elif has wget && wget_usable; then DL=wget
+  elif has wget; then
+    fail downloader_missing "The wget here is not GNU Wget 1.x (BusyBox?), so certificate checks and HTTPS-only redirects cannot be guaranteed; there is no curl." \
+      "$(fix_unavailable "This script does not install system packages. It needs curl, or GNU Wget 1.x, with CA certificates; without them download $RELEASES by hand.")"
   else
     fail downloader_missing "Neither curl nor wget is installed, so nothing can be downloaded." \
       "$(fix_unavailable "This script does not install system packages. It needs curl or wget (with CA certificates); without them download $RELEASES by hand.")"
@@ -188,7 +261,8 @@ sha256() {
 # download <url> <file>; fails with a problem of its own
 download() {
   if [ "$DL" = curl ]; then
-    code=$(curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --connect-timeout 20 -w '%{http_code}' -o "$2" "$1" 2>/dev/null)
+    # -q first: no ~/.curlrc, which could turn certificate checks off; https on every redirect too
+    code=$(curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 2 --connect-timeout 20 -w '%{http_code}' -o "$2" "$1" 2>/dev/null)
     rc=$?
     [ "$rc" = 0 ] && return 0
     case "$rc" in
@@ -197,11 +271,18 @@ download() {
     esac
     [ "$rc" = 22 ] && [ "$code" = 404 ] && missing=1 || missing=0
   else
-    wget -q -O "$2" "$1" 2>/dev/null
+    wlog="$TMP/wget.log"
+    LC_ALL=C wget --no-config --secure-protocol=TLSv1_2 --tries=3 --timeout=20 -S -o "$wlog" -O "$2" "$1"
     rc=$?
-    [ "$rc" = 0 ] && return 0
+    if [ "$rc" = 0 ]; then
+      # Every request wget made, the redirects included, is a "--date time--  URL" line
+      awk '/^--[0-9]/ { n++; if ($NF !~ /^https:\/\//) bad = 1 } END { exit !(n > 0 && !bad) }' "$wlog" && return 0
+      rm -f "$2"
+      fail insecure_redirect "The download of $1 was redirected off HTTPS (or wget's log could not be read); it was thrown away." \
+        "$(fix_unavailable "Downloads are accepted over HTTPS only. A proxy may rewrite the redirect; install curl or download $RELEASES by hand.")"
+    fi
     [ "$rc" = 5 ] && tls=1 || tls=0
-    [ "$rc" = 8 ] && missing=1 || missing=0
+    [ "$rc" = 8 ] && grep -q 'ERROR 404' "$wlog" 2>/dev/null && missing=1 || missing=0
   fi
   if [ "$tls" = 1 ]; then
     fail tls_failed "The HTTPS connection to github.com could not be verified ($DL exit $rc): CA certificates are missing or a proxy intercepts TLS." \
@@ -209,7 +290,7 @@ download() {
   fi
   if [ "$missing" = 1 ]; then
     fail release_not_found "$1 is not published (yet)." \
-      "$(fix_unavailable "Release $TAG appears a few minutes after it is tagged; run the script again later. Releases: $RELEASES")"
+      "$(fix_unavailable "Release $TAG is not on GitHub yet or lacks this file; run the script again later. Releases: $RELEASES")"
   fi
   fail download_failed "Downloading $1 failed ($DL exit $rc)." \
     "$(fix_unavailable "Check the network connection or proxy and run the script again.")"
@@ -243,6 +324,24 @@ unpack() {
     *.tar.gz) if has gzip; then gzip -dc "$TMP/$ARCHIVE" | tar -xf - -C "$out" telegram; else tar -xzf "$TMP/$ARCHIVE" -C "$out" telegram; fi ;;
   esac
   [ -f "$out/telegram" ] && [ ! -L "$out/telegram" ]
+}
+
+# place_new <staged file> <target>: puts a file where nothing was, and never over something that
+# appeared there meanwhile. 0 placed, 3 the target is taken now, 1 write error.
+place_new() {
+  { [ -e "$2" ] || [ -L "$2" ]; } && return 3
+  # A hard link fails when the name exists, instead of following a symlink or writing over a file
+  if ln "$1" "$2" 2>/dev/null; then
+    if [ -L "$2" ] || [ ! -f "$2" ]; then
+      # A symlink to a folder appeared just before ln, which then linked inside that folder
+      [ "$2/${1##*/}" -ef "$1" ] && rm -f "$2/${1##*/}"
+      return 3
+    fi
+    return 0
+  fi
+  { [ -e "$2" ] || [ -L "$2" ]; } && return 3
+  # No hard links on this file system: a rename right after the check
+  mv -f "$1" "$2" 2>/dev/null || return 1
 }
 
 # Other `telegram` executables on PATH, and whether ours comes first
@@ -286,12 +385,70 @@ scan_path() {
   fi
 }
 
+install_files() {
+  write_failed="$(fix_unavailable "Check free space and permissions of $DIR.")"
+  STAGE_DIR=$(mktemp -d "$DIR/.better-tg-cli.stage.XXXXXX" 2>/dev/null) || STAGE_DIR=''
+  [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ] && [ ! -L "$STAGE_DIR" ] ||
+    fail install_write_failed "Cannot create a staging folder in $DIR." "$write_failed"
+  # Both files are prepared in a folder only this run can write, on the same file system as the
+  # target, so the final steps are renames or hard links
+  staged="$STAGE_DIR/telegram"
+  cp "$TMP/x/telegram" "$staged" 2>/dev/null && chmod 755 "$staged" ||
+    fail install_write_failed "Cannot write into $DIR." "$write_failed"
+
+  reported=$(TG_NO_UPDATE_CHECK=1 "$staged" --version 2>/dev/null </dev/null)
+  vrc=$?
+  if [ "$vrc" != 0 ] || [ "$reported" != "$VERSION" ]; then
+    shown=$(printf '%s\n' "$reported" | head -n 1 | cut -c 1-80)
+    fail binary_check_failed "The downloaded telegram does not run here (it printed '$shown' and exited $vrc, expected exactly $VERSION and 0); nothing was replaced." \
+      "$(fix_unavailable "A noexec mount or an unsupported system can cause this. Try TG_INSTALL_DIR on another file system, or npm install -g better-tg-cli with Node 20+.")"
+  fi
+
+  printf '{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":%s,"version":%s,"tag":%s,"target":%s,"archive":%s,"sha256":%s,"installedAt":%s}\n' \
+    "$(json_str "$BIN")" "$(json_str "$VERSION")" "$(json_str "$TAG")" "$(json_str "$TARGET")" "$(json_str "$ARCHIVE")" \
+    "$(json_str "$1")" "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >"$STAGE_DIR/install.json" ||
+    fail install_write_failed "Cannot write install.json in $DIR." "$write_failed"
+
+  taken="$(fix_human "Move it away yourself, or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
+  if [ "$FRESH_BIN" = 0 ]; then
+    # An upgrade: the binary first. A run killed in between leaves the new binary with the old
+    # manifest, which only looks out of date, and the next run rewrites both.
+    mv -f "$staged" "$BIN" 2>/dev/null ||
+      fail install_write_failed "Cannot move the binary into $BIN; the previous install is unchanged." "$write_failed"
+    mv -f "$STAGE_DIR/install.json" "$DIR/install.json" 2>/dev/null ||
+      fail install_write_failed "telegram $VERSION is in $BIN, but $DIR/install.json could not be updated; run the script again." "$write_failed"
+    return
+  fi
+  # A first install: the manifest first, so a run killed in between still owns the path next time
+  if [ "$FRESH_JSON" = 1 ]; then
+    place_new "$STAGE_DIR/install.json" "$DIR/install.json"
+    rc=$?
+    if [ "$rc" = 3 ]; then BIN=''; fail install_path_taken "$DIR/install.json appeared while downloading; it is left as is." "$taken"; fi
+    [ "$rc" = 0 ] || fail install_write_failed "Cannot write $DIR/install.json." "$write_failed"
+  else
+    mv -f "$STAGE_DIR/install.json" "$DIR/install.json" 2>/dev/null ||
+      fail install_write_failed "Cannot write $DIR/install.json." "$write_failed"
+  fi
+  place_new "$staged" "$BIN"
+  rc=$?
+  if [ "$rc" = 3 ]; then
+    # Something else took the name while downloading: our manifest must not claim it
+    rm -f "$DIR/install.json"
+    BIN_TAKEN="$BIN"; BIN=''
+    fail install_path_taken "$BIN_TAKEN appeared while downloading and was not installed by this script; it is left as is." "$taken"
+  fi
+  [ "$rc" = 0 ] || fail install_write_failed "Cannot move the binary into $BIN." "$write_failed"
+}
+
 main() {
   trap cleanup EXIT
   trap 'cleanup; exit 130' INT TERM
 
+  check_old_installer
   detect_target
   resolve_dir
+  take_lock
+  check_ownership
   pick_tools
 
   TMP=$(mktemp -d 2>/dev/null || mktemp -d -t better-tg-cli) || TMP=''
@@ -313,27 +470,7 @@ main() {
   unpack || fail unpack_failed "Could not unpack telegram from $ARCHIVE." \
     "$(fix_unavailable "Check free space in the temporary folder and run the script again.")"
 
-  # Copy next to the target first: the final mv is then a rename on one file system
-  STAGE="$DIR/.telegram.install.$$"
-  cp "$TMP/x/telegram" "$STAGE" 2>/dev/null && chmod 755 "$STAGE" ||
-    fail install_write_failed "Cannot write into $DIR." "$(fix_unavailable "Check free space and permissions of $DIR.")"
-  reported=$(TG_NO_UPDATE_CHECK=1 "$STAGE" --version 2>/dev/null </dev/null | head -n 1 | cut -c 1-80)
-  if [ "$reported" != "$VERSION" ]; then
-    fail binary_check_failed "The downloaded telegram does not run here (it reported '$reported', expected $VERSION); nothing was replaced." \
-      "$(fix_unavailable "A noexec mount or an unsupported system can cause this. Try TG_INSTALL_DIR on another file system, or npm install -g better-tg-cli with Node 20+.")"
-  fi
-  # The manifest goes first: a run cut short between the two renames must still find telegram
-  # ours next time, not refuse its own install as a foreign file
-  STAGE_JSON="$DIR/.install.json.$$"
-  printf '{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":%s,"version":%s,"tag":%s,"target":%s,"archive":%s,"sha256":%s,"installedAt":%s}\n' \
-    "$(json_str "$BIN")" "$(json_str "$VERSION")" "$(json_str "$TAG")" "$(json_str "$TARGET")" "$(json_str "$ARCHIVE")" \
-    "$(json_str "$got")" "$(json_str "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >"$STAGE_JSON" &&
-    mv -f "$STAGE_JSON" "$DIR/install.json" ||
-    fail install_write_failed "Cannot write $DIR/install.json." "$(fix_unavailable "Check permissions of $DIR.")"
-  STAGE_JSON=''
-  mv -f "$STAGE" "$BIN" ||
-    fail install_write_failed "Cannot move the binary into $BIN." "$(fix_unavailable "Check permissions of $DIR.")"
-  STAGE=''
+  install_files "$got"
 
   log "Installed telegram $VERSION to $BIN"
   scan_path
@@ -341,5 +478,5 @@ main() {
   finish true 0
 }
 
-# Everything runs from here, so a download cut short by `curl | sh` runs nothing
 main "$@"
+}

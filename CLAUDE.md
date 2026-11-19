@@ -60,8 +60,8 @@ See `DEVELOPMENT.md`. The short version:
 ## Releasing
 
 Two long-lived branches: pull requests are squash-merged into `next`, and `main` is always the
-last stable release (README, `install.sh` and the plugin marketplaces read `main`, so they never
-describe something unreleased). Never push to either directly. Merging a PR publishes nothing;
+last stable release (README and the plugin marketplaces read `main`, so they never describe
+something unreleased). Never push to either directly. Merging a PR publishes nothing;
 these commands do, all run on `next`:
 
 - `scripts/release.sh pre` pre-releases what is on `next`: it tags HEAD `vX.Y.Z-rc.N` (the coming
@@ -79,7 +79,10 @@ these commands do, all run on `next`:
 
 `install.sh` is the user installer (release binary into `~/.local/bin`, see `docs/install.md`),
 pinned to the package version; on Linux it falls back to the `.tar.gz` that `build-binary.sh` adds
-next to `.tar.xz`. The old checkout-and-`npm -g` installer is `scripts/dev-install.sh`.
+next to `.tar.xz`. Users fetch it from `releases/latest/download/install.sh`: the release workflow
+attaches it to stable releases only, after the archives and SHA256SUMS are up, so it never points
+at unpublished files (never link `main/install.sh`). The old checkout-and-`npm -g` installer is
+`scripts/dev-install.sh`.
 
 A fix that cannot wait for `next` goes as a PR into `main` like a release, followed by the same
 `main` → `next` merge.
@@ -88,7 +91,7 @@ A stable tag runs `.github/workflows/release.yml`:
 1. verify (tag == package.json, tests) and the Claude Desktop extension `better-tg-cli.mcpb`
    (`scripts/mcpb.mjs`)
 2. Bun binaries for darwin-arm64/x64 (built and ad-hoc signed on macOS) and linux-x64/arm64
-3. GitHub Release with the binaries, the `.mcpb` and SHA256SUMS
+3. GitHub Release with the binaries, the `.mcpb` and SHA256SUMS; a stable one then gets `install.sh`
 4. npm publish via trusted publishing (OIDC, no token; skipped if the version exists)
 5. `Formula/better-tg-cli.rb` rendered by `scripts/homebrew-formula.mjs` and pushed to
    `TheVilfer/homebrew-tap` with the `TAP_DEPLOY_KEY` deploy key

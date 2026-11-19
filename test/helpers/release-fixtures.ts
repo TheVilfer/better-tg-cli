@@ -20,6 +20,8 @@ export interface ReleaseFixtureOptions {
   formats: ArchiveFormat[];
   /** What the fake binary prints for --version (default: the release version) */
   reports?: string;
+  /** Exit status of the fake binary's --version (default 0) */
+  versionExit?: number;
   /** Asset names left out of SHA256SUMS */
   unlisted?: string[];
   /** Asset names whose bytes change after SHA256SUMS was written */
@@ -32,9 +34,9 @@ const isBsdTar = () => /bsdtar/i.test(spawnSync('tar', ['--version'], { encoding
 /** Whether this machine can build a .tar.xz fixture (xz, or bsdtar as on macOS) */
 export const canMakeXz = () => has('xz') || isBsdTar();
 
-export function fakeTelegram(reports: string): string {
+export function fakeTelegram(reports: string, versionExit = 0): string {
   // printf, not echo: dash's echo would expand backslashes. `reports` holds no single quote
-  return `#!/bin/sh\nif [ "$1" = --version ]; then printf '%s\\n' '${reports}'; exit 0; fi\necho "fake telegram $*"\n`;
+  return `#!/bin/sh\nif [ "$1" = --version ]; then printf '%s\\n' '${reports}'; exit ${versionExit}; fi\necho "fake telegram $*"\n`;
 }
 
 /** Writes the release assets into `dir` and returns their names (SHA256SUMS included) */
@@ -45,7 +47,7 @@ export function makeReleaseFixtures(dir: string, opts: ReleaseFixtureOptions): s
   try {
     const stage = join(work, 'stage');
     mkdirSync(stage);
-    writeFileSync(join(stage, 'telegram'), fakeTelegram(opts.reports ?? opts.version));
+    writeFileSync(join(stage, 'telegram'), fakeTelegram(opts.reports ?? opts.version, opts.versionExit));
     chmodSync(join(stage, 'telegram'), 0o755);
     writeFileSync(join(stage, 'LICENSE'), 'MIT\n');
     writeFileSync(join(stage, 'README.md'), '# fixture\n');
