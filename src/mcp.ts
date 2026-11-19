@@ -318,7 +318,7 @@ export interface McpOptions {
  */
 export async function gateWrite(plan: Plan, input: Record<string, unknown>, elicit?: McpOptions['elicit']): Promise<string | undefined> {
   const given = typeof input.approval === 'string' && input.approval.trim() ? input.approval.trim() : undefined;
-  if (isMock() || parseWriteState(getWriteValue()).mode !== 'ask') {
+  if (isMock() || parseWriteState(getWriteValue(true)).mode !== 'ask') {
     plan.approval = given;
     return undefined;
   }

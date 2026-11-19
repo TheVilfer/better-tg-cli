@@ -34,6 +34,43 @@ describe('DPAPI secret store', () => {
     expect(existsSync(file)).toBe(false); // nothing left, no file
   });
 
+  it('a fresh read sees what another process wrote since; a plain one keeps the cache', () => {
+    // The onboard page reads the write mode back at the end; `write-access off` may have run meanwhile
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    const page = dpapiStore(() => file, fake);
+    expect(page.set('writeEnabled', 'ask')).toBe(true);
+    expect(page.get('writeEnabled')).toBe('ask');
+    expect(dpapiStore(() => file, fake).delete('writeEnabled')).toBe(true); // the other process
+    expect(page.get('writeEnabled')).toBe('ask'); // cached
+    expect(page.get('writeEnabled', true)).toBeNull();
+    expect(page.get('writeEnabled')).toBeNull(); // and the cache follows the fresh read
+  });
+
+  it('set and delete start from the file as it is now, not from a stale cache', () => {
+    // The MCP server caches writeEnabled=ask, `write-access off` deletes it in another process,
+    // then the server stores its first approvalKey: that must not bring `ask` back
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    const a = dpapiStore(() => file, fake);
+    expect(a.set('writeEnabled', 'ask')).toBe(true);
+    expect(a.set('other', 'x')).toBe(true);
+    expect(a.get('writeEnabled')).toBe('ask'); // cached in A
+    const b = dpapiStore(() => file, fake);
+    expect(b.delete('writeEnabled')).toBe(true);
+    expect(a.set('approvalKey', 'k1')).toBe(true);
+    const now = dpapiStore(() => file, fake);
+    expect(now.get('approvalKey')).toBe('k1');
+    expect(now.get('writeEnabled')).toBeNull();
+    expect(now.get('other')).toBe('x');
+
+    // Same for delete: B adds a key A has not seen, A deletes another one
+    expect(b.set('sessionString', 's')).toBe(true);
+    expect(a.delete('other')).toBe(true);
+    const after = dpapiStore(() => file, fake);
+    expect(after.get('sessionString')).toBe('s');
+    expect(after.get('approvalKey')).toBe('k1');
+    expect(after.get('other')).toBeNull();
+  });
+
   it('reads nothing from a file it cannot decrypt', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
     dpapiStore(() => file, fake).set('k', 'v');
