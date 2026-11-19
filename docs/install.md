@@ -35,7 +35,7 @@ esac
 ```
 
 The subshell keeps the exit code of `curl` or `sh` past the cleanup, and the failure branch exits
-with it (or with 1 when the exit code was 0 but the output was not `"ok":true`). Installed means exit code 0
+with it (or with 1 when it was 0 but the output was not `"ok":true`). Installed means exit code 0
 **and** `"ok":true` in the one JSON line on stdout (see [Output](#output)); only then use
 `data.path`. No JSON line at all means the script did not run to the end, so nothing is installed.
 `-q` keeps `~/.curlrc` from changing these options; `--proto '=https'` keeps every redirect on HTTPS.
@@ -60,10 +60,10 @@ Node, npm, Bun or git, and it never edits shell profiles or installs system pack
 5. It writes `install.json` next to the binary, with the SHA-256 of the archive (`sha256`) and of
    the binary itself (`binarySha256`).
 
-The pinned version is the `VERSION=` line at the top of the script. `scripts/gen-version.mjs` keeps
-it equal to `package.json`. The release workflow puts `install.sh` into each stable GitHub
-Release in the same call that uploads its archives and `SHA256SUMS` and publishes it, and GitHub points
-`releases/latest/download/` at the newest stable release only. So the URL above always serves a
+The pinned version is the `VERSION=` line at the top of the script; `scripts/gen-version.mjs` keeps
+it equal to `package.json`. The release workflow attaches `install.sh` to each stable GitHub
+Release in the same call that uploads its archives and `SHA256SUMS`, and GitHub points
+`releases/latest/download/` at the newest stable release only, so the URL above always serves a
 script whose binaries exist, never a release candidate. Each release's own copy stays at
 `releases/download/vX.Y.Z/install.sh` for an exact version.
 
@@ -75,43 +75,39 @@ script whose binaries exist, never a release candidate. Each release's own copy 
 curl -q --proto '=https' --tlsv1.2 -fsSL https://github.com/TheVilfer/better-tg-cli/releases/latest/download/install.sh | TG_INSTALL_DIR="$HOME/.better-tg-cli/bin" sh
 ```
 
-The script owns a path only through its `install.json`: a `telegram` there counts as ours when
-the `install.json` beside it is exactly the one line this script writes (below): the same field
-order, `"schema":1,"package":"better-tg-cli","manager":"user-binary"` and that exact `path`, and a
-well-formed value in every other field (`version`, `tag`, `target`, `archive`, a 64-digit
-`sha256` and `binarySha256`, `installedAt`), with nothing after the line. The fields must agree: `tag` is `v` plus
-`version`, and `archive` is `better-tg-cli-<version>-<target>.tar.xz` (or `.tar.gz`). Anything
-else (a file from another tool, a symlink, a directory, an `install.json` of something else, a
-record nested inside another file, a cut-off or edited manifest) is left alone, and the script
-stops with `install_path_taken` and exit code 2. Before an upgrade replaces `telegram`, the script
-hashes the file in place with the same tool it checks the archive with: its SHA-256 must equal
-`binarySha256`. Another file copied over `telegram` next to a genuine `install.json` is refused the
-same way (checked before anything is downloaded, and again right before the replacement). A `telegram` that shows up while the script is
-downloading is not written over either. Running the script again over its own install replaces it.
+The script owns a path only through its `install.json`: a `telegram` counts as ours when the
+`install.json` beside it is exactly the one line this script writes (below), with the same field
+order, `"schema":1,"package":"better-tg-cli","manager":"user-binary"`, that exact `path`, a
+well-formed value in every other field and nothing after the line. The fields must agree: `tag` is
+`v` plus `version`, and `archive` is `better-tg-cli-<version>-<target>.tar.xz` (or `.tar.gz`).
+Anything else (a file from another tool, a symlink, a directory, a record nested in another file,
+a cut-off or edited manifest) is left alone, and the script stops with `install_path_taken` and
+exit code 2. The `telegram` in place must also hash to `binarySha256`, checked before anything is
+downloaded and again right before an upgrade replaces it, so another file copied over it is refused
+the same way. A `telegram` that shows up while the script is downloading is not written over
+either. Running the script again over its own install replaces it.
 
 One run at a time installs into a folder. The lock is the file `.better-tg-cli.lock`, holding one
 line `pid=<pid> stage=<staging folder>` and created with a hard link, so it never exists without
-its owner. A second run stops with `install_in_progress`. A run that was killed leaves its lock
-behind, with a PID that is no longer running: the script never takes such a lock over. It stops
-with `install_lock_stale` and exit code 2; if no install is running, delete the lock it names and
-run the script again. A lock in any other form stops the script with `install_lock_unknown`.
-A killed run also leaves its staging folder (`.better-tg-cli.stage.*`) next to the binary; later
-runs name it in an `install_stage_left` warning (when its own lock line names a PID that is not
-running) and never delete it. The script removes only what
-it created itself.
+its owner. A second run stops with `install_in_progress`. A killed run leaves its lock behind with
+a PID that is no longer running; the script never takes such a lock over but stops with
+`install_lock_stale` and exit code 2: if no install is running, delete the lock it names and run
+again. A lock in any other form stops it with `install_lock_unknown`. A killed run also leaves its
+staging folder (`.better-tg-cli.stage.*`); later runs name it in an `install_stage_left` warning
+(when its own lock line names a PID that is not running) and never delete it. The script removes
+only what it created itself.
 
 Files are placed with hard links, which fail when the name is taken, so the target folder must be
 on a file system that supports them (any local disk does); otherwise the script stops with
-`hard_links_unavailable`. An upgrade moves the binary in first and `install.json` second, so a run killed between
-the two leaves a manifest that names the older version (and older sums), never one that claims
-more than is installed. Its `binarySha256` no longer matches the new binary, so after the lock that
-killed run left is deleted, the next run stops with `install_path_taken` and keeps both files. If
-you know no other program wrote that `telegram`, delete it (or move it away) and run the script
-again: the manifest still owns the path, so it installs and records both sums anew. Right before replacing the binary, an upgrade checks that the `telegram` there is
-still the regular file whose ownership it checked (same inode, size and modification time as
-`ls` prints it, to the minute);
-otherwise it stops with `install_path_taken`. That narrows, not closes, a race with another writer
-into the folder, which is outside the threat model.
+`hard_links_unavailable`. An upgrade moves the binary in first and `install.json` second, so a run
+killed between the two leaves a manifest that names the older version, never one that claims more
+than is installed. Its `binarySha256` no longer matches the new binary, so once that run's lock is
+deleted, the next run stops with `install_path_taken` and keeps both files. If you know no other
+program wrote that `telegram`, delete it and run the script again: the manifest still owns the
+path, so it installs and records both sums anew. Right before replacing the binary, an upgrade also
+checks that it is still the regular file it checked before downloading (same inode, size and
+modification time as `ls` prints it, to the minute). That narrows, not closes, a race with another
+writer into the folder, which is outside the threat model.
 
 ```json
 {"schema":1,"package":"better-tg-cli","manager":"user-binary","path":"/home/me/.local/bin/telegram","version":"0.39.6","tag":"v0.39.6","target":"linux-x64","archive":"better-tg-cli-0.39.6-linux-x64.tar.gz","sha256":"…","binarySha256":"…","installedAt":"2026-11-19T12:00:00Z"}

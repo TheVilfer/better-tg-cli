@@ -1,5 +1,5 @@
 #!/bin/sh
-# Better-TG-CLI developer install (was ./install.sh before the release installer took that name)
+# Better-TG-CLI developer install (formerly ./install.sh)
 # Usage: scripts/dev-install.sh   (TG_SKILL_DIR picks the checkout, default ~/.agents/skills/telegram)
 #
 # Clones/updates the fork into a checkout, builds it, installs the `telegram` binary globally

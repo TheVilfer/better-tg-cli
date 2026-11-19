@@ -79,10 +79,10 @@ these commands do, all run on `next`:
 
 `install.sh` is the user installer (release binary into `~/.local/bin`, see `docs/install.md`),
 pinned to the package version; on Linux it falls back to the `.tar.gz` that `build-binary.sh` adds
-next to `.tar.xz`. Users fetch it from `releases/latest/download/install.sh`: the release workflow
-adds it to the asset list of `gh release create` for stable releases only (gh uploads every asset
-to a draft, then publishes), so "latest" never lacks it or points at unpublished files (never link `main/install.sh`). The old checkout-and-`npm -g` installer is
-`scripts/dev-install.sh`.
+next to `.tar.xz`. Users fetch it from `releases/latest/download/install.sh` (never link
+`main/install.sh`): the release workflow adds it to the asset list of `gh release create` for
+stable releases only (gh uploads every asset to a draft, then publishes), so "latest" never lacks
+it. The old checkout-and-`npm -g` installer is `scripts/dev-install.sh`.
 
 A fix that cannot wait for `next` goes as a PR into `main` like a release, followed by the same
 `main` → `next` merge.
@@ -93,7 +93,7 @@ A stable tag runs `.github/workflows/release.yml`:
 2. Bun binaries for darwin-arm64/x64 (built and ad-hoc signed on macOS) and linux-x64/arm64; the
    native darwin-arm64 and linux-x64 jobs run `scripts/smoke-install.sh` (install.sh on those
    archives through a fake curl, on Linux once more without xz)
-3. GitHub Release with the binaries, the `.mcpb` and SHA256SUMS; a stable one then gets `install.sh`
+3. GitHub Release with the binaries, the `.mcpb` and SHA256SUMS; a stable one also gets `install.sh`
 4. npm publish via trusted publishing (OIDC, no token; skipped if the version exists)
 5. `Formula/better-tg-cli.rb` rendered by `scripts/homebrew-formula.mjs` and pushed to
    `TheVilfer/homebrew-tap` with the `TAP_DEPLOY_KEY` deploy key

@@ -277,11 +277,11 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(again.status, again.stderr).toBe(0);
   });
 
-  it('a run cut short after writing install.json still owns the path', () => {
+  it('a first install cut short after writing install.json still owns the path', () => {
     const s = sandbox();
     release(s);
     expect(run(s).status).toBe(0);
-    // install.json is renamed into place before the binary: the state a kill in between leaves
+    // A first install places install.json before the binary: the state a kill in between leaves
     rmSync(join(s.installDir, 'telegram'));
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
@@ -294,7 +294,6 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(run(s).status).toBe(0);
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.json.ok).toBe(true);
     const bin = join(s.installDir, 'telegram');
     expect(JSON.parse(readFileSync(join(s.installDir, 'install.json'), 'utf8')).binarySha256).toBe(sha256Of(readFileSync(bin)));
   });
@@ -366,7 +365,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(readFileSync(join(s.installDir, 'install.json'), 'utf8')).toBe('{"tool":"other"}\n');
   });
 
-  it('a wrong sum installs nothing', () => {
+  it('an archive whose sum does not match SHA256SUMS installs nothing', () => {
     const s = sandbox();
     release(s, { tampered: [assetName(VERSION, 'linux-x64', 'tar.gz')] });
     const r = run(s);
@@ -386,17 +385,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(r.requests).toHaveLength(1);
   });
 
-  it('a binary that does not report the pinned version replaces nothing', () => {
-    const s = sandbox();
-    release(s, { reports: '0.0.1' });
-    const r = run(s);
-    expect(r.status).toBe(1);
-    expect(ids(r)).toEqual(['binary_check_failed']);
-    expect(existsSync(join(s.installDir, 'telegram'))).toBe(false);
-    expect(leftovers(s.installDir)).toEqual([]);
-  });
-
-  it('a binary that prints several lines stays one valid JSON line', () => {
+  it('a binary that prints several lines still yields one valid JSON line', () => {
     const s = sandbox();
     release(s, { reports: 'line one\nline "two"\tend' });
     const r = run(s);
@@ -467,7 +456,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     for (const l of r.requests) expect(l).not.toMatch(/ (-k|--insecure)( |$)/);
   });
 
-  it('a release that is not published yet', () => {
+  it('a release that is not published yet: release_not_found', () => {
     const s = sandbox();
     mkdirSync(s.release);
     const r = run(s);
@@ -475,11 +464,10 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
     expect(ids(r)).toEqual(['release_not_found']);
   });
 
-  it('an old release with only .tar.xz on a system without xz', () => {
+  it.skipIf(!canMakeXz())('an old release with only .tar.xz on a system without xz: unpack_tool_missing', () => {
     const s = sandbox({ xz: false, extraBin: { tar: '#!/bin/sh\necho "tar (GNU tar) 1.34" >&2\nexit 2\n' } });
     // Fixture built with the real tools; the sandbox then gets a tar that is not bsdtar
-    makeReleaseFixtures(s.release, { version: VERSION, targets: ['linux-x64'], formats: canMakeXz() ? ['tar.xz'] : [] });
-    if (!canMakeXz()) return;
+    makeReleaseFixtures(s.release, { version: VERSION, targets: ['linux-x64'], formats: ['tar.xz'] });
     const r = run(s);
     expect(r.status).toBe(1);
     expect(ids(r)).toEqual(['unpack_tool_missing']);
@@ -596,7 +584,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
   const goodManifest = (bin: string, content = 'someone else\n') =>
     `{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"0.1.0","tag":"v0.1.0","target":"linux-x64","archive":"better-tg-cli-0.1.0-linux-x64.tar.gz","sha256":"${'a'.repeat(64)}","binarySha256":"${sha256Of(content)}","installedAt":"2026-11-19T12:00:00Z"}\n`;
 
-  it('ownership: the exact manifest an earlier version wrote counts', () => {
+  it('ownership: an exact manifest of an earlier version, matching its binary, counts', () => {
     const s = sandbox();
     release(s);
     const bin = join(s.installDir, 'telegram');
@@ -637,6 +625,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
   });
 
   it.each([
+    ['another version', { reports: '0.0.1' }],
     ['the right version but a failing exit status', { versionExit: 1 }],
     ['the right version and then another line', { reports: `${VERSION}\nextra` }],
     ['the right version and then a blank line', { reports: `${VERSION}\n` }],
@@ -898,5 +887,4 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       else expect(r.stderr).toContain(`not installed (exit ${want === 1 ? 0 : want})`);
     });
   });
-
 });

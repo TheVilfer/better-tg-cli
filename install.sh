@@ -60,6 +60,7 @@ json_or_null() { if [ -n "$1" ]; then json_str "$1"; else printf 'null'; fi; }
 
 fix_human() { printf '{"human":%s' "$(json_str "$1")"; [ -n "$2" ] && printf ',"url":%s' "$(json_str "$2")"; printf '}'; }
 fix_unavailable() { printf '{"unavailable":%s}' "$(json_str "$1")"; }
+fix_write() { fix_unavailable "Check free space and permissions of $DIR."; }
 
 # add_problem <id> <error|warning> <message> <fix JSON>
 add_problem() {
@@ -89,8 +90,8 @@ fail() {
   case "$3" in '{"human"'*) finish false 2 ;; *) finish false 1 ;; esac
 }
 
-# Removes only what this run created: its own mktemp folder, the fixed file names it writes into
-# its own staging folder, and the lock while it still holds this run's line. Runs twice on INT/TERM.
+# Removes only what this run created: its mktemp folder, its staging folder and the lock while it
+# still holds this run's line. Safe to run twice (INT/TERM, then EXIT).
 cleanup() {
   [ -n "$TMP" ] && rm -rf "$TMP"
   [ -n "$STAGE_DIR" ] && clear_stage "$STAGE_DIR"
@@ -161,12 +162,11 @@ resolve_dir() {
 '*) bad=1 ;; *) printf '%s' "$dir" | LC_ALL=C grep -q '[[:cntrl:]]' && bad=1 || bad=0 ;; esac
   [ "$bad" = 0 ] || fail install_dir_invalid "The install folder name contains a line break or another control character." \
     "$(fix_human "Set TG_INSTALL_DIR to a plain folder path.")"
+  writable="$(fix_human "Set TG_INSTALL_DIR to a folder you can write to (no sudo needed), for example TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin.")"
   if ! mkdir -p "$dir" 2>/dev/null || ! abs=$(cd "$dir" 2>/dev/null && pwd -P); then
-    fail install_dir_invalid "Cannot create or open the folder $dir." \
-      "$(fix_human "Set TG_INSTALL_DIR to a folder you can write to (no sudo needed), for example TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin.")"
+    fail install_dir_invalid "Cannot create or open the folder $dir." "$writable"
   fi
-  [ -w "$abs" ] || fail install_dir_invalid "The folder $abs is not writable." \
-    "$(fix_human "Set TG_INSTALL_DIR to a folder you can write to (no sudo needed), for example TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin.")"
+  [ -w "$abs" ] || fail install_dir_invalid "The folder $abs is not writable." "$writable"
   DIR="$abs"
   BIN="$DIR/telegram"
 }
@@ -176,10 +176,10 @@ resolve_dir() {
 make_stage() {
   STAGE_DIR=$(mktemp -d "$DIR/.better-tg-cli.stage.XXXXXX" 2>/dev/null) || STAGE_DIR=''
   [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ] && [ ! -L "$STAGE_DIR" ] ||
-    fail install_write_failed "Cannot create a staging folder in $DIR." "$(fix_unavailable "Check free space and permissions of $DIR.")"
+    fail install_write_failed "Cannot create a staging folder in $DIR." "$(fix_write)"
   LOCK_LINE="pid=$$ stage=${STAGE_DIR##*/}"
   printf '%s\n' "$LOCK_LINE" >"$STAGE_DIR/lock" ||
-    fail install_write_failed "Cannot write into $DIR." "$(fix_unavailable "Check free space and permissions of $DIR.")"
+    fail install_write_failed "Cannot write into $DIR." "$(fix_write)"
   # Files are placed only with hard links: prove once that this file system has them, so a failed
   # ln later can only mean the name is taken
   if ln "$STAGE_DIR/lock" "$STAGE_DIR/probe" 2>/dev/null; then rm -f "$STAGE_DIR/probe"; else
@@ -222,10 +222,12 @@ owner_of() {
     OWNER=$(read_lock "$1") && return 0
     gone "$1" && return 1
   done
-  BIN=''
   fail install_lock_unknown "$1 is not a lock this script wrote; it is left as is." \
     "$(fix_human "If no install into $DIR is running, delete $1 yourself, then run the script again. Or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
 }
+
+# lock_pid <owner line>: its PID
+lock_pid() { p=${1#pid=}; printf '%s' "${p%% *}"; }
 
 release_lock() {
   [ -n "$1" ] && [ "$(read_lock "$1")" = "$LOCK_LINE" ] && rm -f "$1"
@@ -242,15 +244,13 @@ take_lock() {
   for _ in 1 2 3 4 5; do
     place_new "$STAGE_DIR/lock" "$lock" && { LOCK="$lock"; return; }
     owner_of "$lock" || continue
-    pid=${OWNER#pid=}; pid=${pid%% *}
-    BIN=''
+    pid=$(lock_pid "$OWNER")
     if kill -0 "$pid" 2>/dev/null; then
       fail install_in_progress "Another run of this script (pid $pid) is installing into $DIR right now; nothing was changed." "$busy"
     fi
     fail install_lock_stale "The lock $lock names pid $pid, which is not running: a run was cut short. Nothing was changed." \
       "$(fix_human "No install is running? Delete $lock and run again." "$DOCS")"
   done
-  BIN=''
   fail install_in_progress "Other runs of this script keep taking and releasing the lock in $DIR; nothing was changed." "$busy"
 }
 
@@ -262,7 +262,7 @@ report_stages() {
     [ "$d" = "$STAGE_DIR" ] && continue
     [ -d "$d" ] && [ ! -L "$d" ] || continue
     l=$(read_lock "$d/lock") || continue
-    pid=${l#pid=}; pid=${pid%% *}
+    pid=$(lock_pid "$l")
     kill -0 "$pid" 2>/dev/null && continue
     left="${left:+$left, }$d"
   done
@@ -282,13 +282,11 @@ check_ownership() {
   if [ -e "$BIN" ] || [ -L "$BIN" ]; then
     FRESH_BIN=0
     if [ -L "$BIN" ] || [ ! -f "$BIN" ] || ! is_ours "$manifest"; then
-      BIN_TAKEN="$BIN"; BIN=''
-      fail install_path_taken "$BIN_TAKEN already exists and was not installed by this script; it is left as is." "$taken"
+      fail install_path_taken "$BIN already exists and was not installed by this script; it is left as is." "$taken"
     fi
     BIN_ID=$(file_id "$BIN")
     check_bin_sum "$taken"
   elif [ "$FRESH_JSON" = 0 ] && ! is_ours "$manifest"; then
-    BIN=''
     fail install_path_taken "$manifest belongs to something else; it is left as is." "$taken"
   fi
 }
@@ -298,8 +296,7 @@ check_ownership() {
 check_bin_sum() {
   have=$(sha256 "$BIN")
   if [ -z "$have" ] || [ "$have" != "$BIN_SUM" ]; then
-    BIN_TAKEN="$BIN"; BIN=''
-    fail install_path_taken "$BIN_TAKEN does not match the binary $DIR/install.json records (binarySha256); it is left as is." "$1"
+    fail install_path_taken "$BIN does not match the binary $DIR/install.json records (binarySha256); it is left as is." "$1"
   fi
 }
 
@@ -309,8 +306,7 @@ file_id() { LC_ALL=C ls -lind "$1" 2>/dev/null | awk '{ print $1, $6, $7, $8, $9
 
 # install.json is ours only in the exact one-line form this script writes, for this very path, with
 # every field well formed and agreeing with the others (tag = v + version, archive named after
-# version and target). Sets BIN_SUM to its binarySha256. A record nested in another file, an edited, longer or cut-off one does not
-# count
+# version and target). Sets BIN_SUM to its binarySha256.
 MANIFEST_V='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'
 MANIFEST_T='(darwin|linux)-(x64|arm64)'
 MANIFEST_REST="\"$MANIFEST_V\",\"tag\":\"v$MANIFEST_V\",\"target\":\"$MANIFEST_T\",\"archive\":\"better-tg-cli-$MANIFEST_V-$MANIFEST_T\.tar\.(xz|gz)\",\"sha256\":\"[0-9a-f]{64}\",\"binarySha256\":\"[0-9a-f]{64}\",\"installedAt\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\"}"
@@ -368,7 +364,7 @@ download() {
     "$(fix_unavailable "Check the network connection or proxy and run the script again.")"
 }
 
-# Prints which archive to take: .tar.xz when this system can unpack it, else .tar.gz
+# Sets ARCHIVE: the .tar.xz when this system can unpack it, else the .tar.gz
 choose_archive() {
   base="better-tg-cli-$VERSION-$TARGET"
   bsdtar=0
@@ -398,11 +394,10 @@ unpack() {
   [ -f "$out/telegram" ] && [ ! -L "$out/telegram" ]
 }
 
-# place_new <staged file> <target>: puts a file where nothing was, and never over something that
-# is there or appears meanwhile. 0 placed, 3 the target is taken, 1 not placed and the name is free
-# (taken and released meanwhile, or a write error). A hard link fails when the name exists,
-# instead of following a symlink or writing over a file; there is no check-then-rename fallback
-# (make_stage proved hard links work here).
+# place_new <staged file> <target>: puts a file where nothing is, never over something that is
+# there or appears meanwhile (a hard link fails when the name exists; make_stage proved they work
+# here). 0 placed, 3 the target is taken, 1 not placed and the name is free (released meanwhile,
+# or a write error).
 place_new() {
   if ln "$1" "$2" 2>/dev/null; then
     [ ! -L "$2" ] && [ -f "$2" ] && [ "$2" -ef "$1" ] && return 0
@@ -456,7 +451,7 @@ scan_path() {
 }
 
 install_files() {
-  write_failed="$(fix_unavailable "Check free space and permissions of $DIR.")"
+  write_failed="$(fix_write)"
   # Both files are prepared in the staging folder only this run can write
   staged="$STAGE_DIR/telegram"
   cp "$TMP/x/telegram" "$staged" 2>/dev/null && chmod 755 "$staged" ||
@@ -483,14 +478,11 @@ install_files() {
     # An upgrade: the binary first. A run killed in between leaves the new binary with the old
     # manifest, which never claims more than is installed; its binarySha256 no longer matches, so
     # the next run refuses to replace it until a person moves telegram away.
-    # The file whose ownership was checked must still be the one there: a regular file with the
-    # same inode, size and mtime. This narrows, not closes, a race with another writer into the
-    # folder, which is outside the threat model (see the header).
+    # The file checked before downloading must still be there, unchanged (inode, size, mtime, then
+    # its sum). This narrows a race with another writer, which is outside the threat model.
     if [ -L "$BIN" ] || [ ! -f "$BIN" ] || [ "$(file_id "$BIN")" != "$BIN_ID" ]; then
-      BIN_TAKEN="$BIN"; BIN=''
-      fail install_path_taken "$BIN_TAKEN changed while downloading; it is left as is." "$taken"
+      fail install_path_taken "$BIN changed while downloading; it is left as is." "$taken"
     fi
-    # Its content too, right before it is replaced
     check_bin_sum "$taken"
     mv -f "$staged" "$BIN" 2>/dev/null ||
       fail install_write_failed "Cannot move the binary into $BIN; the previous install is unchanged." "$write_failed"
@@ -502,7 +494,7 @@ install_files() {
   if [ "$FRESH_JSON" = 1 ]; then
     place_new "$STAGE_DIR/install.json" "$DIR/install.json"
     rc=$?
-    if [ "$rc" = 3 ]; then BIN=''; fail install_path_taken "$DIR/install.json appeared while downloading; it is left as is." "$taken"; fi
+    if [ "$rc" = 3 ]; then fail install_path_taken "$DIR/install.json appeared while downloading; it is left as is." "$taken"; fi
     [ "$rc" = 0 ] || fail install_write_failed "Cannot write $DIR/install.json." "$write_failed"
   else
     mv -f "$STAGE_DIR/install.json" "$DIR/install.json" 2>/dev/null ||
@@ -513,8 +505,7 @@ install_files() {
   if [ "$rc" = 3 ]; then
     # Something else took the name while downloading: our manifest must not claim it
     rm -f "$DIR/install.json"
-    BIN_TAKEN="$BIN"; BIN=''
-    fail install_path_taken "$BIN_TAKEN appeared while downloading and was not installed by this script; it is left as is." "$taken"
+    fail install_path_taken "$BIN appeared while downloading and was not installed by this script; it is left as is." "$taken"
   fi
   [ "$rc" = 0 ] || fail install_write_failed "Cannot move the binary into $BIN." "$write_failed"
 }
