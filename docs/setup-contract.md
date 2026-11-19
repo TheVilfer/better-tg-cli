@@ -16,8 +16,9 @@ The contract is opt-in per command. Output that exists today stays exactly as it
 
 - `chats --json`, `skill status --json` and the other list commands print a JSON array.
 - `onboard --json` prints its own JSON lines (`{"event":"url",...}`, no `schema` field). It stops
-  after `done`, `timeout` or `already_logged_in`; after `error` the page offers a retry and it
-  keeps waiting.
+  after `done`, `timeout` or `already_logged_in`. An `error` after `url` comes from the open page,
+  which offers a retry and keeps waiting; an `error` with no `url` before it means the command could
+  not start (for example the secret store could not be read) and has exited with code 1.
 - `telegram mcp` writes only JSON-RPC messages to stdout.
 
 Tests in `test/setup-contract.test.ts` pin these shapes. A command that adopts the contract later
@@ -64,11 +65,11 @@ No other fields are allowed at any level in schema 1.
 ### `data`: what only this command reports
 
 `data` is the one open field of schema 1. A command puts there what is specific to it, for example
-the installer's install path, version and target:
+an install path, version and target, as the installer reports them:
 
 ```json
 { "schema": 1, "ok": true, "problems": [],
-  "data": { "path": "/home/u/.local/bin/telegram", "version": "1.2.3", "target": { "os": "linux", "arch": "x64" } } }
+  "data": { "path": "/home/u/.local/bin/telegram", "version": "1.2.3", "target": "linux-x64" } }
 ```
 
 The generic checker only requires `data` to be a JSON object (not an array, not `null`) and does
