@@ -1,24 +1,38 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { EXIT_NEEDS_APPROVAL } from '../src/approval.js';
+import type { SetupResult } from '../src/setup-contract.js';
 import {
   RUN_ALLOWLIST, SETUP_EXIT, SETUP_SCHEMA, TERMINAL_EVENTS,
-  runRefusal, setupEventErrors, setupExitCode, setupResultErrors, type SetupResult,
-} from '../src/setup-contract.js';
+  runRefusal, setupEventErrors, setupExitCode, setupResultErrors,
+} from './setup-contract-check.js';
 import { cliArgs } from './cli.js';
 
 const fixtures = JSON.parse(readFileSync('test/fixtures/setup-contract.json', 'utf8'));
 
-// Every child process runs on a throwaway home with a profile of its own: nothing here can reach
-// a real account, config or Keychain item, and the mock never sees the real one either
+// Every child process runs on a throwaway home with a profile of its own and none of the
+// inherited TG_* or OP_* settings, so it reaches no real account, config, 1Password vault or
+// approval. A temp HOME does not move the macOS Keychain (/usr/bin/security has a fixed path), so
+// on macOS and Linux the secret store the children see is a fake `op` (1Password is asked first,
+// src/secrets.ts) that logs every call and stores nothing. On Windows the DPAPI file sits in the
+// temp APPDATA.
 const home = mkdtempSync(join(tmpdir(), 'tg-contract-'));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
+const fakeOp = process.platform !== 'win32';
+const opLog = join(home, 'op-calls.log');
+if (fakeOp) {
+  mkdirSync(join(home, 'bin'));
+  writeFileSync(join(home, 'bin', 'op'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${opLog}'\n[ "$1" = whoami ] && exit 0\nexit 1\n`, { mode: 0o755 });
+}
 const baseEnv = (): NodeJS.ProcessEnv => {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_NO_UPDATE_CHECK: '1', TG_PROFILE: 'contract-test' };
-  delete env.TG_MOCK;
+  const env: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(TG|OP)_/.test(k)));
+  Object.assign(env, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_NO_UPDATE_CHECK: '1', TG_PROFILE: 'contract-test' });
+  if (fakeOp) {
+    Object.assign(env, { PATH: join(home, 'bin') + delimiter + (process.env.PATH ?? ''), OP_SERVICE_ACCOUNT_TOKEN: 'ops_contract_test', TG_OP_VAULT: 'contract-vault' });
+  }
   return env;
 };
 const cli = (args: string[], env: NodeJS.ProcessEnv = baseEnv()) =>
@@ -82,12 +96,15 @@ describe('setup contract, schema 1', () => {
   it('never allows commands that change authority or credentials, or a Telegram write', () => {
     for (const argv of [
       ['write-access', 'on'], ['write-access', 'ask'], ['auth'], ['logout'], ['mcp'], ['api', 'messages.sendMessage'],
-      ['send', 'me', 'hi'], ['skill', 'install', '--force'], ['skill', 'uninstall'], ['onboard', '--broker', 'https://evil.example'],
-      ['update', '--json'], ['update', 'constructor', 'x'], ['update', '__proto__', 'x'], ['skill', 'install', 'toString', 'x'],
+      ['send', 'me', 'hi'], ['skill', 'install', '--force'], ['skill', 'uninstall'],
+      // update runs a package manager or a build outside any profile; onboard hands out the page
+      // link whose secret also sets the write mode (#110 review)
+      ['update'], ['update', '--json'], ['onboard'], ['onboard', '--json', '--no-open'], ['onboard', '--broker', 'https://evil.example'],
+      ['skill', 'install', 'constructor', 'x'], ['skill', 'install', '__proto__', 'x'], ['skill', 'install', 'toString', 'x'],
       ['sh', '-c', 'telegram update'], [],
     ]) expect(runRefusal(argv), argv.join(' ')).not.toBeNull();
     expect(runRefusal(['skill', 'install'])).toBeNull();
-    expect(runRefusal(['onboard', '--no-open', '--json'])).toBeNull();
+    expect(runRefusal(['skill', 'install', '--agent', 'codex', 'claude-code', '--json'])).toBeNull();
   });
 });
 
@@ -145,8 +162,23 @@ describe('current consumers keep their output', () => {
     const messages = out.slice(0, -1).split('\n').map(l => JSON.parse(l));
     expect(messages.map(m => m.id)).toEqual([1, 2, 3, 4]);
     for (const m of messages) {
+      const keys = Object.keys(m).sort();
+      expect([['id', 'jsonrpc', 'result'], ['error', 'id', 'jsonrpc']]).toContainEqual(keys);
       expect(m.jsonrpc).toBe('2.0');
-      expect(Object.keys(m).filter(k => k !== 'jsonrpc' && k !== 'id').length).toBe(1); // result or error
     }
+    // Calls 1-3 succeed; the whoami of a profile without a login is a failed tool call, not a
+    // JSON-RPC error
+    for (const m of messages.slice(0, 3)) expect(m.result.isError, `id ${m.id}`).toBeFalsy();
+    expect(messages[3].result.isError).toBe(true);
   }, 30_000);
+
+  // Runs last: every child above asked only the fake store, never the Keychain or a real vault
+  it.runIf(fakeOp)('the children asked only the fake secret store', () => {
+    expect(existsSync(opLog)).toBe(true);
+    const calls = readFileSync(opLog, 'utf8').trimEnd().split('\n');
+    expect(calls).toContain('whoami');
+    for (const call of calls) {
+      expect(call).toMatch(/^(whoami|read op:\/\/contract-vault\/tg-cli-contract-test-(apiHash|sessionString|writeEnabled)\/credential)$/);
+    }
+  });
 });

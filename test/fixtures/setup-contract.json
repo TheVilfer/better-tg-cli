@@ -8,16 +8,16 @@
           "fix": { "run": ["skill", "install", "--agent", "codex", "claude-code", "--json"], "profile": null, "expect": { "exit": 0 } } } ] } },
     { "name": "an error the agent can fix, on a named profile", "exit": 1,
       "result": { "schema": 1, "ok": false, "problems": [
-        { "id": "not_logged_in", "severity": "error", "message": "This profile has no login.",
-          "fix": { "run": ["onboard", "--json", "--no-open"], "profile": "work", "expect": { "exit": 0 } } },
+        { "id": "skill_missing", "severity": "error", "message": "No agent has the skill.",
+          "fix": { "run": ["skill", "install", "--agent", "codex"], "profile": "work", "expect": { "exit": 0 } } },
         { "id": "update_available", "severity": "info", "message": "A new version is out.",
-          "fix": { "run": ["update"], "profile": "work", "expect": { "exit": 0 } } } ] } },
+          "fix": { "human": "Run telegram update when it suits you." } } ] } },
     { "name": "only the person can fix it", "exit": 2,
       "result": { "schema": 1, "ok": false, "problems": [
         { "id": "session_revoked", "severity": "error", "message": "Telegram ended this login.",
           "fix": { "human": "Log in again with a QR code.", "url": "https://better-tg-cli.com/login" } },
-        { "id": "local_page", "severity": "error", "message": "Waiting on the local page.",
-          "fix": { "human": "Open the page.", "url": "http://127.0.0.1:53111/s/abc/" } } ] } },
+        { "id": "not_logged_in", "severity": "error", "message": "This profile has no login.",
+          "fix": { "human": "Log in: run telegram onboard yourself and scan the QR code with your phone." } } ] } },
     { "name": "nothing can fix it here", "exit": 1,
       "result": { "schema": 1, "ok": false, "problems": [
         { "id": "secret_store_missing", "severity": "error", "message": "No secret store.",
@@ -48,12 +48,12 @@
     { "name": "a flag the entry does not allow", "error": "flag \"--force\" is not allowed",
       "result": { "schema": 1, "ok": true, "problems": [
         { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install", "--force"], "profile": null, "expect": { "exit": 0 } } } ] } },
-    { "name": "a positional argument", "error": "argument \"now\" is not allowed",
+    { "name": "a positional argument", "error": "argument \"now\" is not allowed after \"skill install\"",
       "result": { "schema": 1, "ok": true, "problems": [
-        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update", "now"], "profile": null, "expect": { "exit": 0 } } } ] } },
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install", "now"], "profile": null, "expect": { "exit": 0 } } } ] } },
     { "name": "an inherited property name as a flag", "error": "argument \"constructor\" is not allowed",
       "result": { "schema": 1, "ok": true, "problems": [
-        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update", "constructor", "x"], "profile": null, "expect": { "exit": 0 } } } ] } },
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install", "constructor", "x"], "profile": null, "expect": { "exit": 0 } } } ] } },
     { "name": "a value with shell characters", "error": "is not a plain value",
       "result": { "schema": 1, "ok": true, "problems": [
         { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install", "--agent", "codex;id"], "profile": null, "expect": { "exit": 0 } } } ] } },
@@ -65,16 +65,31 @@
         { "id": "x", "severity": "info", "message": "m", "fix": { "human": "h", "unavailable": "u" } } ] } },
     { "name": "a run fix without its profile", "error": "profile must be a profile name or null",
       "result": { "schema": 1, "ok": true, "problems": [
-        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update"], "expect": { "exit": 0 } } } ] } },
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install"], "expect": { "exit": 0 } } } ] } },
     { "name": "an invalid profile", "error": "profile must be a profile name or null",
       "result": { "schema": 1, "ok": true, "problems": [
-        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update"], "profile": "../x", "expect": { "exit": 0 } } } ] } },
-    { "name": "an unknown exit code", "error": "expect must be",
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install"], "profile": "../x", "expect": { "exit": 0 } } } ] } },
+    { "name": "an unknown exit code", "error": "expect must be { exit: 0 }",
       "result": { "schema": 1, "ok": true, "problems": [
-        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update"], "profile": null, "expect": { "exit": 130 } } } ] } },
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install"], "profile": null, "expect": { "exit": 130 } } } ] } },
+    { "name": "approval needed as the expected exit", "error": "expect must be { exit: 0 }",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["skill", "install"], "profile": null, "expect": { "exit": 3 } } } ] } },
+    { "name": "update, which runs a package manager outside any profile", "error": "\"update\" is not an allowed command",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "run": ["update"], "profile": null, "expect": { "exit": 0 } } } ] } },
+    { "name": "onboard, whose page link carries the write-mode secret", "error": "\"onboard --json\" is not an allowed command",
+      "result": { "schema": 1, "ok": false, "problems": [
+        { "id": "x", "severity": "error", "message": "m", "fix": { "run": ["onboard", "--json", "--no-open"], "profile": null, "expect": { "exit": 0 } } } ] } },
     { "name": "a plain http url", "error": "url must be https",
       "result": { "schema": 1, "ok": true, "problems": [
         { "id": "x", "severity": "info", "message": "m", "fix": { "human": "h", "url": "http://example.com/login" } } ] } },
+    { "name": "a loopback url (the onboard page link is a secret)", "error": "url must be https",
+      "result": { "schema": 1, "ok": false, "problems": [
+        { "id": "x", "severity": "error", "message": "m", "fix": { "human": "Open the page.", "url": "http://127.0.0.1:53111/s/abc/" } } ] } },
+    { "name": "a url that is not a string", "error": "url must be a string",
+      "result": { "schema": 1, "ok": true, "problems": [
+        { "id": "x", "severity": "info", "message": "m", "fix": { "human": "h", "url": ["https://example.org"] } } ] } },
     { "name": "a javascript url", "error": "url must be https",
       "result": { "schema": 1, "ok": true, "problems": [
         { "id": "x", "severity": "info", "message": "m", "fix": { "human": "h", "url": "javascript:alert(1)" } } ] } },
@@ -100,7 +115,7 @@
   "events": {
     "valid": [
       [
-        { "schema": 1, "event": "link", "url": "http://127.0.0.1:53111/s/abc/" },
+        { "schema": 1, "event": "human_channel", "channel": "browser" },
         { "schema": 1, "event": "waiting_human" },
         { "schema": 1, "event": "done", "result": { "schema": 1, "ok": true, "problems": [] } }
       ],

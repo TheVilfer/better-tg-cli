@@ -2,8 +2,11 @@
 
 Agents set Better-TG-CLI up by running commands and reading what they print. This contract is the
 one shape in which setup commands report problems and say how to fix them, so an agent can act on
-the output without parsing prose. The types live in [`src/setup-contract.ts`](../src/setup-contract.ts);
-`test/setup-contract.test.ts` checks every example on this page against them.
+the output without parsing prose. The types live in [`src/setup-contract.ts`](../src/setup-contract.ts)
+(types only, nothing there runs). The rules below are checked by
+[`test/setup-contract-check.ts`](../test/setup-contract-check.ts), and
+`test/setup-contract.test.ts` runs every example on this page through it. The first command that
+emits the contract moves the checker and the allowlist into `src/`.
 
 **Status.** Defined, not yet emitted. The commands that will emit it (`doctor`, `connect`, the
 installer and the managed update) come in later PRs of the agent-compatibility plan (#137).
@@ -48,7 +51,7 @@ A contract command run with `--json` prints one JSON object and nothing else on 
 
 | Field | Meaning |
 |---|---|
-| `schema` | Always `1` for this version. A breaking change gets a new number; new optional fields do not. |
+| `schema` | Always `1` for this version. Any change to the shape gets a new number, a new optional field included: a schema 1 reader refuses fields it does not know. |
 | `ok` | `true` exactly when no problem has severity `error`. |
 | `problems` | Empty when there is nothing to report. |
 | `problems[].id` | Stable snake_case id, unique within a result. Agents may match on it, so an id never changes meaning. |
@@ -61,25 +64,29 @@ No other fields are allowed at any level in schema 1.
 ### `fix`: run a command
 
 ```json
-{ "schema": 1, "ok": true, "problems": [
-  { "id": "update_available", "severity": "info", "message": "telegram 0.40.0 is available.",
-    "fix": { "run": ["update"], "profile": null, "expect": { "exit": 0 } } }
+{ "schema": 1, "ok": false, "problems": [
+  { "id": "skill_missing", "severity": "error", "message": "Claude Code has no Better-TG-CLI skill.",
+    "fix": { "run": ["skill", "install", "--agent", "claude-code"], "profile": null, "expect": { "exit": 0 } } }
 ] }
 ```
 
 - `run` is the argv **after** the `telegram` binary, never a shell string and never the binary
   itself. The agent runs it with the same `telegram` that printed the result.
-- `run` must match an entry of `RUN_ALLOWLIST` in `src/setup-contract.ts`: the exact subcommand,
+- `run` must match an entry of `RUN_ALLOWLIST` in `test/setup-contract-check.ts`: the exact subcommand,
   then only the flags that entry allows, no positional arguments, values made of plain
   characters. Anything else is invalid, whoever produced it.
 - `profile` is the `TG_PROFILE` to run it under, or `null` for the default profile. It is always
   explicit because several clients hand a process only a filtered environment.
-- `expect.exit` is the exit code of a successful run, normally `0`.
+- `expect` is always `{ "exit": 0 }`. A run fixed the problem only when it exited `0`; any other
+  code, `3` (write approval needed) included, means it did not.
 
-Allowed today: `skill install [--agent <ids...>] [--json]`, `update`,
-`onboard [--json] [--no-open]`. Later PRs add their own entries (`doctor --fix`,
+Allowed today: `skill install [--agent <ids...>] [--json]`. Later PRs add their own entries (`doctor --fix`,
 `connect --refresh`). Never allowed: anything that changes write authority or credentials
-(`write-access`, `auth`, `logout`), `mcp`, `api`, any Telegram write, `skill install --force`.
+(`write-access`, `auth`, `logout`); `onboard`, because its local page link carries a secret that
+also sets the write mode, so logging in is always a `fix.human`; `update`, because it runs
+Homebrew, Scoop, a global npm install or a source build, none of which a profile isolates (until a
+managed update checks the install method and the user's policy); `mcp`, `api`, any Telegram
+write, `skill install --force`.
 
 ### `fix`: the person has to do it
 
@@ -90,8 +97,9 @@ Allowed today: `skill install [--agent <ids...>] [--json]`, `update`,
 ] }
 ```
 
-`human` is a sentence the agent passes on. `url`, when present, is `https`, or `http` on
-`127.0.0.1` for a local page such as the one `onboard` serves.
+`human` is a sentence the agent passes on. `url`, when present, is an `https` string. A result
+never carries the link of the local `onboard` page: that link holds the page's secret, and the page
+can change the write mode.
 
 ### `fix`: nothing can fix it here
 
@@ -114,7 +122,8 @@ usage today):
 | `2` | A person is needed | every `error` has `fix.human` |
 | `3` | Write approval needed | never from a result: only the write guard exits 3 (`EXIT_NEEDS_APPROVAL`) |
 
-`setupExitCode()` computes it, so the printed result and the exit code cannot disagree.
+The exit code follows from the result (`setupExitCode()` in the checker), so a command that
+computes it the same way cannot print one thing and exit with another.
 
 ## Event stream (`--events v1`)
 
@@ -127,7 +136,7 @@ progress events. Proposed, and settled by the first command that emits events: t
 with one terminal event, `done` (with the result), `error` (with a message) or `timeout`.
 
 ```jsonl
-{"schema":1,"event":"link","url":"http://127.0.0.1:53111/s/abc/"}
+{"schema":1,"event":"human_channel","channel":"browser"}
 {"schema":1,"event":"waiting_human"}
 {"schema":1,"event":"done","result":{"schema":1,"ok":true,"problems":[]}}
 ```
@@ -146,4 +155,6 @@ PR where the issue says nothing, and may still change before a command emits it:
   `waiting_human`, `already_logged_in` for `onboard --terminal`);
 - how an agent that cannot find `telegram` on its PATH learns the absolute path (the installer
   reports it);
-- whether `fix.run` needs `--dry-run` support in the commands it names.
+- whether `fix.run` needs `--dry-run` support in the commands it names;
+- whether a managed `update` (install method and policy checked first) becomes a `fix.run`, and
+  whether an `--events v1` stream of `onboard` may show its page link at all.
