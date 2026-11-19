@@ -90,7 +90,9 @@ A fix that cannot wait for `next` goes as a PR into `main` like a release, follo
 A stable tag runs `.github/workflows/release.yml`:
 1. verify (tag == package.json, tests) and the Claude Desktop extension `better-tg-cli.mcpb`
    (`scripts/mcpb.mjs`)
-2. Bun binaries for darwin-arm64/x64 (built and ad-hoc signed on macOS) and linux-x64/arm64
+2. Bun binaries for darwin-arm64/x64 (built and ad-hoc signed on macOS) and linux-x64/arm64; the
+   native darwin-arm64 and linux-x64 jobs run `scripts/smoke-install.sh` (install.sh on those
+   archives through a fake curl, on Linux once more without xz)
 3. GitHub Release with the binaries, the `.mcpb` and SHA256SUMS; a stable one then gets `install.sh`
 4. npm publish via trusted publishing (OIDC, no token; skipped if the version exists)
 5. `Formula/better-tg-cli.rb` rendered by `scripts/homebrew-formula.mjs` and pushed to

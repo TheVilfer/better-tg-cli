@@ -112,6 +112,14 @@ jobs:
           mkdir smoke && tar -xJf release/*.tar.xz -C smoke
           test "$(./smoke/telegram --version)" = "$VERSION"
           ./smoke/telegram help-all -g thread | grep -q 'read <chat>'
+      - name: Install script on this build (native targets)
+        # install.sh itself on the archives just built and a SHA256SUMS written for them, served by
+        # a fake curl (no network); on Linux once more without xz, so it takes the .tar.gz
+        if: matrix.smoke
+        shell: bash
+        run: |
+          scripts/smoke-install.sh release
+          if [[ "$RUNNER_OS" == Linux ]]; then scripts/smoke-install.sh release --no-xz; fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bin-${{ matrix.target }}

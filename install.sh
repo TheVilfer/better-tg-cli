@@ -1,4 +1,8 @@
 #!/bin/sh
+{
+# The whole script is one { } block, opened on the line right after the shebang: a download cut
+# short anywhere after it is a syntax error, never a partial run.
+#
 # Better-TG-CLI installer for macOS and Linux: one standalone `telegram` binary from a release.
 # No sudo, Node, git or shell-profile edits.
 #
@@ -19,9 +23,6 @@
 # Environment: TG_INSTALL_DIR  folder for the binary (default ~/.local/bin)
 # Developer install from a git checkout: scripts/dev-install.sh
 
-# The whole script is one { } block: a download cut short anywhere is a syntax error, never a
-# partial run
-{
 # The pinned release. Set by scripts/gen-version.mjs from package.json; do not edit.
 VERSION='0.39.6'
 REPO='TheVilfer/better-tg-cli'
@@ -40,6 +41,8 @@ ACTIVE=''
 TMP=''
 STAGE_DIR=''
 LOCK=''
+MUTEX=''
+LOCK_LINE=''
 
 log() { printf '  %s\n' "$*" >&2; }
 has() { command -v "$1" >/dev/null 2>&1; }
@@ -82,10 +85,14 @@ fail() {
   case "$3" in '{"human"'*) finish false 2 ;; *) finish false 1 ;; esac
 }
 
+# Removes only what this run created: its own mktemp folder, the fixed file names it writes into
+# its staging folder, and the lock files that still hold its own line. Runs twice on INT/TERM.
 cleanup() {
   [ -n "$TMP" ] && rm -rf "$TMP"
-  [ -n "$STAGE_DIR" ] && rm -rf "$STAGE_DIR"
-  [ -n "$LOCK" ] && rm -rf "$LOCK"
+  [ -n "$STAGE_DIR" ] && clear_stage "$STAGE_DIR"
+  release_lock "$MUTEX"
+  release_lock "$LOCK"
+  TMP=''; STAGE_DIR=''; MUTEX=''; LOCK=''
 }
 
 # The old install.sh (now scripts/dev-install.sh) took TG_SKILL_DIR and installed from a git
@@ -99,7 +106,7 @@ check_old_installer() {
   if [ -n "${HOME:-}" ] && [ -d "$old/.git" ] && [ -f "$old/package.json" ] &&
     grep -qE '"name": *"(better-tg-cli|better-telegram-cli|@skillhq/telegram)"' "$old/package.json" 2>/dev/null; then
     add_problem dev_install_found warning "A developer install from the old install.sh is in $old: its checkout, npm link and skill links stay on their version." \
-      "$(fix_human "To update that install run $old/scripts/dev-install.sh. To keep only this binary, follow 'Moving from the old install.sh'." "$DOCS")"
+      "$(fix_human "To update that install, first update the checkout (git -C $old pull), then run $old/scripts/dev-install.sh; a checkout that was not updated has no such script yet. To keep only this binary, follow 'Moving from the old install.sh'." "$DOCS")"
     log "found a developer install in $old; it is left as is (see $DOCS)"
   fi
 }
@@ -161,37 +168,122 @@ resolve_dir() {
   BIN="$DIR/telegram"
 }
 
-# One run at a time per folder: an atomic mkdir holding the PID. A lock whose PID is gone is left
-# by a run that was killed; this run takes it over, clears that run's staging folder and writes
-# both files again.
+# A private staging folder next to the target (same file system, so the final steps are renames
+# or hard links). Its name goes into the lock, so a later run knows exactly what to clear.
+make_stage() {
+  STAGE_DIR=$(mktemp -d "$DIR/.better-tg-cli.stage.XXXXXX" 2>/dev/null) || STAGE_DIR=''
+  [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ] && [ ! -L "$STAGE_DIR" ] ||
+    fail install_write_failed "Cannot create a staging folder in $DIR." "$(fix_unavailable "Check free space and permissions of $DIR.")"
+  LOCK_LINE="pid=$$ stage=${STAGE_DIR##*/}"
+  printf '%s\n' "$LOCK_LINE" >"$STAGE_DIR/lock" ||
+    fail install_write_failed "Cannot write into $DIR." "$(fix_unavailable "Check free space and permissions of $DIR.")"
+  # Files are placed only with hard links: prove once that this file system has them, so a failed
+  # ln later can only mean the name is taken
+  if ln "$STAGE_DIR/lock" "$STAGE_DIR/probe" 2>/dev/null; then rm -f "$STAGE_DIR/probe"; else
+    fail hard_links_unavailable "The file system of $DIR does not support hard links, which this script needs to place files without overwriting anything." \
+      "$(fix_unavailable "Install onto another file system: set TG_INSTALL_DIR to a folder in your home directory on a local disk.")"
+  fi
+}
+
+# clear_stage <dir>: the files this script writes into a staging folder, then the folder itself.
+# A folder holding anything else stays.
+clear_stage() {
+  [ -d "$1" ] && [ ! -L "$1" ] || return 0
+  rm -f "$1/telegram" "$1/install.json" "$1/lock" "$1/probe" "$1/version"
+  rmdir "$1" 2>/dev/null || log "left $1 in place: it holds files this script did not write"
+}
+
+# is_line <file> <text>: the file holds exactly <text> and one line break ($(...) alone would drop
+# trailing blank lines; the x keeps them)
+is_line() {
+  [ "$(cat "$1" 2>/dev/null; printf x)" = "$2
+x" ]
+}
+
+gone() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+
+# read_lock <file>: prints the owner line of a lock this script wrote, or fails for anything else
+# (a folder, a symlink, another format, more than that one line)
+read_lock() {
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  IFS= read -r l <"$1" || return 1
+  is_line "$1" "$l" || return 1
+  printf '%s\n' "$l" | LC_ALL=C grep -Eqx 'pid=[1-9][0-9]* stage=\.better-tg-cli\.stage\.[A-Za-z0-9]+' || return 1
+  printf '%s' "$l"
+}
+
+# owner_of <file>: sets OWNER to its owner line. 1 when the file is gone (released meanwhile);
+# a file that is there but not ours stops the run.
+owner_of() {
+  for _ in 1 2; do
+    OWNER=$(read_lock "$1") && return 0
+    gone "$1" && return 1
+  done
+  BIN=''
+  fail install_lock_unknown "$1 is not a lock this script wrote; it is left as is." "$unknown"
+}
+
+release_lock() {
+  [ -n "$1" ] && [ "$(read_lock "$1")" = "$LOCK_LINE" ] && rm -f "$1"
+  return 0
+}
+
+# One run at a time per folder. The lock is a file published with a hard link, which fails when
+# the name exists, so it appears with its owner line already inside. A lock whose PID is gone was
+# left by a killed run: a second hard-linked file serialises taking it over, and the run holding
+# it checks the lock is still that same dead one before replacing it. Anything unknown is refused.
+# A lock released while this run looks at it is simply tried again.
 take_lock() {
   lock="$DIR/.better-tg-cli.lock"
-  if ! mkdir "$lock" 2>/dev/null; then
-    if [ -L "$lock" ] || [ ! -d "$lock" ]; then
-      BIN=''
-      fail install_path_taken "$lock belongs to something else; it is left as is." \
-        "$(fix_human "Move it away yourself, or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
-    fi
-    pid=$(cat "$lock/pid" 2>/dev/null)
-    case "$pid" in '' | *[!0-9]*) pid='' ;; esac
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      BIN=''
-      fail install_in_progress "Another run of this script (pid $pid) is installing into $DIR right now; nothing was changed." \
-        "$(fix_unavailable "Wait for that run to finish, then run the script again if needed.")"
-    fi
-    log "a previous run into $DIR was cut short; this run replaces telegram and install.json"
-    rm -rf "$lock"
-    mkdir "$lock" 2>/dev/null || {
-      BIN=''
-      fail install_in_progress "Another run of this script started installing into $DIR at the same time; nothing was changed." \
-        "$(fix_unavailable "Wait for that run to finish, then run the script again if needed.")"
-    }
-    for d in "$DIR"/.better-tg-cli.stage.*; do
-      [ -d "$d" ] && [ ! -L "$d" ] && rm -rf "$d"
-    done
+  mutex="$DIR/.better-tg-cli.lock.takeover"
+  unknown="$(fix_human "If no install into $DIR is running, delete $lock and $mutex yourself, then run the script again. Or install elsewhere: TG_INSTALL_DIR=\$HOME/.better-tg-cli/bin." "$DOCS")"
+  busy="$(fix_unavailable "Wait for that run to finish, then run the script again if needed.")"
+  for _ in 1 2 3 4 5; do
+    try_lock && return
+  done
+  BIN=''
+  fail install_in_progress "Other runs of this script keep taking and releasing the lock in $DIR; nothing was changed." "$busy"
+}
+
+# 0 the lock is ours, 1 it changed meanwhile (try again); stops the run when busy or unknown
+try_lock() {
+  place_new "$STAGE_DIR/lock" "$lock" && { LOCK="$lock"; return 0; }
+  owner_of "$lock" || return 1
+  stale=$OWNER
+  pid=${stale#pid=}; pid=${pid%% *}
+  if kill -0 "$pid" 2>/dev/null; then
+    BIN=''
+    fail install_in_progress "Another run of this script (pid $pid) is installing into $DIR right now; nothing was changed." "$busy"
   fi
+
+  if ! place_new "$STAGE_DIR/lock" "$mutex"; then
+    owner_of "$mutex" || return 1
+    hpid=${OWNER#pid=}; hpid=${hpid%% *}
+    BIN=''
+    if kill -0 "$hpid" 2>/dev/null; then
+      fail install_in_progress "Another run of this script (pid $hpid) is taking over a lock in $DIR right now; nothing was changed." "$busy"
+    fi
+    fail install_lock_unknown "A run that took over the lock in $DIR was killed and left $mutex; it is left as is." "$unknown"
+  fi
+  MUTEX="$mutex"
+  # Under the takeover lock: the dead lock may be gone, or replaced by a run that came first
+  now=$(read_lock "$lock")
+  if [ "$now" != "$stale" ]; then
+    release_lock "$MUTEX"
+    MUTEX=''
+    gone "$lock" && return 1
+    BIN=''
+    fail install_in_progress "Another run of this script took over the lock in $DIR first; nothing was changed." "$busy"
+  fi
+  log "a previous run into $DIR was cut short; this run replaces telegram and install.json"
+  clear_stage "$DIR/${stale#* stage=}"
+  # A rename replaces the dead lock in one step; the staging folder keeps no copy of the line
+  mv -f "$STAGE_DIR/lock" "$lock" 2>/dev/null ||
+    fail install_write_failed "Cannot replace the lock $lock." "$(fix_unavailable "Check free space and permissions of $DIR.")"
   LOCK="$lock"
-  printf '%s\n' "$$" >"$LOCK/pid"
+  release_lock "$MUTEX"
+  MUTEX=''
+  return 0
 }
 
 # Refuses a path taken by something not ours. Sets FRESH_BIN / FRESH_JSON when nothing is there yet.
@@ -213,35 +305,25 @@ check_ownership() {
   fi
 }
 
-# install.json is ours only in the exact one-line form this script writes, for this very path:
-# a record nested in another file, a longer file or a cut-off one does not count
+# install.json is ours only in the exact one-line form this script writes, for this very path, with
+# every field well formed: a record nested in another file, an edited, longer or cut-off one does
+# not count
+MANIFEST_V='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'
+MANIFEST_T='(darwin|linux)-(x64|arm64)'
+MANIFEST_REST="\"$MANIFEST_V\",\"tag\":\"v$MANIFEST_V\",\"target\":\"$MANIFEST_T\",\"archive\":\"better-tg-cli-$MANIFEST_V-$MANIFEST_T\.tar\.(xz|gz)\",\"sha256\":\"[0-9a-f]{64}\",\"installedAt\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\"}"
 is_ours() {
   [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  IFS= read -r line <"$1" || return 1
+  is_line "$1" "$line" || return 1
   prefix=$(printf '{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":%s,"version":' "$(json_str "$BIN")")
-  line=$(cat "$1" 2>/dev/null) || return 1
-  case "$line" in *'
-'*) return 1 ;; esac
-  case "$line" in "$prefix"*',"installedAt":"'*'"}') return 0 ;; esac
-  return 1
-}
-
-# GNU Wget 1.x can be told to skip its config files (which may turn certificate checks off) and
-# logs every request, so redirects can be checked; BusyBox wget and wget2 cannot promise either
-wget_usable() {
-  LC_ALL=C wget --version 2>/dev/null | head -n 1 | grep -q '^GNU Wget 1\.' &&
-    LC_ALL=C wget --help 2>/dev/null | grep -q -- '--no-config'
+  case "$line" in "$prefix"*) ;; *) return 1 ;; esac
+  printf '%s\n' "${line#"$prefix"}" | LC_ALL=C grep -Eqx "$MANIFEST_REST"
 }
 
 pick_tools() {
-  if has curl; then DL=curl
-  elif has wget && wget_usable; then DL=wget
-  elif has wget; then
-    fail downloader_missing "The wget here is not GNU Wget 1.x (BusyBox?), so certificate checks and HTTPS-only redirects cannot be guaranteed; there is no curl." \
-      "$(fix_unavailable "This script does not install system packages. It needs curl, or GNU Wget 1.x, with CA certificates; without them download $RELEASES by hand.")"
-  else
-    fail downloader_missing "Neither curl nor wget is installed, so nothing can be downloaded." \
-      "$(fix_unavailable "This script does not install system packages. It needs curl or wget (with CA certificates); without them download $RELEASES by hand.")"
-  fi
+  # curl only: it can be told up front to keep every redirect on HTTPS; wget cannot
+  has curl || fail downloader_missing "curl is not installed, so nothing can be downloaded (wget is not used: it cannot keep every redirect on HTTPS)." \
+    "$(fix_unavailable "This script does not install system packages. It needs curl with CA certificates; without them download $RELEASES by hand.")"
   if has sha256sum; then SUM='sha256sum'
   elif has shasum; then SUM='shasum -a 256'
   elif has openssl; then SUM='openssl'
@@ -260,39 +342,20 @@ sha256() {
 
 # download <url> <file>; fails with a problem of its own
 download() {
-  if [ "$DL" = curl ]; then
-    # -q first: no ~/.curlrc, which could turn certificate checks off; https on every redirect too
-    code=$(curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 2 --connect-timeout 20 -w '%{http_code}' -o "$2" "$1" 2>/dev/null)
-    rc=$?
-    [ "$rc" = 0 ] && return 0
-    case "$rc" in
-      35 | 51 | 53 | 54 | 58 | 59 | 60 | 66 | 77 | 80 | 82 | 83 | 90 | 91) tls=1 ;;
-      *) tls=0 ;;
-    esac
-    [ "$rc" = 22 ] && [ "$code" = 404 ] && missing=1 || missing=0
-  else
-    wlog="$TMP/wget.log"
-    LC_ALL=C wget --no-config --secure-protocol=TLSv1_2 --tries=3 --timeout=20 -S -o "$wlog" -O "$2" "$1"
-    rc=$?
-    if [ "$rc" = 0 ]; then
-      # Every request wget made, the redirects included, is a "--date time--  URL" line
-      awk '/^--[0-9]/ { n++; if ($NF !~ /^https:\/\//) bad = 1 } END { exit !(n > 0 && !bad) }' "$wlog" && return 0
-      rm -f "$2"
-      fail insecure_redirect "The download of $1 was redirected off HTTPS (or wget's log could not be read); it was thrown away." \
-        "$(fix_unavailable "Downloads are accepted over HTTPS only. A proxy may rewrite the redirect; install curl or download $RELEASES by hand.")"
-    fi
-    [ "$rc" = 5 ] && tls=1 || tls=0
-    [ "$rc" = 8 ] && grep -q 'ERROR 404' "$wlog" 2>/dev/null && missing=1 || missing=0
-  fi
-  if [ "$tls" = 1 ]; then
-    fail tls_failed "The HTTPS connection to github.com could not be verified ($DL exit $rc): CA certificates are missing or a proxy intercepts TLS." \
-      "$(fix_unavailable "Certificate checks are never turned off. This script does not install system packages (CA certificates).")"
-  fi
-  if [ "$missing" = 1 ]; then
+  # -q first: no ~/.curlrc, which could turn certificate checks off; https on every redirect too
+  code=$(curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 2 --connect-timeout 20 -w '%{http_code}' -o "$2" "$1" 2>/dev/null)
+  rc=$?
+  [ "$rc" = 0 ] && return 0
+  case "$rc" in
+    35 | 51 | 53 | 54 | 58 | 59 | 60 | 66 | 77 | 80 | 82 | 83 | 90 | 91)
+      fail tls_failed "The HTTPS connection to github.com could not be verified (curl exit $rc): CA certificates are missing or a proxy intercepts TLS." \
+        "$(fix_unavailable "Certificate checks are never turned off. This script does not install system packages (CA certificates).")" ;;
+  esac
+  if [ "$rc" = 22 ] && [ "$code" = 404 ]; then
     fail release_not_found "$1 is not published (yet)." \
       "$(fix_unavailable "Release $TAG is not on GitHub yet or lacks this file; run the script again later. Releases: $RELEASES")"
   fi
-  fail download_failed "Downloading $1 failed ($DL exit $rc)." \
+  fail download_failed "Downloading $1 failed (curl exit $rc)." \
     "$(fix_unavailable "Check the network connection or proxy and run the script again.")"
 }
 
@@ -327,21 +390,19 @@ unpack() {
 }
 
 # place_new <staged file> <target>: puts a file where nothing was, and never over something that
-# appeared there meanwhile. 0 placed, 3 the target is taken now, 1 write error.
+# is there or appears meanwhile. 0 placed, 3 the target is taken, 1 not placed and the name is free
+# (taken and released meanwhile, or a write error). A hard link fails when the name exists,
+# instead of following a symlink or writing over a file; there is no check-then-rename fallback
+# (make_stage proved hard links work here).
 place_new() {
-  { [ -e "$2" ] || [ -L "$2" ]; } && return 3
-  # A hard link fails when the name exists, instead of following a symlink or writing over a file
   if ln "$1" "$2" 2>/dev/null; then
-    if [ -L "$2" ] || [ ! -f "$2" ]; then
-      # A symlink to a folder appeared just before ln, which then linked inside that folder
-      [ "$2/${1##*/}" -ef "$1" ] && rm -f "$2/${1##*/}"
-      return 3
-    fi
-    return 0
+    [ ! -L "$2" ] && [ -f "$2" ] && [ "$2" -ef "$1" ] && return 0
+    # A folder (or a symlink to one) appeared just before ln, which then linked inside it
+    [ "$2/${1##*/}" -ef "$1" ] && rm -f "$2/${1##*/}"
+    return 3
   fi
-  { [ -e "$2" ] || [ -L "$2" ]; } && return 3
-  # No hard links on this file system: a rename right after the check
-  mv -f "$1" "$2" 2>/dev/null || return 1
+  gone "$2" && return 1
+  return 3
 }
 
 # Other `telegram` executables on PATH, and whether ours comes first
@@ -387,19 +448,16 @@ scan_path() {
 
 install_files() {
   write_failed="$(fix_unavailable "Check free space and permissions of $DIR.")"
-  STAGE_DIR=$(mktemp -d "$DIR/.better-tg-cli.stage.XXXXXX" 2>/dev/null) || STAGE_DIR=''
-  [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ] && [ ! -L "$STAGE_DIR" ] ||
-    fail install_write_failed "Cannot create a staging folder in $DIR." "$write_failed"
-  # Both files are prepared in a folder only this run can write, on the same file system as the
-  # target, so the final steps are renames or hard links
+  # Both files are prepared in the staging folder only this run can write
   staged="$STAGE_DIR/telegram"
   cp "$TMP/x/telegram" "$staged" 2>/dev/null && chmod 755 "$staged" ||
     fail install_write_failed "Cannot write into $DIR." "$write_failed"
 
-  reported=$(TG_NO_UPDATE_CHECK=1 "$staged" --version 2>/dev/null </dev/null)
+  # stdout goes to a file and is compared byte for byte: $(...) would drop trailing blank lines
+  TG_NO_UPDATE_CHECK=1 "$staged" --version >"$STAGE_DIR/version" 2>/dev/null </dev/null
   vrc=$?
-  if [ "$vrc" != 0 ] || [ "$reported" != "$VERSION" ]; then
-    shown=$(printf '%s\n' "$reported" | head -n 1 | cut -c 1-80)
+  if [ "$vrc" != 0 ] || ! is_line "$STAGE_DIR/version" "$VERSION"; then
+    shown=$(head -n 1 "$STAGE_DIR/version" 2>/dev/null | cut -c 1-80)
     fail binary_check_failed "The downloaded telegram does not run here (it printed '$shown' and exited $vrc, expected exactly $VERSION and 0); nothing was replaced." \
       "$(fix_unavailable "A noexec mount or an unsupported system can cause this. Try TG_INSTALL_DIR on another file system, or npm install -g better-tg-cli with Node 20+.")"
   fi
@@ -447,6 +505,7 @@ main() {
   check_old_installer
   detect_target
   resolve_dir
+  make_stage
   take_lock
   check_ownership
   pick_tools
