@@ -45,9 +45,20 @@ vi.mock('../src/client.js', async orig => ({
   ...(await orig<typeof import('../src/client.js')>()),
   getClient: async () => { telegram.reached++; throw new Error('reached Telegram'); },
 }));
-// Under the real getClient (taken with importActual): the connection it would open
+// The guard's recipient lookup (a read before the approval): answered here, so `reached` still
+// counts only the write's own connection
+vi.mock('../src/peer-lookup.js', () => ({
+  lookupPeers: async (values: string[]) => new Map(values.map(v => [v, { ok: true, id: v === '@alice' ? '1001' : v, title: v, type: 'user' }])),
+}));
+// Under the real getClient (taken with importActual): the connection it would open, or (connectOk)
+// a client that pretends to be connected
+const link = vi.hoisted(() => ({ connectOk: false }));
 vi.mock('../src/transport.js', () => ({
-  connectClient: async () => { telegram.connected++; throw new Error('connected to Telegram'); },
+  connectClient: async () => {
+    telegram.connected++;
+    if (link.connectOk) return { connected: true, isUserAuthorized: async () => true, destroy: async () => {} };
+    throw new Error('connected to Telegram');
+  },
   // getClient may ask which transport to use before it connects
   transportSetting: () => 'auto',
 }));
@@ -60,6 +71,7 @@ import { logoutCommand } from '../src/commands/logout.js';
 import { apiCommand } from '../src/commands/api.js';
 import { sendFileCommand } from '../src/commands/send-file.js';
 import { registerGeneratedCommands } from '../src/commands/generated.js';
+import { trackActiveCommand } from '../src/approval-action.js';
 import { configDir } from '../src/paths.js';
 import { getSessionString, saveConfig, setSessionString } from '../src/config.js';
 import { describeInProcess } from './helpers/describe-in-process.js';
@@ -88,6 +100,7 @@ beforeEach(() => {
   stdin.text = '';
   telegram.reached = 0;
   telegram.connected = 0;
+  link.connectOk = false;
 });
 afterEach(() => {
   // In place: a replaced process.env is a plain object that os.homedir() no longer reads
@@ -135,6 +148,8 @@ async function guard(argv: string[]) {
 async function cli(args: string[]) {
   process.argv = ['node', 'telegram', ...args];
   const program = new Command().name('telegram').exitOverride();
+  // As in src/index.ts: the guard binds the action commander parsed, not the raw argv
+  trackActiveCommand(program);
   program.addCommand(apiCommand);
   program.addCommand(sendFileCommand);
   registerGeneratedCommands(program, process.argv);
@@ -314,6 +329,22 @@ describe('an approval belongs to the account it was given for', () => {
     setSessionString('session-of-account-A');
     await expect(getClient()).rejects.toThrow(/connected to Telegram/);
     expect(telegram.connected).toBe(1);
+  });
+
+  it('a client the guard already connected (for the lookup) is not reused for another account\'s approval', async () => {
+    const { getClient, disconnectClient } = await vi.importActual<typeof import('../src/client.js')>('../src/client.js');
+    saveConfig({ apiId: 1, apiHash: 'h' });
+    link.connectOk = true;
+    try {
+      // Connected as A, as the guard's lookup would
+      await getClient();
+      // An approval checked against B's session (B logged in after the connection)
+      const code = createApproval(actionHash(argv), 'session-of-account-B');
+      expect(consumeApproval(code, actionHash(argv), 'session-of-account-B').ok).toBe(true);
+      await expect(getClient()).rejects.toThrow(/Another account logged in after this write was approved/);
+    } finally {
+      await disconnectClient();
+    }
   });
 
   it('records a fingerprint of the session, never the session', async () => {

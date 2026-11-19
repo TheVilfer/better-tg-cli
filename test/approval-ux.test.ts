@@ -93,6 +93,13 @@ describe('the person sees who gets the write, by name (4.1)', () => {
     expect(cli(['send', 'me', 'hi']).err).toContain('To: Saved Messages (your own chat, id 1000)');
   });
 
+  it('a user the command finds its own way (getEntity) is looked up only by @username or id, a name is shown as typed', () => {
+    const cli = account();
+    // kick resolves its user with getEntity: "Alice" there is not the dialog titled Alice Example
+    expect(cli(['kick', '-1004001', 'Alice']).err).toContain('User: Alice (as typed: the command looks this name up itself)');
+    expect(cli(['kick', '-1004001', '@alice_example']).err).toContain('User: Alice Example (user, @alice_example, id 1001)');
+  });
+
   it('gives the recipients as data in the JSON answer', () => {
     const r = account()(['send', '@alice_example', 'hi', '--json']);
     expect(r.json!.action).toMatchObject({

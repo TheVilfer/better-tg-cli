@@ -87,6 +87,11 @@ interface Descriptor {
   text?: Record<string, string>;
   /** Labels for the other arguments */
   labels?: Record<string, string>;
+  /**
+   * The command finds its user argument with getEntity, not by dialog title: only the forms both
+   * resolve alike (@username, an ID, me) are looked up, a name is shown as typed.
+   */
+  userByEntity?: boolean;
 }
 
 const CHAT = { chat: 'Chat' };
@@ -127,9 +132,9 @@ const DESCRIPTORS: Record<string, Descriptor> = {
   'invite-link': { verb: 'Create an invite link', peers: CHAT },
   'create-group': { verb: 'Create a group', labels: { title: 'Title', users: 'Members' } },
   'create-channel': { verb: 'Create a channel', labels: { title: 'Title' } },
-  kick: { verb: 'Remove a member', peers: { group: 'Chat', user: 'User' } },
-  promote: { verb: 'Make a member an admin', peers: { group: 'Chat', user: 'User' } },
-  'transfer-owner': { verb: 'Transfer chat ownership', peers: { group: 'Chat', user: 'New owner' } },
+  kick: { verb: 'Remove a member', peers: { group: 'Chat', user: 'User' }, userByEntity: true },
+  promote: { verb: 'Make a member an admin', peers: { group: 'Chat', user: 'User' }, userByEntity: true },
+  'transfer-owner': { verb: 'Transfer chat ownership', peers: { group: 'Chat', user: 'New owner' }, userByEntity: true },
   'edit-permissions': { verb: 'Change a member\'s permissions', peers: { chat: 'Chat', user: 'User' } },
   'topic create': { verb: 'Create a forum topic', peers: CHAT, text: { title: 'Title' } },
   'topic edit': { verb: 'Edit a forum topic', peers: CHAT, labels: MSG },
@@ -155,12 +160,18 @@ const USER_ARGS = new Set(['user', 'users']);
  * fail too, and there is nothing to approve.
  */
 export function peerArgs(action: ParsedAction): { value: string; chat: boolean }[] {
-  const peers = action.parsed ? DESCRIPTORS[action.command]?.peers : undefined;
+  const d = action.parsed ? DESCRIPTORS[action.command] : undefined;
+  const peers = d?.peers;
   if (!peers) return [];
   return action.args.flatMap(a => (a.name in peers
-    ? (Array.isArray(a.value) ? a.value : [a.value]).map(value => ({ value, chat: !USER_ARGS.has(a.name) }))
+    ? (Array.isArray(a.value) ? a.value : [a.value])
+      .filter(value => !(d.userByEntity && USER_ARGS.has(a.name)) || SAME_BY_ENTITY.test(value.trim()))
+      .map(value => ({ value, chat: !USER_ARGS.has(a.name) }))
     : []));
 }
+
+/** Forms that getEntity and the chat lookup resolve to the same user. */
+const SAME_BY_ENTITY = /^(@\w+|-?\d+|me|self)$/i;
 
 /** One line, whatever a name contains: a title with a newline must not forge a line of its own. */
 export function oneLine(text: string): string {
@@ -172,10 +183,10 @@ export function visible(text: string): string {
   return text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ch => (ch === '\n' ? '\n' : `\\u{${ch.codePointAt(0)!.toString(16)}}`));
 }
 
-const quoteArg = (a: string) => (/^[\w@./:=+-]+$/.test(a) ? a : JSON.stringify(oneLine(a)));
+const quoteArg = (a: string): string => (/^[\w@./:=+-]+$/.test(a) ? a : JSON.stringify(oneLine(a)));
 
 export function describePeer(raw: string, info: PeerInfo | undefined): string {
-  if (!info) return `${oneLine(raw)} (not looked up)`;
+  if (!info) return `${quoteArg(raw)} (as typed: the command looks this name up itself)`;
   if (!info.ok) return `${quoteArg(raw)} — could not be looked up (${oneLine(info.error)}). Check who this is before you approve.`;
   if (info.self) return `Saved Messages (your own chat, id ${info.id})`;
   const extra = [info.type, info.username ? `@${oneLine(info.username)}` : undefined, `id ${info.id}`].filter(Boolean).join(', ');

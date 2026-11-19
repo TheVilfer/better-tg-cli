@@ -2,7 +2,7 @@ import { qrLoginDriver, saveLogin } from './auth.js';
 import { fetchInviteCredentials } from './broker.js';
 import { disconnectClient, getClient, SESSION_EXPIRED } from './client.js';
 import { getSessionString, isConfigured } from './config.js';
-import { ONBOARD_SITE, startOnboarding, type OnboardEvent, type OnboardSession } from './onboard.js';
+import { ONBOARD_SITE, startOnboarding, type ModeChoice, type OnboardEvent, type OnboardSession } from './onboard.js';
 import { applyModeChoice, savedMode } from './write-mode.js';
 
 /**
@@ -31,15 +31,24 @@ export async function sessionState(): Promise<'none' | 'alive' | 'expired'> {
  * choice of the write mode, which defaults to "ask". With `modeOnly`, only the mode choice for a
  * profile that is logged in already; it has no default, so opening it changes nothing by itself.
  */
-export function openSetupPage(options: { emit(e: OnboardEvent): void; modeOnly?: boolean; testDc?: boolean; broker?: string }): Promise<OnboardSession> {
+export function openSetupPage(options: { emit(e: OnboardEvent): void; modeOnly?: boolean; testDc?: boolean; broker?: string; confirmChoices?: boolean }): Promise<OnboardSession> {
   const notLogin = () => Promise.reject(new Error('not a login'));
+  // `confirmChoices` (telegram_setup: the model got the link): a mode picked on the page is
+  // confirmed by the person in a dialog or terminal, like "on" always is. The default a finished
+  // login sets ("ask", the first call on a login page) is not: only the person can finish a login.
+  let defaultPending = !options.modeOnly;
+  const applyMode = (choice: ModeChoice) => {
+    const isDefault = defaultPending;
+    defaultPending = false;
+    return applyModeChoice(choice, { confirmAsk: !!options.confirmChoices && !isDefault });
+  };
   return startOnboarding({
     driver: options.modeOnly ? { login: notLogin } : qrLoginDriver(!!options.testDc),
     redeemInvite: options.modeOnly ? notLogin : token => fetchInviteCredentials(token, options.broker),
     save: options.modeOnly ? () => {} : (s, creds, invite) => saveLogin(s, creds, invite, !!options.testDc),
     emit: options.emit,
     site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
-    applyMode: choice => applyModeChoice(choice),
+    applyMode,
     currentMode: savedMode,
     ...(options.modeOnly
       ? { modeOnly: true }

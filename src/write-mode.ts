@@ -28,12 +28,14 @@ function humanSpan(seconds: number): string {
  *   mode is unprotected anyway (src/write-store.ts);
  * - neither, but a secret store: refused, the person runs `telegram write-access` in a terminal.
  */
-export async function applyModeChoice(choice: ModeChoice, options: { alreadyConfirmed?: boolean } = {}): Promise<ModeResult> {
+export async function applyModeChoice(choice: ModeChoice, options: { alreadyConfirmed?: boolean; confirmAsk?: boolean } = {}): Promise<ModeResult> {
   if (choice.mode === 'read-only') {
     deleteWriteValue();
     return { ok: true };
   }
-  if (choice.mode === 'on' && !options.alreadyConfirmed) {
+  // `confirmAsk`: "ask" is gated like "on", for a page whose link the model itself handed out
+  // (telegram_setup over MCP), where a click could come from the model rather than the person
+  if ((choice.mode === 'on' || options.confirmAsk) && !options.alreadyConfirmed) {
     if (hasHumanChannel()) {
       if (!(await confirmByHuman(modeQuestion(choice.mode, choice.forSeconds)))) return { ok: false, error: 'not_confirmed' };
     } else if (!mayTrustUnconfirmedChoice()) {

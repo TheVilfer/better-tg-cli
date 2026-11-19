@@ -635,7 +635,7 @@ function setupResult(url: string, step: 'login' | 'mode', extra: { sessionExpire
       ? 'There they log in to Telegram (a QR code they scan in the Telegram app, then their 2FA password if they have one) and choose what you may do: ' +
         'read-only, ask before each write, or write freely. The page stays open 15 minutes.'
       : 'They are logged in, but writes are off. There they choose what you may do: read-only, ask before each write, or write freely ' +
-        '(writing freely also asks them in a system dialog). The page waits 10 minutes and changes nothing if nobody picks.',
+        '(the computer then asks them to confirm in a system dialog). The page waits 10 minutes and changes nothing if nobody picks.',
     'You never see their code or password; never fill in the page or pick a mode for them. When they say they are done, check with telegram_read ["whoami"] and telegram_read ["write-access"].',
   ];
   return { content: [{ type: 'text', text: lines.join('\n') }], structuredContent: { status: 'open_page', step, url, ...extra } };
@@ -661,7 +661,8 @@ export async function runSetup(options: { readOnly?: boolean } = {}): Promise<To
     if (options.readOnly) return { content: [{ type: 'text', text: 'Already logged in. This server is read-only, so there is no write mode to choose.' }], structuredContent: { status: 'ready', mode } };
   }
   const step = state === 'alive' ? 'mode' : 'login';
-  const session = await openSetupPage({ modeOnly: step === 'mode', emit: () => {} });
+  // The model holds this link, so every write mode picked there is confirmed by the person
+  const session = await openSetupPage({ modeOnly: step === 'mode', emit: () => {}, confirmChoices: true });
   const job = { url: session.url, step, session } as const;
   setupJob = job;
   const end = () => {

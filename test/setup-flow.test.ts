@@ -15,6 +15,22 @@ const fake = vi.hoisted(() => ({
   mode: 'read-only' as 'read-only' | 'ask' | 'on',
   pages: [] as { modeOnly?: boolean; defaultMode?: string }[],
   opened: [] as string[],
+  /** applyMode of the last page, as the page server would call it */
+  applyMode: undefined as undefined | ((c: { mode: 'read-only' | 'ask' | 'on'; forSeconds?: number }) => Promise<{ ok: boolean; error?: string }>),
+  /** The person's answer in the OS dialog, and what was asked */
+  answer: false,
+  asked: [] as string[],
+  /** What reached the write-mode store */
+  written: [] as string[],
+}));
+// A person who can be asked (an OS dialog), and a store that records instead of touching a real one
+vi.mock('../src/confirm.js', () => ({ confirmByHuman: async (q: string) => (fake.asked.push(q), fake.answer), windowsConfirmScript: () => '' }));
+vi.mock('../src/write-store.js', async orig => ({
+  ...(await orig<typeof import('../src/write-store.js')>()),
+  hasHumanChannel: () => true,
+  mayTrustUnconfirmedChoice: () => false,
+  setWriteValue: (v: string) => (fake.written.push(v), true),
+  deleteWriteValue: () => { fake.written.push('<deleted>'); },
 }));
 vi.mock('../src/config.js', async orig => ({
   ...(await orig<typeof import('../src/config.js')>()),
@@ -28,8 +44,9 @@ vi.mock('../src/client.js', async orig => ({
 }));
 vi.mock('../src/onboard.js', async orig => ({
   ...(await orig<typeof import('../src/onboard.js')>()),
-  startOnboarding: async (o: { modeOnly?: boolean; defaultMode?: string; emit(e: unknown): void }) => {
+  startOnboarding: async (o: { modeOnly?: boolean; defaultMode?: string; emit(e: unknown): void; applyMode?: typeof fake.applyMode }) => {
     fake.pages.push({ modeOnly: o.modeOnly, defaultMode: o.defaultMode });
+    fake.applyMode = o.applyMode;
     const url = `http://127.0.0.1:1/${fake.pages.length}`;
     o.emit({ event: 'url', url });
     return { url, done: new Promise(() => {}), close: () => {} };
@@ -45,7 +62,7 @@ import { loginHint } from '../src/login-hint.js';
 import { secretStoreHint } from '../src/write-store.js';
 
 beforeEach(() => {
-  Object.assign(fake, { configured: true, session: 'stored-session', clientError: undefined, mode: 'read-only', pages: [], opened: [] });
+  Object.assign(fake, { configured: true, session: 'stored-session', clientError: undefined, mode: 'read-only', pages: [], opened: [], applyMode: undefined, answer: false, asked: [], written: [] });
   for (const k of ['TG_MOCK', 'TG_MCP', 'SSH_CONNECTION']) delete process.env[k];
 });
 afterEach(() => closeSetup());
@@ -147,6 +164,30 @@ describe('telegram_setup gives an MCP-only user a way in (5.1)', () => {
     const r = await runSetup();
     expect(fake.pages).toEqual([{ modeOnly: true, defaultMode: undefined }]);
     expect(r.structuredContent).toMatchObject({ step: 'mode' });
+  });
+
+  it('the model holds the link, so a mode picked on the mode page is confirmed by the person; a no keeps read-only', async () => {
+    await runSetup();
+    fake.answer = false;
+    expect(await fake.applyMode!({ mode: 'ask' })).toEqual({ ok: false, error: 'not_confirmed' });
+    expect(fake.asked).toHaveLength(1);
+    expect(fake.written).toEqual([]);
+    fake.answer = true;
+    expect(await fake.applyMode!({ mode: 'ask' })).toMatchObject({ ok: true });
+    expect(fake.written).toEqual(['ask']);
+    // Going back to read-only needs nobody
+    expect(await fake.applyMode!({ mode: 'read-only' })).toEqual({ ok: true });
+    expect(fake.asked).toHaveLength(2);
+  });
+
+  it('on the login page the default after a finished login needs no dialog, a later pick does', async () => {
+    fake.session = undefined;
+    await runSetup();
+    expect(await fake.applyMode!({ mode: 'ask' })).toMatchObject({ ok: true }); // the login's default
+    expect(fake.asked).toEqual([]);
+    expect(await fake.applyMode!({ mode: 'ask', forSeconds: 3600 })).toEqual({ ok: false, error: 'not_confirmed' });
+    expect(fake.asked).toHaveLength(1);
+    expect(fake.written).toEqual(['ask']);
   });
 
   it('already writable, a read-only server, mock mode, no network: no page', async () => {
