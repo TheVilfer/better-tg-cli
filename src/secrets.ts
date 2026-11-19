@@ -1,21 +1,23 @@
 import {
-  SECRET_KEYS,
   isKeychainAvailable,
   isSecretKey,
   keychainDelete,
   keychainGet,
+  keychainGetStrict,
   keychainSet,
+  type StrictRead,
 } from './keychain.js';
 import {
   isOnePasswordAvailable,
   opDelete,
   opGet,
+  opGetStrict,
   opSet,
 } from './onepassword.js';
-import { isLibsecretAvailable, libsecretDelete, libsecretGet, libsecretSet } from './libsecret.js';
-import { dpapiDelete, dpapiGet, dpapiSet, isDpapiAvailable } from './dpapi.js';
+import { isLibsecretAvailable, libsecretDelete, libsecretGet, libsecretGetStrict, libsecretSet } from './libsecret.js';
+import { dpapiDelete, dpapiGet, dpapiGetStrict, dpapiSet, isDpapiAvailable } from './dpapi.js';
 
-export { SECRET_KEYS, isSecretKey };
+export { isSecretKey };
 
 type Provider = 'op' | 'keychain' | 'libsecret' | 'dpapi' | 'none';
 
@@ -31,13 +33,31 @@ export function isSecretStoreAvailable(): boolean {
   return activeProvider() !== 'none';
 }
 
-export function secretGet(key: string): string | null {
+/**
+ * `fresh`: skip any value cached in this process (DPAPI decrypts its file once per process), for a
+ * read-back that must see what another process wrote since. The other stores always ask anew.
+ */
+export function secretGet(key: string, fresh = false): string | null {
   const provider = activeProvider();
   if (provider === 'op') return opGet(key);
   if (provider === 'keychain') return keychainGet(key);
   if (provider === 'libsecret') return libsecretGet(key);
-  if (provider === 'dpapi') return dpapiGet(key);
+  if (provider === 'dpapi') return dpapiGet(key, fresh);
   return null;
+}
+
+/**
+ * secretGet that tells a missing key ({ok: true, value: null}) from a failed read ({ok: false}).
+ * `fileHasValue`: config.json5 holds this key too. 1Password can only tell "missing" by its error
+ * text, so it may say "missing" only when nothing else could be used instead (see opGetStrict).
+ */
+export function secretGetStrict(key: string, fileHasValue = false): StrictRead {
+  const provider = activeProvider();
+  if (provider === 'op') return opGetStrict(key, fileHasValue);
+  if (provider === 'keychain') return keychainGetStrict(key);
+  if (provider === 'libsecret') return libsecretGetStrict(key);
+  if (provider === 'dpapi') return dpapiGetStrict(key);
+  return { ok: false, reason: 'no secret store is available' };
 }
 
 export function secretSet(key: string, value: string): boolean {
@@ -56,31 +76,4 @@ export function secretDelete(key: string): boolean {
   if (provider === 'libsecret') return libsecretDelete(key);
   if (provider === 'dpapi') return dpapiDelete(key);
   return false;
-}
-
-let migrationDone = false;
-
-/**
- * Migrate secret fields from a config object into the active secret store.
- * Returns a new config object with successfully migrated secrets removed.
- */
-export function migrateSecretsToStore(config: Record<string, unknown>): Record<string, unknown> {
-  if (migrationDone || !isSecretStoreAvailable()) return config;
-  migrationDone = true;
-
-  let needsRewrite = false;
-  const cleaned = { ...config };
-
-  for (const key of SECRET_KEYS) {
-    const value = config[key];
-    if (typeof value === 'string' && value !== '') {
-      if (secretSet(key, value)) {
-        delete cleaned[key];
-        needsRewrite = true;
-      }
-    }
-  }
-
-  if (!needsRewrite) return config;
-  return cleaned;
 }

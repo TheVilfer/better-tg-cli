@@ -34,6 +34,60 @@ describe('DPAPI secret store', () => {
     expect(existsSync(file)).toBe(false); // nothing left, no file
   });
 
+  it('a strict read tells a missing key from a file it cannot decrypt (loadConfig needs it)', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    expect(dpapiStore(() => file, fake).getStrict('k')).toEqual({ ok: true, value: null }); // no file yet
+    dpapiStore(() => file, fake).set('k', 'v');
+    expect(dpapiStore(() => file, fake).getStrict('k')).toEqual({ ok: true, value: 'v' });
+    expect(dpapiStore(() => file, fake).getStrict('other')).toEqual({ ok: true, value: null });
+    const broken = dpapiStore(() => file, { protect: () => { throw new Error('no'); }, unprotect: () => { throw new Error('no'); } });
+    const reason = 'Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed';
+    expect(broken.getStrict('k')).toEqual({ ok: false, reason });
+    // Decrypted but damaged JSON: JSON.parse would quote the content; the reason must not
+    const damaged = dpapiStore(() => file, {
+      protect: b64 => b64,
+      unprotect: () => Buffer.from('{"sessionString": "SECRET-MARKER', 'utf8').toString('base64'),
+    });
+    expect(damaged.getStrict('k')).toEqual({ ok: false, reason });
+  });
+
+  it('a fresh read sees what another process wrote since; a plain one keeps the cache', () => {
+    // The onboard page reads the write mode back at the end; `write-access off` may have run meanwhile
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    const page = dpapiStore(() => file, fake);
+    expect(page.set('writeEnabled', 'ask')).toBe(true);
+    expect(page.get('writeEnabled')).toBe('ask');
+    expect(dpapiStore(() => file, fake).delete('writeEnabled')).toBe(true); // the other process
+    expect(page.get('writeEnabled')).toBe('ask'); // cached
+    expect(page.get('writeEnabled', true)).toBeNull();
+    expect(page.get('writeEnabled')).toBeNull(); // and the cache follows the fresh read
+  });
+
+  it('set and delete start from the file as it is now, not from a stale cache', () => {
+    // The MCP server caches writeEnabled=ask, `write-access off` deletes it in another process,
+    // then the server stores its first approvalKey: that must not bring `ask` back
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    const a = dpapiStore(() => file, fake);
+    expect(a.set('writeEnabled', 'ask')).toBe(true);
+    expect(a.set('other', 'x')).toBe(true);
+    expect(a.get('writeEnabled')).toBe('ask'); // cached in A
+    const b = dpapiStore(() => file, fake);
+    expect(b.delete('writeEnabled')).toBe(true);
+    expect(a.set('approvalKey', 'k1')).toBe(true);
+    const now = dpapiStore(() => file, fake);
+    expect(now.get('approvalKey')).toBe('k1');
+    expect(now.get('writeEnabled')).toBeNull();
+    expect(now.get('other')).toBe('x');
+
+    // Same for delete: B adds a key A has not seen, A deletes another one
+    expect(b.set('sessionString', 's')).toBe(true);
+    expect(a.delete('other')).toBe(true);
+    const after = dpapiStore(() => file, fake);
+    expect(after.get('sessionString')).toBe('s');
+    expect(after.get('approvalKey')).toBe('k1');
+    expect(after.get('other')).toBeNull();
+  });
+
   it('reads nothing from a file it cannot decrypt', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
     dpapiStore(() => file, fake).set('k', 'v');

@@ -4,7 +4,7 @@ import { qrLoginDriver, saveLogin } from '../auth.js';
 import { fetchInviteCredentials } from '../broker.js';
 import { getSessionString, isConfigured } from '../config.js';
 import { ONBOARD_SITE, startOnboarding, type OnboardEvent } from '../onboard.js';
-import { applyModeChoice } from '../write-mode.js';
+import { applyModeChoice, savedMode } from '../write-mode.js';
 
 const HUMAN: Record<OnboardEvent['event'], (e: never) => string> = {
   url: (e: { url: string }) => `Open this page to log in (it stays on this computer): ${e.url}`,
@@ -45,8 +45,18 @@ export const onboardCommand = new Command('onboard')
       if (e.event === 'logged_in' && timer) clearTimeout(timer);
     };;
 
-    // Never replace a working login, same as `telegram auth`
-    if (isConfigured() && getSessionString()) {
+    // Never replace a working login, same as `telegram auth`; an unreadable store stops here too
+    let loggedIn: boolean;
+    try {
+      loggedIn = isConfigured() && !!getSessionString();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // No page is open yet, so not HUMAN.error ("the page offers a retry")
+      if (opts.json) emit({ event: 'error', message });
+      else console.error(message);
+      process.exit(1);
+    }
+    if (loggedIn) {
       console.log(opts.json
         ? JSON.stringify({ event: 'already_logged_in' })
         : 'Already logged in. Check with "telegram whoami"; "telegram logout" first to switch accounts.');
@@ -69,6 +79,7 @@ export const onboardCommand = new Command('onboard')
       emit,
       site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
       applyMode: choice => applyModeChoice(choice),
+      currentMode: savedMode,
       // Writes are possible right away, each one after the user's yes in the chat; the page can change it
       defaultMode: 'ask',
     });

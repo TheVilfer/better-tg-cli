@@ -1,6 +1,7 @@
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { configFile, secretPrefix } from './paths.js';
+import type { StrictRead } from './keychain.js';
 
 let opAvailableCache: boolean | null = null;
 let opBinaryPath: string | null = null;
@@ -113,6 +114,30 @@ export function opGet(key: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * `op read` exits 1 both for a missing item and for any other failure (network, auth, rate limit).
+ * Its "… isn't an item in the … vault" text is the only sign of a missing item, and it is not a
+ * stable interface (it has also been reported for items that exist). So it counts as missing only
+ * when config.json5 has no value for the key (`fileHasValue` false): then "missing" can only mean
+ * "not configured", never "use the file copy instead of the stored one". Any other failure, or any
+ * failure while the file holds a value, is a failed read. The reason never carries op's output.
+ */
+export function opGetStrict(key: string, fileHasValue = false): StrictRead {
+  if (!isOnePasswordAvailable()) return { ok: false, reason: '1Password is not available' };
+  const r = spawnSync(getOpBinary()!, ['read', `op://${resolveVault()!}/${itemName(key)}/credential`], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    timeout: 60_000,
+    env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
+  });
+  if (r.status === 0 && !r.error) return { ok: true, value: r.stdout.trim() || null };
+  if (!fileHasValue && !r.error && r.status === 1 && /isn['\u2019]t an item/.test(r.stderr ?? '')) {
+    return { ok: true, value: null };
+  }
+  return { ok: false, reason: `1Password read failed (exit ${r.status ?? 'none'})` };
 }
 
 interface OpField { id?: string; label?: string; type?: string; value?: string }

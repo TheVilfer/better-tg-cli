@@ -2,13 +2,13 @@ import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
-import { connectClient } from './transport.js';
+import { connectClient, transportSetting } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
-import { getCredentials, getSessionString, setSessionString, isConfigured, loadConfig } from './config.js';
+import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
 import bigInt from 'big-integer';
-import { existsSync, mkdirSync, statSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
 import { basename, join } from 'path';
 import { isTTY } from './spinner.js';
@@ -16,7 +16,8 @@ import { approvedForAnotherSession } from './approval.js';
 
 let clientInstance: TelegramClient | null = null;
 
-export async function getClient(): Promise<TelegramClient> {
+/** `snapshot`: a config the caller already loaded (`telegram check`), used instead of a new read. */
+export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   if (clientInstance?.connected) {
     return clientInstance;
   }
@@ -28,12 +29,15 @@ export async function getClient(): Promise<TelegramClient> {
     return clientInstance;
   }
 
-  if (!isConfigured()) {
+  // One snapshot: credentials, session, transport and test-DC flag all come from the same store read
+  // (a second read after the 1 s cache could see something else or fail)
+  const config = snapshot ?? loadConfig(() => {});
+  if (!isConfigured(config)) {
     throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
   }
 
-  const { apiId, apiHash } = getCredentials();
-  const sessionString = getSessionString() || '';
+  const { apiId, apiHash } = getCredentials(config);
+  const sessionString = config.sessionString || '';
   // A write approved in mode "ask" connects only as the account it was approved for
   if (approvedForAnotherSession(sessionString)) {
     throw new Error('Another account logged in after this write was approved. Nothing was sent; run the command again for a new approval.');
@@ -41,10 +45,14 @@ export async function getClient(): Promise<TelegramClient> {
 
   // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
   // A fresh StringSession per attempt: a failed TCP try must not leave state behind for WSS.
-  clientInstance = await connectClient(t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(undefined, t)));
+  const testServers = !!config.testServers;
+  clientInstance = await connectClient(
+    t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(testServers, t)),
+    { setting: transportSetting(undefined, config) },
+  );
 
   if (!await clientInstance.isUserAuthorized()) {
-    const invited = loadConfig(() => {}).credentialSource === 'invite';
+    const invited = config.credentialSource === 'invite';
     throw new Error(
       invited
         ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'
@@ -882,7 +890,9 @@ export async function downloadMessageMedia(
   client: TelegramClient,
   chatIdentifier: string,
   messageId: number,
-  outputDir: string
+  outputDir: string,
+  /** Called with the target file before the folder is created or anything is written; may throw. */
+  checkPath?: (filePath: string) => void,
 ): Promise<{ filePath: string; media: MediaInfo } | null> {
   const entity = await resolveChat(client, chatIdentifier);
 
@@ -896,18 +906,38 @@ export async function downloadMessageMedia(
   const mediaInfo = extractMediaInfo(msg);
   if (!mediaInfo) return null;
 
+  const fileName = buildMediaFilename(mediaInfo, msg.id);
+  const filePath = join(outputDir, fileName);
+  checkPath?.(filePath);
+  assertDownloadTarget(filePath);
+
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
   }
-
-  const fileName = buildMediaFilename(mediaInfo, msg.id);
-  const filePath = join(outputDir, fileName);
 
   const result = await client.downloadMedia(msg, { outputFile: filePath });
   // downloadMedia returns the path/Buffer; when outputFile is a string, file is written there.
   const savedPath = typeof result === 'string' ? result : filePath;
 
   return { filePath: savedPath, media: mediaInfo };
+}
+
+/**
+ * A download target must be a regular file or nothing. teleproto is always handed this full file
+ * path, but where a directory sits at it, teleproto picks a file of its own inside that directory
+ * (`getProperFilename`), and a write follows a symbolic link wherever it points. Either way the
+ * bytes would land somewhere nobody checked, so both are refused before anything is written.
+ */
+export function assertDownloadTarget(filePath: string): void {
+  let st;
+  try {
+    st = lstatSync(filePath);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw e;
+  }
+  if (st.isSymbolicLink()) throw new Error(`Refusing to download through a symbolic link: ${filePath}`);
+  if (!st.isFile()) throw new Error(`Refusing to download: ${filePath} exists and is not a regular file`);
 }
 
 export function buildMediaFilename(media: MediaInfo, messageId: number): string {
@@ -2591,6 +2621,7 @@ export async function downloadAvatar(
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
   const fileName = `avatar_${entity.id.toString()}.jpg`;
   const filePath = join(outputDir, fileName);
+  assertDownloadTarget(filePath);
   const result = await client.downloadProfilePhoto(entity, { outputFile: filePath });
   if (!result) return { filePath: null, title };
   return { filePath: typeof result === 'string' ? result : filePath, title };
@@ -3032,10 +3063,14 @@ export async function invokeApi(
   methodName: string,
   rawParams: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const { resolveApiMethod } = await import('./api-methods.js');
-  const { ctor } = resolveApiMethod(methodName);
+  const { resolveApiMethod, mcpPaidStarsRefusal, geoParamRefusal } = await import('./api-methods.js');
+  const { ctor, className } = resolveApiMethod(methodName);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
+  // Checked again on the fields the request really carries (Stars over MCP, coordinates)
+  const fields = { ...request } as Record<string, unknown>;
+  const refusal = geoParamRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields);
+  if (refusal) throw new Error(refusal);
   return client.invoke(request);
 }
 
@@ -3049,7 +3084,8 @@ async function materializeApiParams(client: TelegramClient, value: unknown): Pro
     if (typeof obj._base64 === 'string') return Buffer.from(obj._base64, 'base64');
     if (typeof obj._hex === 'string') return Buffer.from(obj._hex, 'hex');
     if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return bigInt(String(obj._bigint));
-    const out: Record<string, unknown> = {};
+    // Prototype-free, so no field (allowPaidStars) is inherited after the checks in runApiMethod
+    const out = Object.create(null) as Record<string, unknown>;
     for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
     return out;
   }
@@ -3063,6 +3099,8 @@ export function serializeApiResult(result: unknown): string {
     if (typeof val === 'bigint') return val.toString();
     if (bigInt.isInstance(val)) return val.toString();
     if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+    // help.GetConfig may carry a token that logs into Telegram's web pages as this account
+    if (_key === 'autologinToken' && val) return '[redacted]';
     return val;
   };
   const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);

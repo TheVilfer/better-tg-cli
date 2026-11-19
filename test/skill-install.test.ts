@@ -7,7 +7,7 @@ import { SKILL_FILES } from '../src/skill-files.js';
 import {
   agentStatus, installSkill, knownAgents, selectAgents, SKILL_NAME, uninstallSkill,
 } from '../src/skill-install.js';
-import { EXCLUDED_COMMANDS, isWriteCommand, setKnownCommands } from '../src/mcp.js';
+import { NEVER_COMMANDS, classifyCall, isWriteCommand, setKnownCommands } from '../src/mcp.js';
 
 // Every test works in a throwaway HOME; the real agent folders are never touched
 const fakeHome = () => mkdtempSync(join(tmpdir(), 'tg-skill-'));
@@ -115,7 +115,8 @@ describe('install / uninstall', () => {
 describe('MCP', () => {
   it('never exposes `skill`, which writes into other agents\' config', () => {
     setKnownCommands(['skill', 'send']);
-    expect(EXCLUDED_COMMANDS.has('skill')).toBe(true);
+    expect(NEVER_COMMANDS.has('skill')).toBe(true);
+    expect(classifyCall(['skill', 'install'])).toMatchObject({ group: 'never' });
     expect(isWriteCommand('skill')).toBe(false);
   });
 });

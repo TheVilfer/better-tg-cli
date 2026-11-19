@@ -1,7 +1,7 @@
 import type { TelegramClient } from 'teleproto';
 import { PromisedWebSockets } from 'teleproto/extensions/PromisedWebSockets.js';
 import { WebSocket as WsWebSocket } from 'ws';
-import { loadConfig, saveConfig } from './config.js';
+import { loadConfig, saveConfig, type TgConfig } from './config.js';
 
 /**
  * How the client reaches Telegram's servers.
@@ -16,14 +16,17 @@ export type TransportSetting = Transport | 'auto';
 
 const VALUES: TransportSetting[] = ['tcp', 'wss', 'auto'];
 
-/** TG_TRANSPORT wins, then `transport` in the config, then auto. */
-export function transportSetting(env = process.env.TG_TRANSPORT): TransportSetting {
+/**
+ * TG_TRANSPORT wins, then `transport` in the config, then auto. `config`: the snapshot the caller
+ * already loaded (getClient), so the transport comes from the same read as the session.
+ */
+export function transportSetting(env = process.env.TG_TRANSPORT, config?: Pick<TgConfig, 'transport'>): TransportSetting {
   const fromEnv = env?.trim().toLowerCase();
   if (fromEnv) {
     if ((VALUES as string[]).includes(fromEnv)) return fromEnv as TransportSetting;
     throw new Error(`Invalid TG_TRANSPORT "${env}": use tcp, wss or auto`);
   }
-  const saved = loadConfig(() => {}).transport;
+  const saved = (config ?? loadConfig(() => {})).transport;
   return saved === 'tcp' || saved === 'wss' ? saved : 'auto';
 }
 
@@ -91,7 +94,8 @@ export async function connectClient(
     await second.destroy().catch(() => {});
     throw isNetworkFailure(e) ? new Error(`${BLOCKED_HINT} (${(e as Error).message})`) : e;
   }
-  if (options.remember !== false) {
+  // A read (TG_READ_ONLY, the MCP read tool) never writes the profile; the next run just tries TCP again
+  if (options.remember !== false && !process.env.TG_READ_ONLY) {
     try {
       saveConfig({ transport: 'wss' });
       notice('Saved transport "wss" for this profile (TG_TRANSPORT=tcp or auto overrides it).');

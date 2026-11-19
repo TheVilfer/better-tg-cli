@@ -48,7 +48,7 @@ vi.mock('../src/write-store.js', async orig => {
 
 import { describeWriteState, encodeWriteState, parseWriteState } from '../src/write-state.js';
 import { actionHash, consumeApproval, createApproval, describeAction, APPROVAL_TTL_MS, EXIT_NEEDS_APPROVAL } from '../src/approval.js';
-import { assertWriteEnabled } from '../src/guard.js';
+import { assertLocalWriteAllowed, assertWriteEnabled } from '../src/guard.js';
 import { auditLog } from '../src/audit.js';
 import { applyModeChoice } from '../src/write-mode.js';
 import { getWriteValue, isFileFallbackAllowed } from '../src/write-store.js';
@@ -60,7 +60,7 @@ import { getSessionString } from '../src/config.js';
 let root: string | undefined;
 let dir: string;
 beforeEach(() => {
-  for (const k of ['TG_MOCK', 'TG_READ_ONLY', 'TG_APPROVE']) delete process.env[k];
+  for (const k of ['TG_MOCK', 'TG_READ_ONLY', 'TG_APPROVE', 'TG_MCP']) delete process.env[k];
   root = mkdtempSync(join(tmpdir(), 'tg-modes-'));
   process.env.HOME = root;
   process.env.USERPROFILE = root;
@@ -94,14 +94,14 @@ afterAll(() => {
 const account = () => getSessionString();
 
 /** Runs the guard, turning process.exit into a value; returns the exit code (or null) and stderr. */
-function guard(argv: string[]) {
+function guard(argv: string[], check: (argv: string[]) => void = assertWriteEnabled) {
   let err = '';
   let out = '';
   vi.spyOn(console, 'error').mockImplementation((...a) => { err += a.join(' ') + '\n'; });
   vi.spyOn(console, 'log').mockImplementation((...a) => { out += a.join(' ') + '\n'; });
   vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw Object.assign(new Error('exit'), { code }); }) as never);
   try {
-    assertWriteEnabled(argv);
+    check(argv);
     return { code: null as number | null, err, out };
   } catch (e) {
     return { code: (e as { code: number }).code, err, out };
@@ -251,6 +251,62 @@ describe('the guard', () => {
   });
 });
 
+// download, sync and avatar write local files only: free in a terminal, but over MCP (TG_MCP) they
+// follow the profile's write mode like any other write
+describe('local file writes', () => {
+  // Called through a wrapper: if the helper were missing, this must fail, not fall back to the default
+  const local = (argv: string[]) => guard(argv, a => assertLocalWriteAllowed(a));
+
+  it('need no write access in a terminal, whatever the mode', () => {
+    expect(local(['download', 'me', '1']).code).toBeNull();
+    store.values.set('writeEnabled', 'ask');
+    expect(local(['sync']).code).toBeNull();
+  });
+
+  it('over MCP are refused in read-only', () => {
+    process.env.TG_MCP = '1';
+    for (const argv of [['download', 'me', '1'], ['sync'], ['avatar', 'me']]) {
+      const r = local(argv);
+      expect(r.code, argv.join(' ')).toBe(1);
+      expect(r.err).toMatch(/Write access is disabled/);
+    }
+  });
+
+  it('over MCP in "ask" need an approval of that exact call, once', () => {
+    process.env.TG_MCP = '1';
+    store.values.set('writeEnabled', 'ask');
+    const first = local(['download', 'me', '1', '-o', '/tmp/x']);
+    expect(first.code).toBe(EXIT_NEEDS_APPROVAL);
+    process.env.TG_APPROVE = codeIn(first.err)!;
+    expect(local(['download', 'me', '1', '-o', '/tmp/x']).code).toBeNull();
+    expect(local(['download', 'me', '1', '-o', '/tmp/x']).code).toBe(EXIT_NEEDS_APPROVAL);
+  });
+
+  it('a misrouted read never writes a file', () => {
+    process.env.TG_READ_ONLY = '1';
+    expect(local(['download', 'me', '1']).code).toBe(1);
+  });
+
+  // A mock write needs no approval, so over MCP the model could pick any path
+  it('over MCP in mock mode are refused, whatever the mode; a terminal and a misrouted read as without mock', () => {
+    process.env.TG_MOCK = '1';
+    expect(local(['sync', '--output', '/tmp/x']).code).toBeNull();
+    process.env.TG_MCP = '1';
+    for (const mode of [undefined, 'ask', 'true']) {
+      if (mode) store.values.set('writeEnabled', mode);
+      for (const argv of [['download', 'me', '1'], ['sync', '--output', '/tmp/x'], ['avatar', 'me']]) {
+        const r = local(argv);
+        expect(r.code, `${mode} ${argv.join(' ')}`).toBe(1);
+        expect(r.err).toMatch(/mock mode \(TG_MOCK\).*write no local files/);
+      }
+    }
+    process.env.TG_READ_ONLY = '1';
+    const read = local(['download', 'me', '1']);
+    expect(read.code).toBe(1);
+    expect(read.err).toMatch(/cannot run as a read/);
+  });
+});
+
 describe('the file fallback', () => {
   it('is never used on macOS or Windows, where a missing store means a broken or disabled one', () => {
     expect(isFileFallbackAllowed('darwin')).toBe(false);
@@ -280,8 +336,11 @@ describe('choosing a mode', () => {
     expect(human.asked[0]).toMatch(/без вопросов/);
     expect(getWriteValue()).toBeNull();
     human.answer = true;
-    expect((await applyModeChoice({ mode: 'on', forSeconds: 3600 })).ok).toBe(true);
+    const r = await applyModeChoice({ mode: 'on', forSeconds: 3600 });
+    expect(r.ok).toBe(true);
     expect(parseWriteState(getWriteValue()).mode).toBe('on');
+    // It reports the end it wrote, to the second, so onboard can compare it with the store
+    expect(r.ok && r.until?.getTime()).toBe(parseWriteState(getWriteValue()).until?.getTime());
   });
 
   it('"ask" needs no dialog anywhere: the yes in the chat before each write is the confirmation', async () => {

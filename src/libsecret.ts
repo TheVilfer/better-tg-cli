@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { platform } from 'node:os';
 import { secretPrefix } from './paths.js';
+import type { StrictRead } from './keychain.js';
 
 /**
  * Linux Secret Service (GNOME Keyring, KWallet, KeePassXC) through `secret-tool`
@@ -32,6 +33,15 @@ export function libsecretGet(key: string): string | null {
   const r = run(['lookup', 'service', secretPrefix(), 'account', key]);
   if (r.status !== 0 || r.error) return null;
   return r.stdout.replace(/\n$/, '') || null;
+}
+
+/** A lookup that finds nothing exits 1 with an empty stderr (see the probe); anything else failed. */
+export function libsecretGetStrict(key: string): StrictRead {
+  const r = run(['lookup', 'service', secretPrefix(), 'account', key]);
+  if (!r.error && r.status === 0) return { ok: true, value: r.stdout.replace(/\n$/, '') || null };
+  if (!r.error && r.status === 1 && !r.stderr.trim()) return { ok: true, value: null };
+  const why = (r.error?.message || r.stderr || '').trim().split('\n')[0];
+  return { ok: false, reason: `Secret Service read failed (exit ${r.status ?? 'none'}${why ? `: ${why}` : ''})` };
 }
 
 export function libsecretSet(key: string, value: string): boolean {

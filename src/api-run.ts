@@ -1,5 +1,5 @@
 import { getClient, invokeApi, serializeApiResult, disconnectClient } from './client.js';
-import { isApiReadMethod, apiRefusalReason } from './api-methods.js';
+import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, plainParams } from './api-methods.js';
 import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
 import chalk from './colors.js';
@@ -20,14 +20,18 @@ export async function runApiMethod(
 ): Promise<void> {
   const auditCommand = options.auditCommand ?? 'api';
 
-  // Refuse after params are known so param-level checks (shared contact/geo media, phone-privacy) apply.
-  const refusal = apiRefusalReason(canonical, params);
+  // Prototype-free, so every check below sees exactly the fields the request gets. Refuse after
+  // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid call
+  // over MCP) apply.
+  params = plainParams(params);
+  const refusal = apiRefusalReason(canonical, params) ?? mcpPaidStarsRefusal(canonical, params);
   if (refusal) {
     console.error(chalk.red(refusal));
     process.exit(1);
   }
 
-  const isWrite = !isApiReadMethod(canonical);
+  // A read that may spend Stars (allowPaidStars) needs write access like any write
+  const isWrite = !isApiReadCall(canonical, params);
   if (isWrite) assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true });
 
   const spinner = ora(`Calling ${canonical}...`).start();
