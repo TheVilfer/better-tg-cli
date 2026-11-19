@@ -1,6 +1,13 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { EXCLUDED_COMMANDS, READ_COMMANDS, handleMessage, isWriteCommand, planCall, setKnownCommands, useWorkers } from '../src/mcp.js';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  NEVER_COMMANDS, PER_CALL_COMMANDS, READ_COMMANDS, WRITE_COMMANDS, classifyCall, handleMessage, isWriteCommand, planCall,
+  setKnownCommands, useWorkers,
+} from '../src/mcp.js';
+import { rootMethodClassName } from '../src/generated-registry.js';
 
 const CLI = 'dist/telegram.mjs';
 // Unconfigured profile: nothing here can reach a real account
@@ -16,15 +23,131 @@ function commandNames(): string[] {
 beforeAll(() => setKnownCommands(commandNames()));
 
 describe('command classification', () => {
-  it('every read or excluded name is a real command (no typos that silently disappear)', () => {
-    const names = new Set([...commandNames(), 'help-all']);
-    for (const c of [...READ_COMMANDS, ...EXCLUDED_COMMANDS]) expect(names, c).toContain(c);
+  const groups = { read: READ_COMMANDS, write: WRITE_COMMANDS, never: NEVER_COMMANDS, 'per call': PER_CALL_COMMANDS };
+
+  it('every registered command is in exactly one group (a new command without a group fails here)', () => {
+    for (const c of new Set([...commandNames(), 'help-all'])) {
+      const in_ = Object.entries(groups).filter(([, set]) => set.has(c)).map(([g]) => g);
+      expect(in_, c).toHaveLength(1);
+    }
   });
 
-  it('commands that are obviously writes or local-file writers are not reads', () => {
-    for (const c of ['send', 'reply', 'delete', 'forward', 'block', 'archive', 'kick', 'download', 'sync', 'avatar', 'invite-link']) {
+  it('every grouped name is a real command (no typos that silently disappear)', () => {
+    const names = new Set([...commandNames(), 'help-all']);
+    for (const set of Object.values(groups)) for (const c of set) expect(names, c).toContain(c);
+  });
+
+  it('no command name is also a root TL method, which would take its classification', () => {
+    for (const c of commandNames()) expect(rootMethodClassName(c), c).toBeUndefined();
+  });
+
+  it('commands that are obviously writes or local-file writers are writes', () => {
+    for (const c of ['send', 'reply', 'delete', 'forward', 'block', 'archive', 'kick', 'download', 'sync', 'avatar', 'invite-link', 'topic']) {
       expect(isWriteCommand(c), c).toBe(true);
     }
+  });
+});
+
+// The whole call decides, not the name: arguments of write-access, a bare --help, the TL method
+// behind api and generated commands, the operand of a clash namespace (auth, contacts, stats…).
+const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = [
+  [['inbox', '-n', '5'], 'read'],
+  [['send', 'me', '-'], 'write'],
+  [['topic', 'create', 'g', 't'], 'write'],
+  [['download', 'me', '1'], 'write'],
+  [['sync'], 'write'],
+  // MCP only shows the write mode
+  [['write-access'], 'read'],
+  [['write-access', 'on'], 'never'],
+  [['write-access', 'ask'], 'never'],
+  [['write-access', 'off'], 'never'],
+  [['write-access', '--json'], 'never'],
+  // Administrative and interactive commands, with any arguments
+  [['auth'], 'never'],
+  [['auth', '--phone', '+1'], 'never'],
+  [['logout'], 'never'],
+  [['onboard'], 'never'],
+  [['update'], 'never'],
+  [['update', '--', '--help'], 'never'],
+  [['logout', '--', '-h'], 'never'],
+  [['skill', 'install'], 'never'],
+  [['transfer-owner', 'g', 'u'], 'never'],
+  [['mcp'], 'never'],
+  [['mcp', '--token'], 'never'],
+  [['mcp', '--rotate-token'], 'never'],
+  [['mcp', '--http'], 'never'],
+  [['help-all'], 'never'],
+  // A bare --help only prints help, for any real command (even a never one); never for an unknown one
+  [['send', '--help'], 'read'],
+  [['mcp', '--token', '--help'], 'never'],
+  [['auth', '--help'], 'read'],
+  [['skill', 'install', '--help'], 'read'],
+  [['messages', '--help'], 'read'],
+  [['messages', 'get-history', '--help', '--json'], 'read'],
+  [['send', '@x', '--', '--help'], 'write'],
+  [['nope', '--help'], 'unknown'],
+  // TL methods: auth.* login methods and other refused methods never run
+  [['auth', 'send-code'], 'never'],
+  [['api', 'auth.CheckPassword'], 'never'],
+  [['api', 'account.DeleteAccount'], 'never'],
+  [['account', 'delete-account'], 'never'],
+  [['api', 'help.GetConfig'], 'read'],
+  [['api', 'contacts.Block'], 'write'],
+  [['api'], 'invalid'],
+  [['messages', 'get-history'], 'read'],
+  [['messages', 'send-message'], 'write'],
+  [['ping'], 'write'],
+  [['contacts'], 'read'],
+  [['contacts', 'block'], 'write'],
+  [['stats', '@chat'], 'read'],
+  [['stats', 'get-broadcast-stats'], 'read'],
+  [['help'], 'read'],
+  [['help', 'get-config'], 'read'],
+  // Not commands: refused, including future administrative commands until they get a group
+  [['messages'], 'unknown'],
+  [['messages', 'bogus'], 'unknown'],
+  [['__update-check'], 'unknown'],
+  [['connect'], 'unknown'],
+  [['secrets', 'use', 'x'], 'unknown'],
+  [['service', 'install'], 'unknown'],
+  [['doctor', '--fix'], 'unknown'],
+  [['nope'], 'unknown'],
+  [['--help'], 'invalid'],
+  [['watch', 'me'], 'invalid'],
+  [['watch', 'me', '-t', '30'], 'read'],
+];
+
+describe('call → group', () => {
+  it.each(CALLS)('%j is %s', (args, group) => {
+    expect(classifyCall(args).group).toBe(group);
+  });
+
+  it('each tool runs only its own group; never, unknown and invalid calls run on neither', () => {
+    for (const [args, group] of CALLS) {
+      for (const tool of ['telegram_read', 'telegram_write'] as const) {
+        const plan = planCall(tool, { args });
+        const runs = (tool === 'telegram_read' && group === 'read') || (tool === 'telegram_write' && group === 'write');
+        expect(typeof plan === 'object', `${tool} ${args.join(' ')}`).toBe(runs);
+        if (typeof plan === 'object') expect(plan.readOnly).toBe(tool === 'telegram_read');
+      }
+    }
+  });
+
+  it('handleMessage never starts the CLI for a refused call', async () => {
+    const ran: string[][] = [];
+    const run = async (plan: { argv: string[] }) => {
+      ran.push(plan.argv);
+      return { content: [{ type: 'text' as const, text: 'ran' }] };
+    };
+    let id = 1;
+    for (const [args, group] of CALLS) {
+      if (group === 'read' || group === 'write') continue;
+      for (const name of ['telegram_read', 'telegram_write']) {
+        const r = (await handleMessage({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: { args } } }, run)) as any;
+        expect(r.result.isError, `${name} ${args.join(' ')}`).toBe(true);
+      }
+    }
+    expect(ran).toEqual([]);
   });
 });
 
@@ -113,5 +236,40 @@ describe.concurrent.each([
     // A real read on the unconfigured profile fails cleanly instead of hanging on a prompt
     expect(lines[5].result.isError).toBe(true);
     expect(lines[5].result.content[0].text).toMatch(/not configured|not authenticated|auth/i);
+  }, 30_000);
+
+  it('refuses never and unknown calls without running anything or writing to disk', async () => {
+    // A fresh HOME: every config path of the profile lives under it, so it must stay empty
+    const home = mkdtempSync(join(tmpdir(), 'tg-mcp-never-'));
+    try {
+      const child = spawn(process.execPath, [CLI, 'mcp'], {
+        env: { ...env, ...extraEnv, HOME: home, USERPROFILE: home, TG_PROFILE: 'mcp-never-test' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const lines: any[] = [];
+      let buf = '';
+      child.stdout.on('data', d => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) { lines.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); }
+      });
+      const refused = [['write-access', 'on'], ['write-access', 'ask'], ['mcp', '--rotate-token'], ['skill', 'install'], ['logout'], ['update'], ['__update-check'], ['connect']];
+      let id = 1;
+      for (const args of refused) {
+        for (const name of ['telegram_read', 'telegram_write']) {
+          child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: { args } } }) + '\n');
+        }
+      }
+      child.stdin.end();
+      expect(await new Promise(r => child.on('close', r))).toBe(0);
+      expect(lines).toHaveLength(refused.length * 2);
+      for (const l of lines) {
+        expect(l.result.isError).toBe(true);
+        expect(l.result.content[0].text).toMatch(/not available over MCP|changed in a terminal|Unknown command/);
+      }
+      expect(readdirSync(home, { recursive: true })).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }, 30_000);
 });
