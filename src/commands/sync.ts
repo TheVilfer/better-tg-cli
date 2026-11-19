@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import {
+  assertDownloadTarget,
   getClient,
   getDialogs,
   getMessages,
@@ -58,7 +59,15 @@ async function formatMessageLines(
   if (msg.media) {
     if (downloadMedia) {
       try {
-        const result = await downloadMessageMedia(client, chatId, msg.id, chatMediaDir, path => { exportPath(outputDir, path); });
+        const result = await downloadMessageMedia(client, chatId, msg.id, chatMediaDir, path => {
+          exportPath(outputDir, path);
+          // A directory at the file's place would let teleproto choose the file inside it: stop the sync
+          try {
+            assertDownloadTarget(path);
+          } catch (e) {
+            throw new ExportPathError((e as Error).message);
+          }
+        });
         if (result) {
           const rel = relative(outputDir, result.filePath);
           lines.push(`> [${formatMediaLabel(result.media)}](${rel})`);
@@ -91,9 +100,11 @@ async function formatMessageLines(
 /**
  * The chats `--chat` names. In a terminal: exact titles (or the ID), else every title containing it.
  * Over MCP the model chose the name, so it must be exactly one chat by ID, @username or exact title;
- * otherwise this returns the reason to stop, before any file is created.
+ * otherwise this returns the reason to stop, before any file is created. `complete` says whether
+ * `all` is the whole dialog list: when it was cut, one exact title is not proven unique (another
+ * chat with that title may sit beyond the cut), so over MCP an ID is required.
  */
-export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolean): ChatInfo[] | string {
+export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolean, complete = true): ChatInfo[] | string {
   // An empty name would match every title (and must never fall back to exporting every chat)
   if (!name.trim()) return '--chat needs a chat: an ID, @username or title';
   // A numeric name is an ID, never a title ("123" must not pick a chat titled 123)
@@ -109,9 +120,13 @@ export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolea
   }
   const user = needle.replace(/^@/, '');
   const matches = needle.startsWith('@') ? all.filter(c => c.username?.toLowerCase() === user) : exact;
-  if (matches.length === 1) return matches;
-  if (matches.length === 0) return `No chat is exactly "${name}". Over MCP sync needs an ID, @username or the exact title.`;
   const list = matches.slice(0, 5).map(c => `  ${c.id} ${c.type} ${c.title}${c.username ? ` @${c.username}` : ''}`).join('\n');
+  // A @username is unique on Telegram, so one match is proven even in a cut list; a title is not
+  if (matches.length === 1 && (complete || needle.startsWith('@'))) return matches;
+  if (matches.length === 1) {
+    return `"${name}" matches a chat among the first ${all.length} dialogs, but the list was cut, so another chat may have the same title; use an ID:\n${list}`;
+  }
+  if (matches.length === 0) return `No chat is exactly "${name}". Over MCP sync needs an ID, @username or the exact title.`;
   return `"${name}" matches ${matches.length} chats; use an ID:\n${list}`;
 }
 
@@ -174,6 +189,9 @@ export function buildSyncFetchOptions(o: {
   return { limit: o.all ? Number.MAX_SAFE_INTEGER : 1000, minDate: o.minDate, maxDate: o.maxDate };
 }
 
+/** How many dialogs `--chat` searches; a list this long may have been cut. */
+const SYNC_DIALOG_LIMIT = 500;
+
 export const syncCommand = new Command('sync')
   .description('Sync messages to markdown files')
   .option('--days <number>', 'Number of days to sync', '7')
@@ -213,7 +231,8 @@ export const syncCommand = new Command('sync')
       // Present but empty is a mistake to stop at, never "every chat"
       if (options.chat !== undefined) {
         const overMcp = !!process.env.TG_MCP;
-        const selected = selectSyncChats(await getDialogs(client, 500), options.chat, overMcp);
+        const dialogs = await getDialogs(client, SYNC_DIALOG_LIMIT);
+        const selected = selectSyncChats(dialogs, options.chat, overMcp, dialogs.length < SYNC_DIALOG_LIMIT);
         if (typeof selected === 'string') {
           spinner.fail(selected);
           await disconnectClient();
@@ -247,11 +266,14 @@ export const syncCommand = new Command('sync')
           // By chat ID: a title such as ".." would otherwise put the media outside outputDir
           const chatMediaDir = exportPath(outputDir, join(outputDir, 'media', chat.id.replace(/[^\w-]/g, '_')));
 
-          // Incremental sync: only messages newer than the last checkpoint, and only into a file
-          // whose header names this chat (otherwise it is exported in full again)
-          const resumable = options.resume && existsSync(filePath)
-            && readFileSync(filePath, 'utf-8').split('\n', 8).includes(chatIdLine(chat.id));
-          const minId = resumable ? meta[chat.id]?.lastMessageId : undefined;
+          // Incremental sync. A known checkpoint always bounds the fetch from below, so the gap
+          // since the last run is fetched in full even when it goes to a new file (an export made
+          // before the file name carried the chat ID, or a file at this name that names another
+          // chat, which is then replaced). Appending is a separate question: only to a file whose
+          // header names this chat.
+          const existing = options.resume && existsSync(filePath) ? readFileSync(filePath, 'utf-8') : undefined;
+          const append = existing !== undefined && existing.split('\n', 8).includes(chatIdLine(chat.id));
+          const minId = options.resume ? meta[chat.id]?.lastMessageId : undefined;
 
           const fetchOptions = buildSyncFetchOptions({ all: !!options.all, since: !!options.since, minDate, maxDate, minId });
 
@@ -270,7 +292,7 @@ export const syncCommand = new Command('sync')
           }
 
           let content: string;
-          if (minId) {
+          if (append && minId) {
             // Append new messages to the existing file
             content = readFileSync(filePath, 'utf-8').trimEnd() + '\n\n' + body.join('\n');
           } else {
@@ -279,6 +301,8 @@ export const syncCommand = new Command('sync')
               header.push(`Username: @${chat.username}`);
             }
             header.push(`\nSynced: ${new Date().toISOString()}`);
+            // Resumed into a new file: the earlier messages are in a previous export
+            if (minId) header.push(`Continues after message #${minId} (earlier messages are in a previous export)`);
             header.push(`Messages: ${messages.length}`);
             header.push('\n---\n');
             content = [...header, ...body].join('\n');

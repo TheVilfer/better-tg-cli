@@ -6,13 +6,30 @@ import type { MockWorld } from '../src/mock/world.js';
 
 // sync over MCP in mock mode is refused by the guard, so the guard is lifted here and the mock
 // account is served straight to the command; nothing reaches Telegram.
-const state = vi.hoisted(() => ({ world: undefined as MockWorld | undefined }));
+const state = vi.hoisted(() => ({ world: undefined as MockWorld | undefined, realDownload: false }));
 vi.mock('../src/guard.js', async orig => ({ ...(await orig<typeof import('../src/guard.js')>()), assertLocalWriteAllowed: () => {} }));
 vi.mock('../src/client.js', async orig => {
   const { MockClient } = await import('../src/mock/client.js');
   return {
     ...(await orig<typeof import('../src/client.js')>()),
-    getClient: async () => new MockClient(state.world!),
+    getClient: async () => {
+      const client = new MockClient(state.world!);
+      if (state.realDownload) {
+        // teleproto's own downloadMedia (its path choice and the write) on a photo with a cached
+        // size, which it writes without any network request
+        const { Api } = await import('teleproto');
+        const downloads = await import('teleproto/client/downloads.js');
+        const bigInt = (await import('big-integer')).default;
+        client.downloadMedia = ((msg: InstanceType<typeof Api.Message>, p: { outputFile?: string }) => downloads.downloadMedia(client as never, new Api.Message({
+          id: msg.id, peerId: msg.peerId, date: 1_700_000_000, message: '',
+          media: new Api.MessageMediaPhoto({ photo: new Api.Photo({
+            id: bigInt(msg.id), accessHash: bigInt(0), fileReference: Buffer.alloc(0), date: 1_700_000_000, dcId: 1,
+            sizes: [new Api.PhotoCachedSize({ type: 's', w: 1, h: 1, bytes: Buffer.from('PHOTO') })],
+          }) }),
+        }), p.outputFile)) as never;
+      }
+      return client;
+    },
     disconnectClient: async () => {},
   };
 });
@@ -43,6 +60,7 @@ async function world(a: string, b: string): Promise<MockWorld> {
 }
 
 beforeEach(() => {
+  state.realDownload = false;
   root = mkdtempSync(join(tmpdir(), 'tg-sync-'));
   out = join(root, 'export');
   exits = [];
@@ -90,6 +108,45 @@ describe('sync --chat over MCP names exactly one chat', () => {
     await sync('--chat', id);
     expect(readdirSync(out).sort()).toEqual(['.sync-meta.json', `Team A (${A}).md`]);
     expect(exits).toEqual([0, 0, 0]);
+  });
+});
+
+describe('sync --chat over MCP when the dialog list was cut', () => {
+  beforeEach(() => { process.env.TG_MCP = '1'; });
+
+  /** 500 more chats (older than the seed), and a second "Team A" whose last message is older than all, beyond the first 500. */
+  async function crowded(): Promise<MockWorld> {
+    const w = await world('Team A', 'Team B');
+    for (let i = 0; i < 500; i++) {
+      w.chats.push({ id: 7000 + i, kind: 'supergroup', title: `Filler ${i}`, messages: [{ id: 1, ago: 30 * 86400, from: 1002, text: 'x' }] } as never);
+    }
+    w.chats.push({ id: 8000, kind: 'supergroup', title: 'Team A', messages: [{ id: 1, ago: 400 * 86400, from: 1002, text: 'old' }] } as never);
+    return w;
+  }
+
+  it('an exact title found on the first page is not proven unique: an ID is required', async () => {
+    state.world = await crowded();
+    await sync('--chat', 'Team A');
+    expect(exits).toEqual([1]);
+    expect(err.join('\n')).toMatch(/list was cut[\s\S]*use an ID:\n {2}-1004001 /);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('an ID or @username still syncs that one chat', async () => {
+    state.world = await crowded();
+    state.world.chats.find(c => c.id === 4001)!.username = 'team_a';
+    await sync('--chat', '@team_a');
+    expect(readdirSync(out).sort()).toEqual(['.sync-meta.json', `Team A (${A}).md`]);
+    expect(exits).toEqual([0]);
+  });
+
+  it('selectSyncChats accepts the single title match only from a complete list', async () => {
+    const { selectSyncChats } = await import('../src/commands/sync.js');
+    const chats = [{ id: '1', title: 'Team A', type: 'group' as const }, { id: '2', title: 'X', type: 'group' as const }];
+    expect(selectSyncChats(chats, 'Team A', true, true)).toEqual([chats[0]]);
+    expect(selectSyncChats(chats, 'Team A', true, false)).toMatch(/list was cut/);
+    // In a terminal the user picks the name and sees what was exported
+    expect(selectSyncChats(chats, 'Team A', false, false)).toEqual([chats[0]]);
   });
 });
 
@@ -191,6 +248,25 @@ describe.skipIf(process.platform === 'win32')('sync never writes through a symbo
     intact();
   });
 
+  it('a directory at a media file\'s place (teleproto would choose a file inside it)', async () => {
+    state.world = await world('Team A', 'Team B');
+    state.realDownload = true;
+    mkdirSync(join(out, 'media', B, '1_palette.zip'), { recursive: true });
+    symlinkSync(sentinel, join(out, 'media', B, '1_palette.zip', 'photo1700000000.jpg'));
+    await sync('--chat', B, '--media');
+    expect(readFileSync(sentinel, 'utf8')).toBe('keep me');
+    expect(err.join('\n')).toMatch(/not a regular file/);
+    expect(exits).toEqual([1]);
+  });
+
+  it('control: teleproto\'s own download writes the computed media file', async () => {
+    state.world = await world('Team A', 'Team B');
+    state.realDownload = true;
+    await sync('--chat', B, '--media');
+    expect(exits).toEqual([0]);
+    expect(readFileSync(join(out, 'media', B, '1_palette.zip'), 'utf8')).toBe('PHOTO');
+  });
+
   it('a media file', async () => {
     state.world = await world('Team A', 'Team B');
     mkdirSync(join(out, 'media', B), { recursive: true });
@@ -233,13 +309,60 @@ describe('sync names each Markdown file by chat ID', () => {
     expect(resumed.match(/CI is green again/g)).toHaveLength(1);
     expect(resumed.match(/^# Team$/gm)).toHaveLength(1);
     expect(readFileSync(fileB, 'utf8')).toBe(before);
-    // A's file name holding someone else's export: resume rewrites it in full instead of appending
+    // A's file name holding someone else's export: resume replaces it instead of appending, still
+    // with only the messages after A's checkpoint (the checkpoint bounds the fetch either way)
     writeFileSync(fileA, before);
+    state.world.chats.find(c => c.id === 4001)!.messages.push({ id: 100, ago: 0, from: 1002, text: 'newer still' } as never);
     await sync('--chat', A, '--resume');
     const rewritten = readFileSync(fileA, 'utf8');
     expect(rewritten).toContain(`Chat ID: ${A}`);
     expect(rewritten).not.toContain(`Chat ID: ${B}`);
-    expect(rewritten).toMatch(/CI is green again/);
+    expect(rewritten).toContain('Continues after message #99');
+    expect(rewritten).toMatch(/newer still/);
+    expect(rewritten).not.toMatch(/CI is green again|fresh news/);
     expect(exits).toEqual([0, 0, 0, 0]);
+  });
+
+  it('--resume after the file name changed fetches the whole gap since the checkpoint into the new file', async () => {
+    state.world = await world('Team A', 'Team B');
+    // 1200 messages over 60 days; an older version exported up to #100 into "Team A.md"
+    const DAY = 86400;
+    state.world.chats.find(c => c.id === 4001)!.messages = Array.from({ length: 1200 }, (_, i) =>
+      ({ id: i + 1, ago: Math.round((60 * DAY * (1200 - i)) / 1200), from: 1002, text: `m${i + 1}` })) as never;
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, 'Team A.md'), '# Team A\n\nType: supergroup\n\n---\n\n> m100\n');
+    writeFileSync(join(out, '.sync-meta.json'), JSON.stringify({ [A]: { title: 'Team A', lastMessageId: 100, lastSyncDate: '2026-09-01T00:00:00Z' } }));
+    // No --all: the default 7-day window and the 1000-message cap must not apply to the gap
+    vi.resetModules();
+    const { syncCommand } = await import('../src/commands/sync.js');
+    await syncCommand.parseAsync(['--chat', A, '--resume', '--output', out], { from: 'user' });
+    expect(exits).toEqual([0]);
+    const text = readFileSync(join(out, `Team A (${A}).md`), 'utf8');
+    const ids = [...text.matchAll(/^\*#(\d+)\*$/gm)].map(m => Number(m[1]));
+    expect(ids).toHaveLength(1100);
+    expect(ids[0]).toBe(101);
+    expect(ids.at(-1)).toBe(1200);
+    expect(text).toContain(`Chat ID: ${A}`);
+    expect(text).toContain('Continues after message #100');
+    expect(readFileSync(join(out, 'Team A.md'), 'utf8')).toContain('> m100');
+    expect(JSON.parse(readFileSync(join(out, '.sync-meta.json'), 'utf8'))[A].lastMessageId).toBe(1200);
+  });
+
+  it('--resume into a file at the new name that names another chat still fetches the whole gap', async () => {
+    state.world = await world('Team A', 'Team B');
+    const DAY = 86400;
+    state.world.chats.find(c => c.id === 4001)!.messages = Array.from({ length: 1200 }, (_, i) =>
+      ({ id: i + 1, ago: Math.round((60 * DAY * (1200 - i)) / 1200), from: 1002, text: `m${i + 1}` })) as never;
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, `Team A (${A}).md`), `# Team B\n\nChat ID: ${B}\n\n---\n`);
+    writeFileSync(join(out, '.sync-meta.json'), JSON.stringify({ [A]: { title: 'Team A', lastMessageId: 100, lastSyncDate: '2026-09-01T00:00:00Z' } }));
+    vi.resetModules();
+    const { syncCommand } = await import('../src/commands/sync.js');
+    await syncCommand.parseAsync(['--chat', A, '--resume', '--output', out], { from: 'user' });
+    expect(exits).toEqual([0]);
+    const text = readFileSync(join(out, `Team A (${A}).md`), 'utf8');
+    const ids = [...text.matchAll(/^\*#(\d+)\*$/gm)].map(m => Number(m[1]));
+    expect([ids.length, ids[0], ids.at(-1)]).toEqual([1100, 101, 1200]);
+    expect(text).not.toContain(`Chat ID: ${B}`);
   });
 });

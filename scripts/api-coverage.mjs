@@ -465,10 +465,11 @@ function build() {
   lines.push('  and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,');
   lines.push('  and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an');
   lines.push('  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`,');
-  lines.push('  and `messages.GetInlineBotResults` with `geoPoint` (an inline query without it stays a read).');
+  lines.push('  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it stays a read),');
+  lines.push('  and `channels.CreateChannel` with `geoPoint` or `address` (a geo group; a plain channel is created).');
   lines.push('- **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,');
   lines.push('  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`, and the');
-  lines.push('  Passport reads `account.GetAllSecureValues` / `GetSecureValue` (`plainData` holds the phone');
+  lines.push('  Passport reads `account.GetAllSecureValues` / `GetSecureValue` / `GetAuthorizationForm` (`plainData` holds the phone');
   lines.push('  number and email in the clear).');
   lines.push('- **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,');
   lines.push('  `messages.CheckUrlAuthMatchCode`, and the read-named `messages.GetEmojiURL` (a login link to');

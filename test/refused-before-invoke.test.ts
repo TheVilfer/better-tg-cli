@@ -44,6 +44,13 @@ const CASES: [string, string, string, string[], Record<string, unknown>][] = [
   ['account.ConfirmPasswordEmail', 'account', 'confirm-password-email', ['--code', '123'], { code: '123' }],
   ['account.GetAllSecureValues', 'account', 'get-all-secure-values', [], {}],
   ['account.GetSecureValue', 'account', 'get-secure-value', ['--json-params', '{"types":[{"_":"secureValueTypePhone"}]}'], { types: [{ _: 'secureValueTypePhone' }] }],
+  // A bot's Passport form carries SecureValue entries with the same plainData
+  ['account.GetAuthorizationForm', 'account', 'get-authorization-form', ['--bot-id', '1', '--scope', 'x', '--public-key', 'k'], { botId: 1, scope: 'x', publicKey: 'k' }],
+  // Creating a geo group publishes a location (coordinates or an address)
+  ['channels.CreateChannel', 'channels', 'create-channel',
+    ['--title', 't', '--about', '', '--json-params', '{"geoPoint":{"_":"inputGeoPoint","lat":1,"long":2}}'],
+    { title: 't', about: '', geoPoint: { _: 'inputGeoPoint', lat: 1, long: 2 } }],
+  ['channels.CreateChannel', 'channels', 'create-channel', ['--title', 't', '--about', '', '--address', 'Main St 1'], { title: 't', about: '', address: 'Main St 1' }],
   // An inline query carrying coordinates hands the user's location to the bot
   ['messages.GetInlineBotResults', 'messages', 'get-inline-bot-results',
     ['--json-params', '{"bot":"@b","peer":"me","query":"x","offset":"","geoPoint":{"_":"inputGeoPoint","lat":1,"long":2}}'],
@@ -127,5 +134,12 @@ describe('the free forms still run over MCP in mode "on"', () => {
       .parseAsync(['--bot', '@b', '--peer', 'me', '--query', 'x', '--offset', ''], { from: 'user' });
     expect(invokeApi).toHaveBeenCalledTimes(2);
     expect(assertWriteEnabled).not.toHaveBeenCalled();
+  });
+
+  it('a channel created without a location reaches invoke, raw and generated', async () => {
+    await apiCommand.parseAsync(['channels.CreateChannel', '--params', '{"title":"t","about":"","megagroup":true,"address":""}'], { from: 'user' });
+    await buildLeaf('channels', 'create-channel', 'channels.CreateChannel', true)
+      .parseAsync(['--title', 't', '--about', '', '--broadcast'], { from: 'user' });
+    expect(invokeApi).toHaveBeenCalledTimes(2);
   });
 });

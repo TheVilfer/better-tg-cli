@@ -260,6 +260,8 @@ describe('api: paid reads and login tokens', () => {
       // Coordinates for an inline bot are refused on the built request in every mode
       delete process.env.TG_MCP;
       await expect(invokeApi(client, 'messages.GetInlineBotResults', { bot: { _: 'inputUserSelf' }, peer: { _: 'inputPeerSelf' }, query: 'x', offset: '', geoPoint: { _: 'inputGeoPoint', lat: 1, long: 2 } })).rejects.toThrow(/geoPoint/);
+      await expect(invokeApi(client, 'channels.CreateChannel', { title: 't', about: '', geoPoint: { _: 'inputGeoPoint', lat: 1, long: 2 } })).rejects.toThrow(/geoPoint\/address/);
+      await expect(invokeApi(client, 'channels.CreateChannel', { title: 't', about: '', address: 'Main St 1' })).rejects.toThrow(/geoPoint\/address/);
       expect(sent).toBe(false);
     } finally {
       if (saved === undefined) delete process.env.TG_MCP; else process.env.TG_MCP = saved;

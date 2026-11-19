@@ -163,9 +163,12 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 - `sync --chat X --output DIR` writes markdown to `DIR/<title> (<chat id>).md`. It takes `--days N`
   (default 7), `--since/--until` and `--all` for full history. `--media` downloads files into
   `DIR/media/<chat id>/`. A numeric `--chat` is a chat ID only. Over MCP `--chat` must name exactly
-  one chat (ID, @username or exact title). Sync refuses to write through a symbolic link inside DIR.
+  one chat (ID, @username or exact title); with 500 or more dialogs an exact title is not proven
+  unique, so it needs the ID. Sync refuses to write through a symbolic link inside DIR, and
+  `sync --media`, `download` and `avatar` refuse a directory or a link where the file would go.
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
-  run fetches everything after the checkpoint and ignores the default `--days` window.
+  run fetches everything after the checkpoint and ignores the default `--days` window, also when
+  it starts a new file (an export from before the file name carried the chat ID).
 
 ## Raw API (`telegram api` and `telegram <namespace> <method>`)
 

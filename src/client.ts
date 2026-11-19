@@ -8,7 +8,7 @@ import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
 import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
 import bigInt from 'big-integer';
-import { existsSync, mkdirSync, statSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, statSync } from 'fs';
 import { isMock } from './paths.js';
 import { basename, join } from 'path';
 import { isTTY } from './spinner.js';
@@ -904,6 +904,7 @@ export async function downloadMessageMedia(
   const fileName = buildMediaFilename(mediaInfo, msg.id);
   const filePath = join(outputDir, fileName);
   checkPath?.(filePath);
+  assertDownloadTarget(filePath);
 
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
@@ -914,6 +915,24 @@ export async function downloadMessageMedia(
   const savedPath = typeof result === 'string' ? result : filePath;
 
   return { filePath: savedPath, media: mediaInfo };
+}
+
+/**
+ * A download target must be a regular file or nothing. teleproto is always handed this full file
+ * path, but where a directory sits at it, teleproto picks a file of its own inside that directory
+ * (`getProperFilename`), and a write follows a symbolic link wherever it points. Either way the
+ * bytes would land somewhere nobody checked, so both are refused before anything is written.
+ */
+export function assertDownloadTarget(filePath: string): void {
+  let st;
+  try {
+    st = lstatSync(filePath);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw e;
+  }
+  if (st.isSymbolicLink()) throw new Error(`Refusing to download through a symbolic link: ${filePath}`);
+  if (!st.isFile()) throw new Error(`Refusing to download: ${filePath} exists and is not a regular file`);
 }
 
 export function buildMediaFilename(media: MediaInfo, messageId: number): string {
@@ -2597,6 +2616,7 @@ export async function downloadAvatar(
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
   const fileName = `avatar_${entity.id.toString()}.jpg`;
   const filePath = join(outputDir, fileName);
+  assertDownloadTarget(filePath);
   const result = await client.downloadProfilePhoto(entity, { outputFile: filePath });
   if (!result) return { filePath: null, title };
   return { filePath: typeof result === 'string' ? result : filePath, title };
@@ -3038,13 +3058,13 @@ export async function invokeApi(
   methodName: string,
   rawParams: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const { resolveApiMethod, mcpPaidStarsRefusal, inlineGeoRefusal } = await import('./api-methods.js');
+  const { resolveApiMethod, mcpPaidStarsRefusal, geoParamRefusal } = await import('./api-methods.js');
   const { ctor, className } = resolveApiMethod(methodName);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
-  // Checked again on the fields the request really carries (Stars over MCP, an inline geoPoint)
+  // Checked again on the fields the request really carries (Stars over MCP, coordinates)
   const fields = { ...request } as Record<string, unknown>;
-  const refusal = inlineGeoRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields);
+  const refusal = geoParamRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields);
   if (refusal) throw new Error(refusal);
   return client.invoke(request);
 }

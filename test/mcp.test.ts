@@ -223,6 +223,12 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['api', 'account.GetAllSecureValues'], 'never'],
   [['account', 'get-secure-value'], 'never'],
   [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'read'],
+  [['api', 'account.GetAuthorizationForm', '-p', '{"botId":1,"scope":"x","publicKey":"k"}'], 'never'],
+  [['account', 'get-authorization-form', '--bot-id', '1'], 'never'],
+  // A geo group is classified on its method (a write); the CLI child refuses geoPoint/address
+  // before getClient (test/refused-before-invoke.test.ts), like an inline query with geoPoint
+  [['api', 'channels.CreateChannel', '-p', '{"title":"t","about":"","geoPoint":{"_":"inputGeoPoint","lat":1,"long":2}}'], 'write'],
+  [['api', 'channels.CreateChannel', '-p', '{"title":"t","about":""}'], 'write'],
   // Inherited names of a plain object are not commands
   [['constructor'], 'unknown'],
   [['__proto__'], 'unknown'],

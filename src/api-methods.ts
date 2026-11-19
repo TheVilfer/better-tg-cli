@@ -139,6 +139,8 @@ const ALWAYS_REFUSED = new Map<string, string>([
   // Reading Passport values: plainData carries the phone number and email in the clear
   ['account.getallsecurevalues', 'Refused: Telegram Passport — this reveals identity data (phone, email, documents).'],
   ['account.getsecurevalue', 'Refused: Telegram Passport — this reveals identity data (phone, email, documents).'],
+  // A bot's Passport form: its values are SecureValue entries with the same plainData
+  ['account.getauthorizationform', 'Refused: Telegram Passport — this reveals identity data (phone, email, documents).'],
   // Privacy that can widen phone-number / added-by-phone visibility
   ['account.setprivacy', 'Refused: changing privacy rules can expose your phone number or let strangers add you; do it in an official client.'],
   ['account.updatebusinesslocation', 'Refused: this shares a geographic location.'],
@@ -222,7 +224,7 @@ export function apiRefusalReason(name: string, params?: Record<string, unknown>)
     if (lower === 'contacts.addcontact' && params.addPhonePrivacyException) {
       return 'Refused: addPhonePrivacyException shares your phone number with this contact.';
     }
-    const geo = inlineGeoRefusal(name, params);
+    const geo = geoParamRefusal(name, params);
     if (geo) return geo;
     if ((lower === 'messages.sendmedia' || lower === 'messages.editmessage' || lower === 'messages.sendmultimedia') && SHARED_MEDIA.test(JSON.stringify(params))) {
       return 'Refused: this sends a contact card or a geographic location.';
@@ -232,14 +234,24 @@ export function apiRefusalReason(name: string, params?: Record<string, unknown>)
 }
 
 /**
- * `messages.GetInlineBotResults` with `geoPoint` hands the user's coordinates to the bot, so it is
- * refused everywhere (read tool and `--read-only` included); an inline query without one stays a read.
+ * Coordinates in the params of an otherwise allowed request are refused everywhere (read tool and
+ * `--read-only` included), like the other location refusals (geo media, GetLocated, EditLocation):
+ * - `messages.GetInlineBotResults` with `geoPoint` hands the user's coordinates to the bot; an
+ *   inline query without one stays a read;
+ * - `channels.CreateChannel` with `geoPoint` or `address` creates a public geo group at that
+ *   place; a plain channel or group is still created.
  * Also checked on the built request in invokeApi.
  */
-export function inlineGeoRefusal(name: string, params: Record<string, unknown>): string | null {
-  if (name.toLowerCase() !== 'messages.getinlinebotresults') return null;
-  if (!Object.hasOwn(params, 'geoPoint') || params.geoPoint == null) return null;
-  return 'Refused: geoPoint sends your location to the inline bot; query it without coordinates.';
+export function geoParamRefusal(name: string, params: Record<string, unknown>): string | null {
+  const lower = name.toLowerCase();
+  const has = (key: string) => Object.hasOwn(params, key) && params[key] != null && params[key] !== '';
+  if (lower === 'messages.getinlinebotresults' && has('geoPoint')) {
+    return 'Refused: geoPoint sends your location to the inline bot; query it without coordinates.';
+  }
+  if (lower === 'channels.createchannel' && (has('geoPoint') || has('address'))) {
+    return 'Refused: geoPoint/address publish a location for the new group; create it without them.';
+  }
+  return null;
 }
 
 export interface ResolvedApiMethod {

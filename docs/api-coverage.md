@@ -195,10 +195,11 @@ location sharing, paying):
   and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,
   and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an
   `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`,
-  and `messages.GetInlineBotResults` with `geoPoint` (an inline query without it stays a read).
+  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it stays a read),
+  and `channels.CreateChannel` with `geoPoint` or `address` (a geo group; a plain channel is created).
 - **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,
   `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`, and the
-  Passport reads `account.GetAllSecureValues` / `GetSecureValue` (`plainData` holds the phone
+  Passport reads `account.GetAllSecureValues` / `GetSecureValue` / `GetAuthorizationForm` (`plainData` holds the phone
   number and email in the clear).
 - **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,
   `messages.CheckUrlAuthMatchCode`, and the read-named `messages.GetEmojiURL` (a login link to
