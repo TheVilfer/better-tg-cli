@@ -49,6 +49,8 @@ export type OnboardEvent =
 /** A write mode picked on the page: how long it lasts, if it should end by itself. */
 export interface ModeChoice { mode: WriteMode; forSeconds?: number }
 export type ModeResult = { ok: true; until?: Date } | { ok: false; error: 'not_confirmed' | 'needs_terminal' | 'store_failed' };
+/** A write mode as read back from the store, with the moment it ends if it ends by itself. */
+export interface SavedMode { mode: WriteMode; until?: Date }
 
 /** Choices the page offers for "until": nothing (no end), an hour, a day, a week. */
 const MODE_SPANS: Record<string, number | undefined> = { '': undefined, '1h': 3600, '1d': 86_400, '1w': 604_800 };
@@ -76,9 +78,12 @@ export interface OnboardOptions {
   defaultMode?: WriteMode;
   /**
    * Reads the write mode back from the store. With it the page reports only a mode that was
-   * actually saved: a store that refused the value leaves the step open with `store_failed`.
+   * actually saved, with the asked-for end: a store that refused the value (or kept an older one)
+   * leaves the step open with `store_failed`.
    */
-  currentMode?(): WriteMode;
+  currentMode?(): SavedMode;
+  /** How long the mode step waits for a choice (tests); 10 minutes by default */
+  modeWaitMs?: number;
 }
 
 export interface OnboardSession {
@@ -122,10 +127,27 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
 
   const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined }, patch);
 
-  /** The mode in the store now, or `expected` when there is no way to read it back */
-  const savedMode = (expected: WriteMode | undefined) => (options.currentMode ? options.currentMode() : expected);
+  /** The mode in the store now (read once), or `expected` when there is no way to read it back */
+  const readBack = (expected: WriteMode | undefined): SavedMode | undefined =>
+    options.currentMode ? options.currentMode() : expected && { mode: expected };
 
-  function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : savedMode(options.defaultMode)): void {
+  /**
+   * The store holds exactly the choice: the same mode and, for "ask" and "on", the same end. With no
+   * span nothing may end it; with a span it ends `forSeconds` after the save, which happened between
+   * `before` and `after` (a dialog may keep it waiting) and is kept in whole seconds. So an older
+   * value with the same mode name ("on" for good when "on" for an hour was picked) does not pass.
+   */
+  function holds(saved: SavedMode | undefined, choice: ModeChoice, before: number, after: number): boolean {
+    if (!options.currentMode) return true; // nothing to check against
+    if (!saved || saved.mode !== choice.mode) return false;
+    if (choice.mode === 'read-only') return true;
+    if (!choice.forSeconds) return !saved.until;
+    if (!saved.until) return false;
+    const end = saved.until.getTime(), span = choice.forSeconds * 1000;
+    return end >= before + span - 1000 && end <= after + span + 1000;
+  }
+
+  function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : readBack(options.defaultMode)?.mode): void {
     if (modeTimer) clearTimeout(modeTimer);
     set({ step: 'done', mode, qrSvg: undefined });
     options.emit({ event: 'done', ...(state.user ? { user: state.user } : {}), ...(mode ? { mode } : {}) });
@@ -136,7 +158,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   function askMode(error?: string): void {
     set({ step: 'mode', qrSvg: undefined, error });
     options.emit({ event: 'waiting_mode' });
-    modeTimer = setTimeout(() => finish(), MODE_WAIT_MS);
+    modeTimer = setTimeout(() => finish(), options.modeWaitMs ?? MODE_WAIT_MS);
     modeTimer.unref?.();
   }
 
@@ -167,10 +189,13 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       let modeError: string | undefined;
       if (options.applyMode && options.defaultMode) {
         // The session is saved either way; a mode the store refused must not show up as in effect
-        const applied = await options.applyMode({ mode: options.defaultMode }).catch((): ModeResult => ({ ok: false, error: 'store_failed' }));
-        const mode = savedMode(applied.ok ? options.defaultMode : undefined);
-        if (!applied.ok || mode !== options.defaultMode) modeError = applied.ok ? 'store_failed' : applied.error;
-        state.mode = mode;
+        const choice: ModeChoice = { mode: options.defaultMode };
+        const before = Date.now();
+        const applied = await options.applyMode(choice).catch((): ModeResult => ({ ok: false, error: 'store_failed' }));
+        const saved = readBack(applied.ok ? options.defaultMode : undefined);
+        if (!applied.ok) modeError = applied.error;
+        else if (!holds(saved, choice, before, Date.now())) modeError = 'store_failed';
+        state.mode = saved?.mode;
       }
       if (options.applyMode) {
         options.emit({ event: 'logged_in', user: result.user });
@@ -257,13 +282,16 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       if ((mode !== 'read-only' && mode !== 'ask' && mode !== 'on') || !(span in MODE_SPANS)) return json(res, 400, { error: 'bad_mode' });
       applying = true;
       try {
+        const choice: ModeChoice = { mode, forSeconds: MODE_SPANS[span] };
+        const before = Date.now();
         // May show a dialog (macOS, Windows) or a terminal prompt and wait for the person
-        const result = await options.applyMode({ mode, forSeconds: MODE_SPANS[span] });
-        // A store that said yes but kept the old value counts as a failure too
-        const error = !result.ok ? result.error : savedMode(mode) !== mode ? 'store_failed' : undefined;
+        const result = await options.applyMode(choice);
+        const saved = readBack(result.ok ? mode : state.mode);
+        // A store that said yes but kept the old value (or the old end) counts as a failure too
+        const error = !result.ok ? result.error : !holds(saved, choice, before, Date.now()) ? 'store_failed' : undefined;
         if (error) {
           state.error = error;
-          state.mode = savedMode(state.mode);
+          state.mode = saved?.mode;
           return json(res, 409, { error });
         }
         options.emit({ event: 'mode', mode, ...(result.ok && result.until ? { until: result.until.toISOString() } : {}) });

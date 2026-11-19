@@ -82,8 +82,10 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
   }
 
   return {
-    get(key: string): string | null {
+    /** `fresh`: read the file again, for a value another process may have changed since */
+    get(key: string, fresh = false): string | null {
       try {
+        if (fresh) cache.delete(file());
         return load()[key] ?? null;
       } catch {
         return null;
@@ -121,6 +123,6 @@ export function isDpapiAvailable(): boolean {
   return platform() === 'win32' && existsSync(PS);
 }
 
-export const dpapiGet = (key: string) => (isDpapiAvailable() ? store.get(key) : null);
+export const dpapiGet = (key: string, fresh = false) => (isDpapiAvailable() ? store.get(key, fresh) : null);
 export const dpapiSet = (key: string, value: string) => isDpapiAvailable() && store.set(key, value);
 export const dpapiDelete = (key: string) => isDpapiAvailable() && store.delete(key);

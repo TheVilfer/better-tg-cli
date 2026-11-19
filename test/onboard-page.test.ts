@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LoginDriver } from '../src/auth.js';
-import { startOnboarding, type ModeResult, type OnboardSession } from '../src/onboard.js';
+import { startOnboarding, type ModeResult, type OnboardSession, type SavedMode } from '../src/onboard.js';
 import { onboardPage, STRINGS } from '../src/onboard-page.js';
 import type { WriteMode } from '../src/write-state.js';
 
@@ -24,7 +24,7 @@ class El {
   placeholder = '';
   className = '';
   innerHTML = '';
-  onclick?: () => void;
+  onclick?: () => unknown;
   onchange?: () => void;
   onkeydown?: (e: unknown) => void;
   dataset: Record<string, string> = {};
@@ -80,14 +80,21 @@ function openPage(url: string, lang: string, fetchImpl?: typeof fetch) {
   const { document, byId } = fakeDocument(html);
   const realFetch: typeof fetch = (input, init = {}) =>
     fetch(new URL(String(input), u.origin), init.method === 'POST' ? { ...init, headers: { ...init.headers as object, origin: u.origin } } : init);
+  let stateCalls = 0;
+  const counted: typeof fetch = (input, init) => {
+    if (String(input).endsWith('state')) stateCalls++;
+    return (fetchImpl ?? realFetch)(input, init);
+  };
+  // The test fires the timer itself (tick); clearInterval really stops it
+  let interval: (() => unknown) | undefined;
   const ctx = vm.createContext({
     document,
     navigator: { languages: [lang] },
     location: { pathname: u.pathname, hash: '' },
     history: { replaceState() {} },
-    fetch: fetchImpl ?? realFetch,
-    setInterval: () => 1, // the test drives poll() itself
-    clearInterval() {},
+    fetch: counted,
+    setInterval: (fn: () => unknown) => { interval = fn; return 1; },
+    clearInterval: () => { interval = undefined; },
     console,
   });
   vm.runInContext(script, ctx);
@@ -95,7 +102,12 @@ function openPage(url: string, lang: string, fetchImpl?: typeof fetch) {
   const visible = () => ['invite', 'connecting', 'scan', 'password', 'mode', 'done', 'error'].filter(id => !byId(id).hidden);
   return {
     poll: () => run('poll()'),
-    click: async (id: string) => { byId(id).onclick!(); await new Promise(r => setTimeout(r, 30)); },
+    /** One timer tick, as the browser would fire it; false once the page stopped polling */
+    tick: async () => { if (!interval) return false; await interval(); return true; },
+    stateCalls: () => stateCalls,
+    checked: () => document.querySelector('input[name=mode]:checked')?.value,
+    // The handlers return act()'s promise: wait for it, not for a fixed time
+    click: async (id: string) => { await byId(id).onclick!(); },
     pick: (mode: WriteMode) => { for (const r of document.querySelectorAll('input[name=mode]')) r.checked = r.value === mode; },
     msg: () => ({ hidden: byId('msg').hidden, text: byId('msg').ownText, small: byId('msg').children.map(c => c.textContent).join('') }),
     byId,
@@ -115,8 +127,8 @@ let session: OnboardSession | undefined;
 afterEach(() => session?.close());
 
 /** A server whose store refuses (`refuse`), or says ok but keeps the old value (`lie`). */
-async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolean } = {}) {
-  let stored: WriteMode = 'read-only';
+async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolean; modeWaitMs?: number } = {}) {
+  let stored: SavedMode = { mode: 'read-only' };
   session = await startOnboarding({
     driver,
     redeemInvite: async () => ({ apiId: 42, apiHash: 'h'.repeat(32) }),
@@ -126,9 +138,10 @@ async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolea
     modeOnly: plan.modeOnly,
     defaultMode: plan.modeOnly ? undefined : 'ask',
     currentMode: () => stored,
+    modeWaitMs: plan.modeWaitMs,
     applyMode: async (c): Promise<ModeResult> => {
       if (plan.refuse) return { ok: false, error: 'store_failed' };
-      if (!plan.lie) stored = c.mode;
+      if (!plan.lie) stored = { mode: c.mode };
       return { ok: true };
     },
   });
@@ -165,6 +178,18 @@ describe('every code the server sends has a text', () => {
   });
 });
 
+describe('the hints name a command that does what they say', () => {
+  it.each(LANGS)('%s', lang => {
+    const L = STRINGS[lang] as unknown as Record<string, unknown>;
+    const texts = [...Object.values(L), ...Object.values(L.errors as object)].filter((t): t is string => typeof t === 'string');
+    // `telegram write-access` alone only prints the status: every hint says which mode to set
+    for (const t of texts) for (const m of t.matchAll(/telegram write-access(?! (ask|on|off)\b)/g)) expect.fail(`${lang}: "${t.slice(Math.max(0, m.index! - 30), m.index! + 40)}"`);
+    // Only the hint before the login sends the person back to onboard
+    for (const k of ['goneSaved', 'goneMode']) expect(L[k], `${lang}: ${k}`).not.toMatch(/telegram onboard (again|de nuevo|ещё|заново)|vuelva a ejecutar telegram onboard|запустить telegram onboard/);
+    expect((L.errors as Record<string, string>).internal).not.toContain('telegram onboard');
+  });
+});
+
 describe.each(LANGS)('the page in %s', lang => {
   const L = STRINGS[lang];
   const E = L.errors;
@@ -178,7 +203,7 @@ describe.each(LANGS)('the page in %s', lang => {
     expect(page.visible()).toEqual(['mode']);
     expect(page.msg()).toEqual({ hidden: false, text: `${E.store_failed} ${L.inEffect.replace('{mode}', L.roName)}`, small: '' });
     // The radio shows what is saved (read-only), not the default that failed
-    expect(page.byId('modego').hidden).toBe(false);
+    expect(page.checked()).toBe('read-only');
     expect((await (await fetch(s.url + 'state')).json())).toMatchObject({ step: 'mode', mode: 'read-only', error: 'store_failed' });
   });
 
@@ -258,5 +283,101 @@ describe.each(LANGS)('the page in %s', lang => {
     await page.poll();
     expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: '' });
     expect(page.visible()).toEqual([]);
+    const calls = page.stateCalls();
+    expect(await page.tick()).toBe(false); // the timer is cleared
+    expect(page.stateCalls()).toBe(calls);
+  });
+
+  /** A 200 whose body breaks off midway, as when the connection drops after the headers */
+  const cutOff = () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"step":')); c.error(new TypeError('network error')); } }), { status: 200 });
+
+  it('a state answer cut off after the headers counts as a drop: polling goes on and recovers', async () => {
+    const s = await server();
+    let cut = true;
+    const page = openPage(s.url, lang, (input, init) =>
+      cut ? Promise.resolve(cutOff()) : fetch(new URL(String(input), new URL(s.url).origin), init));
+    await page.poll();
+    expect(page.msg()).toEqual({ hidden: false, text: L.gone, small: '' });
+    cut = false;
+    expect(await page.tick()).toBe(true); // still polling
+    expect(page.msg().hidden).toBe(true);
+    expect(page.visible()).toEqual(['invite']);
+  });
+
+  it('a whole 200 that is not JSON is not the state: polling stops', async () => {
+    const s = await server();
+    const page = openPage(s.url, lang, async () => new Response('<html>proxy</html>', { status: 200 }));
+    await page.poll();
+    expect(page.msg()).toEqual({ hidden: false, text: L.failed, small: 'HTTP 200' });
+    expect(await page.tick()).toBe(false);
+  });
+
+  it('a click lost on the way: the drop line goes once the server answers, and it says to try again', async () => {
+    const s = await server();
+    const real = (input: RequestInfo | URL, init?: RequestInit) => fetch(new URL(String(input), new URL(s.url).origin), init);
+    const page = openPage(s.url, lang, (input, init) =>
+      init?.method === 'POST' ? Promise.reject(new TypeError('Failed to fetch')) : real(input, init));
+    await page.poll();
+    await page.click('use');
+    expect(page.msg().text).not.toBe(L.gone);
+    expect(page.msg()).toEqual({ hidden: false, text: L.notSent, small: '' });
+    expect(page.visible()).toEqual(['invite']);
+  });
+
+  it('a click lost in a longer drop still says to try again once the server is back', async () => {
+    // The POST and the poll right after it both fail; a later poll gets through
+    const s = await server();
+    let down = false;
+    const page = openPage(s.url, lang, (input, init) =>
+      down ? Promise.reject(new TypeError('Failed to fetch')) : fetch(new URL(String(input), new URL(s.url).origin), init));
+    await page.poll();
+    down = true;
+    await page.click('use');
+    expect(page.msg().text).toBe(L.gone);
+    await page.tick();
+    expect(page.msg().text).toBe(L.gone);
+    down = false;
+    await page.tick();
+    expect(page.msg()).toEqual({ hidden: false, text: L.notSent, small: '' });
+  });
+
+  it('a POST error body cut short shows the generic text and the status, not a raw code alone', async () => {
+    const s = await server();
+    const page = openPage(s.url, lang, async (input, init) =>
+      init?.method === 'POST'
+        ? new Response(new ReadableStream({ start(c) { c.error(new TypeError('network error')); } }), { status: 409 })
+        : fetch(new URL(String(input), new URL(s.url).origin), init));
+    await page.click('keys');
+    expect(page.msg()).toEqual({ hidden: false, text: L.failed, small: 'HTTP 409' });
+  });
+
+  it('done clears the error of the step before it', async () => {
+    // The store refuses, nobody picks, the step times out: "done" with read-only and no stale "in effect: …" line
+    const s = await server({ refuse: true, modeWaitMs: 400 });
+    const page = openPage(s.url, lang);
+    await s.post('invite', { invite: 'tok' });
+    await s.untilStep('mode');
+    await page.poll();
+    expect(page.msg().text).toContain(E.store_failed);
+    await s.untilStep('done');
+    await page.tick();
+    expect(page.visible()).toEqual(['done']);
+    expect(page.byId('donetext').textContent).toBe(L.doneMode.replace('{user}', 'Alice (@alice)').replace('{mode}', L.roName));
+    expect(page.msg().hidden).toBe(true);
+  });
+
+  it('a drop after the login says the login is saved and names write-access, not onboard', async () => {
+    const s = await server();
+    let down = false;
+    const page = openPage(s.url, lang, (input, init) =>
+      down ? Promise.reject(new TypeError('Failed to fetch')) : fetch(new URL(String(input), new URL(s.url).origin), init));
+    await s.post('invite', { invite: 'tok' });
+    await s.untilStep('mode');
+    await page.poll();
+    down = true;
+    await page.tick();
+    expect(page.msg().text).toBe(L.goneSaved);
+    expect(L.goneSaved).not.toContain('telegram onboard again');
+    expect(L.goneSaved).toMatch(/telegram write-access ask, on/);
   });
 });

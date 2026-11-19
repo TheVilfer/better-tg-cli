@@ -34,6 +34,18 @@ describe('DPAPI secret store', () => {
     expect(existsSync(file)).toBe(false); // nothing left, no file
   });
 
+  it('a fresh read sees what another process wrote since; a plain one keeps the cache', () => {
+    // The onboard page reads the write mode back at the end; `write-access off` may have run meanwhile
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    const page = dpapiStore(() => file, fake);
+    expect(page.set('writeEnabled', 'ask')).toBe(true);
+    expect(page.get('writeEnabled')).toBe('ask');
+    expect(dpapiStore(() => file, fake).delete('writeEnabled')).toBe(true); // the other process
+    expect(page.get('writeEnabled')).toBe('ask'); // cached
+    expect(page.get('writeEnabled', true)).toBeNull();
+    expect(page.get('writeEnabled')).toBeNull(); // and the cache follows the fresh read
+  });
+
   it('reads nothing from a file it cannot decrypt', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
     dpapiStore(() => file, fake).set('k', 'v');

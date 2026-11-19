@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { request } from 'node:http';
 import { rpcCode, type LoginDriver } from '../src/auth.js';
 import { RPCError } from 'teleproto/errors/index.js';
-import { startOnboarding, type OnboardEvent, type OnboardSession } from '../src/onboard.js';
+import { startOnboarding, type ModeChoice, type ModeResult, type OnboardEvent, type OnboardSession, type SavedMode } from '../src/onboard.js';
 import { errorMessage } from '../src/text.js';
 
 // Raw HTTP so the tests control Host and Origin exactly (fetch won't set Host)
@@ -242,17 +242,21 @@ describe('rpcCode', () => {
       await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'read-only' });
     });
 
-    /** A fake secret store: applyMode writes to it unless told to fail, currentMode reads it back. */
-    const store = (plan: { refuse?: boolean; lie?: boolean } = {}) => {
-      const st = { value: 'read-only' as 'read-only' | 'ask' | 'on', choices: [] as unknown[] };
+    /**
+     * A fake secret store: applyMode writes the mode and its end to it unless told to fail,
+     * currentMode reads it back. `lie`: says ok, keeps the old value. `start`: the value already there.
+     */
+    const store = (plan: { refuse?: boolean; lie?: boolean; start?: SavedMode } = {}) => {
+      const st = { value: plan.start ?? ({ mode: 'read-only' } as SavedMode), choices: [] as unknown[] };
       return {
         st,
         currentMode: () => st.value,
-        applyMode: async (c: { mode: 'read-only' | 'ask' | 'on' }) => {
+        applyMode: async (c: ModeChoice): Promise<ModeResult> => {
           st.choices.push(c);
-          if (plan.refuse) return { ok: false as const, error: 'store_failed' as const };
-          if (!plan.lie) st.value = c.mode; // `lie`: says ok, keeps the old value
-          return { ok: true as const };
+          if (plan.refuse) return { ok: false, error: 'store_failed' };
+          const until = c.mode !== 'read-only' && c.forSeconds ? new Date(Math.floor(Date.now() / 1000) * 1000 + c.forSeconds * 1000) : undefined;
+          if (!plan.lie) st.value = until ? { mode: c.mode, until } : { mode: c.mode };
+          return { ok: true, until: st.value.until };
         },
       };
     };
@@ -288,6 +292,54 @@ describe('rpcCode', () => {
       expect((await post('mode', { mode: 'on', for: '' })).status).toBe(202);
       expect((await until('done')).mode).toBe('on');
       expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'on' });
+    });
+
+    it('does not take an old "on" for good as the "on for an hour" that was picked', async () => {
+      // The reviewer's case: the mode name matches, the end does not; an hour later writes would still go through
+      const f = store({ lie: true, start: { mode: 'on' } });
+      const { post, until, state, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      const res = await post('mode', { mode: 'on', for: '1h' });
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe('store_failed');
+      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'on' });
+      expect(events.map(e => e.event)).not.toContain('done');
+    });
+
+    it('nor an old "on for an hour" as the "on" for good that was picked', async () => {
+      const f = store({ lie: true, start: { mode: 'on', until: new Date(Date.now() + 3_600_000) } });
+      const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'on', for: '' })).status).toBe(409);
+    });
+
+    it('nor an old "ask" with an end as the default "ask" right after the login', async () => {
+      const f = store({ lie: true, start: { mode: 'ask', until: new Date(Date.now() + 86_400_000) } });
+      const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      expect(await until('mode')).toMatchObject({ error: 'store_failed', mode: 'ask' });
+    });
+
+    it('accepts an honest "on for an hour"', async () => {
+      const f = store({ start: { mode: 'on' } });
+      const { post, until, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      await until('mode');
+      expect((await post('mode', { mode: 'on', for: '1h' })).status).toBe(202);
+      expect((await until('done')).mode).toBe('on');
+      expect(events.find(e => e.event === 'mode')).toMatchObject({ mode: 'on', until: expect.any(String) });
+    });
+
+    it('at the timeout reports the mode in the store then, even if another process changed it', async () => {
+      const f = store();
+      const { post, until, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask', modeWaitMs: 400 });
+      await post('invite', { invite: 'tok' });
+      expect((await until('mode')).mode).toBe('ask');
+      f.st.value = { mode: 'read-only' }; // `telegram write-access off` in another terminal
+      expect((await until('done')).mode).toBe('read-only');
+      expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'read-only' });
     });
 
     it('serves the mode strings in all three languages', async () => {

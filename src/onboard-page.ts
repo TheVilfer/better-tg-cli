@@ -25,7 +25,7 @@ const en = {
   retry: 'Try again',
   modeTitle: 'What may your agent do in Telegram?',
   modeH: 'Last step. What may the agent do?',
-  modeNote: 'You can change this later with telegram write-access.',
+  modeNote: 'You can change this later with telegram write-access ask, on or off.',
   roName: 'Read only', roNote: 'Reads and searches only.',
   askName: 'Ask me each time (recommended)', askNote: 'Before each message or action, the agent shows it to you in the chat and sends only after your yes. It relies on the agent following its instructions.',
   onName: 'Write freely', onNote: 'Sends, edits and deletes without asking. Only for an agent you trust: a message it reads could talk it into posting as you.',
@@ -34,7 +34,9 @@ const en = {
   modeDone: 'Saved: {mode}. You can close this tab and go back to your agent.',
   doneMode: 'Logged in as {user}. Write mode: {mode}. You can close this tab and go back to your agent.',
   gone: 'This page can\'t reach Better-TG-CLI on this computer. Your agent may have stopped telegram onboard, or its time ran out. Ask the agent to run telegram onboard again (or run it yourself in a terminal) and open the new link. This page keeps trying meanwhile.',
-  goneMode: 'This page can\'t reach Better-TG-CLI on this computer. Your agent may have stopped telegram write-access, or its time ran out. Ask the agent to run it again (or run telegram write-access in a terminal) and open the new link. This page keeps trying meanwhile.',
+  goneSaved: 'This page can\'t reach Better-TG-CLI on this computer. Your agent may have stopped telegram onboard, or its time ran out. Your login is saved, and the write mode stays as it was. To change it, ask the agent to run telegram write-access ask, on or off (or run it yourself in a terminal). This page keeps trying meanwhile.',
+  goneMode: 'This page can\'t reach Better-TG-CLI on this computer. Your agent may have stopped telegram write-access on, or its time ran out. Ask the agent to run telegram write-access on again and open the new link, or run telegram write-access ask, on or off yourself in a terminal. This page keeps trying meanwhile.',
+  notSent: 'That didn\'t reach Better-TG-CLI. Try again.',
   failed: 'Something went wrong.',
   inEffect: 'Write mode in effect now: {mode}.',
   errors: {
@@ -42,7 +44,7 @@ const en = {
     not_found: 'This page\'s link is no longer valid: the command that opened it has finished or was started again. Open the newest link your agent gave you.',
     wrong_origin: 'The request didn\'t come from this page. Reload the page and try again.',
     bad_request: 'Better-TG-CLI couldn\'t read what the page sent. Reload the page and try again.',
-    internal: 'Something went wrong inside Better-TG-CLI. Try again; if it keeps happening, ask your agent to run telegram onboard again.',
+    internal: 'Something went wrong inside Better-TG-CLI. Try again; if it keeps happening, tell your agent what this page says.',
     already_started: 'A login has already started. Wait for the next step to appear on this page.',
     bad_keys: 'Check the keys: api_id is a number, api_hash is 32 characters from 0-9 and a-f.',
     invite_failed: 'This login key didn\'t work: it may be used up, expired or mistyped. Get a new one with the button above.',
@@ -53,7 +55,7 @@ const en = {
     bad_mode: 'Pick one of the options, then press Save.',
     not_confirmed: 'Not confirmed in the dialog. Choose again.',
     needs_terminal: 'This computer can only confirm that in a terminal. Run telegram write-access on there. Until then the agent asks before each write.',
-    store_failed: 'Couldn\'t save the write mode: this computer\'s secret store refused it. Choose again, or run telegram write-access in a terminal.',
+    store_failed: 'Couldn\'t save the write mode: this computer\'s secret store refused it. Choose again, or run telegram write-access ask, on or off in a terminal.',
   },
 };
 
@@ -84,7 +86,7 @@ const es: Strings = {
   retry: 'Intentar de nuevo',
   modeTitle: '¿Qué puede hacer tu agente en Telegram?',
   modeH: 'Último paso. ¿Qué puede hacer el agente?',
-  modeNote: 'Puedes cambiarlo más tarde con telegram write-access.',
+  modeNote: 'Puedes cambiarlo más tarde con telegram write-access ask, on u off.',
   roName: 'Solo lectura', roNote: 'Solo lee y busca.',
   askName: 'Preguntarme cada vez (recomendado)', askNote: 'Antes de cada mensaje o acción, el agente te lo muestra en el chat y solo lo envía tras tu sí. Depende de que el agente siga sus instrucciones.',
   onName: 'Escribir libremente', onNote: 'Envía, edita y borra sin preguntar. Solo para un agente de confianza: un mensaje que lea podría convencerlo de publicar en tu nombre.',
@@ -93,7 +95,9 @@ const es: Strings = {
   modeDone: 'Guardado: {mode}. Puedes cerrar esta pestaña y volver a tu agente.',
   doneMode: 'Has iniciado sesión como {user}. Modo de escritura: {mode}. Puedes cerrar esta pestaña y volver a tu agente.',
   gone: 'Esta página no puede comunicarse con Better-TG-CLI en este equipo. Puede que tu agente haya detenido telegram onboard o que se le acabara el tiempo. Pide al agente que vuelva a ejecutar telegram onboard (o ejecútalo tú en una terminal) y abre el enlace nuevo. Mientras tanto, esta página sigue intentándolo.',
-  goneMode: 'Esta página no puede comunicarse con Better-TG-CLI en este equipo. Puede que tu agente haya detenido telegram write-access o que se le acabara el tiempo. Pide al agente que lo vuelva a ejecutar (o ejecuta telegram write-access en una terminal) y abre el enlace nuevo. Mientras tanto, esta página sigue intentándolo.',
+  goneSaved: 'Esta página no puede comunicarse con Better-TG-CLI en este equipo. Puede que tu agente haya detenido telegram onboard o que se le acabara el tiempo. Tu sesión ya está guardada y el modo de escritura sigue como estaba. Para cambiarlo, pide al agente que ejecute telegram write-access ask, on u off (o ejecútalo tú en una terminal). Mientras tanto, esta página sigue intentándolo.',
+  goneMode: 'Esta página no puede comunicarse con Better-TG-CLI en este equipo. Puede que tu agente haya detenido telegram write-access on o que se le acabara el tiempo. Pide al agente que vuelva a ejecutar telegram write-access on y abre el enlace nuevo, o ejecuta tú telegram write-access ask, on u off en una terminal. Mientras tanto, esta página sigue intentándolo.',
+  notSent: 'Esto no llegó a Better-TG-CLI. Inténtalo de nuevo.',
   failed: 'Algo salió mal.',
   inEffect: 'Modo de escritura vigente: {mode}.',
   errors: {
@@ -101,7 +105,7 @@ const es: Strings = {
     not_found: 'El enlace de esta página ya no es válido: el comando que la abrió terminó o se volvió a iniciar. Abre el enlace más reciente que te dio tu agente.',
     wrong_origin: 'La solicitud no vino de esta página. Recarga la página e inténtalo de nuevo.',
     bad_request: 'Better-TG-CLI no pudo leer lo que envió la página. Recarga la página e inténtalo de nuevo.',
-    internal: 'Algo falló dentro de Better-TG-CLI. Inténtalo de nuevo; si se repite, pide a tu agente que vuelva a ejecutar telegram onboard.',
+    internal: 'Algo falló dentro de Better-TG-CLI. Inténtalo de nuevo; si se repite, cuéntale a tu agente lo que dice esta página.',
     already_started: 'Ya se inició un inicio de sesión. Espera a que aparezca el siguiente paso en esta página.',
     bad_keys: 'Revisa las claves: api_id es un número y api_hash tiene 32 caracteres de 0-9 y a-f.',
     invite_failed: 'Esta clave de acceso no funcionó: puede que ya se haya usado, que haya caducado o que tenga un error. Obtén una nueva con el botón de arriba.',
@@ -112,7 +116,7 @@ const es: Strings = {
     bad_mode: 'Elige una de las opciones y pulsa Guardar.',
     not_confirmed: 'No se confirmó en el diálogo. Elige de nuevo.',
     needs_terminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí telegram write-access on. Hasta entonces el agente pregunta antes de cada escritura.',
-    store_failed: 'No se pudo guardar el modo de escritura: el almacén de secretos de este equipo lo rechazó. Elige de nuevo o ejecuta telegram write-access en una terminal.',
+    store_failed: 'No se pudo guardar el modo de escritura: el almacén de secretos de este equipo lo rechazó. Elige de nuevo o ejecuta telegram write-access ask, on u off en una terminal.',
   },
 };
 
@@ -139,7 +143,7 @@ const ru: Strings = {
   retry: 'Попробовать ещё раз',
   modeTitle: 'Что агенту можно делать в Telegram?',
   modeH: 'Последний шаг. Что можно агенту?',
-  modeNote: 'Это можно поменять потом командой telegram write-access.',
+  modeNote: 'Это можно поменять потом командой telegram write-access ask, on или off.',
   roName: 'Только чтение', roNote: 'Только читает и ищет.',
   askName: 'Спрашивать каждый раз (рекомендуем)', askNote: 'Перед каждым сообщением или действием агент показывает его вам в чате и отправляет только после вашего «да». Держится на том, что агент слушается инструкций.',
   onName: 'Писать без вопросов', onNote: 'Отправляет, правит и удаляет, не спрашивая. Только для агента, которому вы доверяете: прочитанное сообщение может уговорить его написать от вашего имени.',
@@ -148,7 +152,9 @@ const ru: Strings = {
   modeDone: 'Сохранено: {mode}. Эту вкладку можно закрыть и вернуться к агенту.',
   doneMode: 'Вы вошли как {user}. Режим записи: {mode}. Эту вкладку можно закрыть и вернуться к агенту.',
   gone: 'Страница не может связаться с Better-TG-CLI на этом компьютере. Возможно, агент остановил telegram onboard или у команды вышло время. Попросите агента запустить telegram onboard ещё раз (или запустите сами в терминале) и откройте новую ссылку. Пока что страница продолжает пробовать.',
-  goneMode: 'Страница не может связаться с Better-TG-CLI на этом компьютере. Возможно, агент остановил telegram write-access или у команды вышло время. Попросите агента запустить её ещё раз (или запустите telegram write-access в терминале) и откройте новую ссылку. Пока что страница продолжает пробовать.',
+  goneSaved: 'Страница не может связаться с Better-TG-CLI на этом компьютере. Возможно, агент остановил telegram onboard или у команды вышло время. Вход уже сохранён, режим записи остался прежним. Чтобы его поменять, попросите агента выполнить telegram write-access ask, on или off (или выполните сами в терминале). Пока что страница продолжает пробовать.',
+  goneMode: 'Страница не может связаться с Better-TG-CLI на этом компьютере. Возможно, агент остановил telegram write-access on или у команды вышло время. Попросите агента ещё раз выполнить telegram write-access on и откройте новую ссылку либо выполните сами в терминале telegram write-access ask, on или off. Пока что страница продолжает пробовать.',
+  notSent: 'Это не дошло до Better-TG-CLI. Попробуйте ещё раз.',
   failed: 'Что-то пошло не так.',
   inEffect: 'Сейчас действует режим записи: {mode}.',
   errors: {
@@ -156,7 +162,7 @@ const ru: Strings = {
     not_found: 'Ссылка этой страницы больше не действует: команда, которая её открыла, завершилась или запущена заново. Откройте самую свежую ссылку от агента.',
     wrong_origin: 'Запрос пришёл не с этой страницы. Обновите страницу и попробуйте ещё раз.',
     bad_request: 'Better-TG-CLI не смог прочитать, что отправила страница. Обновите страницу и попробуйте ещё раз.',
-    internal: 'Внутри Better-TG-CLI что-то сломалось. Попробуйте ещё раз; если повторится, попросите агента запустить telegram onboard заново.',
+    internal: 'Внутри Better-TG-CLI что-то сломалось. Попробуйте ещё раз; если повторится, расскажите агенту, что написано на этой странице.',
     already_started: 'Вход уже начат. Дождитесь, пока на странице появится следующий шаг.',
     bad_keys: 'Проверьте ключи: api_id — число, api_hash — 32 символа из 0-9 и a-f.',
     invite_failed: 'Ключ входа не подошёл: возможно, он уже использован, истёк или скопирован с ошибкой. Получите новый кнопкой выше.',
@@ -167,7 +173,7 @@ const ru: Strings = {
     bad_mode: 'Выберите один из вариантов и нажмите «Сохранить».',
     not_confirmed: 'В диалоге не подтвердили. Выберите ещё раз.',
     needs_terminal: 'На этом компьютере это подтверждается только в терминале. Запустите там telegram write-access on. До тех пор агент спрашивает перед каждой записью.',
-    store_failed: 'Не удалось сохранить режим записи: хранилище секретов этого компьютера его не приняло. Выберите ещё раз или запустите telegram write-access в терминале.',
+    store_failed: 'Не удалось сохранить режим записи: хранилище секретов этого компьютера его не приняло. Выберите ещё раз или выполните в терминале telegram write-access ask, on или off.',
   },
 };
 
@@ -276,35 +282,48 @@ for (const el of document.querySelectorAll('[data-t]')) el.textContent = L[el.da
 for (const el of document.querySelectorAll('[data-ph]')) el.placeholder = L[el.dataset.ph];
 const $ = id => document.getElementById(id);
 const base = location.pathname.replace(/cb$/, '');
+// The last step the server reported; the page starts on the login key
+let step = 'invite', modeOnly = false;
+// What the line under the form is about, so a newer state can drop it once it no longer holds:
+// 'net' a dropped connection (sent: during a click), 'act' the answer to a click on that step,
+// 'state' an error the state itself carries
+let shown = null;
 // A line of text, and the code or server detail under it in small print
-const msg = (t, small) => {
+const msg = (t, small, kind, sent) => {
   const el = $('msg');
   el.textContent = t || '';
   if (t && small) { const c = document.createElement('small'); c.textContent = small; el.appendChild(c); }
   el.hidden = !t;
+  shown = t ? { kind: kind || 'act', step, sent: !!sent } : null;
 };
 const MODE_NAMES = { 'read-only': 'roName', ask: 'askName', on: 'onName' };
-let modeOnly = false, offline = false;
-// 'offline' is a dropped connection; anything else is a code from the server, known or not
+// 'offline' is a dropped connection: what to do depends on how far it got (logged in or not, or
+// write-access alone). Anything else is a code from the server, known or not.
 function explain(code, detail, mode) {
-  if (code === 'offline') return [modeOnly ? L.goneMode : L.gone];
+  if (code === 'offline') return [modeOnly ? L.goneMode : step === 'mode' ? L.goneSaved : L.gone];
   if (!code || !Object.hasOwn(L.errors, code)) return [L.failed, [code, detail].filter(Boolean).join(': ')];
   let text = L.errors[code];
   if (code === 'store_failed' && mode && MODE_NAMES[mode]) text += ' ' + L.inEffect.replace('{mode}', L[MODE_NAMES[mode]]);
   return [text, detail];
 }
-const fail = (code, detail, mode) => msg(...explain(code, detail, mode));
+const fail = (code, detail, mode, kind, sent) => {
+  const [t, small] = explain(code, detail, mode);
+  msg(t, small, code === 'offline' ? 'net' : kind, sent);
+};
 
 async function post(route, body) {
   let res;
   try { res = await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
   catch { throw { code: 'offline' }; }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw { code: data.error || 'HTTP ' + res.status, detail: data.message };
+  if (res.ok) return;
+  // The server said no; a body cut short leaves only the status
+  let data = {};
+  try { data = JSON.parse(await res.text()); } catch { /* the status is all there is */ }
+  throw { code: data.error || 'HTTP ' + res.status, detail: data.message };
 }
 async function act(route, body, btn) {
   msg(''); if (btn) btn.disabled = true;
-  try { await post(route, body); } catch (e) { fail(e.code, e.detail); } finally { if (btn) btn.disabled = false; }
+  try { await post(route, body); } catch (e) { fail(e.code, e.detail, undefined, 'act', true); } finally { if (btn) btn.disabled = false; }
   // The state may hold more (the mode in effect after a store failure), and the next step
   await poll();
 }
@@ -316,7 +335,7 @@ if (m) act('invite', { invite: decodeURIComponent(m[1]) });
 
 $('use').onclick = () => act('invite', { invite: $('tok').value }, $('use'));
 $('keys').onclick = () => act('invite', { apiId: $('apiId').value, apiHash: $('apiHash').value }, $('keys'));
-$('pwgo').onclick = () => { const pw = $('pw').value; $('pw').value = ''; act('password', { password: pw }, $('pwgo')); };
+$('pwgo').onclick = () => { const pw = $('pw').value; $('pw').value = ''; return act('password', { password: pw }, $('pwgo')); };
 $('pw').onkeydown = e => { if (e.key === 'Enter') $('pwgo').click(); };
 $('retry').onclick = () => act('retry', {}, $('retry'));
 const picked = () => document.querySelector('input[name=mode]:checked').value;
@@ -326,24 +345,31 @@ $('modego').onclick = () => act('mode', { mode: picked(), for: picked() === 'rea
 let last = '', timer, modeSeeded = false;
 async function poll() {
   if (!timer) return;
-  let res, s;
-  // No answer at all: the command may have been stopped, or the connection dropped for a moment.
-  // Say what to do and keep trying, so the page comes back by itself if the server does.
-  try { res = await fetch(base + 'state', { cache: 'no-store' }); }
-  catch { offline = true; fail('offline'); return; }
-  s = await res.json().catch(() => null);
+  let res, text, s = null;
+  // No answer at all, or one cut off midway: the command may have been stopped, or the connection
+  // dropped for a moment. Say what to do and keep trying, so the page comes back by itself if the server does.
+  try { res = await fetch(base + 'state', { cache: 'no-store' }); text = await res.text(); }
+  // A click lost on the way stays lost while the server is still away (act() polls right after it)
+  catch { fail('offline', '', undefined, 'net', !!(shown && shown.kind === 'net' && shown.sent)); return; }
+  try { s = JSON.parse(text); } catch { /* a whole answer that is not JSON: not the state */ }
   // An answer, but not the state: the server is there and says no (an old link, a wrong address)
   if (!res.ok || !s || typeof s.step !== 'string') { fail(s && s.error || 'HTTP ' + res.status); clearInterval(timer); timer = undefined; return; }
-  if (offline) { offline = false; msg(''); }
   modeOnly = !!s.modeOnly;
+  // Drop a line this state no longer backs: a drop (the server answers again; a click lost on the
+  // way is said so), the answer to a click on a step left behind, or a state error that is gone
+  if (shown) {
+    if (shown.kind === 'net') msg(shown.sent && s.step === shown.step ? L.notSent : '');
+    else if (s.step === 'done' || s.step !== shown.step || (shown.kind === 'state' && !s.error)) msg('');
+  }
+  step = s.step;
   for (const id of ['invite', 'connecting', 'scan', 'password', 'mode', 'done', 'error']) $(id).hidden = s.step !== id;
   if (s.step === 'mode' && !modeSeeded && s.mode) { const r = document.querySelector('input[name=mode][value="' + s.mode + '"]'); if (r) r.checked = true; $('forrow').hidden = s.mode === 'read-only'; modeSeeded = true; }
   if (s.modeOnly) { document.title = L.modeTitle; document.querySelector('h1').textContent = L.modeTitle; document.querySelector('h1 + p').hidden = true; }
   // qrSvg is rendered by this local CLI from the Telegram login token, not taken from any site
   if (s.step === 'scan' && s.qrSvg !== last) { $('qr').innerHTML = s.qrSvg; last = s.qrSvg; }
-  if (s.step === 'password') { $('hint').textContent = s.hint || '—'; if (s.error) fail(s.error); }
+  if (s.step === 'password') { $('hint').textContent = s.hint || '—'; if (s.error) fail(s.error, '', undefined, 'state'); }
   // A mode that was not saved (also the default one right after the login) stays on this step
-  if (s.step === 'mode' && s.error) fail(s.error, '', s.mode);
+  if (s.step === 'mode' && s.error) fail(s.error, '', s.mode, 'state');
   if (s.step === 'error') $('errtext').textContent = s.error || '';
   if (s.step === 'done') {
     const u = s.user || {};

@@ -1,7 +1,7 @@
 import { confirmByHuman } from './confirm.js';
 import { describeWriteState, encodeWriteState, parseWriteState, type WriteMode } from './write-state.js';
 import { deleteWriteValue, getWriteValue, hasHumanChannel, mayTrustUnconfirmedChoice, setWriteValue } from './write-store.js';
-import type { ModeChoice, ModeResult } from './onboard.js';
+import type { ModeChoice, ModeResult, SavedMode } from './onboard.js';
 
 /** The question in the macOS / Windows dialog or at the terminal (Russian, like the rest of them). */
 export function modeQuestion(mode: Exclude<WriteMode, 'read-only'>, forSeconds?: number): string {
@@ -44,9 +44,13 @@ export async function applyModeChoice(choice: ModeChoice, options: { alreadyConf
   return { ok: true, until: parseWriteState(getWriteValue()).until };
 }
 
-/** The write mode the store holds right now (read back, not what was asked for). */
-export function savedMode(): WriteMode {
-  return parseWriteState(getWriteValue()).mode;
+/**
+ * The write mode the store holds right now (read back, not what was asked for), and when it ends.
+ * A fresh read: another process may have run `telegram write-access` meanwhile.
+ */
+export function savedMode(): SavedMode {
+  const { mode, until } = parseWriteState(getWriteValue(true));
+  return until && mode !== 'read-only' ? { mode, until } : { mode };
 }
 
 export function currentModeLine(): string {
