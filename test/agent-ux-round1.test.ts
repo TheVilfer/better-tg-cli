@@ -188,3 +188,28 @@ describe('7 --topic: bot forums count, and an empty unread page is checked like 
     expect(oneJson(r.out)).toEqual({ chatTitle: 'Mock', chatId: '1000', messages: [] });
   }, 30_000);
 });
+
+describe('11 hasMore only when a next page was seen', () => {
+  it('read: a page of exactly limit at the start of history has no hasMore; one less has', () => {
+    // Team has exactly 3 messages
+    const exact = cli(['read', 'Team', '-n', '3', '--json']);
+    expect(JSON.parse(exact.out).messages).toHaveLength(3);
+    expect(JSON.parse(exact.out).hasMore).toBeUndefined();
+    expect(cli(['read', 'Team', '-n', '3']).out).not.toMatch(/more: --before/);
+    const page = JSON.parse(cli(['read', 'Team', '-n', '2', '--json']).out);
+    expect(page.messages).toHaveLength(2);
+    expect(page.hasMore).toBe(true);
+    // The promised next page is not empty
+    expect(JSON.parse(cli(['read', 'Team', '-n', '2', '--before', String(page.nextBefore), '--json']).out).messages.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('search: exactly limit results is the end; one less says more exist', () => {
+    // An empty query matches every message: fewer than the default 50
+    const all = JSON.parse(cli(['search', '', '--json']).out)[0].messages.length;
+    expect(all).toBeGreaterThan(1);
+    expect(JSON.parse(cli(['search', '', '-n', String(all), '--json']).out)[0].hasMore).toBeUndefined();
+    expect(JSON.parse(cli(['search', '', '-n', String(all - 1), '--json']).out)[0].hasMore).toBe(true);
+    const inChat = JSON.parse(cli(['search', '', '--chat', 'Team', '--json']).out)[0].messages.length;
+    expect(JSON.parse(cli(['search', '', '--chat', 'Team', '-n', String(inChat), '--json']).out)[0].hasMore).toBeUndefined();
+  }, 30_000);
+});

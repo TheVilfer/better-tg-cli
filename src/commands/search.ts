@@ -64,7 +64,7 @@ export const searchCommand = new Command('search')
           } else {
             console.log(formatMessages(result.messages, result.chatTitle ?? `Results for "${query}"`));
           }
-          if (result.hasMore) console.log(`… more may exist: raise -n (now ${options.limit}) or narrow with --since/--until`);
+          if (result.hasMore) console.log(`… more exist: raise -n (now ${options.limit}) or narrow with --since/--until`);
         }
       }
 

@@ -62,6 +62,7 @@ export const readCommand = new Command('read')
       const fetchOptions: Parameters<typeof getMessages>[2] = {
         limit: options.limit,
         full: Boolean(options.full || options.stats),
+        probe: true,
       };
       if (options.since) fetchOptions.minDate = parseTimeOffset(options.since);
       if (options.until) fetchOptions.maxDate = parseTimeOffset(options.until);
@@ -84,13 +85,13 @@ export const readCommand = new Command('read')
       if (thread) fetchOptions.thread = thread;
       if (options.topic && !options.thread) fetchOptions.topic = true;
 
-      const { messages, chatTitle, chatId, threadChatId } = await getMessages(client, chat, fetchOptions);
+      const { messages, chatTitle, chatId, threadChatId, hasMore } = await getMessages(client, chat, fetchOptions);
 
       spinner.stop();
       const title = thread ? `${chatTitle} › thread ${thread}${threadChatId ? ` (comments chat ${threadChatId})` : ''}` : chatTitle;
-      // A full page may not be the last one: say how to get the next (older) page
+      // Only when an older message was seen: a page that ends exactly at the start of history has none
       const oldest = messages.length ? Math.min(...messages.map(m => m.id)) : undefined;
-      const more = messages.length >= options.limit && oldest !== undefined && !options.after && !options.unread;
+      const more = !!hasMore && oldest !== undefined && !options.after && !options.unread;
       const extra = { chatId, ...(threadChatId ? { threadChatId } : {}), ...(more ? { hasMore: true, nextBefore: oldest } : {}) };
       printMessages(messages, chatTitle, options, extra, title, more ? `… more: --before ${oldest}` : undefined);
 

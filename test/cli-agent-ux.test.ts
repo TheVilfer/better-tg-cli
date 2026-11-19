@@ -249,11 +249,11 @@ describe('output shapes', () => {
     expect(readFileSync(report.chats[0].file, 'utf8')).toMatch(/^# Team/);
   }, 30_000);
 
-  it('3.6/3.7 search says when more may exist and names the time zone of a global result list', () => {
+  it('3.6/3.7 search says when more exist and names the time zone of a global result list', () => {
     const r = cli(['search', '', '-n', '1']);
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/^# Results for "" \(times in .+, UTC[+-]\d/m);
-    expect(r.out).toMatch(/^… more may exist: raise -n \(now 1\)/m);
+    expect(r.out).toMatch(/^… more exist: raise -n \(now 1\)/m);
     expect(JSON.parse(cli(['search', '', '-n', '1', '--json']).out)[0].hasMore).toBe(true);
     expect(JSON.parse(cli(['search', 'green', '--chat', 'Team', '--json']).out)[0].hasMore).toBeUndefined();
   }, 30_000);

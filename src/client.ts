@@ -799,14 +799,19 @@ export interface GetMessagesOptions {
   topic?: boolean;
   /** Attach MessageFull to each message (the `--full` flag). */
   full?: boolean;
+  /** Look for one message past `limit`, so `hasMore` is known, never guessed from a full page. */
+  probe?: boolean;
 }
 
 export async function getMessages(
   client: TelegramClient,
   chatIdentifier: string,
   options: GetMessagesOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; threadChatId?: string; forum?: boolean }> {
-  const { limit = 50, offsetId, minDate, maxDate, minId, from, thread, full } = options;
+): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; threadChatId?: string; forum?: boolean; hasMore?: boolean }> {
+  const { offsetId, minDate, maxDate, minId, from, thread, full } = options;
+  const wanted = options.limit ?? 50;
+  // With probe: one more than asked; finding it proves there is a next page
+  const limit = options.probe ? wanted + 1 : wanted;
   let threadChatId: string | undefined;
 
   // Find the chat by name or username
@@ -907,7 +912,9 @@ export async function getMessages(
     if (batch.length < batchLimit) break;
   }
 
-  return { messages, chatTitle, chatId, threadChatId, ...(forum ? { forum } : {}) };
+  const hasMore = messages.length > wanted;
+  if (hasMore) messages.length = wanted;
+  return { messages, chatTitle, chatId, threadChatId, ...(forum ? { forum } : {}), ...(options.probe ? { hasMore } : {}) };
 }
 
 /** Fetch specific messages by ID (missing/deleted IDs are skipped). */
@@ -1128,7 +1135,7 @@ export async function searchMessages(
         maxDate: maxTs,
         offsetId: 0,
         addOffset: 0,
-        limit,
+        limit: limit + 1,
         maxId: 0,
         minId: 0,
         hash: bigInt(0),
@@ -1139,11 +1146,11 @@ export async function searchMessages(
     // Every result carries its chat ID, as in global search, so a reply needs no second lookup
     const chatId = utils.getPeerId(entity).toString();
     if ('messages' in res) {
-      for (const msg of res.messages) {
+      for (const msg of res.messages.slice(0, limit)) {
         if (msg instanceof Api.Message) messages.push({ ...(await toMessageInfo(client, msg, { full })), chatId });
       }
     }
-    return [{ messages, chatTitle: getChatTitle(entity), chatId, ...(messages.length >= limit ? { hasMore: true } : {}) }];
+    return [{ messages, chatTitle: getChatTitle(entity), chatId, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) }];
   }
 
   // Global search: results span chats, so tag each message with its chat
@@ -1156,13 +1163,13 @@ export async function searchMessages(
       offsetRate: 0,
       offsetPeer: new Api.InputPeerEmpty(),
       offsetId: 0,
-      limit,
+      limit: limit + 1,
     })
   );
 
   const messages: MessageInfo[] = [];
   if ('messages' in res) {
-    for (const msg of res.messages) {
+    for (const msg of res.messages.slice(0, limit)) {
       if (!(msg instanceof Api.Message)) continue;
       const info = await toMessageInfo(client, msg, { full });
       info.chatId = utils.getPeerId(msg.peerId).toString();
@@ -1170,7 +1177,18 @@ export async function searchMessages(
       messages.push(info);
     }
   }
-  return [{ messages, ...(messages.length >= limit ? { hasMore: true } : {}) }];
+  return [{ messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) }];
+}
+
+/**
+ * Whether a search has results past the first `limit`: the extra one asked for came back, or the
+ * exact total says so (the server may cap a page below limit + 1). A full page alone proves nothing.
+ */
+function searchHasMore(res: object, limit: number): boolean {
+  const r = res as { messages?: unknown[]; count?: unknown; inexact?: unknown };
+  const got = r.messages?.length ?? 0;
+  if (got > limit) return true;
+  return typeof r.count === 'number' && !r.inexact && r.count > got;
 }
 
 export async function sendMessage(
