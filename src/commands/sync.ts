@@ -10,7 +10,7 @@ import {
 import type { ChatInfo, GetMessagesOptions, MessageInfo } from '../client.js';
 import type { TelegramClient } from 'teleproto';
 import { formatMediaLabel } from '../formatters/plain.js';
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, readFileSync, mkdirSync, existsSync, lstatSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
@@ -38,7 +38,7 @@ function readSyncMeta(outputDir: string): SyncMeta {
 }
 
 function writeSyncMeta(outputDir: string, meta: SyncMeta): void {
-  writeFileSync(join(outputDir, '.sync-meta.json'), JSON.stringify(meta, null, 2));
+  writeFileSync(exportPath(outputDir, join(outputDir, '.sync-meta.json')), JSON.stringify(meta, null, 2));
 }
 
 async function formatMessageLines(
@@ -58,7 +58,7 @@ async function formatMessageLines(
   if (msg.media) {
     if (downloadMedia) {
       try {
-        const result = await downloadMessageMedia(client, chatId, msg.id, chatMediaDir);
+        const result = await downloadMessageMedia(client, chatId, msg.id, chatMediaDir, path => { exportPath(outputDir, path); });
         if (result) {
           const rel = relative(outputDir, result.filePath);
           lines.push(`> [${formatMediaLabel(result.media)}](${rel})`);
@@ -66,6 +66,7 @@ async function formatMessageLines(
           lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
         }
       } catch (mediaErr) {
+        if (mediaErr instanceof ExportPathError) throw mediaErr;
         lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
         console.error(
           chalk.yellow(
@@ -93,8 +94,15 @@ async function formatMessageLines(
  * otherwise this returns the reason to stop, before any file is created.
  */
 export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolean): ChatInfo[] | string {
+  // An empty name would match every title (and must never fall back to exporting every chat)
+  if (!name.trim()) return '--chat needs a chat: an ID, @username or title';
+  // A numeric name is an ID, never a title ("123" must not pick a chat titled 123)
+  if (/^-?\d+$/.test(name.trim())) {
+    const byId = all.filter(c => c.id === name.trim());
+    return byId.length > 0 ? byId : `No chat has the ID ${name.trim()}`;
+  }
   const needle = name.toLowerCase();
-  const exact = all.filter(c => c.id === name || c.title.toLowerCase() === needle);
+  const exact = all.filter(c => c.title.toLowerCase() === needle);
   if (!exactOnly) {
     const chats = exact.length > 0 ? exact : all.filter(c => c.title.toLowerCase().includes(needle));
     return chats.length > 0 ? chats : `No chat found matching "${name}"`;
@@ -106,6 +114,40 @@ export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolea
   const list = matches.slice(0, 5).map(c => `  ${c.id} ${c.type} ${c.title}${c.username ? ` @${c.username}` : ''}`).join('\n');
   return `"${name}" matches ${matches.length} chats; use an ID:\n${list}`;
 }
+
+/** Stops the whole sync: a write would leave the export folder through a symbolic link. */
+export class ExportPathError extends Error {}
+
+/**
+ * `path` itself, or a stop if it is not strictly inside `dir` or if any existing component below
+ * `dir` (the file included) is a symbolic link: writeFileSync and mkdir follow links, so a link
+ * planted in the export folder would send the Markdown, media or checkpoints elsewhere.
+ */
+export function exportPath(dir: string, path: string): string {
+  insideDir(dir, path);
+  let cur = resolve(dir);
+  for (const part of relative(cur, resolve(path)).split(sep)) {
+    cur = join(cur, part);
+    let link: boolean;
+    try {
+      link = lstatSync(cur).isSymbolicLink();
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') break; // nothing below it exists either
+      throw e;
+    }
+    if (link) throw new ExportPathError(`Refusing to write through a symbolic link in ${dir}: ${cur}`);
+  }
+  return path;
+}
+
+/** The Markdown file of a chat: its title and ID, so equal titles never share (or resume) a file. */
+export function chatFileName(chat: Pick<ChatInfo, 'id' | 'title'>): string {
+  const safeTitle = chat.title.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '-');
+  return `${safeTitle} (${chat.id.replace(/[^\w-]/g, '_')}).md`;
+}
+
+/** The header line that names the chat a Markdown file belongs to (checked by --resume). */
+const chatIdLine = (id: string) => `Chat ID: ${id}`;
 
 /** `path` itself, or a stop if it is not strictly inside `dir` (a chat title must never pick the folder). */
 export function insideDir(dir: string, path: string): string {
@@ -168,7 +210,8 @@ export const syncCommand = new Command('sync')
       }
 
       let chats;
-      if (options.chat) {
+      // Present but empty is a mistake to stop at, never "every chat"
+      if (options.chat !== undefined) {
         const overMcp = !!process.env.TG_MCP;
         const selected = selectSyncChats(await getDialogs(client, 500), options.chat, overMcp);
         if (typeof selected === 'string') {
@@ -186,6 +229,8 @@ export const syncCommand = new Command('sync')
       if (!existsSync(outputDir)) {
         mkdirSync(outputDir, { recursive: true });
       }
+      // Before any file is written: the checkpoints must not be a link out of the folder
+      exportPath(outputDir, join(outputDir, '.sync-meta.json'));
 
       // Checkpoints are always written, but only read with --resume
       const meta = readSyncMeta(outputDir);
@@ -198,13 +243,15 @@ export const syncCommand = new Command('sync')
         try {
           spinner.text = `Syncing "${chat.title}"...`;
 
-          const safeTitle = chat.title.replace(/[/\\?%*:|"<>]/g, '-');
-          const filePath = insideDir(outputDir, join(outputDir, `${safeTitle}.md`));
+          const filePath = exportPath(outputDir, join(outputDir, chatFileName(chat)));
           // By chat ID: a title such as ".." would otherwise put the media outside outputDir
-          const chatMediaDir = insideDir(outputDir, join(outputDir, 'media', chat.id.replace(/[^\w-]/g, '_')));
+          const chatMediaDir = exportPath(outputDir, join(outputDir, 'media', chat.id.replace(/[^\w-]/g, '_')));
 
-          // Incremental sync: only messages newer than the last checkpoint
-          const minId = options.resume && existsSync(filePath) ? meta[chat.id]?.lastMessageId : undefined;
+          // Incremental sync: only messages newer than the last checkpoint, and only into a file
+          // whose header names this chat (otherwise it is exported in full again)
+          const resumable = options.resume && existsSync(filePath)
+            && readFileSync(filePath, 'utf-8').split('\n', 8).includes(chatIdLine(chat.id));
+          const minId = resumable ? meta[chat.id]?.lastMessageId : undefined;
 
           const fetchOptions = buildSyncFetchOptions({ all: !!options.all, since: !!options.since, minDate, maxDate, minId });
 
@@ -227,7 +274,7 @@ export const syncCommand = new Command('sync')
             // Append new messages to the existing file
             content = readFileSync(filePath, 'utf-8').trimEnd() + '\n\n' + body.join('\n');
           } else {
-            const header: string[] = [`# ${chat.title}`, `\nType: ${chat.type}`];
+            const header: string[] = [`# ${chat.title}`, `\n${chatIdLine(chat.id)}`, `Type: ${chat.type}`];
             if (chat.username) {
               header.push(`Username: @${chat.username}`);
             }
@@ -237,7 +284,7 @@ export const syncCommand = new Command('sync')
             content = [...header, ...body].join('\n');
           }
 
-          writeFileSync(filePath, content);
+          writeFileSync(exportPath(outputDir, filePath), content);
 
           meta[chat.id] = {
             title: chat.title,
@@ -248,6 +295,7 @@ export const syncCommand = new Command('sync')
           synced++;
           newMessages += messages.length;
         } catch (error) {
+          if (error instanceof ExportPathError) throw error;
           // Skip chats that fail
           console.error(chalk.yellow(`\nWarning: Could not sync "${chat.title}": ${error instanceof Error ? error.message : error}`));
         }

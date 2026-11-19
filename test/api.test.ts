@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TelegramClient } from 'teleproto';
 import { invokeApi, serializeApiResult, disconnectClient } from '../src/client.js';
-import { resolveApiMethod, isApiReadMethod, isApiReadCall, apiRefusalReason, mcpPaidReadRefusal, plainParams } from '../src/api-methods.js';
+import { resolveApiMethod, isApiReadMethod, isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, plainParams } from '../src/api-methods.js';
 import { apiMethodToken, planCall } from '../src/mcp.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 import { MockClient } from '../src/mock/client.js';
@@ -192,18 +192,21 @@ describe('api: paid reads and login tokens', () => {
     expect(r.stderr).toMatch(/Write access|secret store/);
   }, 30_000);
 
-  it('mcpPaidReadRefusal: only over MCP, only a read, only an own non-null field', () => {
+  it('mcpPaidStarsRefusal: only over MCP, any method class, only an own non-null field', () => {
     const saved = { mcp: process.env.TG_MCP, ro: process.env.TG_READ_ONLY };
     try {
       delete process.env.TG_MCP; delete process.env.TG_READ_ONLY;
-      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: 5 })).toBeNull();
+      expect(mcpPaidStarsRefusal('channels.SearchPosts', { allowPaidStars: 5 })).toBeNull();
       process.env.TG_MCP = '1';
-      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: 5 })).toMatch(/Refused over MCP/);
-      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: 0 })).toMatch(/Refused over MCP/);
-      expect(mcpPaidReadRefusal('channels.SearchPosts', { allowPaidStars: null })).toBeNull();
-      expect(mcpPaidReadRefusal('channels.SearchPosts', Object.create({ allowPaidStars: 5 }))).toBeNull();
-      // A paid message is a write already (approved in "ask"), not this refusal
-      expect(mcpPaidReadRefusal('messages.SendMessage', { allowPaidStars: 5 })).toBeNull();
+      expect(mcpPaidStarsRefusal('channels.SearchPosts', { allowPaidStars: 5 })).toMatch(/Refused over MCP/);
+      expect(mcpPaidStarsRefusal('channels.SearchPosts', { allowPaidStars: 0 })).toMatch(/Refused over MCP/);
+      expect(mcpPaidStarsRefusal('channels.SearchPosts', { allowPaidStars: null })).toBeNull();
+      expect(mcpPaidStarsRefusal('channels.SearchPosts', Object.create({ allowPaidStars: 5 }))).toBeNull();
+      // A paid message, media or forward spends Stars too: refused over MCP like a paid search
+      for (const m of ['messages.SendMessage', 'messages.SendMedia', 'messages.SendMultiMedia', 'messages.ForwardMessages']) {
+        expect(mcpPaidStarsRefusal(m, { allowPaidStars: 5 }), m).toMatch(/Refused over MCP/);
+        expect(mcpPaidStarsRefusal(m, { message: 'x' }), m).toBeNull();
+      }
     } finally {
       if (saved.mcp === undefined) delete process.env.TG_MCP; else process.env.TG_MCP = saved.mcp;
       if (saved.ro === undefined) delete process.env.TG_READ_ONLY; else process.env.TG_READ_ONLY = saved.ro;
@@ -253,6 +256,10 @@ describe('api: paid reads and login tokens', () => {
     const client = { invoke: async () => { sent = true; return true; } } as unknown as TelegramClient;
     try {
       await expect(invokeApi(client, 'channels.SearchPosts', { query: 'x', allowPaidStars: 5 })).rejects.toThrow(/Refused over MCP/);
+      await expect(invokeApi(client, 'messages.SendMessage', { peer: { _: 'inputPeerSelf' }, message: 'x', allowPaidStars: 5 })).rejects.toThrow(/Refused over MCP/);
+      // Coordinates for an inline bot are refused on the built request in every mode
+      delete process.env.TG_MCP;
+      await expect(invokeApi(client, 'messages.GetInlineBotResults', { bot: { _: 'inputUserSelf' }, peer: { _: 'inputPeerSelf' }, query: 'x', offset: '', geoPoint: { _: 'inputGeoPoint', lat: 1, long: 2 } })).rejects.toThrow(/geoPoint/);
       expect(sent).toBe(false);
     } finally {
       if (saved === undefined) delete process.env.TG_MCP; else process.env.TG_MCP = saved;

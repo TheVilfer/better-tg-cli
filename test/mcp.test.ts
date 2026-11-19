@@ -209,6 +209,20 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['api', 'channels.SearchPosts', '--params', '{"query":"allowPaidStars"}'], 'read'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"x","offsetPeer":{"allowPaidStars":1}}'], 'read'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":null}'], 'read'],
+  // A paid message or forward never runs over MCP either; the free forms stay writes
+  [['api', 'messages.SendMessage', '--params', '{"peer":"@c","message":"hi","allowPaidStars":5}'], 'never'],
+  [['api', 'messages.ForwardMessages', '-p{"fromPeer":"@a","toPeer":"@c","id":[1],"allowPaidStars":0}'], 'never'],
+  [['messages', 'send-message', '--peer', '@c', '--message', 'hi', '--allow-paid-stars', '5'], 'never'],
+  [['messages', 'send-media', '--json-params', '{"allowPaidStars":5}'], 'never'],
+  [['api', 'messages.SendMessage', '--params', '{"peer":"@c","message":"hi"}'], 'write'],
+  [['messages', 'send-message', '--peer', '@c', '--message', '--allow-paid-stars=5'], 'write'],
+  [['api', 'messages.SendMessage', '-p', '-'], 'write'], // stdin params: the CLI refuses a paid body
+  // Recovery-email management and Passport values never run; an inline query is a read
+  [['api', 'account.ResendPasswordEmail'], 'never'],
+  [['account', 'cancel-password-email'], 'never'],
+  [['api', 'account.GetAllSecureValues'], 'never'],
+  [['account', 'get-secure-value'], 'never'],
+  [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'read'],
   // Inherited names of a plain object are not commands
   [['constructor'], 'unknown'],
   [['__proto__'], 'unknown'],

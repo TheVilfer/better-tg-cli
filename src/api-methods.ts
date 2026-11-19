@@ -57,17 +57,19 @@ function hasPaidStars(params?: Record<string, unknown>): boolean {
 }
 
 /**
- * Over MCP (TG_MCP or TG_READ_ONLY) a read that would pay Stars is refused in every write mode, "on"
- * included: the model must not spend the user's Stars. In a terminal it stays a write behind the
- * guard. Checked on the prototype-free params and again on the built request.
+ * Over MCP (TG_MCP or TG_READ_ONLY) a call that would pay Stars is refused for every method class
+ * and in every write mode, "on" included: the model must not spend the user's Stars. That covers a
+ * paid search (`channels.SearchPosts`) and a message, media, album or forward to a chat that
+ * charges for delivery (`messages.SendMessage`, `SendMedia`, `SendMultiMedia`, `ForwardMessages`,
+ * and any other method with the field). In a terminal a paid read stays a write behind the guard.
+ * Checked on the prototype-free params and again on the built request.
  */
-export function mcpPaidReadRefusal(name: string, params?: Record<string, unknown>): string | null {
+export function mcpPaidStarsRefusal(_name: string, params?: Record<string, unknown>): string | null {
   if (!process.env.TG_MCP && !process.env.TG_READ_ONLY) return null;
-  if (!isApiReadMethod(name) || !hasPaidStars(params)) return null;
-  return PAID_READ_REFUSAL;
+  return hasPaidStars(params) ? PAID_STARS_REFUSAL : null;
 }
 
-export const PAID_READ_REFUSAL = 'Refused over MCP: allowPaidStars makes this search spend Stars; run a paid search in a terminal.';
+export const PAID_STARS_REFUSAL = 'Refused over MCP: allowPaidStars spends the user\'s Stars (a paid search, or a message to a chat that charges for it); do it in a terminal.';
 
 /**
  * A deep copy of request params made of prototype-free objects, so no field can be inherited (a JSON
@@ -111,6 +113,10 @@ const ALWAYS_REFUSED = new Map<string, string>([
   ['account.declinepasswordreset', 'Refused: 2FA password-reset management is security-sensitive.'],
   ['account.getpasswordsettings', 'Refused: this reveals 2FA password settings and needs the password.'],
   ['account.gettmppassword', 'Refused: this mints a temporary password token.'],
+  // The 2FA recovery email: confirming, resending or cancelling it manages a login credential
+  ['account.confirmpasswordemail', 'Refused: 2FA recovery-email management is security-sensitive; do it in an official client.'],
+  ['account.resendpasswordemail', 'Refused: 2FA recovery-email management is security-sensitive; do it in an official client.'],
+  ['account.cancelpasswordemail', 'Refused: 2FA recovery-email management is security-sensitive; do it in an official client.'],
   // Passkeys (log-in credentials): registering or deleting one changes how the account signs in
   ['account.initpasskeyregistration', 'Refused: registering a passkey adds a way to log in to the account; do it in an official client.'],
   ['account.registerpasskey', 'Refused: registering a passkey adds a way to log in to the account; do it in an official client.'],
@@ -130,6 +136,9 @@ const ALWAYS_REFUSED = new Map<string, string>([
   ['account.acceptauthorization', 'Refused: Telegram Passport — this shares identity documents.'],
   ['account.savesecurevalue', 'Refused: Telegram Passport — this stores identity documents.'],
   ['account.deletesecurevalue', 'Refused: Telegram Passport identity-document management.'],
+  // Reading Passport values: plainData carries the phone number and email in the clear
+  ['account.getallsecurevalues', 'Refused: Telegram Passport — this reveals identity data (phone, email, documents).'],
+  ['account.getsecurevalue', 'Refused: Telegram Passport — this reveals identity data (phone, email, documents).'],
   // Privacy that can widen phone-number / added-by-phone visibility
   ['account.setprivacy', 'Refused: changing privacy rules can expose your phone number or let strangers add you; do it in an official client.'],
   ['account.updatebusinesslocation', 'Refused: this shares a geographic location.'],
@@ -213,11 +222,24 @@ export function apiRefusalReason(name: string, params?: Record<string, unknown>)
     if (lower === 'contacts.addcontact' && params.addPhonePrivacyException) {
       return 'Refused: addPhonePrivacyException shares your phone number with this contact.';
     }
+    const geo = inlineGeoRefusal(name, params);
+    if (geo) return geo;
     if ((lower === 'messages.sendmedia' || lower === 'messages.editmessage' || lower === 'messages.sendmultimedia') && SHARED_MEDIA.test(JSON.stringify(params))) {
       return 'Refused: this sends a contact card or a geographic location.';
     }
   }
   return null;
+}
+
+/**
+ * `messages.GetInlineBotResults` with `geoPoint` hands the user's coordinates to the bot, so it is
+ * refused everywhere (read tool and `--read-only` included); an inline query without one stays a read.
+ * Also checked on the built request in invokeApi.
+ */
+export function inlineGeoRefusal(name: string, params: Record<string, unknown>): string | null {
+  if (name.toLowerCase() !== 'messages.getinlinebotresults') return null;
+  if (!Object.hasOwn(params, 'geoPoint') || params.geoPoint == null) return null;
+  return 'Refused: geoPoint sends your location to the inline bot; query it without coordinates.';
 }
 
 export interface ResolvedApiMethod {

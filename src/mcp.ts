@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
-import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_READ_REFUSAL } from './api-methods.js';
+import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_STARS_REFUSAL } from './api-methods.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
 import { paramsOf } from './commands/generated.js';
 import { actionHash, createApproval, describeAction, readsStdin } from './approval.js';
@@ -184,8 +184,8 @@ function generatedValuedOptions(className: string): Set<string> {
  * `allowPaidStars` in the JSON of a params option. Only option names and the params object count,
  * so a query that merely contains the word (`--query allowPaidStars`) stays a free read. The value
  * of an option in `valued` is skipped as commander would consume it, so `--query
- * '--allow-paid-stars=5'` is a search for that text, not a payment. Read calls get no stdin, so
- * `-p -` cannot hide it here; the CLI checks the built request again.
+ * '--allow-paid-stars=5'` is a search for that text, not a payment. A write may read its params
+ * from stdin (`-p -`), which this does not see; the CLI refuses that on the parsed params.
  */
 function asksPaidStars(args: string[], valued: Set<string>): boolean {
   for (let i = 1; i < args.length; i++) {
@@ -220,9 +220,10 @@ function hasPaidKey(json: string): boolean {
 function byMethod(method: string, label: string, args: string[], valued: Set<string>): CallClass {
   const refusal = apiRefusalReason(method);
   if (refusal) return { group: 'never', reason: refusal };
-  // A read that would spend Stars never runs over MCP, in any write mode (the CLI refuses it too,
-  // on the built request, see mcpPaidReadRefusal).
-  if (isApiReadMethod(method) && asksPaidStars(args, valued)) return { group: 'never', reason: PAID_READ_REFUSAL };
+  // A call that would spend Stars (a paid search, a paid message or forward) never runs over MCP, in
+  // any write mode. Params read from stdin (`-p -`) are not visible here; the CLI refuses those on the
+  // parsed params and on the built request, see mcpPaidStarsRefusal.
+  if (asksPaidStars(args, valued)) return { group: 'never', reason: PAID_STARS_REFUSAL };
   return { group: isApiReadMethod(method) ? 'read' : 'write', label };
 }
 

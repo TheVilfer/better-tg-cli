@@ -885,7 +885,9 @@ export async function downloadMessageMedia(
   client: TelegramClient,
   chatIdentifier: string,
   messageId: number,
-  outputDir: string
+  outputDir: string,
+  /** Called with the target file before the folder is created or anything is written; may throw. */
+  checkPath?: (filePath: string) => void,
 ): Promise<{ filePath: string; media: MediaInfo } | null> {
   const entity = await resolveChat(client, chatIdentifier);
 
@@ -899,12 +901,13 @@ export async function downloadMessageMedia(
   const mediaInfo = extractMediaInfo(msg);
   if (!mediaInfo) return null;
 
+  const fileName = buildMediaFilename(mediaInfo, msg.id);
+  const filePath = join(outputDir, fileName);
+  checkPath?.(filePath);
+
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
   }
-
-  const fileName = buildMediaFilename(mediaInfo, msg.id);
-  const filePath = join(outputDir, fileName);
 
   const result = await client.downloadMedia(msg, { outputFile: filePath });
   // downloadMedia returns the path/Buffer; when outputFile is a string, file is written there.
@@ -3035,12 +3038,13 @@ export async function invokeApi(
   methodName: string,
   rawParams: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const { resolveApiMethod, mcpPaidReadRefusal } = await import('./api-methods.js');
+  const { resolveApiMethod, mcpPaidStarsRefusal, inlineGeoRefusal } = await import('./api-methods.js');
   const { ctor, className } = resolveApiMethod(methodName);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
-  // Checked again on the fields the request really carries (a paid search over MCP)
-  const refusal = mcpPaidReadRefusal(className, { ...request } as Record<string, unknown>);
+  // Checked again on the fields the request really carries (Stars over MCP, an inline geoPoint)
+  const fields = { ...request } as Record<string, unknown>;
+  const refusal = inlineGeoRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields);
   if (refusal) throw new Error(refusal);
   return client.invoke(request);
 }

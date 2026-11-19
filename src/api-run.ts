@@ -1,5 +1,5 @@
 import { getClient, invokeApi, serializeApiResult, disconnectClient } from './client.js';
-import { isApiReadCall, apiRefusalReason, mcpPaidReadRefusal, plainParams } from './api-methods.js';
+import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, plainParams } from './api-methods.js';
 import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
 import chalk from './colors.js';
@@ -21,10 +21,10 @@ export async function runApiMethod(
   const auditCommand = options.auditCommand ?? 'api';
 
   // Prototype-free, so every check below sees exactly the fields the request gets. Refuse after
-  // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid search
+  // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid call
   // over MCP) apply.
   params = plainParams(params);
-  const refusal = apiRefusalReason(canonical, params) ?? mcpPaidReadRefusal(canonical, params);
+  const refusal = apiRefusalReason(canonical, params) ?? mcpPaidStarsRefusal(canonical, params);
   if (refusal) {
     console.error(chalk.red(refusal));
     process.exit(1);

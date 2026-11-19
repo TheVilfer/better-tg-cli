@@ -38,9 +38,19 @@ const CASES: [string, string, string, string[], Record<string, unknown>][] = [
   ['account.RegisterPasskey', 'account', 'register-passkey', [], {}],
   ['account.DeletePasskey', 'account', 'delete-passkey', ['--id', 'x'], { id: 'x' }],
   ['account.InitPasskeyRegistration', 'account', 'init-passkey-registration', [], {}],
+  // The 2FA recovery email and Telegram Passport values (plainData holds the phone and email)
+  ['account.ResendPasswordEmail', 'account', 'resend-password-email', [], {}],
+  ['account.CancelPasswordEmail', 'account', 'cancel-password-email', [], {}],
+  ['account.ConfirmPasswordEmail', 'account', 'confirm-password-email', ['--code', '123'], { code: '123' }],
+  ['account.GetAllSecureValues', 'account', 'get-all-secure-values', [], {}],
+  ['account.GetSecureValue', 'account', 'get-secure-value', ['--json-params', '{"types":[{"_":"secureValueTypePhone"}]}'], { types: [{ _: 'secureValueTypePhone' }] }],
+  // An inline query carrying coordinates hands the user's location to the bot
+  ['messages.GetInlineBotResults', 'messages', 'get-inline-bot-results',
+    ['--json-params', '{"bot":"@b","peer":"me","query":"x","offset":"","geoPoint":{"_":"inputGeoPoint","lat":1,"long":2}}'],
+    { bot: '@b', peer: 'me', query: 'x', offset: '', geoPoint: { _: 'inputGeoPoint', lat: 1, long: 2 } }],
 ];
 
-describe.each([['terminal', {}], ['MCP', { TG_MCP: '1' }]])('refused before invoke in write mode "on" (%s)', (_where, env) => {
+describe.each([['terminal', {}], ['MCP', { TG_MCP: '1' }], ['MCP read-only', { TG_MCP: '1', TG_READ_ONLY: '1' }]])('refused before invoke in write mode "on" (%s)', (_where, env) => {
   beforeEach(() => { Object.assign(process.env, env); });
 
   it.each(CASES)('%s: the raw api form', async (className, _ns, _method, _args, params) => {
@@ -64,4 +74,58 @@ it('control: an ordinary write runs in mode "on" (so the spies above would see a
   await apiCommand.parseAsync(['contacts.Block', '--params', '{"id": "@x"}'], { from: 'user' });
   expect(assertWriteEnabled).toHaveBeenCalled();
   expect(invokeApi).toHaveBeenCalledTimes(1);
+});
+
+// A paid message, media, album or forward (allowPaidStars) over MCP, in write mode "on":
+// [class name, namespace, generated method, the free params]
+const PAID: [string, string, string, Record<string, unknown>][] = [
+  ['messages.SendMessage', 'messages', 'send-message', { peer: '@c', message: 'hi' }],
+  ['messages.SendMedia', 'messages', 'send-media', { peer: '@c', message: '', media: { _: 'inputMediaEmpty' } }],
+  ['messages.SendMultiMedia', 'messages', 'send-multi-media', { peer: '@c', multiMedia: [] }],
+  ['messages.ForwardMessages', 'messages', 'forward-messages', { fromPeer: '@a', toPeer: '@c', id: [1] }],
+  ['channels.SearchPosts', 'channels', 'search-posts', { query: 'x', offsetPeer: { _: 'inputPeerEmpty' }, limit: 10 }],
+];
+
+describe.each([['MCP', { TG_MCP: '1' }], ['MCP read-only', { TG_MCP: '1', TG_READ_ONLY: '1' }]])('allowPaidStars is refused before invoke in mode "on" (%s)', (_where, env) => {
+  beforeEach(() => { Object.assign(process.env, env); });
+  const paid = (p: Record<string, unknown>) => ({ ...p, allowPaidStars: 5 });
+
+  it.each(PAID)('%s: the raw api form', async (className, _ns, _method, params) => {
+    await expect(apiCommand.parseAsync([className, '--params', JSON.stringify(paid(params))], { from: 'user' })).rejects.toThrow('exit 1');
+    expect(err.join('\n')).toMatch(/^Refused over MCP: allowPaidStars/m);
+    expect(getClient).not.toHaveBeenCalled();
+    expect(invokeApi).not.toHaveBeenCalled();
+  });
+
+  it.each(PAID)('%s: the generated command, JSON params and the typed flag', async (className, ns, method, params) => {
+    expect(methodClassName(ns, method)).toBe(className);
+    for (const args of [['--json-params', JSON.stringify(paid(params))], ['--json-params', JSON.stringify(params), '--allow-paid-stars', '0']]) {
+      err = [];
+      await expect(buildLeaf(ns, method, className, true).parseAsync(args, { from: 'user' })).rejects.toThrow('exit 1');
+      expect(err.join('\n'), args.join(' ')).toMatch(/^Refused over MCP: allowPaidStars/m);
+    }
+    expect(getClient).not.toHaveBeenCalled();
+    expect(invokeApi).not.toHaveBeenCalled();
+  });
+});
+
+describe('the free forms still run over MCP in mode "on"', () => {
+  beforeEach(() => { process.env.TG_MCP = '1'; });
+
+  it.each(PAID)('%s without allowPaidStars (or with null) reaches invoke', async (className, ns, method, params) => {
+    await apiCommand.parseAsync([className, '--params', JSON.stringify(params)], { from: 'user' });
+    await apiCommand.parseAsync([className, '--params', JSON.stringify({ ...params, allowPaidStars: null })], { from: 'user' });
+    await buildLeaf(ns, method, className, true).parseAsync(['--json-params', JSON.stringify(params)], { from: 'user' });
+    expect(invokeApi).toHaveBeenCalledTimes(3);
+  });
+
+  it('an inline query without coordinates reaches invoke, raw and generated', async () => {
+    process.env.TG_READ_ONLY = '1';
+    const params = { bot: '@b', peer: 'me', query: 'x', offset: '' };
+    await apiCommand.parseAsync(['messages.GetInlineBotResults', '--params', JSON.stringify(params)], { from: 'user' });
+    await buildLeaf('messages', 'get-inline-bot-results', 'messages.GetInlineBotResults', true)
+      .parseAsync(['--bot', '@b', '--peer', 'me', '--query', 'x', '--offset', ''], { from: 'user' });
+    expect(invokeApi).toHaveBeenCalledTimes(2);
+    expect(assertWriteEnabled).not.toHaveBeenCalled();
+  });
 });
