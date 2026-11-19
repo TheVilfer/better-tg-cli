@@ -17,10 +17,20 @@ export type Evidence =
   | { level: 'doc' | 'src' | 'report'; ref: string; checked: string; version?: string }
   | { level: 'live'; version: string; date: string; ref?: string };
 
-export interface Cell<V extends string = string> {
+/** One configuration (an interface, a version or a mode) of a cell whose answer depends on it. */
+export interface Case<V extends string = string> {
+  when: string;
   value: V | 'unknown' | 'n/a';
   note?: string;
   evidence: Evidence[];
+}
+
+export interface Cell<V extends string = string> {
+  /** `varies` when the answer depends on the configuration: `cases` holds one entry per configuration. */
+  value: V | 'unknown' | 'n/a' | 'varies';
+  note?: string;
+  evidence: Evidence[];
+  cases?: Case<V>[];
 }
 
 export type Surface = 'cli' | 'ide' | 'desktop' | 'web' | 'cloud';
@@ -31,10 +41,14 @@ export type StdioEnv = 'full' | 'filtered' | 'allowlist' | 'n/a';
 /** What the client does with an MCP tool call before anyone configured it. */
 export type ApprovalDefault = 'ask' | 'allow' | 'hints' | 'rules' | 'model';
 /** How Better-TG-CLI gets into the client today. */
-export type Install = 'plugin' | 'extension' | 'mcpb' | 'catalog' | 'config' | 'ui' | 'none';
+export type Install = 'plugin' | 'extension' | 'mcpb' | 'catalog' | 'config' | 'ui' | 'tunnel' | 'beta' | 'none';
 /** Reading Telegram through our server in this client. `works` needs a live entry. */
 export type Read = 'works' | 'expected' | 'blocked' | 'n/a';
-/** Approval level a write gets in mode `ask`: G1 = the client's own dialog, G2 = a code in chat. */
+/**
+ * Approval level a write gets in mode `ask`. G1: the client gets our approval form (elicitation),
+ * so the model never sees a code; the server checks the answer, not who gave it. G2: a one-time
+ * code the model must take to the human in chat.
+ */
 export type Approval = 'G1' | 'G2' | 'n/a';
 /** What happens when the human says no, or nobody can answer. */
 export type Refusal = 'refused' | 'chat' | 'n/a';
@@ -65,9 +79,11 @@ export interface ClientRecord {
   read: Cell<Read>;
   /** Derived from `elicitation` unless set. */
   approval?: Cell<Approval>;
+  /** Who besides the human may answer the form (a hook, a reviewer agent): added to the derived approval. */
+  approvalNote?: string;
   /** Derived from the approval level unless set. */
   refusal?: Cell<Refusal>;
-  /** Set only once an update notice reaches the agent in this client (see UPDATE_NOTICE). */
+  /** Set once a live run shows whether the update notice reaches the agent here (see UPDATE_NOTICE). */
   update?: Cell<'shown' | 'none'>;
   gui: Cell<Gui>;
   headless: Cell<Headless>;
@@ -92,12 +108,30 @@ function na<V extends string>(): Cell<V | 'n/a'> {
 function unknown<V extends string = string>(note?: string): Cell<V> {
   return note ? { value: 'unknown', note, evidence: [] } : { value: 'unknown', evidence: [] };
 }
+/** One configuration of a `varies` cell. */
+function when<V extends string>(label: string, value: V | 'unknown' | 'n/a', evidence: Evidence[] = [], note?: string): Case<V> {
+  return note ? { when: label, value, note, evidence } : { when: label, value, evidence };
+}
+/** A configuration nobody could confirm. */
+function whenUnknown(label: string, note?: string): Case<never> {
+  return note ? { when: label, value: 'unknown', note, evidence: [] } : { when: label, value: 'unknown', evidence: [] };
+}
+/** A cell whose answer depends on the interface, version or mode. */
+function varies<V extends string>(cases: NoInfer<Case<V>>[], note?: string): Cell<V> {
+  return note ? { value: 'varies', note, evidence: [], cases } : { value: 'varies', evidence: [], cases };
+}
+/** The configurations of a cell; a plain cell is one case with an empty label. */
+export function casesOf<V extends string>(cell: Cell<V>): Case<V>[] {
+  if (cell.cases) return cell.cases;
+  const value = cell.value === 'varies' ? 'unknown' : cell.value;
+  return [cell.note ? { when: '', value, note: cell.note, evidence: cell.evidence } : { when: '', value, evidence: cell.evidence }];
+}
 
 /**
- * Today the update notice is printed only to an interactive terminal (`src/update.ts`): agents
- * and pipes never see it, in any client. One note for the whole column instead of 22 cells.
+ * Whether an agent sees the notice that a new version exists is unknown per client until a live
+ * run shows it. What our code does is known, so one note covers the whole column.
  */
-export const UPDATE_NOTICE = 'Not shown to agents: the notice that a new version exists is printed only to an interactive terminal (`src/update.ts`), so no client passes it on yet.';
+export const UPDATE_NOTICE = 'Unknown in every client until seen live. Over MCP the notice is never part of a tool result: the commands the server runs get `TG_NO_UPDATE_CHECK=1` (`src/mcp.ts`). When an agent runs the `telegram` CLI, the notice goes to stderr only if stderr is a terminal, `CI` and `TG_NO_UPDATE_CHECK` are unset and a newer version is already cached (`src/update.ts`), so an agent that runs commands in a pseudo-terminal may see it.';
 
 /**
  * The approval columns describe the local stdio server (`telegram mcp`). Two routes are G2 in
@@ -152,14 +186,23 @@ export const CLIENTS: ClientRecord[] = [
     stdioEnv: cell('full', [doc(`${CC}/env-vars.md`)], 'Only a safe baseline with `CLAUDE_CODE_MCP_ALLOWLIST_ENV=1`.'),
     toolTimeout: cell('≈28 h', [doc(`${CC}/mcp.md`)], '`MCP_TOOL_TIMEOUT`; idle timeout 30 min on stdio.'),
     approvalDefault: cell('ask', [doc(`${CC}/permissions.md`)], 'Every MCP tool asks until an allow rule `mcp__telegram__*` matches.'),
-    install: cell('plugin', [doc(`${CC}/plugins-reference.md`)],
-      'The marketplace plugin carries the skill only; the MCP server is added with `claude mcp add telegram -- telegram mcp`.'),
+    install: varies([
+      when('stdio (`claude mcp add`)', 'config', [doc(`${CC}/mcp.md`, '2.1.328')], '`claude mcp add telegram -- telegram mcp`.'),
+      when('plugin', 'plugin', [doc(`${CC}/plugins-reference.md`)], 'The marketplace plugin carries the skill only.'),
+    ]),
     read: cell('expected', [doc(`${CC}/sandboxing.md`)], 'MCP servers run outside the Bash sandbox, with the user\'s Keychain.'),
-    approval: cell('G1', [doc(`${CC}/mcp.md`, '2.1.328'), doc(`${CC}/hooks.md`)],
-      'Through the MCP server (`claude mcp add`); the marketplace plugin alone is the skill route, which is G2.'),
+    approval: varies([
+      when('stdio (`claude mcp add`)', 'G1', [doc(`${CC}/mcp.md`, '2.1.328'), doc(`${CC}/hooks.md`)],
+        'An `Elicitation` hook can answer the form instead of the human.'),
+      when('plugin', 'G2', [doc(`${CC}/plugins-reference.md`)],
+        'The marketplace plugin is the skill only: the agent runs the CLI, which prints a one-time code.'),
+    ]),
     gui: na(),
-    headless: cell('refused', [doc(`${CC}/headless.md`), doc(`${CC}/hooks.md`)],
-      '`-p --permission-prompts none` cancels an elicitation no hook answers. Plain `-p` without that flag: unverified.'),
+    headless: varies([
+      when('`-p --permission-prompts none`, no hook answers', 'refused', [doc(`${CC}/headless.md`), doc(`${CC}/hooks.md`)],
+        'The form is cancelled.'),
+      whenUnknown('plain `-p`', 'An unanswered form may wait until the tool timeout; unverified.'),
+    ]),
     sandbox: cell('outside', [doc(`${CC}/sandboxing.md`)]),
     http: cell('bearer', [doc(`${CC}/mcp.md`)], '`--header "Authorization: Bearer …"` or `headersHelper`.'),
   },
@@ -195,15 +238,13 @@ export const CLIENTS: ClientRecord[] = [
     toolTimeout: cell('240 s', [doc(`${CD}/building/index.md`)]),
     approvalDefault: cell('hints', [doc(`${CD}/building/review-criteria.md`)],
       '`readOnlyHint` runs without a prompt, `destructiveHint` always asks.'),
-    install: cell('none', [doc(`${CD}/building/authentication.md`)],
-      'Needs a public HTTPS server with OAuth; `telegram mcp --http` has a static bearer only (TheVilfer/better-tg-cli#17, #72).'),
+    install: cell('beta', [doc(`${CD}/building/authentication.md`)],
+      'A public HTTPS `telegram mcp --http` URL works only in the `static_headers` beta (a limited set of organizations): an org Owner enters one `Authorization` header, sent for everyone in the org, so every member acts as the same Telegram account. Otherwise it needs OAuth, which the HTTP server does not offer yet (TheVilfer/better-tg-cli#17, #72).'),
     read: unknown(),
-    approval: unknown(),
-    refusal: unknown(),
     gui: na(),
     headless: na(),
     sandbox: cell('cloud', [doc(`${CD}/building/index.md`)], 'Calls come from Anthropic\'s cloud.'),
-    http: cell('oauth-only', [doc(`${CD}/building/authentication.md`)]),
+    http: cell('oauth-only', [doc(`${CD}/building/authentication.md`)], 'A static header exists only in the org-wide `static_headers` beta.'),
   },
   {
     id: 'cursor',
@@ -211,15 +252,21 @@ export const CLIENTS: ClientRecord[] = [
     surfaces: ['ide', 'cli'],
     versionSeen: 'CLI 2026.11.17',
     config: cell('`~/.cursor/mcp.json`, project `.cursor/mcp.json`, plugins', [doc(`${CURSOR}/mcp.md`)]),
-    elicitation: cell('form', [doc(`${CURSOR}/mcp.md`), report('https://forum.cursor.com/t/172829')],
-      'Gives up after ~60 s while the form is open (forum); URL mode and the Cursor CLI: unverified.'),
+    elicitation: varies([
+      when('IDE', 'form', [doc(`${CURSOR}/mcp.md`), report('https://forum.cursor.com/t/172829')],
+        'Gives up on the call after ~60 s while the form is open (forum). Our server keeps waiting for the form, so an approval that still arrives runs the write.'),
+      whenUnknown('CLI', 'Not documented.'),
+    ], 'URL mode: unverified.'),
     stdioEnv: unknown('Not documented.'),
     toolTimeout: cell('~60 s', [report('https://forum.cursor.com/t/172829'), report('https://forum.cursor.com/t/145618')], 'Observed, not documented.'),
     approvalDefault: cell('ask', [doc(`${CURSOR}/agent/security/run-modes.md`)]),
     install: cell('plugin', [doc(`${CURSOR}/plugins.md`)], 'The Cursor Marketplace plugin runs the pinned `npx better-tg-cli@<version> mcp`.'),
     read: unknown('The stdio environment and sandbox are not documented.'),
     gui: unknown(`The docs only say \`command\` must be on PATH or a full path: ${ABS_PATH}.`),
-    headless: cell('refused', [doc(`${CURSOR}/cli/headless.md`)], '`agent -p` rejects MCP tools that are not allowed.'),
+    headless: varies([
+      when('`agent -p`, tool not allowed', 'refused', [doc(`${CURSOR}/cli/headless.md`)], 'The call is rejected before it runs.'),
+      whenUnknown('`agent -p`, tool allowed', 'What the CLI does with the form is not documented.'),
+    ]),
     sandbox: unknown('Per-server sandboxing is documented only under Enterprise admin controls.'),
     http: cell('bearer', [doc(`${CURSOR}/mcp.md`)]),
   },
@@ -247,8 +294,10 @@ export const CLIENTS: ClientRecord[] = [
     surfaces: ['cli'],
     versionSeen: '1.0.114',
     config: cell('`~/.copilot/mcp-config.json` (`tools` is required), `.mcp.json`', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)]),
-    elicitation: cell('form', [doc('https://github.com/github/copilot-cli/blob/main/changelog.md', '1.0.114')],
-      'Autopilot answers prompts itself; URL mode unverified.'),
+    elicitation: varies([
+      when('interactive', 'form', [doc('https://github.com/github/copilot-cli/blob/main/changelog.md', '1.0.114')]),
+      whenUnknown('Autopilot', 'Autopilot answers the form itself; which answer it gives is not documented.'),
+    ], 'URL mode: unverified.'),
     stdioEnv: cell('allowlist', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)], '`PATH`, a small platform set and `env`.'),
     toolTimeout: cell('30 s', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)],
       'Per-server `timeout`; an approval that takes longer may be cut off.'),
@@ -269,11 +318,12 @@ export const CLIENTS: ClientRecord[] = [
     config: cell('`~/.codex/config.toml` `[mcp_servers.<name>]`, plugins', [doc(`${CODEX_DOC}/extend/mcp.md`)]),
     elicitation: cell('form+url', [src(`${CODEX_SRC}/codex-mcp/src/elicitation.rs`, 'near rust-v0.170.0')],
       '`approval_policy = "never"` and a missing UI decline automatically.'),
+    approvalNote: 'With `approvals_reviewer = auto_review` a reviewer subagent may answer the form instead of the human.',
     stdioEnv: cell('allowlist', [src(`${CODEX_SRC}/rmcp-client/src/utils.rs`, 'near rust-v0.170.0'), doc(`${CODEX_DOC}/config-file/config-reference.md`)],
       '`HOME`, `PATH`, `USER`, locale and a few more, plus `env_vars` and `env`.'),
     toolTimeout: cell('60 s', [doc(`${CODEX_DOC}/config-file/config-reference.md`)], '`tool_timeout_sec`; startup 10 s.'),
     approvalDefault: cell('hints', [doc(`${CODEX_DOC}/agent-approvals-security.md`), doc(`${CODEX_DOC}/extend/mcp.md`)],
-      'A destructive annotation always asks; `approval_mode = "writes"` asks for tools not marked read-only.'),
+      'A destructive annotation always asks, unless the tool is also marked read-only, which wins; `approval_mode = "writes"` asks for tools not marked read-only.'),
     install: cell('plugin', [doc(`${OAI}/plugins/build/plugins.md`)], 'The repo marketplace plugin runs the pinned `npx better-tg-cli@<version> mcp`.'),
     read: cell('expected', [src(`${CODEX_SRC}/rmcp-client/src/utils.rs`, 'near rust-v0.170.0')],
       'On Linux the Secret Service needs `DBUS_SESSION_BUS_ADDRESS` in `env_vars`.'),
@@ -289,17 +339,19 @@ export const CLIENTS: ClientRecord[] = [
     surfaces: ['web'],
     config: cell('chatgpt.com/plugins › Add custom MCP server (URL or tunnel)', [doc(`${OAI}/api/docs/guides/developer-mode.md`)]),
     elicitation: unknown('The docs do not say whether remote servers can ask.'),
-    stdioEnv: na(),
-    toolTimeout: cell('120 s', [doc(`${OAI}/api/docs/guides/secure-mcp-tunnels.md`)], 'Through Secure MCP Tunnel; other limits not documented.'),
+    stdioEnv: unknown('Through Secure MCP Tunnel, the environment `tunnel-client` gives a stdio command is not documented.'),
+    toolTimeout: cell('120 s', [doc(`${OAI}/api/docs/guides/secure-mcp-tunnels.md`)],
+      'Through Secure MCP Tunnel, an absolute deadline that includes queue time (an approval wait would count too); other limits not documented.'),
     approvalDefault: cell('hints', [doc(`${OAI}/plugins/reference.md`)], 'Writes ask; a tool without `readOnlyHint` counts as a write.'),
-    install: cell('none', [doc(`${OAI}/plugins/build/auth.md`)],
-      'OAuth or no auth only, no static bearer; `telegram mcp --http` has a static bearer (TheVilfer/better-tg-cli#17, #72).'),
+    install: cell('tunnel', [doc(`${OAI}/api/docs/guides/secure-mcp-tunnels.md`)],
+      'Secure MCP Tunnel: `tunnel-client` on the user\'s machine can forward to a local stdio command, here `telegram mcp`. A public URL needs OAuth or no auth, and `telegram mcp --http` has a static bearer only (TheVilfer/better-tg-cli#17, #72).'),
     read: unknown(),
-    approval: unknown(),
-    refusal: unknown(),
     gui: na(),
     headless: na(),
-    sandbox: cell('cloud', [doc(`${OAI}/plugins/deploy/connect-chatgpt.md`)]),
+    sandbox: varies([
+      when('URL', 'cloud', [doc(`${OAI}/plugins/deploy/connect-chatgpt.md`)]),
+      when('Secure MCP Tunnel', 'outside', [doc(`${OAI}/api/docs/guides/secure-mcp-tunnels.md`)], 'Our server runs on the user\'s machine under `tunnel-client`.'),
+    ]),
     http: cell('oauth-only', [doc(`${OAI}/plugins/build/auth.md`)]),
   },
   {
@@ -318,7 +370,10 @@ export const CLIENTS: ClientRecord[] = [
       '`gemini extensions install https://github.com/TheVilfer/better-tg-cli` (root `gemini-extension.json`).'),
     read: cell('expected', [src(`${GEMINI}/packages/core/src/tools/mcp-client.ts`, 'v0.69.0')], 'A stdio server starts only in a trusted folder.'),
     gui: na(),
-    headless: cell('refused', [doc(`${GEMINI}/docs/reference/policy-engine.md`, 'v0.69.0')], '`ask_user` counts as `deny` in non-interactive runs.'),
+    headless: varies([
+      when('policy chose `ask_user`', 'refused', [doc(`${GEMINI}/docs/reference/policy-engine.md`, 'v0.69.0')], '`ask_user` counts as `deny` in non-interactive runs.'),
+      whenUnknown('tool allowed (`trust`, an allow rule)', 'The one-time code goes to the model with nobody to ask; what happens then is unverified.'),
+    ]),
     sandbox: cell('opt-in', [doc(`${GEMINI}/docs/cli/sandbox.md`, 'v0.69.0')],
       '`--sandbox` re-launches the whole CLI, MCP servers included; a container has no host Keychain.'),
     http: cell('bearer', [doc(`${GEMINI}/docs/tools/mcp-server.md`, 'v0.69.0')]),
@@ -347,13 +402,17 @@ export const CLIENTS: ClientRecord[] = [
     versionSeen: 'v4.1.26',
     config: cell('`cline_mcp_settings.json`', [doc(`${CLINE_DOC}/mcp/mcp-overview.md`)]),
     elicitation: cell('none', [src(`${CLINE_SRC}/apps/vscode/src/services/mcp/McpHub.ts`)], 'Capabilities are empty.'),
-    stdioEnv: cell('allowlist', [src(`${CLINE_SRC}/apps/vscode/src/services/mcp/McpHub.ts`), src(`${CLINE_SRC}/sdk/packages/core/src/extensions/mcp/client.ts`)],
-      'The VS Code code path passes the MCP SDK default set, the CLI the full environment; which one the shipped extension uses is unverified.'),
+    stdioEnv: varies([
+      whenUnknown('VS Code', 'Two code paths: the MCP SDK default set (`McpHub.ts`) or the full environment (the SDK client); which one the shipped extension uses is unverified.'),
+      when('CLI', 'full', [src(`${CLINE_SRC}/sdk/packages/core/src/extensions/mcp/client.ts`)]),
+    ]),
     toolTimeout: cell('60 s', [src(`${CLINE_SRC}/sdk/packages/shared/src/mcp.ts`)]),
     approvalDefault: cell('ask', [doc(`${CLINE_DOC}/features/auto-approve.md`)]),
     install: cell('config', [doc(`${CLINE_DOC}/mcp/mcp-overview.md`)], 'An HTTP entry without `type` is read as legacy SSE.'),
-    read: cell('expected', [src(`${CLINE_SRC}/apps/vscode/src/services/mcp/McpHub.ts`)],
-      'The macOS Keychain needs no variables; the Linux Secret Service needs `DBUS_SESSION_BUS_ADDRESS` in `env`.'),
+    read: varies([
+      whenUnknown('VS Code', 'Depends on the stdio environment. If it is the SDK default set, the Linux Secret Service needs `DBUS_SESSION_BUS_ADDRESS` in `env`.'),
+      when('CLI', 'expected', [src(`${CLINE_SRC}/sdk/packages/core/src/extensions/mcp/client.ts`)]),
+    ]),
     gui: unknown(),
     headless: unknown(),
     sandbox: unknown(),
@@ -382,8 +441,11 @@ export const CLIENTS: ClientRecord[] = [
     surfaces: ['cli'],
     versionSeen: '1.0.45',
     config: cell('`~/.grok/config.toml` `[mcp_servers.<name>]`; also reads `~/.claude.json` and `.mcp.json`', [doc(`${GROK_DOC}/features/mcp-servers.md`, '1.0.45')]),
-    elicitation: cell('form+url', [src(`${GROK_SRC}/xai-grok-mcp/src/servers.rs`, '1.0.45')],
-      'With no UI attached Grok declines; in ACP or headless sessions it cancels.'),
+    elicitation: varies([
+      when('TUI', 'form+url', [src(`${GROK_SRC}/xai-grok-mcp/src/servers.rs`, '1.0.45')]),
+      whenUnknown('`grok -p`', 'The headless frontend answers every form with `cancel`, but whether `!is_acp()` holds there, so that the form is advertised at all, is unverified.'),
+      whenUnknown('ACP (`grok agent stdio`)', 'The capability is advertised only when `!is_acp()`, yet an ACP handler for the form exists; whether our server gets the form there is unverified.'),
+    ], 'With no UI attached Grok declines the form.'),
     stdioEnv: cell('full', [src(`${GROK_SRC}/xai-grok-mcp/src/servers.rs`, '1.0.45')]),
     toolTimeout: cell('6000 s', [doc(`${GROK_DOC}/features/mcp-servers.md`, '1.0.45')], 'Output over 20,000 bytes spills to a file.'),
     approvalDefault: cell('ask', [doc(`${GROK_DOC}/features/permissions.md`, '1.0.45')]),
@@ -392,10 +454,11 @@ export const CLIENTS: ClientRecord[] = [
     read: cell('expected', [src(`${GROK_SRC}/xai-grok-mcp/src/servers.rs`, '1.0.45')]),
     gui: cell('path', [src(`${GROK_SRC}/xai-grok-mcp/src/servers.rs`, '1.0.45')],
       `Started from a GUI, an IDE or ACP, \`/opt/homebrew/bin\` can be missing: ${ABS_PATH}.`),
-    headless: cell('refused', [src(`${GROK_SRC}/xai-grok-pager/src/headless/ext_protocol.rs`, '1.0.45')], '`grok -p` answers every form with `cancel`.'),
+    headless: unknown('`grok -p` answers every form with `cancel` (`xai-grok-pager/src/headless/ext_protocol.rs`, 1.0.45); whether it advertises the form, so that the write is refused rather than handed a one-time code, is unverified.'),
     sandbox: cell('opt-in', [doc(`${GROK_DOC}/features/sandbox.md`, '1.0.45')],
       '`--sandbox` wraps the whole process; `workspace` blocks writes to `~/.config/tg`.'),
-    http: cell('bearer', [doc(`${GROK_DOC}/features/mcp-servers.md`, '1.0.45')], '`headers` or `bearer_token_file`.'),
+    http: cell('bearer', [doc(`${GROK_DOC}/features/mcp-servers.md`, '1.0.45'), doc(`${GROK_SRC}/xai-grok-pager/docs/user-guide/07-mcp-servers.md`, '1.0.45')],
+      '`headers`; `bearer_token_file` (1.0.45) is in the repo user guide, not on the docs site.'),
   },
   {
     id: 'grok-bot',
@@ -406,10 +469,16 @@ export const CLIENTS: ClientRecord[] = [
     stdioEnv: unknown('Command connectors run on the cloud computer; their environment is not documented.'),
     toolTimeout: unknown(),
     approvalDefault: cell('model', [doc(`${GROKBOT}/approvals-security-and-privacy.md`)], 'Auto Review, a model-based check, is on by default.'),
-    install: cell('ui', [doc(`${GROKBOT}/computer-and-apps.md`), report('https://forum.cursor.com/t/does-grok-bot-support-local-mcp-e-g-workflowy/168182')],
-      'A Remote HTTPS connector to a public `telegram mcp --http` URL with an `Authorization` header; servers on the user\'s own machine are not reachable.'),
+    install: varies([
+      when('Remote HTTPS', 'ui', [doc(`${GROKBOT}/computer-and-apps.md`), report('https://forum.cursor.com/t/does-grok-bot-support-local-mcp-e-g-workflowy/168182')],
+        'A public `telegram mcp --http` URL with an `Authorization` header; a server on the user\'s own machine is not reachable directly.'),
+      whenUnknown('cloud Command', 'Would run `telegram` on the Bot\'s cloud computer; its environment, a lasting session store and forms are not documented.'),
+    ]),
     read: unknown(),
-    approval: cell('G2', [doc(`${GROKBOT}/computer-and-apps.md`)], 'Only `telegram mcp --http` is reachable, and the HTTP server never shows the form.'),
+    approval: varies([
+      when('Remote HTTPS', 'G2', [doc(`${GROKBOT}/computer-and-apps.md`)], 'The HTTP server never shows the form.'),
+      whenUnknown('cloud Command'),
+    ]),
     gui: na(),
     headless: na(),
     sandbox: cell('cloud', [doc(`${GROKBOT}/security.md`)], 'Remote connectors are dialled from the vendor\'s servers.'),
@@ -421,8 +490,8 @@ export const CLIENTS: ClientRecord[] = [
     surfaces: ['cli', 'desktop'],
     versionSeen: 'v0.23.2',
     config: cell('`~/.hermes/config.yaml` `mcp_servers`, plugins', [doc(`${HERMES_DOC}/features/mcp`)]),
-    elicitation: cell('form', [doc(`${HERMES_DOC}/features/mcp`), src(`${HERMES_SRC}/tools/mcp_tool_sampling.py`, 'v0.23.2')],
-      'URL mode is declined. Before v0.23.2 an Allow answers with empty content, which counts as approval.'),
+    elicitation: cell('form+url', [doc(`${HERMES_DOC}/features/mcp`), src(`${HERMES_SRC}/tools/mcp_tool_sampling.py`, 'v0.23.2')],
+      'URL mode is advertised but declined. Before v0.23.2 an Allow answers with empty content, which counts as approval.'),
     stdioEnv: cell('allowlist', [doc(`${HERMES_DOC}/security`), src(`${HERMES_SRC}/tools/mcp_tool_config.py`, 'v0.23.2')],
       '`PATH`, `HOME`, locale, `XDG_*` and a few more, plus `env`; `DBUS_SESSION_BUS_ADDRESS` must be forwarded.'),
     toolTimeout: cell('300 s', [doc(`${HERMES_DOC}/features/mcp`)], 'The approval form has its own 300 s; the tool deadline probably fires first (inferred from source).'),
@@ -441,8 +510,10 @@ export const CLIENTS: ClientRecord[] = [
     surfaces: ['cli', 'desktop'],
     versionSeen: 'v2.3.2 (V2), v1.19.6 (V1)',
     config: cell('`opencode.json` `mcp.servers` (V2), `command` as an array', [doc(`${OPENCODE_DOC}/mcp-servers/`)]),
-    elicitation: cell('form+url', [src(`${OPENCODE_SRC}/packages/core/src/mcp/client.ts`, 'v2.3.x'), src(`${OPENCODE_V1}/packages/opencode/src/mcp/index.ts`, 'v1.19.6')],
-      'V2 only; V1 does not advertise elicitation.'),
+    elicitation: varies([
+      when('V2', 'form+url', [src(`${OPENCODE_SRC}/packages/core/src/mcp/client.ts`, 'v2.3.x')]),
+      when('V1', 'none', [src(`${OPENCODE_V1}/packages/opencode/src/mcp/index.ts`, 'v1.19.6')], 'The capability is commented out.'),
+    ]),
     stdioEnv: cell('full', [doc(`${OPENCODE_DOC}/mcp-servers/`), src(`${OPENCODE_SRC}/packages/core/src/mcp/stdio.ts`, 'v2.3.x')],
       'In V2 the environment of the shared background service.'),
     toolTimeout: cell('12 h', [doc(`${OPENCODE_DOC}/mcp-servers/`)], 'V2 `execution`; startup 30 s, but `opencode run` waits 2 s (anomalyco/opencode#63310).'),
@@ -450,11 +521,12 @@ export const CLIENTS: ClientRecord[] = [
     install: cell('config', [doc(`${OPENCODE_DOC}/mcp-servers/`), report('https://github.com/anomalyco/opencode/issues/63310')],
       'Prefer the installed binary: a cold `npx` misses the 2 s startup of `opencode run`.'),
     read: cell('expected', [src(`${OPENCODE_SRC}/packages/core/src/mcp/stdio.ts`, 'v2.3.x')]),
-    approval: cell('G1', [src(`${OPENCODE_SRC}/packages/core/src/mcp/client.ts`, 'v2.3.x'), src(`${OPENCODE_V1}/packages/opencode/src/mcp/index.ts`, 'v1.19.6')],
-      'G1 in V2; G2 in V1, which has no elicitation.'),
     gui: cell('path', [report('https://github.com/anomalyco/opencode/issues/16854')], `"command not found" in Desktop without PATH: ${ABS_PATH}.`),
-    headless: cell('refused', [src(`${OPENCODE_SRC}/packages/cli/src/run/noninteractive.ts`, 'v2.3.x')],
-      '`opencode run` cancels every form, `--auto` included.'),
+    headless: varies([
+      when('V2 `opencode run`', 'refused', [src(`${OPENCODE_SRC}/packages/cli/src/run/noninteractive.ts`, 'v2.3.x')],
+        'Every form is cancelled, `--auto` included.'),
+      whenUnknown('V1'),
+    ]),
     sandbox: unknown(),
     http: cell('bearer', [doc(`${OPENCODE_DOC}/mcp-servers/`)], '`"oauth": false` and an `Authorization` header.'),
   },
@@ -472,8 +544,11 @@ export const CLIENTS: ClientRecord[] = [
     approvalDefault: cell('allow', [doc(`${GOOSE_DOC}/guides/managing-tools/goose-permissions.md`)], '`GOOSE_MODE=auto` (fully autonomous) is the default.'),
     install: cell('config', [doc(`${GOOSE_DOC}/guides/config-files.md`)]),
     read: cell('expected', [src(`${GOOSE_SRC}/crates/oi-kit-agent/src/mcp/stdio.rs`)]),
-    gui: cell('ok', [src(`${GOOSE_SRC}/ui/desktop/src/loginShellPath.ts`)],
-      'Desktop takes only PATH from the login shell; other exported variables (`TG_PROFILE`) are missing.'),
+    gui: varies([
+      when('Desktop on macOS, Linux', 'ok', [src(`${GOOSE_SRC}/ui/desktop/src/loginShellPath.ts`)],
+        'Only PATH comes from the login shell; other exported variables (`TG_PROFILE`) are missing.'),
+      whenUnknown('Desktop on Windows, Flatpak', 'The login-shell PATH lookup is skipped.'),
+    ]),
     headless: cell('aborts', [src(`${GOOSE_SRC}/crates/goose-cli/src/session/mod.rs`)],
       '`goose run` aborts the whole run when a write asks for approval.'),
     sandbox: unknown(),
@@ -516,7 +591,10 @@ export const CLIENTS: ClientRecord[] = [
     id: 'warp',
     name: 'Warp',
     surfaces: ['desktop', 'cli'],
-    config: cell('Settings › Agents › MCP servers, `~/.warp/.mcp.json`', [doc(`${WARP_DOC}/capabilities/mcp/`)]),
+    config: varies([
+      when('Desktop', 'Settings › Agents › MCP servers, `~/.warp/.mcp.json`', [doc(`${WARP_DOC}/capabilities/mcp/`)]),
+      when('CLI (macOS)', '`~/.warp_cli/.mcp.json` (global only)', [doc(`${WARP_DOC}/cli/configuration/`)]),
+    ]),
     elicitation: cell('none', [src(`${WARP_SRC}/crates/mcp/src/runtime.rs`)], 'No client capabilities are advertised.'),
     stdioEnv: cell('full', [src(`${WARP_SRC}/crates/mcp/src/runtime.rs`)]),
     toolTimeout: unknown(),
@@ -536,12 +614,18 @@ export const CLIENTS: ClientRecord[] = [
     config: cell('`~/.kiro/settings/mcp.json`, workspace `.kiro/settings/mcp.json`', [doc(`${KIRO}/mcp/configuration.md`)]),
     elicitation: cell('form+url', [doc(`${KIRO}/mcp/usage.md`), report('https://github.com/kirodotdev/Kiro/issues/11385')],
       'A server loaded through a Power gets every form cancelled (kirodotdev/Kiro#11385); the CLI only in local V3 sessions from 2.34.'),
-    stdioEnv: cell('full', [report('https://github.com/kirodotdev/Kiro/issues/10118')], 'CLI from 2.41; IDE not documented.'),
+    stdioEnv: varies([
+      when('CLI 2.41+', 'full', [report('https://github.com/kirodotdev/Kiro/issues/10118')]),
+      whenUnknown('IDE', 'Not documented.'),
+    ]),
     toolTimeout: unknown('Initialization must finish in 5 s (`mcp.initTimeout`); the tool-call default is not documented.'),
     approvalDefault: cell('ask', [doc(`${KIRO}/mcp/usage.md`)], 'Untrusted workspaces ask before every call.'),
     install: cell('config', [doc(`${KIRO}/mcp/configuration.md`), doc(`${KIRO}/reference/settings.md`)],
       'A plain `mcp.json` entry, not a Power; a cold `npx` can miss the 5 s start.'),
-    read: cell('expected', [doc(`${KIRO}/mcp/configuration.md`)]),
+    read: varies([
+      when('CLI 2.41+', 'expected', [report('https://github.com/kirodotdev/Kiro/issues/10118')]),
+      whenUnknown('IDE', 'Depends on the stdio environment.'),
+    ]),
     gui: unknown('Register `telegram` by its absolute path.'),
     headless: unknown(),
     sandbox: cell('opt-in', [doc(`${KIRO}/mcp/security.md`)], '`mcpSandboxing` limits file and network access of stdio servers.'),
@@ -554,11 +638,11 @@ export const CLIENTS: ClientRecord[] = [
     versionSeen: 'app 1.0.1116.2',
     config: cell('Settings › MCP', [doc(`${ASIDE}/changelog/components.md`)]),
     elicitation: cell('none', [src('Aside.app daemon (binary)', '1.0.1116.2')], 'No elicitation capability or handler in the client.'),
-    stdioEnv: cell('full', [src('Aside.app daemon (binary)', '1.0.1116.2')], 'The daemon\'s environment plus `env`.'),
+    stdioEnv: unknown('The daemon (binary 1.0.1116.2) passes its own environment plus `env`, or only `env` when `inheritEnv` is false; which one a user\'s server gets is unverified.'),
     toolTimeout: cell('60 s', [src('Aside.app daemon (binary)', '1.0.1116.2')], 'Sends `notifications/cancelled` on timeout.'),
     approvalDefault: cell('rules', [doc(`${ASIDE}/help/security.md`)], 'Allow / Ask / Deny rules per tool.'),
     install: cell('ui', [doc(`${ASIDE}/changelog/components.md`)]),
-    read: cell('expected', [src('Aside.app daemon (binary)', '1.0.1116.2')]),
+    read: unknown('Depends on the stdio environment.'),
     gui: unknown(`Whether the daemon gets the login-shell PATH is unknown: ${ABS_PATH}.`),
     headless: na(),
     sandbox: unknown('Aside has a sandbox toggle; whether it wraps MCP servers is not documented.'),
@@ -569,48 +653,81 @@ export const CLIENTS: ClientRecord[] = [
 // ---- derived cells -------------------------------------------------------------------------
 
 /**
- * The approval level a write gets in mode `ask` with the released server (`gateWrite` in
- * `src/mcp.ts`): a client that advertises elicitation gets our form (G1); one that does not gets
- * the one-time code the model must take to the human (G2). The evidence is the client's.
+ * Evidence a derived cell may carry: the client's docs or source. A live entry on the cell it is
+ * derived from shows that cell (say, the client advertised elicitation), not that our write
+ * approval or refusal was seen, so it is dropped; those need live entries of their own.
  */
-export function approvalOf(c: ClientRecord): Cell<Approval> {
-  if (c.approval) return c.approval;
-  if (c.install.value === 'none') return unknown();
-  const e = c.elicitation;
-  if (e.value === 'unknown') return unknown('Depends on whether the client advertises elicitation.');
-  return { value: e.value === 'none' ? 'G2' : 'G1', evidence: e.evidence };
+const notLive = (evidence: Evidence[]) => evidence.filter(e => e.level !== 'live');
+
+/** A cell from its cases: a plain cell for one unlabelled case, `varies` otherwise. */
+function fromCases<V extends string>(cases: Case<V>[]): Cell<V> {
+  if (cases.length === 1 && !cases[0].when) {
+    const { value, note, evidence } = cases[0];
+    return note ? { value, note, evidence } : { value, evidence };
+  }
+  return varies(cases);
+}
+
+function derive<V extends string, W extends string>(from: Case<V>, value: W | 'unknown', note?: string): Case<W> {
+  const evidence = value === 'unknown' ? [] : notLive(from.evidence);
+  // Seen only live: the derived claim needs a live entry of its own
+  if (value !== 'unknown' && !evidence.length) return when<W>(from.when, 'unknown', [], 'Record it live.');
+  return when<W>(from.when, value, evidence, note);
 }
 
 /**
- * What a "no" does with the released server. G1: decline, cancel or no answer within 10 minutes
- * refuses the write and nothing is sent; there is no fallback to a code. G2: the human refuses
- * in chat, and nothing is sent without the code, though the model sees the code itself.
+ * The approval level a write gets in mode `ask` with the released server (`gateWrite` in
+ * `src/mcp.ts`), per configuration: a client that advertises elicitation gets our form (G1); one
+ * that does not gets the one-time code the model must take to the human (G2). The evidence is the
+ * client's.
+ */
+export function approvalOf(c: ClientRecord): Cell<Approval> {
+  if (c.approval) return c.approval;
+  if (casesOf(c.install).every(k => k.value === 'none')) return unknown();
+  return fromCases(casesOf(c.elicitation).map(e => {
+    if (e.value === 'unknown') return when<Approval>(e.when, 'unknown', [], 'Depends on whether the client advertises elicitation.');
+    if (e.value === 'n/a') return when<Approval>(e.when, 'n/a');
+    return e.value === 'none' ? derive<Elicitation, Approval>(e, 'G2') : derive<Elicitation, Approval>(e, 'G1', c.approvalNote);
+  }));
+}
+
+/**
+ * What a "no" does with the released server, per configuration. G1: a decline or cancel answer to
+ * the form, or no answer within the server's own 10-minute timer, refuses the write and nothing is
+ * sent; there is no fallback to a code. G2: the human refuses in chat, and nothing is sent without
+ * the code, though the model sees the code itself.
  */
 export function refusalOf(c: ClientRecord): Cell<Refusal> {
   if (c.refusal) return c.refusal;
-  const a = approvalOf(c);
-  if (a.value === 'unknown' || a.value === 'n/a') return unknown();
-  return { value: a.value === 'G1' ? 'refused' : 'chat', evidence: a.evidence };
+  return fromCases(casesOf(approvalOf(c)).map(a =>
+    a.value === 'G1' ? derive<Approval, Refusal>(a, 'refused')
+      : a.value === 'G2' ? derive<Approval, Refusal>(a, 'chat')
+        : when<Refusal>(a.when, a.value === 'n/a' ? 'n/a' : 'unknown')));
 }
 
 export type Status = 'supported' | 'untested' | 'unsupported';
 
-/** The cells a client needs a live entry in before it may be called supported. */
+/** The cells a client needs a live entry in, in every configuration, before it may be called supported. */
 export const LIVE_REQUIRED = ['install', 'read', 'approval', 'refusal'] as const;
 
 export function outcomeCells(c: ClientRecord): Record<(typeof LIVE_REQUIRED)[number], Cell> {
   return { install: c.install, read: c.read, approval: approvalOf(c), refusal: refusalOf(c) };
 }
 
-const hasLive = (cell: Cell) => cell.evidence.some(e => e.level === 'live');
+const hasLive = (cell: { evidence: Evidence[] }) => cell.evidence.some(e => e.level === 'live');
 
 /**
- * Supported only when install, read, approval and refusal were each seen working live.
- * Unsupported when there is no way to install it today. Everything else is untested.
+ * Supported only when install, read, approval and refusal were each seen live in every
+ * configuration the record lists, and reading was seen working. Derived approval and refusal
+ * never carry a live entry, so both must be recorded. Unsupported when there is no way to
+ * install it today. Everything else is untested.
  */
 export function statusOf(c: ClientRecord): Status {
-  if (c.install.value === 'none') return 'unsupported';
-  return Object.values(outcomeCells(c)).every(hasLive) ? 'supported' : 'untested';
+  if (casesOf(c.install).every(k => k.value === 'none')) return 'unsupported';
+  const cells = outcomeCells(c);
+  const live = Object.values(cells).every(cell => casesOf(cell).every(hasLive));
+  const reads = casesOf(c.read).every(k => k.value === 'works');
+  return live && reads ? 'supported' : 'untested';
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -629,23 +746,43 @@ export function validate(clients: ClientRecord[]): string[] {
     ];
     if (c.update) cells.push(['update', c.update]);
     for (const [name, cell] of cells) {
-      const at = `${c.id}.${name}`;
-      if (cell.value === 'unknown' && cell.evidence.length) problems.push(`${at}: unknown but has evidence`);
-      if (cell.value !== 'unknown' && cell.value !== 'n/a' && !cell.evidence.length) problems.push(`${at}: "${cell.value}" has no evidence`);
-      for (const e of cell.evidence) {
-        if (e.level === 'live') {
-          if (!e.version?.trim()) problems.push(`${at}: live entry without a client version`);
-          if (!DATE.test(e.date ?? '')) problems.push(`${at}: live entry without a date (YYYY-MM-DD)`);
-        } else {
-          if (!e.ref?.trim()) problems.push(`${at}: ${e.level} entry without a reference`);
-          if (!DATE.test(e.checked ?? '')) problems.push(`${at}: ${e.level} entry without a checked date`);
+      if (cell.value === 'varies' || cell.cases) {
+        if (cell.value !== 'varies' || !cell.cases?.length) problems.push(`${c.id}.${name}: "varies" needs cases, and cases need "varies"`);
+        if (cell.evidence.length) problems.push(`${c.id}.${name}: a "varies" cell keeps its evidence in its cases`);
+        const labels = new Set<string>();
+        for (const k of cell.cases ?? []) {
+          if (!k.when.trim()) problems.push(`${c.id}.${name}: a case without a label`);
+          if (labels.has(k.when)) problems.push(`${c.id}.${name}: duplicate case "${k.when}"`);
+          labels.add(k.when);
         }
       }
-      // A claim about our server working there can only come from running it there
-      if (cell.value === 'works' && !hasLive(cell)) problems.push(`${at}: "works" without a live entry`);
+      for (const k of casesOf(cell)) {
+        const at = k.when ? `${c.id}.${name} [${k.when}]` : `${c.id}.${name}`;
+        if (k.value === 'unknown' && k.evidence.length) problems.push(`${at}: unknown but has evidence`);
+        if (k.value !== 'unknown' && k.value !== 'n/a' && !k.evidence.length) problems.push(`${at}: "${k.value}" has no evidence`);
+        for (const e of k.evidence) {
+          if (e.level === 'live') {
+            if (!e.version?.trim()) problems.push(`${at}: live entry without a client version`);
+            if (!DATE.test(e.date ?? '')) problems.push(`${at}: live entry without a date (YYYY-MM-DD)`);
+          } else {
+            if (!e.ref?.trim()) problems.push(`${at}: ${e.level} entry without a reference`);
+            if (!DATE.test(e.checked ?? '')) problems.push(`${at}: ${e.level} entry without a checked date`);
+          }
+        }
+        // A claim about our server working there can only come from running it there
+        if (k.value === 'works' && !hasLive(k)) problems.push(`${at}: "works" without a live entry`);
+        if (name === 'update' && k.value === 'shown' && !hasLive(k)) problems.push(`${at}: "shown" without a live entry`);
+      }
     }
-    if (c.read.value === 'expected' && c.stdioEnv.value === 'unknown') problems.push(`${c.id}.read: "expected" while its stdio environment is unknown`);
-    if (c.update?.value === 'shown' && !hasLive(c.update)) problems.push(`${c.id}.update: "shown" without a live entry`);
+    // Reading is expected only where the stdio environment of the same configuration is known
+    const envCases = casesOf(c.stdioEnv);
+    for (const k of casesOf(c.read)) {
+      if (k.value !== 'expected') continue;
+      const env = c.stdioEnv.cases ? (k.when ? envCases.filter(e => e.when === k.when) : envCases) : envCases;
+      if (!env.length || env.some(e => e.value === 'unknown')) {
+        problems.push(`${c.id}.read${k.when ? ` [${k.when}]` : ''}: "expected" while its stdio environment is unknown`);
+      }
+    }
   }
   return problems;
 }

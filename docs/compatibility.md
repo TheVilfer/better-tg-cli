@@ -7,9 +7,9 @@ How Better-TG-CLI behaves inside each agent client, and how we know it. A client
 with a named client version on a named date (`live`). Everything else comes from the client's
 docs or source and says what we expect, not what we saw.
 
-Supported: **0** of 22. Untested: 20. Not possible yet: 2.
+Supported: **0** of 22. Untested: 22. Not possible yet: 0.
 
-**Evidence**, strongest first. A table cell shows the strongest one it has; the sections below list all of them.
+**Evidence**, strongest first. A table cell shows the strongest one it has; the sections below list all of them. Where the answer depends on the interface, version or mode, a cell lists each one: `V1: G2 (src); V2: G1 (src)`.
 
 - `live`: our server was run in that client (client version and date).
 - `src`: the client's source code or binary was read, but not run.
@@ -21,37 +21,37 @@ Supported: **0** of 22. Untested: 20. Not possible yet: 2.
 
 | Client | Status | Install | Read | Write approval² | Refusal² | Update notice¹ | GUI | Headless² | Sandbox² | HTTP |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Claude Code | untested | plugin (doc) | expected (doc) | G1 (doc) | refused (doc) | none | n/a | refused (doc) | outside (doc) | bearer (doc) |
-| Claude Desktop (chat) | untested | mcpb (doc) | expected (doc) | G2 (report) | chat (report) | none | ? | n/a | outside (doc) | oauth-only (doc) |
-| claude.ai | not possible yet | none (doc) | ? | ? | ? | none | n/a | n/a | cloud (doc) | oauth-only (doc) |
-| Cursor | untested | plugin (doc) | ? | G1 (doc) | refused (doc) | none | ? | refused (doc) | ? | bearer (doc) |
-| VS Code Copilot | untested | config (doc) | ? | G1 (doc) | refused (doc) | none | ? | refused (doc) | opt-in (doc) | bearer (doc) |
-| Copilot CLI | untested | config (doc) | expected (doc) | G1 (doc) | refused (doc) | none | n/a | ? | opt-in (doc) | bearer (doc) |
-| Codex | untested | plugin (doc) | expected (src) | G1 (src) | refused (src) | none | ? | refused (src) | outside (doc) | bearer (doc) |
-| ChatGPT | not possible yet | none (doc) | ? | ? | ? | none | n/a | n/a | cloud (doc) | oauth-only (doc) |
-| Gemini CLI | untested | extension (doc) | expected (src) | G2 (src) | chat (src) | none | n/a | refused (doc) | opt-in (doc) | bearer (doc) |
-| Windsurf (Devin Desktop) | untested | config (doc) | ? | ? | ? | none | ? | ? | ? | bearer (doc) |
-| Cline | untested | config (doc) | expected (src) | G2 (src) | chat (src) | none | ? | ? | ? | bearer (doc) |
-| Zed | untested | config (doc) | expected (src) | G2 (doc) | chat (doc) | none | ? | n/a | outside (doc) | bearer (doc) |
-| Grok Build | untested | plugin (doc) | expected (src) | G1 (src) | refused (src) | none | path (src) | refused (src) | opt-in (doc) | bearer (doc) |
-| Grok Bot | untested | ui (doc) | ? | G2 (doc) | chat (doc) | none | n/a | n/a | cloud (doc) | bearer (doc) |
-| Hermes Agent | untested | catalog (doc) | expected (doc) | G1 (src) | refused (src) | none | ? | refused (doc) | ? | bearer (doc) |
-| OpenCode | untested | config (doc) | expected (src) | G1 (src) | refused (src) | none | path (report) | refused (src) | ? | bearer (doc) |
-| Goose | untested | config (doc) | expected (src) | G1 (src) | refused (src) | none | ok (src) | aborts (src) | ? | bearer (doc) |
-| Factory Droid | untested | config (doc) | ? | ? | ? | none | ? | ? | opt-in (doc) | bearer (doc) |
-| Amp | untested | config (doc) | ? | ? | ? | none | ? | ? | ? | bearer (doc) |
-| Warp | untested | config (doc) | expected (src) | G2 (src) | chat (src) | none | ok (src) | ? | ? | bearer (doc) |
-| Kiro | untested | config (doc) | expected (doc) | G1 (doc) | refused (doc) | none | ? | ? | opt-in (doc) | bearer (doc) |
-| Aside | untested | ui (doc) | expected (src) | G2 (src) | chat (src) | none | ? | n/a | ? | bearer (src) |
+| Claude Code | untested | stdio (`claude mcp add`): config (doc); plugin: plugin (doc) | expected (doc) | stdio (`claude mcp add`): G1 (doc); plugin: G2 (doc) | stdio (`claude mcp add`): refused (doc); plugin: chat (doc) | ? | n/a | `-p --permission-prompts none`, no hook answers: refused (doc); plain `-p`: ? | outside (doc) | bearer (doc) |
+| Claude Desktop (chat) | untested | mcpb (doc) | expected (doc) | G2 (report) | chat (report) | ? | ? | n/a | outside (doc) | oauth-only (doc) |
+| claude.ai | untested | beta (doc) | ? | G2 (doc) | chat (doc) | ? | n/a | n/a | cloud (doc) | oauth-only (doc) |
+| Cursor | untested | plugin (doc) | ? | IDE: G1 (doc); CLI: ? | IDE: refused (doc); CLI: ? | ? | ? | `agent -p`, tool not allowed: refused (doc); `agent -p`, tool allowed: ? | ? | bearer (doc) |
+| VS Code Copilot | untested | config (doc) | ? | G1 (doc) | refused (doc) | ? | ? | refused (doc) | opt-in (doc) | bearer (doc) |
+| Copilot CLI | untested | config (doc) | expected (doc) | interactive: G1 (doc); Autopilot: ? | interactive: refused (doc); Autopilot: ? | ? | n/a | ? | opt-in (doc) | bearer (doc) |
+| Codex | untested | plugin (doc) | expected (src) | G1 (src) | refused (src) | ? | ? | refused (src) | outside (doc) | bearer (doc) |
+| ChatGPT | untested | tunnel (doc) | ? | ? | ? | ? | n/a | n/a | URL: cloud (doc); Secure MCP Tunnel: outside (doc) | oauth-only (doc) |
+| Gemini CLI | untested | extension (doc) | expected (src) | G2 (src) | chat (src) | ? | n/a | policy chose `ask_user`: refused (doc); tool allowed (`trust`, an allow rule): ? | opt-in (doc) | bearer (doc) |
+| Windsurf (Devin Desktop) | untested | config (doc) | ? | ? | ? | ? | ? | ? | ? | bearer (doc) |
+| Cline | untested | config (doc) | VS Code: ?; CLI: expected (src) | G2 (src) | chat (src) | ? | ? | ? | ? | bearer (doc) |
+| Zed | untested | config (doc) | expected (src) | G2 (doc) | chat (doc) | ? | ? | n/a | outside (doc) | bearer (doc) |
+| Grok Build | untested | plugin (doc) | expected (src) | TUI: G1 (src); `grok -p`: ?; ACP (`grok agent stdio`): ? | TUI: refused (src); `grok -p`: ?; ACP (`grok agent stdio`): ? | ? | path (src) | ? | opt-in (doc) | bearer (doc) |
+| Grok Bot | untested | Remote HTTPS: ui (doc); cloud Command: ? | ? | Remote HTTPS: G2 (doc); cloud Command: ? | Remote HTTPS: chat (doc); cloud Command: ? | ? | n/a | n/a | cloud (doc) | bearer (doc) |
+| Hermes Agent | untested | catalog (doc) | expected (doc) | G1 (src) | refused (src) | ? | ? | refused (doc) | ? | bearer (doc) |
+| OpenCode | untested | config (doc) | expected (src) | V2: G1 (src); V1: G2 (src) | V2: refused (src); V1: chat (src) | ? | path (report) | V2 `opencode run`: refused (src); V1: ? | ? | bearer (doc) |
+| Goose | untested | config (doc) | expected (src) | G1 (src) | refused (src) | ? | Desktop on macOS, Linux: ok (src); Desktop on Windows, Flatpak: ? | aborts (src) | ? | bearer (doc) |
+| Factory Droid | untested | config (doc) | ? | ? | ? | ? | ? | ? | opt-in (doc) | bearer (doc) |
+| Amp | untested | config (doc) | ? | ? | ? | ? | ? | ? | ? | bearer (doc) |
+| Warp | untested | config (doc) | expected (src) | G2 (src) | chat (src) | ? | ok (src) | ? | ? | bearer (doc) |
+| Kiro | untested | config (doc) | CLI 2.41+: expected (report); IDE: ? | G1 (doc) | refused (doc) | ? | ? | ? | opt-in (doc) | bearer (doc) |
+| Aside | untested | ui (doc) | ? | G2 (src) | chat (src) | ? | ? | n/a | ? | bearer (src) |
 
-¹ Not shown to agents: the notice that a new version exists is printed only to an interactive terminal (`src/update.ts`), so no client passes it on yet.
+¹ Unknown in every client until seen live. Over MCP the notice is never part of a tool result: the commands the server runs get `TG_NO_UPDATE_CHECK=1` (`src/mcp.ts`). When an agent runs the `telegram` CLI, the notice goes to stderr only if stderr is a terminal, `CI` and `TG_NO_UPDATE_CHECK` are unset and a newer version is already cached (`src/update.ts`), so an agent that runs commands in a pseudo-terminal may see it.
 
 ² Write approval, refusal, headless and sandbox describe the local MCP server (`telegram mcp`). The skill route (the agent runs the `telegram` CLI in a shell) and `telegram mcp --http` are G2 in every client: the CLI prints a one-time code, and the HTTP server never asks the client for a form.
 
-- **Install:** `plugin`, `extension`, `catalog` (a plugin directory or catalog), `mcpb` (a Claude Desktop extension), `config` (an entry in the client's MCP config), `ui` (added in the client's settings), `none` (no way today).
+- **Install:** `plugin`, `extension`, `catalog` (a plugin directory or catalog), `mcpb` (a Claude Desktop extension), `config` (an entry in the client's MCP config), `ui` (added in the client's settings), `tunnel` (through the vendor's tunnel to a server on the user's machine), `beta` (only in a limited beta), `none` (no way today).
 - **Read:** `works` (seen live), `expected` (nothing known stands in the way), `blocked`.
-- **Write approval** in write mode `ask`: `G1`, the client shows our approval form (MCP elicitation) and the model never sees a code; `G2`, the model gets a one-time code and must ask the human in chat, which guards against mistakes but not against a model that uses the code itself.
-- **Refusal:** `refused`, a decline, a cancel or no answer within 10 minutes refuses the write and nothing is sent, with no fallback to a code; `chat`, the human says no in chat and nothing is sent without the code.
+- **Write approval** in write mode `ask`: `G1`, the client gets our approval form (MCP elicitation) and the model never sees a code. The server checks the answer, not who gave it: by default the human answers, but in some modes a hook, a reviewer agent or an autopilot may answer instead (named in the client's section). `G2`, the model gets a one-time code and must ask the human in chat, which guards against mistakes but not against a model that uses the code itself.
+- **Refusal:** `refused`, a decline or cancel answer to our form, or no answer within the server's own 10-minute timer, refuses the write and nothing is sent, with no fallback to a code. Cancelling the tool call itself (a client timeout, `notifications/cancelled`) does not withdraw the form: the server keeps waiting for its answer, and an approval that still arrives runs the write. `chat`, the human says no in chat and nothing is sent without the code.
 - **GUI:** `ok` (gets the login-shell PATH), `path` (may not: register `telegram` by its absolute path).
 - **Headless:** what a write does in an unattended run (`-p`, `exec`, cron, Autopilot): `refused` (the approval is refused), `aborts` (the whole run stops).
 - **Sandbox:** `outside` (our server runs outside the client's sandbox), `opt-in` (an optional sandbox can wrap it and may close the Keychain or the network), `cloud` (the client runs in the vendor's cloud).
@@ -64,25 +64,25 @@ Supported: **0** of 22. Untested: 20. Not possible yet: 2.
 | Claude Code | `~/.claude.json`, project `.mcp.json`, plugins (doc) | form+url (doc) | full (doc) | ≈28 h (doc) | ask (doc) |
 | Claude Desktop (chat) | `claude_desktop_config.json` or a `.mcpb` extension (doc) | none (report) | allowlist (doc) | 240 s (doc) | ask (doc) |
 | claude.ai | Customize › Connectors › Add custom connector (a public URL) (doc) | none (doc) | n/a | 240 s (doc) | hints (doc) |
-| Cursor | `~/.cursor/mcp.json`, project `.cursor/mcp.json`, plugins (doc) | form (doc) | ? | ~60 s (report) | ask (doc) |
+| Cursor | `~/.cursor/mcp.json`, project `.cursor/mcp.json`, plugins (doc) | IDE: form (doc); CLI: ? | ? | ~60 s (report) | ask (doc) |
 | VS Code Copilot | `~/.copilot/mcp-config.json`, workspace `.mcp.json` (doc) | form+url (doc) | ? | ? | ask (doc) |
-| Copilot CLI | `~/.copilot/mcp-config.json` (`tools` is required), `.mcp.json` (doc) | form (doc) | allowlist (doc) | 30 s (doc) | ask (doc) |
+| Copilot CLI | `~/.copilot/mcp-config.json` (`tools` is required), `.mcp.json` (doc) | interactive: form (doc); Autopilot: ? | allowlist (doc) | 30 s (doc) | ask (doc) |
 | Codex | `~/.codex/config.toml` `[mcp_servers.<name>]`, plugins (doc) | form+url (src) | allowlist (src) | 60 s (doc) | hints (doc) |
-| ChatGPT | chatgpt.com/plugins › Add custom MCP server (URL or tunnel) (doc) | ? | n/a | 120 s (doc) | hints (doc) |
+| ChatGPT | chatgpt.com/plugins › Add custom MCP server (URL or tunnel) (doc) | ? | ? | 120 s (doc) | hints (doc) |
 | Gemini CLI | `~/.gemini/settings.json` `mcpServers`, extensions (doc) | none (src) | filtered (src) | 10 min (doc) | ask (doc) |
 | Windsurf (Devin Desktop) | `~/.config/devin/mcp_config.json` (legacy `~/.codeium/windsurf/mcp_config.json`) (doc) | ? | ? | ? | ask (doc) |
-| Cline | `cline_mcp_settings.json` (doc) | none (src) | allowlist (src) | 60 s (src) | ask (doc) |
+| Cline | `cline_mcp_settings.json` (doc) | none (src) | VS Code: ?; CLI: full (src) | 60 s (src) | ask (doc) |
 | Zed | `settings.json` `context_servers` (doc) | none (doc) | full (src) | 60 s (src) | ? |
-| Grok Build | `~/.grok/config.toml` `[mcp_servers.<name>]`; also reads `~/.claude.json` and `.mcp.json` (doc) | form+url (src) | full (src) | 6000 s (doc) | ask (doc) |
+| Grok Build | `~/.grok/config.toml` `[mcp_servers.<name>]`; also reads `~/.claude.json` and `.mcp.json` (doc) | TUI: form+url (src); `grok -p`: ?; ACP (`grok agent stdio`): ? | full (src) | 6000 s (doc) | ask (doc) |
 | Grok Bot | Connect apps › Add a custom connector (Remote HTTPS or Command) (doc) | ? | ? | ? | model (doc) |
-| Hermes Agent | `~/.hermes/config.yaml` `mcp_servers`, plugins (doc) | form (src) | allowlist (src) | 300 s (doc) | allow (doc) |
-| OpenCode | `opencode.json` `mcp.servers` (V2), `command` as an array (doc) | form+url (src) | full (src) | 12 h (doc) | allow (doc) |
+| Hermes Agent | `~/.hermes/config.yaml` `mcp_servers`, plugins (doc) | form+url (src) | allowlist (src) | 300 s (doc) | allow (doc) |
+| OpenCode | `opencode.json` `mcp.servers` (V2), `command` as an array (doc) | V2: form+url (src); V1: none (src) | full (src) | 12 h (doc) | allow (doc) |
 | Goose | `~/.config/goose/config.yaml` `extensions` (doc) | form (src) | full (src) | 300 s (doc) | allow (doc) |
 | Factory Droid | `~/.factory/mcp.json`, project `.factory/mcp.json` (doc) | ? | ? | ? | rules (doc) |
 | Amp | `amp.mcpServers` in `~/.config/amp/settings.json` (doc) | ? | ? | ? | allow (doc) |
-| Warp | Settings › Agents › MCP servers, `~/.warp/.mcp.json` (doc) | none (src) | full (src) | ? | rules (doc) |
-| Kiro | `~/.kiro/settings/mcp.json`, workspace `.kiro/settings/mcp.json` (doc) | form+url (doc) | full (report) | ? | ask (doc) |
-| Aside | Settings › MCP (doc) | none (src) | full (src) | 60 s (src) | rules (doc) |
+| Warp | Desktop: Settings › Agents › MCP servers, `~/.warp/.mcp.json` (doc); CLI (macOS): `~/.warp_cli/.mcp.json` (global only) (doc) | none (src) | full (src) | ? | rules (doc) |
+| Kiro | `~/.kiro/settings/mcp.json`, workspace `.kiro/settings/mcp.json` (doc) | form+url (doc) | CLI 2.41+: full (report); IDE: ? | ? | ask (doc) |
+| Aside | Settings › MCP (doc) | none (src) | ? | 60 s (src) | rules (doc) |
 
 - **Approval form:** `form+url`, `form` or `none`, what the client advertises for MCP elicitation.
 - **stdio env:** `full` (the client's whole environment), `filtered` (all but names that look secret), `allowlist` (only a fixed set plus the configured `env`).
@@ -104,18 +104,29 @@ Status: **untested**. surfaces: cli. version seen: 2.1.328.
   doc: [code.claude.com/docs/en/mcp.md](https://code.claude.com/docs/en/mcp.md)
 - **Default tool approval:** `ask`. Every MCP tool asks until an allow rule `mcp__telegram__*` matches.  
   doc: [code.claude.com/docs/en/permissions.md](https://code.claude.com/docs/en/permissions.md)
-- **Install:** `plugin`. The marketplace plugin carries the skill only; the MCP server is added with `claude mcp add telegram -- telegram mcp`.  
-  doc: [code.claude.com/docs/en/plugins-reference.md](https://code.claude.com/docs/en/plugins-reference.md)
+- **Install:** depends on the configuration
+  - stdio (`claude mcp add`): `config`. `claude mcp add telegram -- telegram mcp`.  
+    doc: [code.claude.com/docs/en/mcp.md](https://code.claude.com/docs/en/mcp.md), 2.1.328
+  - plugin: `plugin`. The marketplace plugin carries the skill only.  
+    doc: [code.claude.com/docs/en/plugins-reference.md](https://code.claude.com/docs/en/plugins-reference.md)
 - **Read:** `expected`. MCP servers run outside the Bash sandbox, with the user's Keychain.  
   doc: [code.claude.com/docs/en/sandboxing.md](https://code.claude.com/docs/en/sandboxing.md)
-- **Write approval:** `G1`. Through the MCP server (`claude mcp add`); the marketplace plugin alone is the skill route, which is G2.  
-  doc: [code.claude.com/docs/en/mcp.md](https://code.claude.com/docs/en/mcp.md), 2.1.328; doc: [code.claude.com/docs/en/hooks.md](https://code.claude.com/docs/en/hooks.md)
-- **Refusal:** `refused`  
-  doc: [code.claude.com/docs/en/mcp.md](https://code.claude.com/docs/en/mcp.md), 2.1.328; doc: [code.claude.com/docs/en/hooks.md](https://code.claude.com/docs/en/hooks.md)
-- **Update notice:** `none`, see the note under the table.
+- **Write approval:** depends on the configuration
+  - stdio (`claude mcp add`): `G1`. An `Elicitation` hook can answer the form instead of the human.  
+    doc: [code.claude.com/docs/en/mcp.md](https://code.claude.com/docs/en/mcp.md), 2.1.328; doc: [code.claude.com/docs/en/hooks.md](https://code.claude.com/docs/en/hooks.md)
+  - plugin: `G2`. The marketplace plugin is the skill only: the agent runs the CLI, which prints a one-time code.  
+    doc: [code.claude.com/docs/en/plugins-reference.md](https://code.claude.com/docs/en/plugins-reference.md)
+- **Refusal:** depends on the configuration
+  - stdio (`claude mcp add`): `refused`  
+    doc: [code.claude.com/docs/en/mcp.md](https://code.claude.com/docs/en/mcp.md), 2.1.328; doc: [code.claude.com/docs/en/hooks.md](https://code.claude.com/docs/en/hooks.md)
+  - plugin: `chat`  
+    doc: [code.claude.com/docs/en/plugins-reference.md](https://code.claude.com/docs/en/plugins-reference.md)
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `n/a`
-- **Headless or unattended:** `refused`. `-p --permission-prompts none` cancels an elicitation no hook answers. Plain `-p` without that flag: unverified.  
-  doc: [code.claude.com/docs/en/headless.md](https://code.claude.com/docs/en/headless.md); doc: [code.claude.com/docs/en/hooks.md](https://code.claude.com/docs/en/hooks.md)
+- **Headless or unattended:** depends on the configuration
+  - `-p --permission-prompts none`, no hook answers: `refused`. The form is cancelled.  
+    doc: [code.claude.com/docs/en/headless.md](https://code.claude.com/docs/en/headless.md); doc: [code.claude.com/docs/en/hooks.md](https://code.claude.com/docs/en/hooks.md)
+  - plain `-p`: unknown. An unanswered form may wait until the tool timeout; unverified.
 - **Sandbox:** `outside`  
   doc: [code.claude.com/docs/en/sandboxing.md](https://code.claude.com/docs/en/sandboxing.md)
 - **HTTP (`telegram mcp --http`):** `bearer`. `--header "Authorization: Bearer …"` or `headersHelper`.  
@@ -143,7 +154,7 @@ Status: **untested**. surfaces: desktop.
   report: [github.com/anthropics/claude-code/issues/41347](https://github.com/anthropics/claude-code/issues/41347)
 - **Refusal:** `chat`  
   report: [github.com/anthropics/claude-code/issues/41347](https://github.com/anthropics/claude-code/issues/41347)
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown. Widely reported, not in the official docs: a Dock-launched app lacks the login-shell PATH, so register `telegram` by its absolute path.
 - **Headless or unattended:** `n/a`
 - **Sandbox:** `outside`  
@@ -153,7 +164,7 @@ Status: **untested**. surfaces: desktop.
 
 ### claude.ai (`claude-ai`)
 
-Status: **not possible yet**. surfaces: web.
+Status: **untested**. surfaces: web.
 
 - **MCP config:** `Customize › Connectors › Add custom connector (a public URL)`  
   doc: [claude.com/docs/connectors/custom/remote-mcp.md](https://claude.com/docs/connectors/custom/remote-mcp.md)
@@ -164,17 +175,19 @@ Status: **not possible yet**. surfaces: web.
   doc: [claude.com/docs/connectors/building/index.md](https://claude.com/docs/connectors/building/index.md)
 - **Default tool approval:** `hints`. `readOnlyHint` runs without a prompt, `destructiveHint` always asks.  
   doc: [claude.com/docs/connectors/building/review-criteria.md](https://claude.com/docs/connectors/building/review-criteria.md)
-- **Install:** `none`. Needs a public HTTPS server with OAuth; `telegram mcp --http` has a static bearer only (TheVilfer/better-tg-cli#17, #72).  
+- **Install:** `beta`. A public HTTPS `telegram mcp --http` URL works only in the `static_headers` beta (a limited set of organizations): an org Owner enters one `Authorization` header, sent for everyone in the org, so every member acts as the same Telegram account. Otherwise it needs OAuth, which the HTTP server does not offer yet (TheVilfer/better-tg-cli#17, #72).  
   doc: [claude.com/docs/connectors/building/authentication.md](https://claude.com/docs/connectors/building/authentication.md)
 - **Read:** unknown
-- **Write approval:** unknown
-- **Refusal:** unknown
-- **Update notice:** `none`, see the note under the table.
+- **Write approval:** `G2`  
+  doc: [claude.com/docs/connectors/building/index.md](https://claude.com/docs/connectors/building/index.md); report: [github.com/anthropics/claude-ai-mcp/issues/153](https://github.com/anthropics/claude-ai-mcp/issues/153)
+- **Refusal:** `chat`  
+  doc: [claude.com/docs/connectors/building/index.md](https://claude.com/docs/connectors/building/index.md); report: [github.com/anthropics/claude-ai-mcp/issues/153](https://github.com/anthropics/claude-ai-mcp/issues/153)
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `n/a`
 - **Headless or unattended:** `n/a`
 - **Sandbox:** `cloud`. Calls come from Anthropic's cloud.  
   doc: [claude.com/docs/connectors/building/index.md](https://claude.com/docs/connectors/building/index.md)
-- **HTTP (`telegram mcp --http`):** `oauth-only`  
+- **HTTP (`telegram mcp --http`):** `oauth-only`. A static header exists only in the org-wide `static_headers` beta.  
   doc: [claude.com/docs/connectors/building/authentication.md](https://claude.com/docs/connectors/building/authentication.md)
 
 ### Cursor (`cursor`)
@@ -183,8 +196,10 @@ Status: **untested**. surfaces: ide, cli. version seen: CLI 2026.11.17.
 
 - **MCP config:** `~/.cursor/mcp.json`, project `.cursor/mcp.json`, plugins  
   doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md)
-- **Approval form (elicitation):** `form`. Gives up after ~60 s while the form is open (forum); URL mode and the Cursor CLI: unverified.  
-  doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md); report: [forum.cursor.com/t/172829](https://forum.cursor.com/t/172829)
+- **Approval form (elicitation):** depends on the configuration. URL mode: unverified.
+  - IDE: `form`. Gives up on the call after ~60 s while the form is open (forum). Our server keeps waiting for the form, so an approval that still arrives runs the write.  
+    doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md); report: [forum.cursor.com/t/172829](https://forum.cursor.com/t/172829)
+  - CLI: unknown. Not documented.
 - **stdio environment:** unknown. Not documented.
 - **Tool-call timeout:** `~60 s`. Observed, not documented.  
   report: [forum.cursor.com/t/172829](https://forum.cursor.com/t/172829); report: [forum.cursor.com/t/145618](https://forum.cursor.com/t/145618)
@@ -193,14 +208,20 @@ Status: **untested**. surfaces: ide, cli. version seen: CLI 2026.11.17.
 - **Install:** `plugin`. The Cursor Marketplace plugin runs the pinned `npx better-tg-cli@<version> mcp`.  
   doc: [cursor.com/docs/plugins.md](https://cursor.com/docs/plugins.md)
 - **Read:** unknown. The stdio environment and sandbox are not documented.
-- **Write approval:** `G1`  
-  doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md); report: [forum.cursor.com/t/172829](https://forum.cursor.com/t/172829)
-- **Refusal:** `refused`  
-  doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md); report: [forum.cursor.com/t/172829](https://forum.cursor.com/t/172829)
-- **Update notice:** `none`, see the note under the table.
+- **Write approval:** depends on the configuration
+  - IDE: `G1`  
+    doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md); report: [forum.cursor.com/t/172829](https://forum.cursor.com/t/172829)
+  - CLI: unknown. Depends on whether the client advertises elicitation.
+- **Refusal:** depends on the configuration
+  - IDE: `refused`  
+    doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md); report: [forum.cursor.com/t/172829](https://forum.cursor.com/t/172829)
+  - CLI: unknown
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown. The docs only say `command` must be on PATH or a full path: register `telegram` by its absolute path.
-- **Headless or unattended:** `refused`. `agent -p` rejects MCP tools that are not allowed.  
-  doc: [cursor.com/docs/cli/headless.md](https://cursor.com/docs/cli/headless.md)
+- **Headless or unattended:** depends on the configuration
+  - `agent -p`, tool not allowed: `refused`. The call is rejected before it runs.  
+    doc: [cursor.com/docs/cli/headless.md](https://cursor.com/docs/cli/headless.md)
+  - `agent -p`, tool allowed: unknown. What the CLI does with the form is not documented.
 - **Sandbox:** unknown. Per-server sandboxing is documented only under Enterprise admin controls.
 - **HTTP (`telegram mcp --http`):** `bearer`  
   doc: [cursor.com/docs/mcp.md](https://cursor.com/docs/mcp.md)
@@ -224,7 +245,7 @@ Status: **untested**. surfaces: ide.
   doc: [code.visualstudio.com/api/extension-guides/ai/mcp](https://code.visualstudio.com/api/extension-guides/ai/mcp)
 - **Refusal:** `refused`  
   doc: [code.visualstudio.com/api/extension-guides/ai/mcp](https://code.visualstudio.com/api/extension-guides/ai/mcp)
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown. Whether the Copilot harness gets the login-shell env is not documented: register `telegram` by its absolute path.
 - **Headless or unattended:** `refused`. Autopilot cancels the approval form.  
   doc: [code.visualstudio.com/api/extension-guides/ai/mcp](https://code.visualstudio.com/api/extension-guides/ai/mcp)
@@ -239,8 +260,10 @@ Status: **untested**. surfaces: cli. version seen: 1.0.114.
 
 - **MCP config:** `~/.copilot/mcp-config.json` (`tools` is required), `.mcp.json`  
   doc: [docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
-- **Approval form (elicitation):** `form`. Autopilot answers prompts itself; URL mode unverified.  
-  doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
+- **Approval form (elicitation):** depends on the configuration. URL mode: unverified.
+  - interactive: `form`  
+    doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
+  - Autopilot: unknown. Autopilot answers the form itself; which answer it gives is not documented.
 - **stdio environment:** `allowlist`. `PATH`, a small platform set and `env`.  
   doc: [docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
 - **Tool-call timeout:** `30 s`. Per-server `timeout`; an approval that takes longer may be cut off.  
@@ -251,11 +274,15 @@ Status: **untested**. surfaces: cli. version seen: 1.0.114.
   doc: [docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
 - **Read:** `expected`. Fails inside `/sandbox`, where the Keychain is closed by default.  
   doc: [docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)
-- **Write approval:** `G1`  
-  doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
-- **Refusal:** `refused`  
-  doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
-- **Update notice:** `none`, see the note under the table.
+- **Write approval:** depends on the configuration
+  - interactive: `G1`  
+    doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
+  - Autopilot: unknown. Depends on whether the client advertises elicitation.
+- **Refusal:** depends on the configuration
+  - interactive: `refused`  
+    doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
+  - Autopilot: unknown
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `n/a`
 - **Headless or unattended:** unknown. `-p` shows no approval prompts; what it does with an elicitation is not documented.
 - **Sandbox:** `opt-in`. `sandbox.enabled` (off by default) also wraps MCP servers; `keychainAccess` defaults to false.  
@@ -275,17 +302,17 @@ Status: **untested**. surfaces: cli, ide, desktop. version seen: rust-v0.170.0.
   src: [github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/utils.rs](https://github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/utils.rs), near rust-v0.170.0; doc: [learn.chatgpt.com/docs/config-file/config-reference.md](https://learn.chatgpt.com/docs/config-file/config-reference.md)
 - **Tool-call timeout:** `60 s`. `tool_timeout_sec`; startup 10 s.  
   doc: [learn.chatgpt.com/docs/config-file/config-reference.md](https://learn.chatgpt.com/docs/config-file/config-reference.md)
-- **Default tool approval:** `hints`. A destructive annotation always asks; `approval_mode = "writes"` asks for tools not marked read-only.  
+- **Default tool approval:** `hints`. A destructive annotation always asks, unless the tool is also marked read-only, which wins; `approval_mode = "writes"` asks for tools not marked read-only.  
   doc: [learn.chatgpt.com/docs/agent-approvals-security.md](https://learn.chatgpt.com/docs/agent-approvals-security.md); doc: [learn.chatgpt.com/docs/extend/mcp.md](https://learn.chatgpt.com/docs/extend/mcp.md)
 - **Install:** `plugin`. The repo marketplace plugin runs the pinned `npx better-tg-cli@<version> mcp`.  
   doc: [developers.openai.com/plugins/build/plugins.md](https://developers.openai.com/plugins/build/plugins.md)
 - **Read:** `expected`. On Linux the Secret Service needs `DBUS_SESSION_BUS_ADDRESS` in `env_vars`.  
   src: [github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/utils.rs](https://github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/utils.rs), near rust-v0.170.0
-- **Write approval:** `G1`  
+- **Write approval:** `G1`. With `approvals_reviewer = auto_review` a reviewer subagent may answer the form instead of the human.  
   src: [github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/elicitation.rs](https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/elicitation.rs), near rust-v0.170.0
 - **Refusal:** `refused`  
   src: [github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/elicitation.rs](https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/elicitation.rs), near rust-v0.170.0
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown. Whether the desktop app passes the login-shell PATH is not documented: register `telegram` by its absolute path.
 - **Headless or unattended:** `refused`. `codex exec` runs with `approval_policy = "never"`, which declines the form.  
   doc: [learn.chatgpt.com/docs/non-interactive-mode.md](https://learn.chatgpt.com/docs/non-interactive-mode.md); src: [github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/elicitation.rs](https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/elicitation.rs), near rust-v0.170.0
@@ -296,26 +323,29 @@ Status: **untested**. surfaces: cli, ide, desktop. version seen: rust-v0.170.0.
 
 ### ChatGPT (`chatgpt`)
 
-Status: **not possible yet**. surfaces: web.
+Status: **untested**. surfaces: web.
 
 - **MCP config:** `chatgpt.com/plugins › Add custom MCP server (URL or tunnel)`  
   doc: [developers.openai.com/api/docs/guides/developer-mode.md](https://developers.openai.com/api/docs/guides/developer-mode.md)
 - **Approval form (elicitation):** unknown. The docs do not say whether remote servers can ask.
-- **stdio environment:** `n/a`
-- **Tool-call timeout:** `120 s`. Through Secure MCP Tunnel; other limits not documented.  
+- **stdio environment:** unknown. Through Secure MCP Tunnel, the environment `tunnel-client` gives a stdio command is not documented.
+- **Tool-call timeout:** `120 s`. Through Secure MCP Tunnel, an absolute deadline that includes queue time (an approval wait would count too); other limits not documented.  
   doc: [developers.openai.com/api/docs/guides/secure-mcp-tunnels.md](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels.md)
 - **Default tool approval:** `hints`. Writes ask; a tool without `readOnlyHint` counts as a write.  
   doc: [developers.openai.com/plugins/reference.md](https://developers.openai.com/plugins/reference.md)
-- **Install:** `none`. OAuth or no auth only, no static bearer; `telegram mcp --http` has a static bearer (TheVilfer/better-tg-cli#17, #72).  
-  doc: [developers.openai.com/plugins/build/auth.md](https://developers.openai.com/plugins/build/auth.md)
+- **Install:** `tunnel`. Secure MCP Tunnel: `tunnel-client` on the user's machine can forward to a local stdio command, here `telegram mcp`. A public URL needs OAuth or no auth, and `telegram mcp --http` has a static bearer only (TheVilfer/better-tg-cli#17, #72).  
+  doc: [developers.openai.com/api/docs/guides/secure-mcp-tunnels.md](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels.md)
 - **Read:** unknown
-- **Write approval:** unknown
+- **Write approval:** unknown. Depends on whether the client advertises elicitation.
 - **Refusal:** unknown
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `n/a`
 - **Headless or unattended:** `n/a`
-- **Sandbox:** `cloud`  
-  doc: [developers.openai.com/plugins/deploy/connect-chatgpt.md](https://developers.openai.com/plugins/deploy/connect-chatgpt.md)
+- **Sandbox:** depends on the configuration
+  - URL: `cloud`  
+    doc: [developers.openai.com/plugins/deploy/connect-chatgpt.md](https://developers.openai.com/plugins/deploy/connect-chatgpt.md)
+  - Secure MCP Tunnel: `outside`. Our server runs on the user's machine under `tunnel-client`.  
+    doc: [developers.openai.com/api/docs/guides/secure-mcp-tunnels.md](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels.md)
 - **HTTP (`telegram mcp --http`):** `oauth-only`  
   doc: [developers.openai.com/plugins/build/auth.md](https://developers.openai.com/plugins/build/auth.md)
 
@@ -341,10 +371,12 @@ Status: **untested**. surfaces: cli. version seen: v0.69.0.
   src: [github.com/google-gemini/gemini-cli/blob/v0.69.0/packages/core/src/tools/mcp-client.ts](https://github.com/google-gemini/gemini-cli/blob/v0.69.0/packages/core/src/tools/mcp-client.ts), v0.69.0; report: [github.com/google-gemini/gemini-cli/issues/28074](https://github.com/google-gemini/gemini-cli/issues/28074)
 - **Refusal:** `chat`  
   src: [github.com/google-gemini/gemini-cli/blob/v0.69.0/packages/core/src/tools/mcp-client.ts](https://github.com/google-gemini/gemini-cli/blob/v0.69.0/packages/core/src/tools/mcp-client.ts), v0.69.0; report: [github.com/google-gemini/gemini-cli/issues/28074](https://github.com/google-gemini/gemini-cli/issues/28074)
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `n/a`
-- **Headless or unattended:** `refused`. `ask_user` counts as `deny` in non-interactive runs.  
-  doc: [github.com/google-gemini/gemini-cli/blob/v0.69.0/docs/reference/policy-engine.md](https://github.com/google-gemini/gemini-cli/blob/v0.69.0/docs/reference/policy-engine.md), v0.69.0
+- **Headless or unattended:** depends on the configuration
+  - policy chose `ask_user`: `refused`. `ask_user` counts as `deny` in non-interactive runs.  
+    doc: [github.com/google-gemini/gemini-cli/blob/v0.69.0/docs/reference/policy-engine.md](https://github.com/google-gemini/gemini-cli/blob/v0.69.0/docs/reference/policy-engine.md), v0.69.0
+  - tool allowed (`trust`, an allow rule): unknown. The one-time code goes to the model with nobody to ask; what happens then is unverified.
 - **Sandbox:** `opt-in`. `--sandbox` re-launches the whole CLI, MCP servers included; a container has no host Keychain.  
   doc: [github.com/google-gemini/gemini-cli/blob/v0.69.0/docs/cli/sandbox.md](https://github.com/google-gemini/gemini-cli/blob/v0.69.0/docs/cli/sandbox.md), v0.69.0
 - **HTTP (`telegram mcp --http`):** `bearer`  
@@ -366,7 +398,7 @@ Status: **untested**. surfaces: ide. version seen: v3.14.30825.
 - **Read:** unknown
 - **Write approval:** unknown. Depends on whether the client advertises elicitation.
 - **Refusal:** unknown
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown. Register `telegram` by its absolute path.
 - **Headless or unattended:** unknown
 - **Sandbox:** unknown
@@ -381,21 +413,25 @@ Status: **untested**. surfaces: ide, cli. version seen: v4.1.26.
   doc: [docs.cline.bot/mcp/mcp-overview.md](https://docs.cline.bot/mcp/mcp-overview.md)
 - **Approval form (elicitation):** `none`. Capabilities are empty.  
   src: [github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts](https://github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts)
-- **stdio environment:** `allowlist`. The VS Code code path passes the MCP SDK default set, the CLI the full environment; which one the shipped extension uses is unverified.  
-  src: [github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts](https://github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts); src: [github.com/cline/cline/blob/main/sdk/packages/core/src/extensions/mcp/client.ts](https://github.com/cline/cline/blob/main/sdk/packages/core/src/extensions/mcp/client.ts)
+- **stdio environment:** depends on the configuration
+  - VS Code: unknown. Two code paths: the MCP SDK default set (`McpHub.ts`) or the full environment (the SDK client); which one the shipped extension uses is unverified.
+  - CLI: `full`  
+    src: [github.com/cline/cline/blob/main/sdk/packages/core/src/extensions/mcp/client.ts](https://github.com/cline/cline/blob/main/sdk/packages/core/src/extensions/mcp/client.ts)
 - **Tool-call timeout:** `60 s`  
   src: [github.com/cline/cline/blob/main/sdk/packages/shared/src/mcp.ts](https://github.com/cline/cline/blob/main/sdk/packages/shared/src/mcp.ts)
 - **Default tool approval:** `ask`  
   doc: [docs.cline.bot/features/auto-approve.md](https://docs.cline.bot/features/auto-approve.md)
 - **Install:** `config`. An HTTP entry without `type` is read as legacy SSE.  
   doc: [docs.cline.bot/mcp/mcp-overview.md](https://docs.cline.bot/mcp/mcp-overview.md)
-- **Read:** `expected`. The macOS Keychain needs no variables; the Linux Secret Service needs `DBUS_SESSION_BUS_ADDRESS` in `env`.  
-  src: [github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts](https://github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts)
+- **Read:** depends on the configuration
+  - VS Code: unknown. Depends on the stdio environment. If it is the SDK default set, the Linux Secret Service needs `DBUS_SESSION_BUS_ADDRESS` in `env`.
+  - CLI: `expected`  
+    src: [github.com/cline/cline/blob/main/sdk/packages/core/src/extensions/mcp/client.ts](https://github.com/cline/cline/blob/main/sdk/packages/core/src/extensions/mcp/client.ts)
 - **Write approval:** `G2`  
   src: [github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts](https://github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts)
 - **Refusal:** `chat`  
   src: [github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts](https://github.com/cline/cline/blob/main/apps/vscode/src/services/mcp/McpHub.ts)
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown
 - **Headless or unattended:** unknown
 - **Sandbox:** unknown
@@ -423,7 +459,7 @@ Status: **untested**. surfaces: ide. version seen: v1.29.2.
   doc: [zed.dev/docs/ai/mcp.md](https://zed.dev/docs/ai/mcp.md)
 - **Refusal:** `chat`  
   doc: [zed.dev/docs/ai/mcp.md](https://zed.dev/docs/ai/mcp.md)
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown
 - **Headless or unattended:** `n/a`
 - **Sandbox:** `outside`  
@@ -437,8 +473,11 @@ Status: **untested**. surfaces: cli. version seen: 1.0.45.
 
 - **MCP config:** `~/.grok/config.toml` `[mcp_servers.<name>]`; also reads `~/.claude.json` and `.mcp.json`  
   doc: [docs.x.ai/build/features/mcp-servers.md](https://docs.x.ai/build/features/mcp-servers.md), 1.0.45
-- **Approval form (elicitation):** `form+url`. With no UI attached Grok declines; in ACP or headless sessions it cancels.  
-  src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
+- **Approval form (elicitation):** depends on the configuration. With no UI attached Grok declines the form.
+  - TUI: `form+url`  
+    src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
+  - `grok -p`: unknown. The headless frontend answers every form with `cancel`, but whether `!is_acp()` holds there, so that the form is advertised at all, is unverified.
+  - ACP (`grok agent stdio`): unknown. The capability is advertised only when `!is_acp()`, yet an ACP handler for the form exists; whether our server gets the form there is unverified.
 - **stdio environment:** `full`  
   src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
 - **Tool-call timeout:** `6000 s`. Output over 20,000 bytes spills to a file.  
@@ -449,19 +488,24 @@ Status: **untested**. surfaces: cli. version seen: 1.0.45.
   doc: [docs.x.ai/build/features/skills-plugins-marketplaces.md](https://docs.x.ai/build/features/skills-plugins-marketplaces.md), 1.0.45
 - **Read:** `expected`  
   src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
-- **Write approval:** `G1`  
-  src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
-- **Refusal:** `refused`  
-  src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
-- **Update notice:** `none`, see the note under the table.
+- **Write approval:** depends on the configuration
+  - TUI: `G1`  
+    src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
+  - `grok -p`: unknown. Depends on whether the client advertises elicitation.
+  - ACP (`grok agent stdio`): unknown. Depends on whether the client advertises elicitation.
+- **Refusal:** depends on the configuration
+  - TUI: `refused`  
+    src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
+  - `grok -p`: unknown
+  - ACP (`grok agent stdio`): unknown
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `path`. Started from a GUI, an IDE or ACP, `/opt/homebrew/bin` can be missing: register `telegram` by its absolute path.  
   src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-mcp/src/servers.rs), 1.0.45
-- **Headless or unattended:** `refused`. `grok -p` answers every form with `cancel`.  
-  src: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/src/headless/ext_protocol.rs](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/src/headless/ext_protocol.rs), 1.0.45
+- **Headless or unattended:** unknown. `grok -p` answers every form with `cancel` (`xai-grok-pager/src/headless/ext_protocol.rs`, 1.0.45); whether it advertises the form, so that the write is refused rather than handed a one-time code, is unverified.
 - **Sandbox:** `opt-in`. `--sandbox` wraps the whole process; `workspace` blocks writes to `~/.config/tg`.  
   doc: [docs.x.ai/build/features/sandbox.md](https://docs.x.ai/build/features/sandbox.md), 1.0.45
-- **HTTP (`telegram mcp --http`):** `bearer`. `headers` or `bearer_token_file`.  
-  doc: [docs.x.ai/build/features/mcp-servers.md](https://docs.x.ai/build/features/mcp-servers.md), 1.0.45
+- **HTTP (`telegram mcp --http`):** `bearer`. `headers`; `bearer_token_file` (1.0.45) is in the repo user guide, not on the docs site.  
+  doc: [docs.x.ai/build/features/mcp-servers.md](https://docs.x.ai/build/features/mcp-servers.md), 1.0.45; doc: [github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/07-mcp-servers.md](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/07-mcp-servers.md), 1.0.45
 
 ### Grok Bot (`grok-bot`)
 
@@ -474,14 +518,20 @@ Status: **untested**. surfaces: cloud.
 - **Tool-call timeout:** unknown
 - **Default tool approval:** `model`. Auto Review, a model-based check, is on by default.  
   doc: [docs.x.ai/grok-bot/approvals-security-and-privacy.md](https://docs.x.ai/grok-bot/approvals-security-and-privacy.md)
-- **Install:** `ui`. A Remote HTTPS connector to a public `telegram mcp --http` URL with an `Authorization` header; servers on the user's own machine are not reachable.  
-  doc: [docs.x.ai/grok-bot/computer-and-apps.md](https://docs.x.ai/grok-bot/computer-and-apps.md); report: [forum.cursor.com/t/does-grok-bot-support-local-mcp-e-g-workflowy/168182](https://forum.cursor.com/t/does-grok-bot-support-local-mcp-e-g-workflowy/168182)
+- **Install:** depends on the configuration
+  - Remote HTTPS: `ui`. A public `telegram mcp --http` URL with an `Authorization` header; a server on the user's own machine is not reachable directly.  
+    doc: [docs.x.ai/grok-bot/computer-and-apps.md](https://docs.x.ai/grok-bot/computer-and-apps.md); report: [forum.cursor.com/t/does-grok-bot-support-local-mcp-e-g-workflowy/168182](https://forum.cursor.com/t/does-grok-bot-support-local-mcp-e-g-workflowy/168182)
+  - cloud Command: unknown. Would run `telegram` on the Bot's cloud computer; its environment, a lasting session store and forms are not documented.
 - **Read:** unknown
-- **Write approval:** `G2`. Only `telegram mcp --http` is reachable, and the HTTP server never shows the form.  
-  doc: [docs.x.ai/grok-bot/computer-and-apps.md](https://docs.x.ai/grok-bot/computer-and-apps.md)
-- **Refusal:** `chat`  
-  doc: [docs.x.ai/grok-bot/computer-and-apps.md](https://docs.x.ai/grok-bot/computer-and-apps.md)
-- **Update notice:** `none`, see the note under the table.
+- **Write approval:** depends on the configuration
+  - Remote HTTPS: `G2`. The HTTP server never shows the form.  
+    doc: [docs.x.ai/grok-bot/computer-and-apps.md](https://docs.x.ai/grok-bot/computer-and-apps.md)
+  - cloud Command: unknown
+- **Refusal:** depends on the configuration
+  - Remote HTTPS: `chat`  
+    doc: [docs.x.ai/grok-bot/computer-and-apps.md](https://docs.x.ai/grok-bot/computer-and-apps.md)
+  - cloud Command: unknown
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `n/a`
 - **Headless or unattended:** `n/a`
 - **Sandbox:** `cloud`. Remote connectors are dialled from the vendor's servers.  
@@ -495,7 +545,7 @@ Status: **untested**. surfaces: cli, desktop. version seen: v0.23.2.
 
 - **MCP config:** `~/.hermes/config.yaml` `mcp_servers`, plugins  
   doc: [hermes-agent.nousresearch.com/docs/user-guide/features/mcp](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)
-- **Approval form (elicitation):** `form`. URL mode is declined. Before v0.23.2 an Allow answers with empty content, which counts as approval.  
+- **Approval form (elicitation):** `form+url`. URL mode is advertised but declined. Before v0.23.2 an Allow answers with empty content, which counts as approval.  
   doc: [hermes-agent.nousresearch.com/docs/user-guide/features/mcp](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp); src: [github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_sampling.py](https://github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_sampling.py), v0.23.2
 - **stdio environment:** `allowlist`. `PATH`, `HOME`, locale, `XDG_*` and a few more, plus `env`; `DBUS_SESSION_BUS_ADDRESS` must be forwarded.  
   doc: [hermes-agent.nousresearch.com/docs/user-guide/security](https://hermes-agent.nousresearch.com/docs/user-guide/security); src: [github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_config.py](https://github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_config.py), v0.23.2
@@ -511,7 +561,7 @@ Status: **untested**. surfaces: cli, desktop. version seen: v0.23.2.
   doc: [hermes-agent.nousresearch.com/docs/user-guide/features/mcp](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp); src: [github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_sampling.py](https://github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_sampling.py), v0.23.2
 - **Refusal:** `refused`  
   doc: [hermes-agent.nousresearch.com/docs/user-guide/features/mcp](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp); src: [github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_sampling.py](https://github.com/NousResearch/hermes-agent/blob/c152cfceecd5e27682ce1957ca13305dad15d0ec/tools/mcp_tool_sampling.py), v0.23.2
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown
 - **Headless or unattended:** `refused`. Cron, `hermes chat -q` and unattended runs decline.  
   doc: [hermes-agent.nousresearch.com/docs/user-guide/features/mcp](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)
@@ -525,8 +575,11 @@ Status: **untested**. surfaces: cli, desktop. version seen: v2.3.2 (V2), v1.19.6
 
 - **MCP config:** `opencode.json` `mcp.servers` (V2), `command` as an array  
   doc: [opencode.ai/docs/mcp-servers/](https://opencode.ai/docs/mcp-servers/)
-- **Approval form (elicitation):** `form+url`. V2 only; V1 does not advertise elicitation.  
-  src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts), v2.3.x; src: [github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts), v1.19.6
+- **Approval form (elicitation):** depends on the configuration
+  - V2: `form+url`  
+    src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts), v2.3.x
+  - V1: `none`. The capability is commented out.  
+    src: [github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts), v1.19.6
 - **stdio environment:** `full`. In V2 the environment of the shared background service.  
   doc: [opencode.ai/docs/mcp-servers/](https://opencode.ai/docs/mcp-servers/); src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/stdio.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/stdio.ts), v2.3.x
 - **Tool-call timeout:** `12 h`. V2 `execution`; startup 30 s, but `opencode run` waits 2 s (anomalyco/opencode#63310).  
@@ -537,15 +590,23 @@ Status: **untested**. surfaces: cli, desktop. version seen: v2.3.2 (V2), v1.19.6
   doc: [opencode.ai/docs/mcp-servers/](https://opencode.ai/docs/mcp-servers/); report: [github.com/anomalyco/opencode/issues/63310](https://github.com/anomalyco/opencode/issues/63310)
 - **Read:** `expected`  
   src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/stdio.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/stdio.ts), v2.3.x
-- **Write approval:** `G1`. G1 in V2; G2 in V1, which has no elicitation.  
-  src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts), v2.3.x; src: [github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts), v1.19.6
-- **Refusal:** `refused`  
-  src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts), v2.3.x; src: [github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts), v1.19.6
-- **Update notice:** `none`, see the note under the table.
+- **Write approval:** depends on the configuration
+  - V2: `G1`  
+    src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts), v2.3.x
+  - V1: `G2`  
+    src: [github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts), v1.19.6
+- **Refusal:** depends on the configuration
+  - V2: `refused`  
+    src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/core/src/mcp/client.ts), v2.3.x
+  - V1: `chat`  
+    src: [github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/opencode/src/mcp/index.ts), v1.19.6
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `path`. "command not found" in Desktop without PATH: register `telegram` by its absolute path.  
   report: [github.com/anomalyco/opencode/issues/16854](https://github.com/anomalyco/opencode/issues/16854)
-- **Headless or unattended:** `refused`. `opencode run` cancels every form, `--auto` included.  
-  src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/cli/src/run/noninteractive.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/cli/src/run/noninteractive.ts), v2.3.x
+- **Headless or unattended:** depends on the configuration
+  - V2 `opencode run`: `refused`. Every form is cancelled, `--auto` included.  
+    src: [github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/cli/src/run/noninteractive.ts](https://github.com/anomalyco/opencode/blob/88c90d08add7dd899a0caefc15609fdbb1d4b2ed/packages/cli/src/run/noninteractive.ts), v2.3.x
+  - V1: unknown
 - **Sandbox:** unknown
 - **HTTP (`telegram mcp --http`):** `bearer`. `"oauth": false` and an `Authorization` header.  
   doc: [opencode.ai/docs/mcp-servers/](https://opencode.ai/docs/mcp-servers/)
@@ -572,9 +633,11 @@ Status: **untested**. surfaces: cli, desktop. version seen: v1.60.1.
   doc: [goose-docs.ai/docs/guides/mcp-elicitation.md](https://goose-docs.ai/docs/guides/mcp-elicitation.md); src: [github.com/aaif-goose/goose/blob/e196781/crates/oi-kit-agent/src/mcp/client.rs](https://github.com/aaif-goose/goose/blob/e196781/crates/oi-kit-agent/src/mcp/client.rs)
 - **Refusal:** `refused`  
   doc: [goose-docs.ai/docs/guides/mcp-elicitation.md](https://goose-docs.ai/docs/guides/mcp-elicitation.md); src: [github.com/aaif-goose/goose/blob/e196781/crates/oi-kit-agent/src/mcp/client.rs](https://github.com/aaif-goose/goose/blob/e196781/crates/oi-kit-agent/src/mcp/client.rs)
-- **Update notice:** `none`, see the note under the table.
-- **GUI launch:** `ok`. Desktop takes only PATH from the login shell; other exported variables (`TG_PROFILE`) are missing.  
-  src: [github.com/aaif-goose/goose/blob/e196781/ui/desktop/src/loginShellPath.ts](https://github.com/aaif-goose/goose/blob/e196781/ui/desktop/src/loginShellPath.ts)
+- **Update notice:** unknown, see the note under the table.
+- **GUI launch:** depends on the configuration
+  - Desktop on macOS, Linux: `ok`. Only PATH comes from the login shell; other exported variables (`TG_PROFILE`) are missing.  
+    src: [github.com/aaif-goose/goose/blob/e196781/ui/desktop/src/loginShellPath.ts](https://github.com/aaif-goose/goose/blob/e196781/ui/desktop/src/loginShellPath.ts)
+  - Desktop on Windows, Flatpak: unknown. The login-shell PATH lookup is skipped.
 - **Headless or unattended:** `aborts`. `goose run` aborts the whole run when a write asks for approval.  
   src: [github.com/aaif-goose/goose/blob/e196781/crates/goose-cli/src/session/mod.rs](https://github.com/aaif-goose/goose/blob/e196781/crates/goose-cli/src/session/mod.rs)
 - **Sandbox:** unknown
@@ -597,7 +660,7 @@ Status: **untested**. surfaces: cli, desktop. version seen: CLI v1.15.0.
 - **Read:** unknown
 - **Write approval:** unknown. Depends on whether the client advertises elicitation.
 - **Refusal:** unknown
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown
 - **Headless or unattended:** unknown. `droid exec` cannot collect an interactive approval; what a write does there is not documented.
 - **Sandbox:** `opt-in`. The sandbox strips the environment and checks file and network access.  
@@ -621,7 +684,7 @@ Status: **untested**. surfaces: cli, desktop.
 - **Read:** unknown
 - **Write approval:** unknown. Depends on whether the client advertises elicitation.
 - **Refusal:** unknown
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown
 - **Headless or unattended:** unknown
 - **Sandbox:** unknown
@@ -632,8 +695,11 @@ Status: **untested**. surfaces: cli, desktop.
 
 Status: **untested**. surfaces: desktop, cli.
 
-- **MCP config:** Settings › Agents › MCP servers, `~/.warp/.mcp.json`  
-  doc: [docs.warp.dev/agents/capabilities/mcp/](https://docs.warp.dev/agents/capabilities/mcp/)
+- **MCP config:** depends on the configuration
+  - Desktop: Settings › Agents › MCP servers, `~/.warp/.mcp.json`  
+    doc: [docs.warp.dev/agents/capabilities/mcp/](https://docs.warp.dev/agents/capabilities/mcp/)
+  - CLI (macOS): `~/.warp_cli/.mcp.json` (global only)  
+    doc: [docs.warp.dev/agents/cli/configuration/](https://docs.warp.dev/agents/cli/configuration/)
 - **Approval form (elicitation):** `none`. No client capabilities are advertised.  
   src: [github.com/warpdotdev/Warp/blob/master/crates/mcp/src/runtime.rs](https://github.com/warpdotdev/Warp/blob/master/crates/mcp/src/runtime.rs)
 - **stdio environment:** `full`  
@@ -649,7 +715,7 @@ Status: **untested**. surfaces: desktop, cli.
   src: [github.com/warpdotdev/Warp/blob/master/crates/mcp/src/runtime.rs](https://github.com/warpdotdev/Warp/blob/master/crates/mcp/src/runtime.rs)
 - **Refusal:** `chat`  
   src: [github.com/warpdotdev/Warp/blob/master/crates/mcp/src/runtime.rs](https://github.com/warpdotdev/Warp/blob/master/crates/mcp/src/runtime.rs)
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `ok`. PATH comes from a bootstrapped terminal session.  
   src: [github.com/warpdotdev/Warp/blob/master/app/src/ai/mcp/templatable_manager/native.rs](https://github.com/warpdotdev/Warp/blob/master/app/src/ai/mcp/templatable_manager/native.rs)
 - **Headless or unattended:** unknown
@@ -665,20 +731,24 @@ Status: **untested**. surfaces: ide, cli.
   doc: [kiro.dev/docs/mcp/configuration.md](https://kiro.dev/docs/mcp/configuration.md)
 - **Approval form (elicitation):** `form+url`. A server loaded through a Power gets every form cancelled (kirodotdev/Kiro#11385); the CLI only in local V3 sessions from 2.34.  
   doc: [kiro.dev/docs/mcp/usage.md](https://kiro.dev/docs/mcp/usage.md); report: [github.com/kirodotdev/Kiro/issues/11385](https://github.com/kirodotdev/Kiro/issues/11385)
-- **stdio environment:** `full`. CLI from 2.41; IDE not documented.  
-  report: [github.com/kirodotdev/Kiro/issues/10118](https://github.com/kirodotdev/Kiro/issues/10118)
+- **stdio environment:** depends on the configuration
+  - CLI 2.41+: `full`  
+    report: [github.com/kirodotdev/Kiro/issues/10118](https://github.com/kirodotdev/Kiro/issues/10118)
+  - IDE: unknown. Not documented.
 - **Tool-call timeout:** unknown. Initialization must finish in 5 s (`mcp.initTimeout`); the tool-call default is not documented.
 - **Default tool approval:** `ask`. Untrusted workspaces ask before every call.  
   doc: [kiro.dev/docs/mcp/usage.md](https://kiro.dev/docs/mcp/usage.md)
 - **Install:** `config`. A plain `mcp.json` entry, not a Power; a cold `npx` can miss the 5 s start.  
   doc: [kiro.dev/docs/mcp/configuration.md](https://kiro.dev/docs/mcp/configuration.md); doc: [kiro.dev/docs/reference/settings.md](https://kiro.dev/docs/reference/settings.md)
-- **Read:** `expected`  
-  doc: [kiro.dev/docs/mcp/configuration.md](https://kiro.dev/docs/mcp/configuration.md)
+- **Read:** depends on the configuration
+  - CLI 2.41+: `expected`  
+    report: [github.com/kirodotdev/Kiro/issues/10118](https://github.com/kirodotdev/Kiro/issues/10118)
+  - IDE: unknown. Depends on the stdio environment.
 - **Write approval:** `G1`  
   doc: [kiro.dev/docs/mcp/usage.md](https://kiro.dev/docs/mcp/usage.md); report: [github.com/kirodotdev/Kiro/issues/11385](https://github.com/kirodotdev/Kiro/issues/11385)
 - **Refusal:** `refused`  
   doc: [kiro.dev/docs/mcp/usage.md](https://kiro.dev/docs/mcp/usage.md); report: [github.com/kirodotdev/Kiro/issues/11385](https://github.com/kirodotdev/Kiro/issues/11385)
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown. Register `telegram` by its absolute path.
 - **Headless or unattended:** unknown
 - **Sandbox:** `opt-in`. `mcpSandboxing` limits file and network access of stdio servers.  
@@ -694,21 +764,19 @@ Status: **untested**. surfaces: desktop. version seen: app 1.0.1116.2.
   doc: [docs.aside.com/changelog/components.md](https://docs.aside.com/changelog/components.md)
 - **Approval form (elicitation):** `none`. No elicitation capability or handler in the client.  
   src: Aside.app daemon (binary), 1.0.1116.2
-- **stdio environment:** `full`. The daemon's environment plus `env`.  
-  src: Aside.app daemon (binary), 1.0.1116.2
+- **stdio environment:** unknown. The daemon (binary 1.0.1116.2) passes its own environment plus `env`, or only `env` when `inheritEnv` is false; which one a user's server gets is unverified.
 - **Tool-call timeout:** `60 s`. Sends `notifications/cancelled` on timeout.  
   src: Aside.app daemon (binary), 1.0.1116.2
 - **Default tool approval:** `rules`. Allow / Ask / Deny rules per tool.  
   doc: [docs.aside.com/help/security.md](https://docs.aside.com/help/security.md)
 - **Install:** `ui`  
   doc: [docs.aside.com/changelog/components.md](https://docs.aside.com/changelog/components.md)
-- **Read:** `expected`  
-  src: Aside.app daemon (binary), 1.0.1116.2
+- **Read:** unknown. Depends on the stdio environment.
 - **Write approval:** `G2`  
   src: Aside.app daemon (binary), 1.0.1116.2
 - **Refusal:** `chat`  
   src: Aside.app daemon (binary), 1.0.1116.2
-- **Update notice:** `none`, see the note under the table.
+- **Update notice:** unknown, see the note under the table.
 - **GUI launch:** unknown. Whether the daemon gets the login-shell PATH is unknown: register `telegram` by its absolute path.
 - **Headless or unattended:** `n/a`
 - **Sandbox:** unknown. Aside has a sandbox toggle; whether it wraps MCP servers is not documented.

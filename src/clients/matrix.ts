@@ -3,14 +3,14 @@
  * CLIENTS, LF line endings. Written by `bun scripts/compat-matrix.ts`; checked by
  * test/compat-matrix.test.ts.
  */
-import { CLIENTS, ROUTE_NOTE, UPDATE_NOTICE, approvalOf, refusalOf, statusOf, type Cell, type ClientRecord, type Evidence, type EvidenceLevel } from './data.js';
+import { CLIENTS, ROUTE_NOTE, UPDATE_NOTICE, approvalOf, casesOf, refusalOf, statusOf, type Case, type Cell, type ClientRecord, type Evidence, type EvidenceLevel } from './data.js';
 
 export const DOC_PATH = 'docs/compatibility.md';
 
 const RANK: Record<EvidenceLevel, number> = { live: 3, src: 2, doc: 1, report: 0 };
 
 /** The strongest evidence a cell has, or undefined for an unknown cell. */
-export function strongest(cell: Cell): EvidenceLevel | undefined {
+export function strongest(cell: { evidence: Evidence[] }): EvidenceLevel | undefined {
   let best: EvidenceLevel | undefined;
   for (const e of cell.evidence) if (best === undefined || RANK[e.level] > RANK[best]) best = e.level;
   return best;
@@ -18,11 +18,18 @@ export function strongest(cell: Cell): EvidenceLevel | undefined {
 
 const esc = (s: string) => s.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
 
-/** A table cell: the value and the strongest level of its evidence, or "?" when unknown. */
+function shortCase(k: Case): string {
+  if (k.value === 'unknown') return '?';
+  const level = strongest(k);
+  return level ? `${k.value} (${level})` : k.value;
+}
+
+/**
+ * A table cell: the value and the strongest level of its evidence, or "?" when unknown. A cell
+ * that varies lists each configuration: `V1: G2 (src); V2: G1 (src)`.
+ */
 function short(cell: Cell): string {
-  if (cell.value === 'unknown') return '?';
-  const level = strongest(cell);
-  return esc(level ? `${cell.value} (${level})` : cell.value);
+  return esc(casesOf(cell).map(k => (k.when ? `${k.when}: ` : '') + shortCase(k)).join('; '));
 }
 
 function evidenceText(e: Evidence): string {
@@ -31,13 +38,19 @@ function evidenceText(e: Evidence): string {
   return `${e.level}: ${where}${e.version ? `, ${e.version}` : ''}`;
 }
 
+function detailLine(prefix: string, indent: string, k: { value: string; note?: string; evidence: Evidence[] }): string {
+  const value = k.value.includes('`') ? k.value : `\`${k.value}\``;
+  const parts = [k.value === 'unknown' ? 'unknown' : value];
+  if (k.note) parts.push(k.note);
+  const line = `${prefix}${parts.join('. ')}`;
+  const ev = k.evidence.map(evidenceText);
+  return ev.length ? `${line}  \n${indent}  ${esc(ev.join('; '))}` : line;
+}
+
 function detail(label: string, cell: Cell): string {
-  const value = cell.value.includes('`') ? cell.value : `\`${cell.value}\``;
-  const parts = [cell.value === 'unknown' ? 'unknown' : value];
-  if (cell.note) parts.push(cell.note);
-  const line = `- **${label}:** ${parts.join('. ')}`;
-  const ev = cell.evidence.map(evidenceText);
-  return ev.length ? `${line}  \n  ${esc(ev.join('; '))}` : line;
+  if (!cell.cases) return detailLine(`- **${label}:** `, '', cell);
+  const head = `- **${label}:** depends on the configuration${cell.note ? `. ${cell.note}` : ''}`;
+  return [head, ...cell.cases.map(k => detailLine(`  - ${k.when}: `, '  ', k))].join('\n');
 }
 
 const STATUS_TEXT = {
@@ -64,7 +77,7 @@ function clientSection(c: ClientRecord): string[] {
     detail('Read', c.read),
     detail('Write approval', approvalOf(c)),
     detail('Refusal', refusalOf(c)),
-    c.update ? detail('Update notice', c.update) : '- **Update notice:** `none`, see the note under the table.',
+    c.update ? detail('Update notice', c.update) : '- **Update notice:** unknown, see the note under the table.',
     detail('GUI launch', c.gui),
     detail('Headless or unattended', c.headless),
     detail('Sandbox', c.sandbox),
@@ -87,7 +100,7 @@ export function renderCompatibility(clients: ClientRecord[] = CLIENTS): string {
     '',
     `Supported: **${count('supported')}** of ${clients.length}. Untested: ${count('untested')}. Not possible yet: ${count('unsupported')}.`,
     '',
-    '**Evidence**, strongest first. A table cell shows the strongest one it has; the sections below list all of them.',
+    '**Evidence**, strongest first. A table cell shows the strongest one it has; the sections below list all of them. Where the answer depends on the interface, version or mode, a cell lists each one: `V1: G2 (src); V2: G1 (src)`.',
     '',
     '- `live`: our server was run in that client (client version and date).',
     '- `src`: the client\'s source code or binary was read, but not run.',
@@ -103,7 +116,7 @@ export function renderCompatibility(clients: ClientRecord[] = CLIENTS): string {
   for (const c of clients) {
     out.push('| ' + [
       esc(c.name), STATUS_TEXT[statusOf(c)], short(c.install), short(c.read), short(approvalOf(c)), short(refusalOf(c)),
-      c.update ? short(c.update) : 'none', short(c.gui), short(c.headless), short(c.sandbox), short(c.http),
+      c.update ? short(c.update) : '?', short(c.gui), short(c.headless), short(c.sandbox), short(c.http),
     ].join(' | ') + ' |');
   }
   out.push(
@@ -112,10 +125,10 @@ export function renderCompatibility(clients: ClientRecord[] = CLIENTS): string {
     '',
     `² ${ROUTE_NOTE}`,
     '',
-    '- **Install:** `plugin`, `extension`, `catalog` (a plugin directory or catalog), `mcpb` (a Claude Desktop extension), `config` (an entry in the client\'s MCP config), `ui` (added in the client\'s settings), `none` (no way today).',
+    '- **Install:** `plugin`, `extension`, `catalog` (a plugin directory or catalog), `mcpb` (a Claude Desktop extension), `config` (an entry in the client\'s MCP config), `ui` (added in the client\'s settings), `tunnel` (through the vendor\'s tunnel to a server on the user\'s machine), `beta` (only in a limited beta), `none` (no way today).',
     '- **Read:** `works` (seen live), `expected` (nothing known stands in the way), `blocked`.',
-    '- **Write approval** in write mode `ask`: `G1`, the client shows our approval form (MCP elicitation) and the model never sees a code; `G2`, the model gets a one-time code and must ask the human in chat, which guards against mistakes but not against a model that uses the code itself.',
-    '- **Refusal:** `refused`, a decline, a cancel or no answer within 10 minutes refuses the write and nothing is sent, with no fallback to a code; `chat`, the human says no in chat and nothing is sent without the code.',
+    '- **Write approval** in write mode `ask`: `G1`, the client gets our approval form (MCP elicitation) and the model never sees a code. The server checks the answer, not who gave it: by default the human answers, but in some modes a hook, a reviewer agent or an autopilot may answer instead (named in the client\'s section). `G2`, the model gets a one-time code and must ask the human in chat, which guards against mistakes but not against a model that uses the code itself.',
+    '- **Refusal:** `refused`, a decline or cancel answer to our form, or no answer within the server\'s own 10-minute timer, refuses the write and nothing is sent, with no fallback to a code. Cancelling the tool call itself (a client timeout, `notifications/cancelled`) does not withdraw the form: the server keeps waiting for its answer, and an approval that still arrives runs the write. `chat`, the human says no in chat and nothing is sent without the code.',
     '- **GUI:** `ok` (gets the login-shell PATH), `path` (may not: register `telegram` by its absolute path).',
     '- **Headless:** what a write does in an unattended run (`-p`, `exec`, cron, Autopilot): `refused` (the approval is refused), `aborts` (the whole run stops).',
     '- **Sandbox:** `outside` (our server runs outside the client\'s sandbox), `opt-in` (an optional sandbox can wrap it and may close the Keychain or the network), `cloud` (the client runs in the vendor\'s cloud).',
@@ -127,8 +140,7 @@ export function renderCompatibility(clients: ClientRecord[] = CLIENTS): string {
     '|---|---|---|---|---|---|',
   );
   for (const c of clients) {
-    const config = c.config.value === 'unknown' ? '?' : esc(c.config.value) + (strongest(c.config) ? ` (${strongest(c.config)})` : '');
-    out.push('| ' + [esc(c.name), config, short(c.elicitation), short(c.stdioEnv), short(c.toolTimeout), short(c.approvalDefault)].join(' | ') + ' |');
+    out.push('| ' + [esc(c.name), short(c.config), short(c.elicitation), short(c.stdioEnv), short(c.toolTimeout), short(c.approvalDefault)].join(' | ') + ' |');
   }
   out.push(
     '',

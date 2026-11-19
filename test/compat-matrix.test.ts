@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { CLIENTS, LIVE_REQUIRED, approvalOf, outcomeCells, refusalOf, statusOf, validate, type ClientRecord } from '../src/clients/data.js';
+import { CLIENTS, LIVE_REQUIRED, approvalOf, casesOf, outcomeCells, refusalOf, statusOf, validate, type ClientRecord } from '../src/clients/data.js';
 import { DOC_PATH, renderCompatibility, strongest } from '../src/clients/matrix.js';
 import { knownAgents } from '../src/skill-install.js';
 
@@ -51,11 +51,38 @@ describe('compatibility matrix', () => {
   it('nothing is supported without a live run', () => {
     for (const c of CLIENTS) {
       if (statusOf(c) === 'supported') {
-        for (const cell of Object.values(outcomeCells(c))) expect(cell.evidence.some(e => e.level === 'live'), c.id).toBe(true);
+        for (const cell of Object.values(outcomeCells(c))) {
+          for (const k of casesOf(cell)) expect(k.evidence.some(e => e.level === 'live'), `${c.id} ${k.when}`).toBe(true);
+        }
+        for (const k of casesOf(c.read)) expect(k.value, c.id).toBe('works');
       }
     }
-    // Nobody has run the server in any client yet
-    expect(CLIENTS.filter(c => statusOf(c) === 'supported')).toEqual([]);
+  });
+
+  it('a live entry on elicitation or on a read that is not "works" does not make a client supported', () => {
+    const base = byId('codex');
+    const live = <T extends { evidence: unknown[] }>(c: T) => ({ ...c, evidence: [...c.evidence, LIVE] });
+    // Install, read and the advertised form seen live, but no write was approved or refused live
+    const formOnly: ClientRecord = { ...base, install: live(base.install), read: live(base.read), elicitation: live(base.elicitation) };
+    expect(validate([formOnly])).toEqual([]);
+    expect(approvalOf(formOnly).evidence.some(e => e.level === 'live')).toBe(false);
+    expect(refusalOf(formOnly).evidence.some(e => e.level === 'live')).toBe(false);
+    expect(statusOf(formOnly)).toBe('untested');
+    // Every outcome cell live, but reading was blocked
+    const blocked = withLive(base, { read: { value: 'blocked', evidence: [LIVE] } });
+    expect(validate([blocked])).toEqual([]);
+    expect(statusOf(blocked)).toBe('untested');
+    // A live approval does not carry over to a derived refusal
+    const approvalOnly = withLive(base);
+    delete approvalOnly.refusal;
+    expect(statusOf(approvalOnly)).toBe('untested');
+  });
+
+  it('a client is not possible yet only when no install route exists', () => {
+    expect(statusOf({ ...byId('chatgpt'), install: { value: 'none', evidence: byId('chatgpt').install.evidence } })).toBe('unsupported');
+    expect(statusOf(byId('chatgpt'))).toBe('untested');
+    expect(byId('chatgpt').install.value).toBe('tunnel');
+    expect(byId('claude-ai').install.value).toBe('beta');
   });
 
   it('a client becomes supported only when install, read, approval and refusal are all live', () => {
@@ -91,30 +118,86 @@ describe('compatibility matrix', () => {
   });
 
   it('derives the approval level from what the client advertises, as the released server does', () => {
-    expect(approvalOf(byId('claude-code')).value).toBe('G1');
-    expect(refusalOf(byId('claude-code')).value).toBe('refused');
+    expect(approvalOf(byId('codex')).value).toBe('G1');
+    expect(refusalOf(byId('codex')).value).toBe('refused');
     expect(approvalOf(byId('aside')).value).toBe('G2');
     expect(refusalOf(byId('aside')).value).toBe('chat');
     expect(approvalOf(byId('amp')).value).toBe('unknown');
-    expect(approvalOf(byId('opencode')).note).toMatch(/V1/);
-    expect(approvalOf(byId('claude-ai')).value).toBe('unknown');
-    expect(statusOf(byId('chatgpt'))).toBe('unsupported');
+    expect(approvalOf(byId('chatgpt')).value).toBe('unknown');
+    // claude.ai reaches only `telegram mcp --http`, which never elicits
+    expect(approvalOf(byId('claude-ai')).value).toBe('G2');
+  });
+
+  it('a value that depends on the version or route is shown per configuration, each with its own evidence', () => {
+    const pick = (cell: ReturnType<typeof approvalOf>) => Object.fromEntries(casesOf(cell).map(k => [k.when, k]));
+    const oc = { a: pick(approvalOf(byId('opencode'))), r: pick(refusalOf(byId('opencode'))) };
+    expect([oc.a.V1.value, oc.r.V1.value, oc.a.V2.value, oc.r.V2.value]).toEqual(['G2', 'chat', 'G1', 'refused']);
+    // V1's source backs only V1's cells
+    expect(oc.r.V2.evidence.some(e => 'ref' in e && e.ref?.includes('v1.19.6'))).toBe(false);
+    expect(oc.r.V1.evidence.every(e => 'ref' in e && e.ref?.includes('v1.19.6'))).toBe(true);
+    const row = (id: string) => renderCompatibility([byId(id)]).split('\n').find(l => l.startsWith(`| ${byId(id).name} |`))!;
+    expect(row('opencode')).toContain('| V2: G1 (src); V1: G2 (src) | V2: refused (src); V1: chat (src) |');
+    expect(row('claude-code')).toContain('| stdio (`claude mcp add`): G1 (doc); plugin: G2 (doc) | stdio (`claude mcp add`): refused (doc); plugin: chat (doc) |');
+    expect(row('github-copilot')).toContain('| interactive: G1 (doc); Autopilot: ? | interactive: refused (doc); Autopilot: ? |');
+    expect(row('grok-bot')).toContain('| Remote HTTPS: G2 (doc); cloud Command: ? | Remote HTTPS: chat (doc); cloud Command: ? |');
+    expect(row('cline')).toContain('| VS Code: ?; CLI: expected (src) |');
+    expect(row('claude-code')).toContain('| stdio (`claude mcp add`): config (doc); plugin: plugin (doc) |');
+    expect(row('grok')).toContain('| TUI: G1 (src); `grok -p`: ?; ACP (`grok agent stdio`): ? |');
   });
 
   it('the skill route and the HTTP server are G2: Claude Code is G1 only through its MCP server, Grok Bot is G2', () => {
-    const cc = approvalOf(byId('claude-code'));
-    expect(cc.value).toBe('G1');
-    expect(cc.note).toMatch(/claude mcp add.*skill route, which is G2/);
-    expect(approvalOf(byId('grok-bot')).value).toBe('G2');
-    expect(refusalOf(byId('grok-bot')).value).toBe('chat');
+    const cc = casesOf(approvalOf(byId('claude-code'))).map(k => `${k.when}=${k.value}`);
+    expect(cc).toEqual(['stdio (`claude mcp add`)=G1', 'plugin=G2']);
+    expect(casesOf(approvalOf(byId('grok-bot')))[0]).toMatchObject({ when: 'Remote HTTPS', value: 'G2' });
     expect(renderCompatibility()).toContain('`telegram mcp --http` are G2 in every client');
+    // G1 means the client got the form, not that a human answered it
+    expect(approvalOf(byId('codex')).note).toMatch(/auto_review/);
+    expect(renderCompatibility()).toMatch(/The server checks the answer, not who gave it/);
+    expect(renderCompatibility()).toMatch(/does not withdraw the form/);
   });
 
-  it('"expected" reading needs a known stdio environment; "n/a" needs no evidence', () => {
+  it('"expected" reading needs a known stdio environment of the same configuration; "n/a" needs no evidence', () => {
     const base = byId('codex');
     const guess = { ...base, stdioEnv: { value: 'unknown' as const, evidence: [] } };
     expect(validate([guess]).join('\n')).toMatch(/codex\.read: "expected" while its stdio environment is unknown/);
     expect(validate([{ ...base, gui: { value: 'n/a' as const, evidence: [] } }])).toEqual([]);
+    const kiro = byId('kiro');
+    const ideGuess: ClientRecord = { ...kiro, read: { value: 'varies', evidence: [], cases: [
+      ...casesOf(kiro.read).filter(k => k.when !== 'IDE'), { when: 'IDE', value: 'expected', evidence: kiro.config.evidence },
+    ] } };
+    expect(validate([ideGuess]).join('\n')).toMatch(/kiro\.read \[IDE\]: "expected" while its stdio environment is unknown/);
+    // A flat "expected" is rejected when any configuration's environment is unknown
+    expect(validate([{ ...kiro, read: { value: 'expected', evidence: kiro.config.evidence } }]).join('\n')).toMatch(/kiro\.read: "expected"/);
+  });
+
+  it('checks every case of a cell that varies', () => {
+    const base = byId('opencode');
+    const cases = casesOf(base.elicitation);
+    const odd = { ...base, elicitation: { ...base.elicitation, cases: [{ ...cases[0], value: 'unknown' as const }, cases[1]] } };
+    expect(validate([odd]).join('\n')).toMatch(/opencode\.elicitation \[V2\]: unknown but has evidence/);
+    const bare = { ...base, elicitation: { ...base.elicitation, cases: [{ ...cases[0], evidence: [] }, cases[1]] } };
+    expect(validate([bare]).join('\n')).toMatch(/opencode\.elicitation \[V2\]: "form\+url" has no evidence/);
+    const noCases = { ...base, elicitation: { value: 'varies' as const, evidence: [] } };
+    expect(validate([noCases]).join('\n')).toMatch(/opencode\.elicitation: "varies" needs cases/);
+    const unlabelled = { ...base, elicitation: { ...base.elicitation, cases: [{ ...cases[0], when: '' }, cases[1]] } };
+    expect(validate([unlabelled]).join('\n')).toMatch(/a case without a label/);
+  });
+
+  it('per-interface facts the review asked for', () => {
+    const warp = casesOf(byId('warp').config).map(k => k.when + ' ' + k.value).join('\n');
+    expect(warp).toMatch(/CLI \(macOS\) `~\/\.warp_cli\/\.mcp\.json`/);
+    expect(byId('aside').stdioEnv.value).toBe('unknown');
+    expect(byId('hermes').elicitation.value).toBe('form+url');
+    expect(casesOf(byId('cursor').headless).map(k => k.value)).toEqual(['refused', 'unknown']);
+    expect(casesOf(byId('gemini-cli').headless).map(k => k.value)).toEqual(['refused', 'unknown']);
+    expect(casesOf(byId('claude-code').headless).map(k => k.value)).toEqual(['refused', 'unknown']);
+  });
+
+  it('the update notice is unknown per client, and the note says when it can appear', () => {
+    const md = renderCompatibility();
+    expect(md).toMatch(/\| Codex \|(?: [^|]+ \|){5} \? \|/);
+    expect(md).toMatch(/never part of a tool result/);
+    expect(md).toMatch(/stderr is a terminal/);
   });
 
   it('a table cell shows the strongest evidence; an unknown shows "?"', () => {
@@ -132,6 +215,6 @@ describe('compatibility matrix', () => {
 
   it('never points the public doc at local-only files', () => {
     const md = renderCompatibility();
-    expect(md).not.toMatch(/(^|[\s(`])\.dev\/|CLAUDE\.local|PROFILE\.md|PLAN\.md/m);
+    expect(md).not.toMatch(/(^|[\s(`])\.dev\/|CLAUDE\.local|PROFILE\.md|PLAN\.md|research-[\w-]+\.md|part-[\w-]+\.md/m);
   });
 });
