@@ -3,7 +3,7 @@ import { readStdinOnce } from '../text.js';
 import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { runApiMethod } from '../api-run.js';
 import { apiRefusalReason, isApiReadMethod } from '../api-methods.js';
-import { mcpApiAllowlistRefusal } from '../mcp-api-allowlist.js';
+import { mcpApiAllowlistRefusal, isMcpApiAllowed } from '../mcp-api-allowlist.js';
 import chalk from '../colors.js';
 import { methodDoc, paramDoc, docsUrl } from '../tl-docs.js';
 import {
@@ -102,6 +102,16 @@ export function access(className: string): { kind: Access; reason?: string } {
   return { kind: isApiReadMethod(className) ? 'read' : 'write' };
 }
 
+/**
+ * How the MCP server treats a method, from the same allowlist the server enforces
+ * (src/mcp-api-allowlist.ts): `refused` when it is refused everywhere or off the allowlist,
+ * otherwise the tool it runs through. Params can still be refused per call (see mcpParamRefusal).
+ */
+export function mcpAccess(className: string): Access {
+  const kind = access(className).kind;
+  return kind === 'refused' || !isMcpApiAllowed(className) ? 'refused' : kind;
+}
+
 /** The schema's result type for a method (for the help "Returns:" line and `schema`). */
 export function returnType(className: string): string {
   return defByClassName.get(className)?.result ?? '';
@@ -149,9 +159,15 @@ export function exampleInvocation(nsKebab: string, methodKebab: string, classNam
 }
 
 const ACCESS_NOTE: Record<Access, string> = {
-  read: 'read — runs without write access (telegram_read over MCP)',
-  write: 'write — needs `telegram write-access on` (telegram_write over MCP)',
+  read: 'read — runs without write access',
+  write: 'write — needs `telegram write-access on`',
   refused: 'refused — always refused',
+};
+
+const MCP_ACCESS_NOTE: Record<Access, string> = {
+  read: 'read — through telegram_read',
+  write: 'write — through telegram_write',
+  refused: 'refused — not available over MCP; the user runs it in a terminal',
 };
 
 /** The rich `--help` body for a single method (description, access, returns, example, docs, errors). */
@@ -159,7 +175,8 @@ function leafHelpText(nsKebab: string, methodKebab: string, className: string): 
   const doc = methodDoc(className);
   const acc = access(className);
   const lines: string[] = [''];
-  lines.push(`Access: ${acc.kind === 'refused' ? `refused — ${acc.reason}` : ACCESS_NOTE[acc.kind]}`);
+  lines.push(`Access in a terminal: ${acc.kind === 'refused' ? `refused — ${acc.reason}` : ACCESS_NOTE[acc.kind]}`);
+  lines.push(`Access over MCP: ${MCP_ACCESS_NOTE[mcpAccess(className)]}`);
   const rt = returnType(className);
   if (rt) lines.push(`Returns: ${rt} (raw TL object, JSON)`);
   lines.push('');
@@ -382,6 +399,8 @@ export interface MethodSchema {
   command: string;
   className: string;
   access: Access;
+  /** How the MCP server treats it (read, write, or refused when off the allowlist). */
+  mcpAccess: Access;
   refusedReason?: string;
   returns: string;
   description: string;
@@ -397,6 +416,7 @@ export function methodSchema(nsKebab: string, methodKebab: string, className: st
     command: `${nsKebab ? `${nsKebab} ` : ''}${methodKebab}`,
     className,
     access: acc.kind,
+    mcpAccess: mcpAccess(className),
     ...(acc.reason ? { refusedReason: acc.reason } : {}),
     returns: returnType(className),
     description: methodDoc(className)?.d ?? '',
@@ -414,11 +434,12 @@ export function methodSchema(nsKebab: string, methodKebab: string, className: st
 }
 
 /** One-line entries for every method in a namespace (the `schema <ns>` form). */
-export function namespaceSchema(nsKebab: string): { command: string; className: string; access: Access; description: string }[] {
+export function namespaceSchema(nsKebab: string): { command: string; className: string; access: Access; mcpAccess: Access; description: string }[] {
   return namespaceMethodList(nsKebab).map(([, methodKebab, className]) => ({
     command: `${nsKebab} ${methodKebab}`,
     className,
     access: access(className).kind,
+    mcpAccess: mcpAccess(className),
     description: methodDoc(className)?.d ?? '',
   }));
 }

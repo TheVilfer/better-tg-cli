@@ -30,7 +30,7 @@ const MAX_OUTPUT = 100_000;
  * guarded write can never run through it even if this list is wrong. */
 export const READ_COMMANDS = new Set([
   'check', 'whoami', 'chats', 'read', 'get', 'info', 'topics', 'link', 'contacts', 'search',
-  'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'inline', 'watch', 'contact', 'members',
+  'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'watch', 'contact', 'members',
   'admins', 'groups', 'folders', 'folder', 'write-access', 'drafts', 'admin-log', 'profile-photos',
   'permissions', 'stats', 'scheduled', 'sessions', 'stars', 'invites', 'schema',
 ]);
@@ -39,7 +39,7 @@ export const READ_COMMANDS = new Set([
  * sync, avatar). A command in no list is refused, so a new command stays off MCP until it is
  * classified here. */
 export const WRITE_COMMANDS = new Set([
-  'send', 'reply', 'send-file', 'edit', 'delete', 'forward', 'react', 'click', 'poll', 'vote',
+  'send', 'reply', 'send-file', 'edit', 'delete', 'forward', 'react', 'click', 'inline', 'poll', 'vote',
   'pin', 'unpin', 'mark-read', 'mark-unread', 'typing', 'mute', 'unmute', 'archive', 'unarchive',
   'pin-chat', 'unpin-chat', 'delete-dialog', 'folder-add', 'folder-remove', 'block', 'unblock',
   'add-contact', 'del-contact', 'join', 'leave', 'invite-link', 'create-group', 'create-channel',
@@ -245,7 +245,8 @@ export const TOOLS = [
     description:
       'Run a read-only telegram CLI command on the user\'s account, e.g. ["inbox","-n","10"], ["read","@user","-n","20"], ["search","invoice","--chat","Work"]. ' +
       'args[0] is the command; chats are an ID, @username, "me" or a title. Output is compact text (add "--json" for JSON). ' +
-      'Add "--full" (read/get/search/inbox/watch) for complete per-message stats: views, forwards, full reactions, comments, flags, media detail. watch needs -t or -n.',
+      'Add "--full" (read/get/search/inbox/watch) for complete per-message stats: views, forwards, full reactions, comments, flags, media detail. watch needs -t or -n. ' +
+      'A new public-post search (channels.SearchPosts) may use up the free daily search quota.',
     inputSchema: {
       type: 'object',
       properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1 } },

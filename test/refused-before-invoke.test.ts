@@ -126,14 +126,14 @@ describe('the free forms still run over MCP in mode "on"', () => {
     expect(invokeApi).toHaveBeenCalledTimes(3);
   });
 
-  it('an inline query without coordinates reaches invoke, raw and generated', async () => {
-    process.env.TG_READ_ONLY = '1';
+  it('an inline query without coordinates reaches invoke as a write, raw and generated', async () => {
     const params = { bot: '@b', peer: 'me', query: 'x', offset: '' };
     await apiCommand.parseAsync(['messages.GetInlineBotResults', '--params', JSON.stringify(params)], { from: 'user' });
     await buildLeaf('messages', 'get-inline-bot-results', 'messages.GetInlineBotResults', true)
       .parseAsync(['--bot', '@b', '--peer', 'me', '--query', 'x', '--offset', ''], { from: 'user' });
     expect(invokeApi).toHaveBeenCalledTimes(2);
-    expect(assertWriteEnabled).not.toHaveBeenCalled();
+    // The query and the user's ID go to the bot, so it passes the write guard
+    expect(assertWriteEnabled).toHaveBeenCalledTimes(2);
   });
 
   it('a channel created without a location reaches invoke, raw and generated', async () => {

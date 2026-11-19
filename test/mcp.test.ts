@@ -218,12 +218,13 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['api', 'messages.SendMessage', '--params', '{"peer":"@c","message":"hi"}'], 'write'],
   [['messages', 'send-message', '--peer', '@c', '--message', '--allow-paid-stars=5'], 'write'],
   [['api', 'messages.SendMessage', '-p', '-'], 'write'], // stdin params: the CLI refuses a paid body
-  // Recovery-email management and Passport values never run; an inline query is a read
+  // Recovery-email management and Passport values never run; an inline query is a write
   [['api', 'account.ResendPasswordEmail'], 'never'],
   [['account', 'cancel-password-email'], 'never'],
   [['api', 'account.GetAllSecureValues'], 'never'],
   [['account', 'get-secure-value'], 'never'],
-  [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'read'],
+  [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'write'],
+  [['inline', '@bot', 'cats'], 'write'],
   [['api', 'account.GetAuthorizationForm', '-p', '{"botId":1,"scope":"x","publicKey":"k"}'], 'never'],
   [['account', 'get-authorization-form', '--bot-id', '1'], 'never'],
   // A geo group is classified on its method (a write); the CLI child refuses geoPoint/address

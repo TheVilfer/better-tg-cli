@@ -170,8 +170,9 @@ audited against the whole schema:
 
 **Named like a read but reclassified as a write (they change state):**
 
-- `messages.GetMessagesViews` — increments the view counter when `increment` is set.
 - `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.
+- `messages.GetInlineBotResults` — sends the query and your user ID to an external bot (the
+  `inline` command is a write for the same reason).
 
 **Refused outright, even with write access** (issue #47: account/session takeover, phone or
 location sharing, paying):
@@ -195,7 +196,7 @@ location sharing, paying):
   and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,
   and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an
   `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`,
-  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it stays a read),
+  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it is a plain write),
   and `channels.CreateChannel` with `geoPoint` or `address` (a geo group; a plain channel is created).
 - **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,
   `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`, and the
@@ -212,7 +213,8 @@ location sharing, paying):
   `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.
 
 **Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text
-search) needs write access in a terminal, like any write; without it, it stays a read.
+search) and `messages.GetMessagesViews` with `increment` (it adds a view) need write access in a
+terminal, like any write; without them they stay reads.
 **Paying Stars over MCP:** a non-null `allowPaidStars` is refused over MCP for every method
 (`channels.SearchPosts`, `messages.SendMessage`, `SendMedia`, `SendMultiMedia`,
 `ForwardMessages`, …) in every write mode, `on` included, before anything reaches Telegram.
@@ -226,20 +228,29 @@ Over MCP only the allowlist below runs.
 ## 5. Raw API over MCP: the allowlist
 
 Over MCP (the `telegram_read` and `telegram_write` tools) a raw call, `api <method>` or a
-generated `<namespace> <method>` command, runs only if its method is one of these **104**
+generated `<namespace> <method>` command, runs only if its method is one of these **92**
 of the 823 TL methods. Any other method is refused before anything runs: "not available over
 MCP; run it in a terminal". The rules in section 4 still apply on top (geo or contact media,
 a phone-privacy exception, `allowPaidStars`), and a read runs through the read tool, a write
 through the write tool and its write mode. In a terminal nothing changes.
+
+Over MCP these params of allowed methods are refused as well, at any depth, in every write
+mode: a `suggestedPost` with a `price`, an `InputMediaStakeDice`, `allowPaidFloodskip`, any
+location (a geo point, geo or venue media, an `InputPageBlockMap` in a `richMessage`), a
+`referer` in `contacts.ResolveUsername`, `subscriptionPricing` in `messages.ExportChatInvite`,
+`myStoriesFrom` in `contacts.Block`/`Unblock`, `password` in `messages.GetBotCallbackAnswer`
+and `increment` in `messages.GetMessagesViews`. A raw result over MCP shows phone numbers,
+vCards, birthdays, contact notes and every location field as `"[redacted]"`.
+`--help` and `schema` (`mcpAccess`) show the MCP access of each method next to its terminal access.
 
 Not on the list on purpose: payments and Stars, account / auth / Passport / passkeys, privacy
 and security settings, sessions, takeout, phone calls, sticker-set management, business and
 premium purchases, geo / location, bot administration, folders, chat import and export.
 The list lives in `src/mcp-api-allowlist.ts`; this section is generated from it.
 
-**Read: Messages, history and threads.** Reading chats is the main job: history, exact messages, comments and replies, scheduled and saved messages, drafts, poll results.
+**Read: Messages, history and threads.** Reading chats is the main job: history, exact messages, comments and replies, scheduled and saved messages, drafts, poll results, view counters (increment=false only) and custom emoji.
 
-`messages.GetHistory`, `messages.GetMessages`, `channels.GetMessages`, `messages.GetReplies`, `messages.GetDiscussionMessage`, `messages.GetScheduledHistory`, `messages.GetScheduledMessages`, `messages.GetSavedHistory`, `messages.GetUnreadMentions`, `messages.GetRichMessage`, `messages.GetFactCheck`, `messages.GetMessageEditData`, `messages.GetMessageReadParticipants`, `messages.GetOutboxReadDate`, `messages.GetAllDrafts`, `messages.GetPollResults`, `messages.GetPollVotes`
+`messages.GetHistory`, `messages.GetMessages`, `channels.GetMessages`, `messages.GetReplies`, `messages.GetDiscussionMessage`, `messages.GetScheduledHistory`, `messages.GetScheduledMessages`, `messages.GetSavedHistory`, `messages.GetUnreadMentions`, `messages.GetRichMessage`, `messages.GetFactCheck`, `messages.GetMessageEditData`, `messages.GetAllDrafts`, `messages.GetPollResults`, `messages.GetPollVotes`, `messages.GetMessagesViews`, `messages.GetCustomEmojiDocuments`
 
 **Read: Forum topics.** Listing the topics of a forum group, as `topics` does.
 
@@ -249,15 +260,15 @@ The list lives in `src/mcp-api-allowlist.ts`; this section is generated from it.
 
 `messages.GetDialogs`, `messages.GetPeerDialogs`, `messages.GetPinnedDialogs`, `messages.GetDialogUnreadMarks`, `messages.GetSavedDialogs`, `messages.GetSavedDialogsByID`, `messages.GetPinnedSavedDialogs`
 
-**Read: Chats, channels and members.** Chat info, members, admins, the admin log and invite links, as `info`, `members`, `admins`, `admin-log` and `invites` show them.
+**Read: Chats, channels and members.** Chats and their members, as `info` and `members` list them. Full chat info, the admin log and invite links are read with the curated commands.
 
-`messages.GetChats`, `messages.GetFullChat`, `messages.GetCommonChats`, `messages.GetOnlines`, `messages.CheckChatInvite`, `messages.GetExportedChatInvites`, `messages.GetExportedChatInvite`, `messages.GetChatInviteImporters`, `channels.GetChannels`, `channels.GetFullChannel`, `channels.GetParticipants`, `channels.GetParticipant`, `channels.GetAdminLog`, `channels.GetSendAs`, `channels.GetMessageAuthor`
+`messages.GetChats`, `messages.GetCommonChats`, `messages.GetOnlines`, `messages.CheckChatInvite`, `channels.GetChannels`, `channels.GetParticipants`, `channels.GetParticipant`, `channels.GetSendAs`
 
-**Read: Users and contacts.** Resolving people and reading the contact list, as `contact`, `contacts` and `profile-photos` do.
+**Read: Users and contacts.** Resolving people and reading the contact list, as `contacts` and `profile-photos` do (resolving with a referer is refused). Full profiles are read with `contact`.
 
-`users.GetUsers`, `users.GetFullUser`, `contacts.GetContacts`, `contacts.GetContactIDs`, `contacts.ResolveUsername`, `contacts.Search`, `contacts.GetBlocked`, `contacts.GetStatuses`, `photos.GetUserPhotos`
+`users.GetUsers`, `contacts.GetContacts`, `contacts.GetContactIDs`, `contacts.ResolveUsername`, `contacts.Search`, `photos.GetUserPhotos`
 
-**Read: Search.** Search in a chat, across chats and in public posts (a paid post search is still refused by its allowPaidStars).
+**Read: Search.** Search in a chat, across chats and in public posts (a paid post search is refused; a new post search may use up the free daily quota).
 
 `messages.Search`, `messages.SearchGlobal`, `messages.GetSearchCounters`, `messages.GetSearchResultsCalendar`, `messages.GetSearchResultsPositions`, `channels.SearchPosts`, `channels.CheckSearchPostsFlood`
 
@@ -265,11 +276,7 @@ The list lives in `src/mcp-api-allowlist.ts`; this section is generated from it.
 
 `messages.GetMessagesReactions`, `messages.GetMessageReactionsList`, `messages.GetUnreadReactions`, `messages.GetAvailableReactions`
 
-**Read: Inline bots.** Asking an inline bot for results, as `inline` does (a query with geoPoint is still refused).
-
-`messages.GetInlineBotResults`
-
-**Write: Send, edit, delete and forward messages.** What `send`, `reply`, `edit`, `delete`, `forward` and `typing` do (contact or geo media and paid messages are still refused).
+**Write: Send, edit, delete and forward messages.** What `send`, `reply`, `edit`, `delete`, `forward` and `typing` do (contact or geo media, map blocks, paid messages, priced suggested posts and stakes are refused).
 
 `messages.SendMessage`, `messages.SendMedia`, `messages.SendMultiMedia`, `messages.EditMessage`, `messages.DeleteMessages`, `channels.DeleteMessages`, `messages.ForwardMessages`, `messages.SetTyping`
 
@@ -285,15 +292,15 @@ The list lives in `src/mcp-api-allowlist.ts`; this section is generated from it.
 
 `messages.SendVote`
 
-**Write: Bot buttons and inline results.** Pressing a callback button, as `click` does, and sending a chosen inline result.
+**Write: Bots.** Pressing a callback button, as `click` does (a 2FA-protected button is refused), and asking an inline bot, as `inline` does: the bot gets the query and your user ID (a query with geoPoint is refused).
 
-`messages.GetBotCallbackAnswer`, `messages.SendInlineBotResult`
+`messages.GetBotCallbackAnswer`, `messages.GetInlineBotResults`
 
-**Write: Chats, channels, topics and members.** What `create-group`, `create-channel`, `join`, `leave`, `delete-dialog`, `invite-link`, `kick`, `promote`, `edit-permissions` and `topic` do (a geo group is still refused).
+**Write: Chats, channels, topics and members.** What `create-group`, `create-channel`, `join`, `leave`, `delete-dialog`, `invite-link`, `kick`, `promote`, `edit-permissions` and `topic` do (a geo group and a paid subscription link are refused).
 
 `messages.CreateChat`, `channels.CreateChannel`, `channels.JoinChannel`, `messages.ImportChatInvite`, `channels.LeaveChannel`, `messages.DeleteChatUser`, `messages.DeleteHistory`, `messages.ExportChatInvite`, `channels.EditBanned`, `channels.EditAdmin`, `messages.EditChatAdmin`, `messages.EditChatDefaultBannedRights`, `messages.CreateForumTopic`, `messages.EditForumTopic`, `messages.UpdatePinnedForumTopic`
 
-**Write: Contacts and blocking.** What `add-contact`, `del-contact`, `block` and `unblock` do (sharing your phone number is still refused).
+**Write: Contacts and blocking.** What `del-contact`, `block` and `unblock` do (myStoriesFrom is refused). Adding a contact widens who sees your phone number, so it goes through `add-contact`.
 
-`contacts.AddContact`, `contacts.DeleteContacts`, `contacts.Block`, `contacts.Unblock`
+`contacts.DeleteContacts`, `contacts.Block`, `contacts.Unblock`
 

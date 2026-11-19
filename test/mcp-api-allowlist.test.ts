@@ -110,6 +110,23 @@ const DANGEROUS: [string, string][] = [
   ['plumbing', 'help.GetConfig'],
   ['plumbing', 'upload.GetFile'],
   ['plumbing', 'Ping'],
+  // Removed after review: profiles, chat internals, invite links, who read what, blocked list
+  ['sensitive reads', 'users.GetFullUser'],
+  ['sensitive reads', 'channels.GetFullChannel'],
+  ['sensitive reads', 'messages.GetFullChat'],
+  ['sensitive reads', 'channels.GetAdminLog'],
+  ['sensitive reads', 'messages.GetExportedChatInvites'],
+  ['sensitive reads', 'messages.GetExportedChatInvite'],
+  ['sensitive reads', 'messages.GetChatInviteImporters'],
+  ['sensitive reads', 'channels.GetMessageAuthor'],
+  ['sensitive reads', 'contacts.GetBlocked'],
+  ['sensitive reads', 'contacts.GetStatuses'],
+  ['sensitive reads', 'messages.GetMessageReadParticipants'],
+  ['sensitive reads', 'messages.GetOutboxReadDate'],
+  // An inline result is sent by ID, so its geo or contact content cannot be checked
+  ['inline result', 'messages.SendInlineBotResult'],
+  // Adding a contact widens who sees the phone number; the curated add-contact stays
+  ['phone visibility', 'contacts.AddContact'],
 ];
 
 describe('over MCP, a method off the allowlist never runs', () => {
@@ -142,7 +159,9 @@ describe('over MCP, a method off the allowlist never runs', () => {
 /** Allowed reads and writes in both forms, with params a run needs. */
 const ALLOWED_READS: [string, Record<string, unknown>, string[]][] = [
   ['messages.GetHistory', { peer: '@c', limit: 5 }, ['--peer', '@c', '--limit', '5']],
-  ['channels.GetFullChannel', { channel: '@c' }, ['--channel', '@c']],
+  ['users.GetUsers', { id: ['me'] }, ['--id', 'me']],
+  ['messages.GetMessagesViews', { peer: '@c', id: [1], increment: false }, ['--peer', '@c', '--id', '1', '--increment', 'false']],
+  ['messages.GetCustomEmojiDocuments', { documentId: ['1'] }, ['--document-id', '1']],
   ['contacts.ResolveUsername', { username: 'x' }, ['--username', 'x']],
   ['messages.GetForumTopics', { peer: '@c', limit: 5 }, ['--peer', '@c', '--limit', '5']],
 ];
@@ -282,11 +301,220 @@ describe('end to end on the mock account', () => {
     expect(r.status, r.stderr).toBe(0);
   });
 
+  it('a raw result over MCP shows phone numbers as "[redacted]"', () => {
+    const r = run(['api', 'contacts.GetContacts', '--params', '{"hash":0}']);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/"phone":"\[redacted\]"/);
+    expect(r.stdout).not.toMatch(/1555000000/);
+  });
+
+  it('the inline command is a write: the read tool refuses it', () => {
+    const r = run(['inline', '@some_bot', 'cats']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/cannot run as a read/);
+  });
+
+  it('--help and schema state the terminal and the MCP access separately', () => {
+    const help = run(['account', 'get-passkeys', '--help']);
+    expect(help.stdout).toMatch(/Access in a terminal: read/);
+    expect(help.stdout).toMatch(/Access over MCP: refused — not available over MCP/);
+    const schema = run(['schema', 'account.GetPasskeys']);
+    expect(schema.status, schema.stderr).toBe(0);
+    expect(JSON.parse(schema.stdout)).toMatchObject({ access: 'read', mcpAccess: 'refused' });
+  });
+
   it('an off-list method is refused in both forms with the terminal hint', () => {
     for (const args of [['api', 'account.GetPasskeys'], ['account', 'get-passkeys'], ['api', 'payments.GetStarsStatus', '--params', '{"peer":{"_chat":"me"}}']]) {
       const r = run(args);
       expect(r.status, args.join(' ')).toBe(1);
       expect(r.stderr).toMatch(/not available over MCP; run it in a terminal/);
     }
+  });
+});
+
+describe('no allowlisted method can carry another request', () => {
+  it('none has an argument of the generic query type (X or !X)', async () => {
+    const { paramsOf } = await import('../src/commands/generated.js');
+    const generic = (m: string) => paramsOf(m).filter(p => p.type === 'X' || p.type === '!X').map(p => `${m}.${p.name}`);
+    // The check sees the type: a wrapper has one
+    expect(generic('InvokeWithLayer')).toEqual(['InvokeWithLayer.query']);
+    expect(ALLOWED.flatMap(generic)).toEqual([]);
+  });
+});
+
+/**
+ * Params of allowed methods that MCP refuses: [method, raw params, generated argv, reason]. Each is
+ * refused on the parsed params (both forms) and on the built request.
+ */
+const STAKE = { _: 'inputMediaStakeDice', gameHash: 'h', tonAmount: '1', clientSeed: { _base64: 'AA==' } };
+const PRICED_POST = { _: 'suggestedPost', price: { _: 'starsAmount', amount: '5', nanos: 0 } };
+const MAP_BLOCK = { _: 'inputRichMessage', blocks: [{ _: 'inputPageBlockMap', geo: { _: 'inputGeoPoint', lat: 1, long: 2 }, zoom: 1, w: 1, h: 1 }] };
+const REFUSED_PARAMS: [string, Record<string, unknown>, string[], RegExp][] = [
+  ['messages.SendMessage', { peer: '@c', message: 'x', suggestedPost: PRICED_POST }, ['--peer', '@c', '--message', 'x', '--suggested-post', JSON.stringify(PRICED_POST)], /suggested post with a price/],
+  ['messages.ForwardMessages', { fromPeer: '@c', toPeer: '@d', id: [1], suggestedPost: PRICED_POST }, ['--from-peer', '@c', '--to-peer', '@d', '--id', '1', '--json-params', JSON.stringify({ suggestedPost: PRICED_POST })], /suggested post with a price/],
+  ['messages.SendMedia', { peer: '@c', message: '', media: STAKE }, ['--peer', '@c', '--message', '', '--media', JSON.stringify(STAKE)], /stake/],
+  ['messages.SendMultiMedia', { peer: '@c', multiMedia: [{ _: 'inputSingleMedia', media: STAKE, randomId: '1', message: '' }] }, ['--peer', '@c', '--json-params', JSON.stringify({ multiMedia: [{ _: 'inputSingleMedia', media: STAKE, randomId: '1', message: '' }] })], /stake/],
+  ['messages.SendMessage', { peer: '@c', message: 'x', allowPaidFloodskip: true }, ['--peer', '@c', '--message', 'x', '--allow-paid-floodskip'], /allowPaidFloodskip/],
+  // An empty string still sets the bit of a `true` flag
+  ['messages.SendMessage', { peer: '@c', message: 'x', allowPaidFloodskip: '' }, ['--peer', '@c', '--message', 'x', '--json-params', '{"allowPaidFloodskip":""}'], /allowPaidFloodskip/],
+  ['contacts.Block', { id: '@x', myStoriesFrom: '' }, ['--id', '@x', '--json-params', '{"myStoriesFrom":""}'], /myStoriesFrom/],
+  ['messages.SendMessage', { peer: '@c', message: 'x', richMessage: MAP_BLOCK }, ['--peer', '@c', '--message', 'x', '--json-params', JSON.stringify({ richMessage: MAP_BLOCK })], /geographic location/],
+  ['messages.EditMessage', { peer: '@c', id: 1, richMessage: MAP_BLOCK }, ['--peer', '@c', '--id', '1', '--json-params', JSON.stringify({ richMessage: MAP_BLOCK })], /geographic location/],
+  ['contacts.ResolveUsername', { username: 'x', referer: 'partner' }, ['--username', 'x', '--referer', 'partner'], /referer/],
+  ['messages.ExportChatInvite', { peer: '@c', subscriptionPricing: { _: 'starsSubscriptionPricing', period: 2592000, amount: '10' } }, ['--peer', '@c', '--subscription-pricing', '{"_":"starsSubscriptionPricing","period":2592000,"amount":"10"}'], /subscriptionPricing/],
+  ['contacts.Block', { id: '@x', myStoriesFrom: true }, ['--id', '@x', '--my-stories-from'], /myStoriesFrom/],
+  ['contacts.Unblock', { id: '@x', myStoriesFrom: true }, ['--id', '@x', '--my-stories-from'], /myStoriesFrom/],
+  ['messages.GetBotCallbackAnswer', { peer: '@c', msgId: 1, password: { _: 'inputCheckPasswordEmpty' } }, ['--peer', '@c', '--msg-id', '1', '--password', '{"_":"inputCheckPasswordEmpty"}'], /2FA/],
+  ['messages.GetMessagesViews', { peer: '@c', id: [1], increment: true }, ['--peer', '@c', '--id', '1', '--increment', 'true'], /increment/],
+];
+
+describe('over MCP, risky params of allowed methods are refused', () => {
+  const saved = { ...process.env };
+  let err: string[];
+  beforeEach(() => {
+    err = [];
+    vi.spyOn(console, 'error').mockImplementation(m => { err.push(String(m)); });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`exit ${code}`); }) as never);
+    getClient.mockClear();
+    invokeApi.mockClear();
+  });
+  afterEach(() => {
+    process.env = { ...saved };
+    vi.restoreAllMocks();
+  });
+
+  it('every sample method is on the allowlist, so only the param stops it', () => {
+    for (const [m] of REFUSED_PARAMS) expect(isMcpApiAllowed(m), m).toBe(true);
+  });
+
+  it.each(REFUSED_PARAMS)('%s: refused on the parsed params, raw and generated', async (m, params, args, reason) => {
+    process.env.TG_MCP = '1';
+    await expect(apiCommand.parseAsync([m, '--params', JSON.stringify(params)], { from: 'user' })).rejects.toThrow('exit 1');
+    const [ns, method] = GENERATED.get(m)!;
+    await expect(buildLeaf(ns, method, m, true).parseAsync(args, { from: 'user' })).rejects.toThrow('exit 1');
+    expect(err.length).toBe(2);
+    for (const e of err) expect(e).toMatch(reason);
+    expect(getClient).not.toHaveBeenCalled();
+    expect(invokeApi).not.toHaveBeenCalled();
+  });
+
+  it.each(REFUSED_PARAMS)('%s: refused on the built request before it is sent', async (m, params, _args, reason) => {
+    process.env.TG_MCP = '1';
+    const real = await vi.importActual<typeof import('../src/client.js')>('../src/client.js');
+    const invoke = vi.fn(async () => true);
+    const client = { invoke } as unknown as Parameters<typeof real.invokeApi>[0];
+    await expect(real.invokeApi(client, m, params)).rejects.toThrow(reason);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it.each(REFUSED_PARAMS)('%s: runs in a terminal', async (m, params) => {
+    await apiCommand.parseAsync([m, '--params', JSON.stringify(params)], { from: 'user' });
+    expect(invokeApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('the checks read built TL objects too, and leave harmless values alone', async () => {
+    process.env.TG_MCP = '1';
+    const { Api } = await import('teleproto');
+    const { mcpParamRefusal } = await import('../src/api-methods.js');
+    const stake = new Api.InputMediaStakeDice({ gameHash: 'h', tonAmount: 1 as never, clientSeed: Buffer.alloc(1) });
+    expect(mcpParamRefusal('messages.SendMedia', { media: stake })).toMatch(/stake/);
+    expect(mcpParamRefusal('messages.SendMessage', { richMessage: { blocks: [new Api.InputPageBlockMap({ geo: new Api.InputGeoPoint({ lat: 1, long: 2 }), zoom: 1, w: 1, h: 1 })] } })).toMatch(/geographic/);
+    // A suggested post without a price, false flags and an empty referer pass
+    expect(mcpParamRefusal('messages.SendMessage', { suggestedPost: { _: 'suggestedPost' }, allowPaidFloodskip: false })).toBeNull();
+    expect(mcpParamRefusal('contacts.ResolveUsername', { username: 'x', referer: '' })).toBeNull();
+    expect(mcpParamRefusal('messages.GetMessagesViews', { peer: '@c', id: [1], increment: false })).toBeNull();
+    expect(mcpParamRefusal('contacts.Block', { id: '@x', myStoriesFrom: false })).toBeNull();
+    delete process.env.TG_MCP;
+    expect(mcpParamRefusal('messages.SendMedia', { media: stake })).toBeNull();
+  });
+});
+
+describe('over MCP a raw result hides phones, birthdays, notes and locations', () => {
+  const saved = { ...process.env };
+  afterEach(() => { process.env = { ...saved }; });
+
+  /** A synthetic users.UserFull plus a history page with contact, geo and venue media. */
+  const response = async () => {
+    const { Api } = await import('teleproto');
+    return {
+      fullUser: {
+        _: 'userFull', id: '5', about: 'hi',
+        birthday: { _: 'birthday', day: 1, month: 2, year: 1990 },
+        businessLocation: { _: 'businessLocation', address: 'Main St 1', geoPoint: { _: 'geoPoint', lat: 1, long: 2 } },
+        note: { _: 'textWithEntities', text: 'owes me money', entities: [] },
+      },
+      users: [new Api.User({ id: 5 as never, firstName: 'Ann', phone: '15550000001' })],
+      chats: [{ _: 'channelFull', location: { _: 'channelLocation', geoPoint: { _: 'geoPoint', lat: 1, long: 2 }, address: 'Old Town' } }],
+      messages: [
+        { _: 'message', id: 1, message: 'call me', media: { _: 'messageMediaContact', phoneNumber: '15550000002', firstName: 'Bob', vcard: 'TEL:15550000002' } },
+        { _: 'message', id: 2, media: { _: 'messageMediaGeo', geo: { _: 'geoPoint', lat: 1, long: 2 } } },
+        { _: 'message', id: 3, media: { _: 'messageMediaVenue', geo: { _: 'geoPoint', lat: 1, long: 2 }, title: 'Cafe', address: 'Main St 1' } },
+      ],
+    };
+  };
+
+  it('replaces each such key with "[redacted]" at any depth, keeping the key', async () => {
+    process.env.TG_MCP = '1';
+    const { serializeApiResult } = await vi.importActual<typeof import('../src/client.js')>('../src/client.js');
+    const out = serializeApiResult(await response());
+    const j = JSON.parse(out);
+    expect(j.fullUser.birthday).toBe('[redacted]');
+    expect(j.fullUser.businessLocation).toBe('[redacted]');
+    expect(j.fullUser.note).toBe('[redacted]');
+    expect(j.users[0].phone).toBe('[redacted]');
+    expect(j.chats[0].location).toBe('[redacted]');
+    expect(j.messages[0].media.phoneNumber).toBe('[redacted]');
+    expect(j.messages[0].media.vcard).toBe('[redacted]');
+    expect(j.messages[1].media.geo).toBe('[redacted]');
+    expect(j.messages[2].media).toMatchObject({ geo: '[redacted]', address: '[redacted]', title: 'Cafe' });
+    // What the agent needs stays
+    expect(j.users[0].firstName).toBe('Ann');
+    expect(j.messages[0].message).toBe('call me');
+    expect(out).not.toMatch(/1555|Main St|Old Town|owes me|1990/);
+  });
+
+  it('the read tool redacts too, and a terminal shows everything', async () => {
+    const { serializeApiResult } = await vi.importActual<typeof import('../src/client.js')>('../src/client.js');
+    process.env.TG_READ_ONLY = '1';
+    expect(serializeApiResult(await response())).not.toMatch(/1555/);
+    delete process.env.TG_READ_ONLY;
+    delete process.env.TG_MCP;
+    const out = serializeApiResult(await response());
+    expect(out).toMatch(/15550000001/);
+    expect(out).toMatch(/Main St 1/);
+  });
+});
+
+describe('--help and schema show MCP access from the allowlist', () => {
+  it('methodSchema and namespaceSchema carry mcpAccess next to the terminal access', async () => {
+    const { methodSchema, namespaceSchema, mcpAccess } = await import('../src/commands/generated.js');
+    const cases: [string, string, string, string, string][] = [
+      ['account', 'get-passkeys', 'account.GetPasskeys', 'read', 'refused'],
+      ['messages', 'get-history', 'messages.GetHistory', 'read', 'read'],
+      ['messages', 'send-message', 'messages.SendMessage', 'write', 'write'],
+      ['messages', 'get-inline-bot-results', 'messages.GetInlineBotResults', 'write', 'write'],
+      ['account', 'delete-account', 'account.DeleteAccount', 'refused', 'refused'],
+      ['users', 'get-full-user', 'users.GetFullUser', 'read', 'refused'],
+    ];
+    for (const [ns, method, cls, terminal, mcp] of cases) {
+      expect(methodSchema(ns, method, cls), cls).toMatchObject({ access: terminal, mcpAccess: mcp });
+      expect(namespaceSchema(ns).find(e => e.className === cls), cls).toMatchObject({ access: terminal, mcpAccess: mcp });
+    }
+    // The same table as the server: every method agrees with the allowlist
+    for (const [, , cls] of TL_METHODS) {
+      if (mcpAccess(cls) !== 'refused') expect(isMcpApiAllowed(cls), cls).toBe(true);
+    }
+    for (const m of ALLOWED) expect(mcpAccess(m), m).toBe(isApiReadMethod(m) ? 'read' : 'write');
+  });
+});
+
+describe('an empty string is a set flag on the wire', () => {
+  it('teleproto sets the bit of a true flag for "" (so the MCP checks count it)', async () => {
+    const { Api } = await import('teleproto');
+    const hex = (r: { getBytes(): Buffer }) => Buffer.from(r.getBytes()).toString('hex');
+    const base = { peer: new Api.InputPeerSelf(), message: 'x', randomId: 1 as never };
+    expect(hex(new Api.messages.SendMessage({ ...base, allowPaidFloodskip: '' as never }))).not.toBe(hex(new Api.messages.SendMessage(base)));
+    expect(hex(new Api.messages.SendMessage({ ...base, allowPaidFloodskip: '' as never }))).toBe(hex(new Api.messages.SendMessage({ ...base, allowPaidFloodskip: true })));
   });
 });

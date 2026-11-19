@@ -3063,16 +3063,16 @@ export async function invokeApi(
   methodName: string,
   rawParams: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const { resolveApiMethod, mcpPaidStarsRefusal, geoParamRefusal } = await import('./api-methods.js');
+  const { resolveApiMethod, mcpPaidStarsRefusal, mcpParamRefusal, geoParamRefusal } = await import('./api-methods.js');
   const { mcpApiAllowlistRefusal } = await import('./mcp-api-allowlist.js');
   const { ctor, className } = resolveApiMethod(methodName);
   const notAllowed = mcpApiAllowlistRefusal(className);
   if (notAllowed) throw new Error(notAllowed);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
-  // Checked again on the fields the request really carries (Stars over MCP, coordinates)
+  // Checked again on the fields the request really carries (Stars, stakes, coordinates over MCP)
   const fields = { ...request } as Record<string, unknown>;
-  const refusal = geoParamRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields);
+  const refusal = geoParamRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields) ?? mcpParamRefusal(className, fields);
   if (refusal) throw new Error(refusal);
   return client.invoke(request);
 }
@@ -3095,8 +3095,16 @@ async function materializeApiParams(client: TelegramClient, value: unknown): Pro
   return value;
 }
 
+/**
+ * Keys a raw result over MCP shows as "[redacted]", at any depth: phone numbers (a `User`, a contact
+ * card and its vCard), birthdays, the private note about a contact, and every location field
+ * (geo points, a business or geo-group location, a venue address).
+ */
+const MCP_REDACTED_KEY = /^(phone|phoneNumber|vcard|birthday|businessLocation|note|location|address)$|geo/i;
+
 /** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
 export function serializeApiResult(result: unknown): string {
+  const overMcp = !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
   const pretty = isTTY || process.env.TG_JSON_PRETTY === '1';
   const replacer = (_key: string, val: unknown): unknown => {
     if (typeof val === 'bigint') return val.toString();
@@ -3104,6 +3112,8 @@ export function serializeApiResult(result: unknown): string {
     if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
     // help.GetConfig may carry a token that logs into Telegram's web pages as this account
     if (_key === 'autologinToken' && val) return '[redacted]';
+    // Over MCP: phone numbers, birthdays, private notes and locations stay out of the model's context
+    if (overMcp && val != null && MCP_REDACTED_KEY.test(_key)) return '[redacted]';
     return val;
   };
   const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);

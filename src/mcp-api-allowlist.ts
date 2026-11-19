@@ -8,7 +8,9 @@
  * (payments, Passport, passkeys, geo, credentials), so a new or overlooked method now stays off MCP
  * until someone adds it here on purpose. The denylist and param checks in src/api-methods.ts still
  * run after this, so an allowed method keeps its param-level refusals (geo or contact media, a
- * phone-privacy exception, allowPaidStars).
+ * phone-privacy exception, allowPaidStars), and mcpParamRefusal adds the MCP-only ones (a priced
+ * suggested post, a stake, a referer, a paid invite link, a story audience, a 2FA button, a view
+ * increment, any location). Over MCP the raw result hides phones, birthdays, notes and locations.
  *
  * Deliberately absent: payments and Stars, account/auth/Passport/passkeys, privacy and security
  * settings, sessions, takeout, phone calls, sticker-set management, business and premium
@@ -31,14 +33,14 @@ export const MCP_API_ALLOWLIST: readonly McpApiGroup[] = [
   {
     access: 'read',
     title: 'Messages, history and threads',
-    reason: 'Reading chats is the main job: history, exact messages, comments and replies, scheduled and saved messages, drafts, poll results.',
+    reason: 'Reading chats is the main job: history, exact messages, comments and replies, scheduled and saved messages, drafts, poll results, view counters (increment=false only) and custom emoji.',
     methods: [
       'messages.GetHistory', 'messages.GetMessages', 'channels.GetMessages', 'messages.GetReplies',
       'messages.GetDiscussionMessage', 'messages.GetScheduledHistory', 'messages.GetScheduledMessages',
       'messages.GetSavedHistory', 'messages.GetUnreadMentions', 'messages.GetRichMessage',
-      'messages.GetFactCheck', 'messages.GetMessageEditData', 'messages.GetMessageReadParticipants',
-      'messages.GetOutboxReadDate', 'messages.GetAllDrafts', 'messages.GetPollResults',
-      'messages.GetPollVotes',
+      'messages.GetFactCheck', 'messages.GetMessageEditData', 'messages.GetAllDrafts',
+      'messages.GetPollResults', 'messages.GetPollVotes', 'messages.GetMessagesViews',
+      'messages.GetCustomEmojiDocuments',
     ],
   },
   {
@@ -60,29 +62,25 @@ export const MCP_API_ALLOWLIST: readonly McpApiGroup[] = [
   {
     access: 'read',
     title: 'Chats, channels and members',
-    reason: 'Chat info, members, admins, the admin log and invite links, as `info`, `members`, `admins`, `admin-log` and `invites` show them.',
+    reason: 'Chats and their members, as `info` and `members` list them. Full chat info, the admin log and invite links are read with the curated commands.',
     methods: [
-      'messages.GetChats', 'messages.GetFullChat', 'messages.GetCommonChats', 'messages.GetOnlines',
-      'messages.CheckChatInvite', 'messages.GetExportedChatInvites', 'messages.GetExportedChatInvite',
-      'messages.GetChatInviteImporters', 'channels.GetChannels', 'channels.GetFullChannel',
-      'channels.GetParticipants', 'channels.GetParticipant', 'channels.GetAdminLog',
-      'channels.GetSendAs', 'channels.GetMessageAuthor',
+      'messages.GetChats', 'messages.GetCommonChats', 'messages.GetOnlines', 'messages.CheckChatInvite',
+      'channels.GetChannels', 'channels.GetParticipants', 'channels.GetParticipant', 'channels.GetSendAs',
     ],
   },
   {
     access: 'read',
     title: 'Users and contacts',
-    reason: 'Resolving people and reading the contact list, as `contact`, `contacts` and `profile-photos` do.',
+    reason: 'Resolving people and reading the contact list, as `contacts` and `profile-photos` do (resolving with a referer is refused). Full profiles are read with `contact`.',
     methods: [
-      'users.GetUsers', 'users.GetFullUser', 'contacts.GetContacts', 'contacts.GetContactIDs',
-      'contacts.ResolveUsername', 'contacts.Search', 'contacts.GetBlocked', 'contacts.GetStatuses',
-      'photos.GetUserPhotos',
+      'users.GetUsers', 'contacts.GetContacts', 'contacts.GetContactIDs', 'contacts.ResolveUsername',
+      'contacts.Search', 'photos.GetUserPhotos',
     ],
   },
   {
     access: 'read',
     title: 'Search',
-    reason: 'Search in a chat, across chats and in public posts (a paid post search is still refused by its allowPaidStars).',
+    reason: 'Search in a chat, across chats and in public posts (a paid post search is refused; a new post search may use up the free daily quota).',
     methods: [
       'messages.Search', 'messages.SearchGlobal', 'messages.GetSearchCounters',
       'messages.GetSearchResultsCalendar', 'messages.GetSearchResultsPositions',
@@ -99,15 +97,9 @@ export const MCP_API_ALLOWLIST: readonly McpApiGroup[] = [
     ],
   },
   {
-    access: 'read',
-    title: 'Inline bots',
-    reason: 'Asking an inline bot for results, as `inline` does (a query with geoPoint is still refused).',
-    methods: ['messages.GetInlineBotResults'],
-  },
-  {
     access: 'write',
     title: 'Send, edit, delete and forward messages',
-    reason: 'What `send`, `reply`, `edit`, `delete`, `forward` and `typing` do (contact or geo media and paid messages are still refused).',
+    reason: 'What `send`, `reply`, `edit`, `delete`, `forward` and `typing` do (contact or geo media, map blocks, paid messages, priced suggested posts and stakes are refused).',
     methods: [
       'messages.SendMessage', 'messages.SendMedia', 'messages.SendMultiMedia', 'messages.EditMessage',
       'messages.DeleteMessages', 'channels.DeleteMessages', 'messages.ForwardMessages',
@@ -138,14 +130,14 @@ export const MCP_API_ALLOWLIST: readonly McpApiGroup[] = [
   },
   {
     access: 'write',
-    title: 'Bot buttons and inline results',
-    reason: 'Pressing a callback button, as `click` does, and sending a chosen inline result.',
-    methods: ['messages.GetBotCallbackAnswer', 'messages.SendInlineBotResult'],
+    title: 'Bots',
+    reason: 'Pressing a callback button, as `click` does (a 2FA-protected button is refused), and asking an inline bot, as `inline` does: the bot gets the query and your user ID (a query with geoPoint is refused).',
+    methods: ['messages.GetBotCallbackAnswer', 'messages.GetInlineBotResults'],
   },
   {
     access: 'write',
     title: 'Chats, channels, topics and members',
-    reason: 'What `create-group`, `create-channel`, `join`, `leave`, `delete-dialog`, `invite-link`, `kick`, `promote`, `edit-permissions` and `topic` do (a geo group is still refused).',
+    reason: 'What `create-group`, `create-channel`, `join`, `leave`, `delete-dialog`, `invite-link`, `kick`, `promote`, `edit-permissions` and `topic` do (a geo group and a paid subscription link are refused).',
     methods: [
       'messages.CreateChat', 'channels.CreateChannel', 'channels.JoinChannel', 'messages.ImportChatInvite',
       'channels.LeaveChannel', 'messages.DeleteChatUser', 'messages.DeleteHistory',
@@ -157,8 +149,8 @@ export const MCP_API_ALLOWLIST: readonly McpApiGroup[] = [
   {
     access: 'write',
     title: 'Contacts and blocking',
-    reason: 'What `add-contact`, `del-contact`, `block` and `unblock` do (sharing your phone number is still refused).',
-    methods: ['contacts.AddContact', 'contacts.DeleteContacts', 'contacts.Block', 'contacts.Unblock'],
+    reason: 'What `del-contact`, `block` and `unblock` do (myStoriesFrom is refused). Adding a contact widens who sees your phone number, so it goes through `add-contact`.',
+    methods: ['contacts.DeleteContacts', 'contacts.Block', 'contacts.Unblock'],
   },
 ];
 

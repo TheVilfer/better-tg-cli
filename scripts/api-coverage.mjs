@@ -462,8 +462,9 @@ function build() {
   lines.push('');
   lines.push('**Named like a read but reclassified as a write (they change state):**');
   lines.push('');
-  lines.push('- `messages.GetMessagesViews` — increments the view counter when `increment` is set.');
   lines.push('- `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.');
+  lines.push('- `messages.GetInlineBotResults` — sends the query and your user ID to an external bot (the');
+  lines.push('  `inline` command is a write for the same reason).');
   lines.push('');
   lines.push('**Refused outright, even with write access** (issue #47: account/session takeover, phone or');
   lines.push('location sharing, paying):');
@@ -487,7 +488,7 @@ function build() {
   lines.push('  and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,');
   lines.push('  and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an');
   lines.push('  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`,');
-  lines.push('  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it stays a read),');
+  lines.push('  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it is a plain write),');
   lines.push('  and `channels.CreateChannel` with `geoPoint` or `address` (a geo group; a plain channel is created).');
   lines.push('- **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,');
   lines.push('  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`, and the');
@@ -504,7 +505,8 @@ function build() {
   lines.push('  `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.');
   lines.push('');
   lines.push('**Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text');
-  lines.push('search) needs write access in a terminal, like any write; without it, it stays a read.');
+  lines.push('search) and `messages.GetMessagesViews` with `increment` (it adds a view) need write access in a');
+  lines.push('terminal, like any write; without them they stay reads.');
   lines.push('**Paying Stars over MCP:** a non-null `allowPaidStars` is refused over MCP for every method');
   lines.push('(`channels.SearchPosts`, `messages.SendMessage`, `SendMedia`, `SendMultiMedia`,');
   lines.push('`ForwardMessages`, …) in every write mode, `on` included, before anything reaches Telegram.');
@@ -526,6 +528,15 @@ function build() {
   lines.push('MCP; run it in a terminal". The rules in section 4 still apply on top (geo or contact media,');
   lines.push('a phone-privacy exception, `allowPaidStars`), and a read runs through the read tool, a write');
   lines.push('through the write tool and its write mode. In a terminal nothing changes.');
+  lines.push('');
+  lines.push('Over MCP these params of allowed methods are refused as well, at any depth, in every write');
+  lines.push('mode: a `suggestedPost` with a `price`, an `InputMediaStakeDice`, `allowPaidFloodskip`, any');
+  lines.push('location (a geo point, geo or venue media, an `InputPageBlockMap` in a `richMessage`), a');
+  lines.push('`referer` in `contacts.ResolveUsername`, `subscriptionPricing` in `messages.ExportChatInvite`,');
+  lines.push('`myStoriesFrom` in `contacts.Block`/`Unblock`, `password` in `messages.GetBotCallbackAnswer`');
+  lines.push('and `increment` in `messages.GetMessagesViews`. A raw result over MCP shows phone numbers,');
+  lines.push('vCards, birthdays, contact notes and every location field as `"[redacted]"`.');
+  lines.push('`--help` and `schema` (`mcpAccess`) show the MCP access of each method next to its terminal access.');
   lines.push('');
   lines.push('Not on the list on purpose: payments and Stars, account / auth / Passport / passkeys, privacy');
   lines.push('and security settings, sessions, takeout, phone calls, sticker-set management, business and');

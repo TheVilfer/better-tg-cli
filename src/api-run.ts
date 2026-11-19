@@ -1,5 +1,5 @@
 import { getClient, invokeApi, serializeApiResult, disconnectClient } from './client.js';
-import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, plainParams } from './api-methods.js';
+import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, mcpParamRefusal, plainParams } from './api-methods.js';
 import { mcpApiAllowlistRefusal } from './mcp-api-allowlist.js';
 import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
@@ -27,13 +27,14 @@ export async function runApiMethod(
   params = plainParams(params);
   // Over MCP only allowlisted methods run (src/mcp-api-allowlist.ts); the denylist reason wins
   // when there is one, since such a method is refused in a terminal too.
-  const refusal = apiRefusalReason(canonical, params) ?? mcpApiAllowlistRefusal(canonical) ?? mcpPaidStarsRefusal(canonical, params);
+  const refusal = apiRefusalReason(canonical, params) ?? mcpApiAllowlistRefusal(canonical) ?? mcpPaidStarsRefusal(canonical, params)
+    ?? mcpParamRefusal(canonical, params);
   if (refusal) {
     console.error(chalk.red(refusal));
     process.exit(1);
   }
 
-  // A read that may spend Stars (allowPaidStars) needs write access like any write
+  // A read that may spend Stars (allowPaidStars) or add a view (increment) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
   if (isWrite) assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true });
 

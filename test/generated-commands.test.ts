@@ -116,7 +116,8 @@ describe('MCP routing of the top-level generated form', () => {
     expect(planCall('telegram_write', { args: ['ping'] })).toMatch(/not available over MCP/);
     // reclassified side-effecting read
     expect(planCall('telegram_read', { args: ['messages', 'get-bot-callback-answer', '--peer', '@x', '--msg-id', '1'] })).toMatch(/use telegram_write/);
-    expect(planCall('telegram_write', { args: ['messages', 'get-messages-views', '--peer', '@x', '--id', '1'] })).toMatch(/not available over MCP/); // off the allowlist
+    expect(planCall('telegram_read', { args: ['messages', 'get-messages-views', '--peer', '@x', '--id', '1'] })).toMatchObject({ readOnly: true }); // increment is refused by the CLI
+    expect(planCall('telegram_read', { args: ['messages', 'get-inline-bot-results', '--bot', '@b'] })).toMatch(/use telegram_write/);
     // refusals
     expect(planCall('telegram_read', { args: ['account', 'delete-account'] })).toMatch(/irreversible/);
     expect(planCall('telegram_read', { args: ['auth', 'send-code'] })).toMatch(/login|session/i);
@@ -292,7 +293,8 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
     expect(method).toMatch(/--peer <value>\s+InputPeer, required — Target peer/); // type + param desc
     expect(method).toMatch(/--offset-id <value>\s+int, default 0/);
     expect(method).toMatch(/--hash <value>\s+long, default 0/);
-    expect(method).toMatch(/Access: read/);
+    expect(method).toMatch(/Access in a terminal: read/);
+    expect(method).toMatch(/Access over MCP: read — through telegram_read/);
     expect(method).toMatch(/Returns: messages\.Messages/);
     expect(method).toMatch(/Example:\s+telegram messages get-history --peer @username --limit 20/);
     expect(method).toMatch(/core\.telegram\.org\/method\/messages\.getHistory/);
@@ -301,7 +303,8 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
 
   it('a refused method --help states the refusal + reason (and never runs anything)', async () => {
     const help = await run('account', 'delete-account', '--help');
-    expect(help).toMatch(/Access: refused — Refused:.*irreversible/i);
+    expect(help).toMatch(/Access in a terminal: refused — Refused:.*irreversible/i);
+    expect(help).toMatch(/Access over MCP: refused/);
     expect(help).toMatch(/Delete the user's account/); // official description still shown
   }, 30_000);
 

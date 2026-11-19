@@ -1,16 +1,19 @@
 import { Command } from 'commander';
 import { getClient, queryInlineBot, disconnectClient } from '../client.js';
+import { assertWriteEnabled } from '../guard.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 
 export const inlineCommand = new Command('inline')
-  .description('Query an inline bot (like typing "@bot query" in Telegram)')
+  .description('Query an inline bot (like typing "@bot query" in Telegram); a write: the bot gets the query and your user ID')
   .argument('<bot>', 'Inline bot username (@bot)')
   .argument('<query>', 'The inline query text')
   .option('-n, --limit <number>', 'Max results to show', '20')
   .option('--json', 'Output as JSON')
   .action(async (bot, query, options) => {
+    // The query and the user's ID go to an external bot, so it needs write access like a send
+    assertWriteEnabled();
     const spinner = ora(`Querying ${bot} "${query}"...`).start();
     try {
       const client = await getClient();
