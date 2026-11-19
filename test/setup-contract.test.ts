@@ -44,18 +44,26 @@ const baseEnv = (log = opLog): NodeJS.ProcessEnv => {
   }
   return env;
 };
-// Before any child runs: with the children's PATH, `op` (looked up by `which`, src/onepassword.ts)
-// is the fake one and its whoami succeeds; otherwise the CLI would fall back to the Keychain
+// Before any child runs: with the children's PATH, `op` resolves to the fake one and its whoami
+// succeeds; otherwise the CLI would fall back to the Keychain. The path is parsed exactly as
+// getOpBinary() in src/onepassword.ts does (first line of the trimmed output), so a TMPDIR with a
+// newline, which the CLI would cut short, fails here instead of reaching the system store.
 beforeAll(() => {
   if (!fakeOp) return;
   const env = baseEnv(join(home, 'preflight.log'));
   const which = spawnSync('sh', ['-c', 'which op'], { encoding: 'utf8', env });
-  expect(which.stdout.trim()).toBe(fakeOpBin);
-  expect(spawnSync('op', ['whoami'], { env }).status).toBe(0);
+  expect(which.status).toBe(0);
+  const resolved = which.stdout.trim().split(/\r?\n/)[0];
+  expect(resolved).toBe(fakeOpBin);
+  expect(spawnSync(resolved, ['whoami'], { env }).status).toBe(0);
 });
-// After each test: whatever its children asked, it was only the fake store
+// After each test: whatever its children asked, it was only the fake store. Only the lines this
+// test added are checked, so one bad call fails the test that made it and no later one.
+let opLogChecked = 0;
 afterEach(() => {
-  for (const call of opCalls(opLog)) expect(call).toMatch(ALLOWED_OP_CALL);
+  const calls = opCalls(opLog);
+  for (const call of calls.slice(opLogChecked)) expect(call).toMatch(ALLOWED_OP_CALL);
+  opLogChecked = calls.length;
 });
 const cli = (args: string[], env: NodeJS.ProcessEnv = baseEnv()) =>
   spawnSync(process.execPath, [...cliArgs(), ...args], { encoding: 'utf8', env, timeout: 30_000 });
@@ -198,7 +206,8 @@ describe('current consumers keep their output', () => {
   it.runIf(fakeOp)('a child asks only the fake secret store', () => {
     const log = join(home, 'whoami-op-calls.log');
     const r = cli(['whoami'], baseEnv(log));
-    expect(r.status, r.stderr).not.toBe(0);
+    // 1, the error of a profile without a login; null (a signal) or anything else is not that
+    expect(r.status, r.stderr).toBe(1);
     const calls = opCalls(log);
     expect(calls).toContain('whoami');
     expect(calls.some(c => c.startsWith('read '))).toBe(true);

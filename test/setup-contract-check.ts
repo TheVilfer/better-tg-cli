@@ -86,8 +86,11 @@ export function setupResultErrors(value: unknown): string[] {
   const r = value as Record<string, unknown>;
   const errors: string[] = [];
   if (r.schema !== SETUP_SCHEMA) errors.push(`schema must be ${SETUP_SCHEMA}`);
-  const extra = Object.keys(r).filter(k => !['schema', 'ok', 'problems'].includes(k));
+  const extra = Object.keys(r).filter(k => !['schema', 'ok', 'problems', 'data'].includes(k));
   if (extra.length) errors.push(`unexpected field ${extra[0]}`);
+  // `data` is the one open field: command-specific content that only its command documents and
+  // tests. Here it only has to be a plain JSON object.
+  if ('data' in r && (!r.data || typeof r.data !== 'object' || Array.isArray(r.data))) errors.push('data must be a JSON object');
   if (typeof r.ok !== 'boolean') errors.push('ok must be a boolean');
   if (!Array.isArray(r.problems)) return [...errors, 'problems must be an array'];
   const seen = new Set<string>();

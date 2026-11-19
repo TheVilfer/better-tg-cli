@@ -41,12 +41,21 @@ export interface Problem {
   fix: Fix;
 }
 
-/** The single result of a contract command (its whole stdout with `--json`). */
-export interface SetupResult {
+/**
+ * The single result of a contract command (its whole stdout with `--json`). `D` is the shape of
+ * the command's own `data`.
+ */
+export interface SetupResult<D extends Record<string, unknown> = Record<string, unknown>> {
   schema: 1;
   /** true exactly when no problem has severity `error` */
   ok: boolean;
   problems: Problem[];
+  /**
+   * Optional command-specific content (an installer's path, version and target). The only open
+   * field of schema 1: the generic checker requires a JSON object and looks no further; each
+   * command that sets it documents and tests its own shape.
+   */
+  data?: D;
 }
 
 /**

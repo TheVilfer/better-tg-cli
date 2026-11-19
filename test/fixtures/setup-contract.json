@@ -2,6 +2,9 @@
   "valid": [
     { "name": "nothing to report", "exit": 0,
       "result": { "schema": 1, "ok": true, "problems": [] } },
+    { "name": "command-specific data, not inspected by the generic checker", "exit": 0,
+      "result": { "schema": 1, "ok": true, "problems": [],
+        "data": { "path": "/home/u/.local/bin/telegram", "version": "1.2.3", "target": { "os": "linux", "arch": "x64" } } } },
     { "name": "a warning the agent can fix", "exit": 0,
       "result": { "schema": 1, "ok": true, "problems": [
         { "id": "skill_outdated", "severity": "warning", "message": "The Codex skill is outdated.",
@@ -31,6 +34,12 @@
       "result": { "schema": 2, "ok": true, "problems": [] } },
     { "name": "unknown top-level field", "error": "unexpected field notices",
       "result": { "schema": 1, "ok": true, "problems": [], "notices": [] } },
+    { "name": "data that is not an object", "error": "data must be a JSON object",
+      "result": { "schema": 1, "ok": true, "problems": [], "data": "1.2.3" } },
+    { "name": "data as an array", "error": "data must be a JSON object",
+      "result": { "schema": 1, "ok": true, "problems": [], "data": [] } },
+    { "name": "data as null", "error": "data must be a JSON object",
+      "result": { "schema": 1, "ok": true, "problems": [], "data": null } },
     { "name": "ok disagrees with the errors", "error": "ok must be true exactly when",
       "result": { "schema": 1, "ok": true, "problems": [
         { "id": "x", "severity": "error", "message": "m", "fix": { "unavailable": "r" } } ] } },

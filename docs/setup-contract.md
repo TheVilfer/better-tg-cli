@@ -51,15 +51,31 @@ A contract command run with `--json` prints one JSON object and nothing else on 
 
 | Field | Meaning |
 |---|---|
-| `schema` | Always `1` for this version. Any change to the shape gets a new number, a new optional field included: a schema 1 reader refuses fields it does not know. |
+| `schema` | Always `1` for this version. Any change to the shape gets a new number, a new optional field included: a schema 1 reader refuses fields it does not know. The content of `data` is the exception: it belongs to the command. |
 | `ok` | `true` exactly when no problem has severity `error`. |
 | `problems` | Empty when there is nothing to report. |
 | `problems[].id` | Stable snake_case id, unique within a result. Agents may match on it, so an id never changes meaning. |
 | `problems[].severity` | `error` (setup does not work), `warning` (works, but should be fixed), `info`. |
 | `problems[].message` | One line in English, for the agent and the person. |
 | `problems[].fix` | Exactly one of the three kinds below. |
+| `data` | Optional. A JSON object with content specific to the command (see below). |
 
 No other fields are allowed at any level in schema 1.
+
+### `data`: what only this command reports
+
+`data` is the one open field of schema 1. A command puts there what is specific to it, for example
+the installer's install path, version and target:
+
+```json
+{ "schema": 1, "ok": true, "problems": [],
+  "data": { "path": "/home/u/.local/bin/telegram", "version": "1.2.3", "target": { "os": "linux", "arch": "x64" } } }
+```
+
+The generic checker only requires `data` to be a JSON object (not an array, not `null`) and does
+not look inside it. Each command that sets `data` documents its shape next to the command and
+tests it. A reader that does not know the command ignores `data`. Everything outside `data` stays
+closed: a new field there still needs a new schema number.
 
 ### `fix`: run a command
 
