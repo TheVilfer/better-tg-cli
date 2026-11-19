@@ -7,7 +7,7 @@ import {
   approvalHash, consumeApproval, createApproval, EXIT_NEEDS_APPROVAL, MOCK_ACCOUNT, readsStdin,
   APPROVAL_TTL_MS, REJECT_HINT, STDIN_IN_APPROVAL_ENV, type RejectReason,
 } from './approval.js';
-import { apiChatRefs, declaredReadsStdin, describeParsedAction, parsedAction, peerArgs, type ParsedAction, type PeerInfo } from './approval-action.js';
+import { apiChatRefs, declaredReadsStdin, describeParsedAction, oneLine, parsedAction, peerArgs, type ParsedAction, type PeerInfo } from './approval-action.js';
 import { prepareAction, type Prepared } from './approval-prepare.js';
 import { lookupPeers } from './peer-lookup.js';
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
@@ -115,7 +115,8 @@ interface Scope {
 }
 
 const nothingToApprove = (message: string): never => {
-  console.error(chalk.red(`Not sent, nothing to approve: ${message}`));
+  // The message may quote what was typed: never let it act on the terminal
+  console.error(chalk.red(`Not sent, nothing to approve: ${oneLine(message)}`));
   process.exit(1);
 };
 
@@ -134,7 +135,7 @@ async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope>
   try {
     peers = await lookupPeers(peerArgs(action));
   } catch (e) {
-    console.error(chalk.red(`Not sent: could not look up the recipient (${e instanceof Error ? e.message : String(e)}).`));
+    console.error(chalk.red(`Not sent: could not look up the recipient (${oneLine(e instanceof Error ? e.message : String(e))}).`));
     process.exit(1);
   }
   // Every recipient is approved as the ID it resolves to; one that does not resolve (the write
@@ -162,7 +163,7 @@ async function requireGivenCode(argv: string[], opts: GuardOptions): Promise<voi
   const { covered, hash, prepared } = await approvalScope(argv, opts);
   const used = consumeApproval(process.env.TG_APPROVE!, hash, session);
   if (!used.ok) {
-    console.error(chalk.red(`Not sent: approval ${process.env.TG_APPROVE!.trim().toUpperCase()} not accepted: ${used.reason} (${REJECT_HINT[used.kind]}).`));
+    console.error(chalk.red(`Not sent: approval ${oneLine(process.env.TG_APPROVE!.trim().toUpperCase())} not accepted: ${used.reason} (${REJECT_HINT[used.kind]}).`));
     console.error(chalk.gray(process.env.TG_MCP
       ? 'Call telegram_write again without "approval".'
       : 'Run the command again without TG_APPROVE.'));
@@ -219,7 +220,7 @@ async function requireApproval(argv: string[], opts: GuardOptions): Promise<void
       if (!scope.covered) sealStdin();
       return;
     }
-    rejected = { code: given.trim().toUpperCase(), reason: used.kind, message: used.reason };
+    rejected = { code: oneLine(given.trim().toUpperCase()), reason: used.kind, message: used.reason };
   }
   const code = createApproval(scope.hash, session);
   const minutes = APPROVAL_TTL_MS / 60_000;
@@ -248,10 +249,16 @@ async function requireApproval(argv: string[], opts: GuardOptions): Promise<void
     ));
   } else {
     const stdinNote = scope.covered ? ' with the same text on stdin' : '';
+    // A quoted argument keeps its line breaks and escape sequences, which the terminal would act on
+    // when this is printed: such a command is not repeated, the exact one is retry.argv in JSON
+    const printable = argv.every(a => oneLine(a) === a);
+    const lines = printable
+      ? `  TG_APPROVE=${code} telegram ${argv.map(shellQuote).join(' ')}\n` +
+        `  (PowerShell: $env:TG_APPROVE='${code}'; telegram ${argv.map(psQuote).join(' ')}; Remove-Item Env:TG_APPROVE)\n`
+      : '  (The command has line breaks or control characters, so it is not repeated here: pass the same arguments exactly as before. ' +
+        'With --json the exact command is in retry.argv.)\n';
     console.error(chalk.gray(
-      `After a yes, run the same command again${stdinNote} with TG_APPROVE=${code} in its environment:\n` +
-      `  TG_APPROVE=${code} telegram ${argv.map(shellQuote).join(' ')}\n` +
-      `  (PowerShell: $env:TG_APPROVE='${code}'; telegram ${argv.map(psQuote).join(' ')}; Remove-Item Env:TG_APPROVE)\n` +
+      `After a yes, run the same command again${stdinNote} with TG_APPROVE=${code} in its environment:\n` + lines +
       `The code works once, for this exact action and text, for ${minutes} minutes; flag order and --json may differ. ` +
       'Never approve on the user\'s behalf.',
     ));

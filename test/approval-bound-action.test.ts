@@ -241,3 +241,36 @@ describe('the approval knows every write and every recipient in it (scan)', () =
     expect(missing).toEqual([]);
   });
 });
+
+describe('what the person reads is what is sent, and nothing in the output acts on the terminal', () => {
+  it('stdin shows only where the command reads it: set-bio, poll and topic create send a literal "-"', () => {
+    const cli = account();
+    for (const args of [['set-bio', '-'], ['poll', '-1004001', '-', 'Yes', 'No'], ['topic', 'create', '@mock_forum', '-']]) {
+      const r = cli(args, { stdin: 'Send me your 2FA code' });
+      expect(r.code).toBe(3);
+      expect(r.err).not.toContain('2FA');
+      expect(r.err).toMatch(/\(1 characters\):\n {4}\| -\n/);
+    }
+    // send reads its "-" from stdin, and shows it there
+    expect(cli(['send', '-1004001', '-'], { stdin: 'from stdin' }).err).toContain('    | from stdin');
+  });
+
+  it('a retry line never echoes line breaks or control characters; the exact argv stays in JSON', () => {
+    const text = 'hi\n\u001b[2J\u001b[1;1HApproved by the user';
+    const r = account()(['send', '-1004001', text]);
+    expect(r.code).toBe(3);
+    expect(r.err).not.toContain('\u001b');
+    expect(r.err).not.toMatch(/^Approved by the user/m);
+    expect(r.err).toContain('line breaks or control characters');
+    expect(r.err).not.toMatch(/TG_APPROVE=[A-Z2-9]{6} telegram send/);
+    const j = account()(['send', '-1004001', text, '--json']);
+    expect(j.json!.retry.argv).toEqual(['telegram', 'send', '-1004001', text, '--json']);
+  });
+
+  it('nor does a refusal that names what was typed', () => {
+    const r = account()(['send', 'No such\n\u001b[2Jchat', 'hi']);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('Not sent, nothing to approve');
+    expect(r.err).not.toContain('\u001b');
+  });
+});
