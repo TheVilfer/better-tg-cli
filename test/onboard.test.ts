@@ -242,6 +242,54 @@ describe('rpcCode', () => {
       await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'read-only' });
     });
 
+    /** A fake secret store: applyMode writes to it unless told to fail, currentMode reads it back. */
+    const store = (plan: { refuse?: boolean; lie?: boolean } = {}) => {
+      const st = { value: 'read-only' as 'read-only' | 'ask' | 'on', choices: [] as unknown[] };
+      return {
+        st,
+        currentMode: () => st.value,
+        applyMode: async (c: { mode: 'read-only' | 'ask' | 'on' }) => {
+          st.choices.push(c);
+          if (plan.refuse) return { ok: false as const, error: 'store_failed' as const };
+          if (!plan.lie) st.value = c.mode; // `lie`: says ok, keeps the old value
+          return { ok: true as const };
+        },
+      };
+    };
+
+    it('says so when the store refuses the default mode right after the login, and shows the real mode', async () => {
+      const f = store({ refuse: true });
+      const { events, saved, post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      const s = await until('mode');
+      expect(s).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'read-only' });
+      expect(saved).toHaveLength(1); // the login itself is kept
+      expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'logged_in', 'waiting_mode']); // JSONL unchanged
+    });
+
+    it('does not trust an ok from a store that kept the old value', async () => {
+      const f = store({ lie: true });
+      const { post, until, state } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      expect(await until('mode')).toMatchObject({ error: 'store_failed', mode: 'read-only' });
+      const res = await post('mode', { mode: 'on', for: '1h' });
+      expect(res.status).toBe(409);
+      expect(JSON.parse(res.body).error).toBe('store_failed');
+      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'read-only' });
+    });
+
+    it('reports done with the mode read back from the store', async () => {
+      const f = store();
+      const { events, post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
+      await post('invite', { invite: 'tok' });
+      const s = await until('mode');
+      expect(s.mode).toBe('ask');
+      expect(s.error).toBeUndefined();
+      expect((await post('mode', { mode: 'on', for: '' })).status).toBe(202);
+      expect((await until('done')).mode).toBe('on');
+      expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'on' });
+    });
+
     it('serves the mode strings in all three languages', async () => {
       await start();
       const res = await call(session!.url);

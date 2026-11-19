@@ -44,6 +44,11 @@ export async function applyModeChoice(choice: ModeChoice, options: { alreadyConf
   return { ok: true, until: parseWriteState(getWriteValue()).until };
 }
 
+/** The write mode the store holds right now (read back, not what was asked for). */
+export function savedMode(): WriteMode {
+  return parseWriteState(getWriteValue()).mode;
+}
+
 export function currentModeLine(): string {
   return describeWriteState(parseWriteState(getWriteValue()));
 }

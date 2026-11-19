@@ -74,6 +74,11 @@ export interface OnboardOptions {
   modeOnly?: boolean;
   /** What the profile is set to right after the login, before (or without) a choice on the page */
   defaultMode?: WriteMode;
+  /**
+   * Reads the write mode back from the store. With it the page reports only a mode that was
+   * actually saved: a store that refused the value leaves the step open with `store_failed`.
+   */
+  currentMode?(): WriteMode;
 }
 
 export interface OnboardSession {
@@ -117,7 +122,10 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
 
   const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined }, patch);
 
-  function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : options.defaultMode): void {
+  /** The mode in the store now, or `expected` when there is no way to read it back */
+  const savedMode = (expected: WriteMode | undefined) => (options.currentMode ? options.currentMode() : expected);
+
+  function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : savedMode(options.defaultMode)): void {
     if (modeTimer) clearTimeout(modeTimer);
     set({ step: 'done', mode, qrSvg: undefined });
     options.emit({ event: 'done', ...(state.user ? { user: state.user } : {}), ...(mode ? { mode } : {}) });
@@ -125,8 +133,8 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   }
 
   /** After the login: the page asks what the agent may do; skipping or waiting too long keeps read-only. */
-  function askMode(): void {
-    set({ step: 'mode', qrSvg: undefined });
+  function askMode(error?: string): void {
+    set({ step: 'mode', qrSvg: undefined, error });
     options.emit({ event: 'waiting_mode' });
     modeTimer = setTimeout(() => finish(), MODE_WAIT_MS);
     modeTimer.unref?.();
@@ -156,10 +164,17 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       });
       options.save(result.session, creds, creds.invite);
       set({ user: result.user, mode: options.defaultMode });
-      if (options.applyMode && options.defaultMode) await options.applyMode({ mode: options.defaultMode });
+      let modeError: string | undefined;
+      if (options.applyMode && options.defaultMode) {
+        // The session is saved either way; a mode the store refused must not show up as in effect
+        const applied = await options.applyMode({ mode: options.defaultMode }).catch((): ModeResult => ({ ok: false, error: 'store_failed' }));
+        const mode = savedMode(applied.ok ? options.defaultMode : undefined);
+        if (!applied.ok || mode !== options.defaultMode) modeError = applied.ok ? 'store_failed' : applied.error;
+        state.mode = mode;
+      }
       if (options.applyMode) {
         options.emit({ event: 'logged_in', user: result.user });
-        askMode();
+        askMode(modeError);
       } else finish();
     } catch (e) {
       if (abort.signal.aborted) return;
@@ -244,11 +259,14 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       try {
         // May show a dialog (macOS, Windows) or a terminal prompt and wait for the person
         const result = await options.applyMode({ mode, forSeconds: MODE_SPANS[span] });
-        if (!result.ok) {
-          state.error = result.error;
-          return json(res, 409, { error: result.error });
+        // A store that said yes but kept the old value counts as a failure too
+        const error = !result.ok ? result.error : savedMode(mode) !== mode ? 'store_failed' : undefined;
+        if (error) {
+          state.error = error;
+          state.mode = savedMode(state.mode);
+          return json(res, 409, { error });
         }
-        options.emit({ event: 'mode', mode, ...(result.until ? { until: result.until.toISOString() } : {}) });
+        options.emit({ event: 'mode', mode, ...(result.ok && result.until ? { until: result.until.toISOString() } : {}) });
         finish(mode);
         return json(res, 202, { ok: true });
       } finally {
