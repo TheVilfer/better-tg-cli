@@ -106,7 +106,9 @@ scoop install better-tg-cli
 
 The Windows `telegram.exe` is not code-signed, so SmartScreen may warn about the release download.
 
-`telegram update` upgrades an existing install, whichever of these you used. On a terminal the CLI
+`telegram update` upgrades an install from Homebrew, Scoop, npm or a git checkout. A binary from the
+install script is updated by running the script again; `telegram update` prints that command for it.
+Do not replace that binary by hand: the script records its SHA-256 and then refuses the path. On a terminal the CLI
 checks for new versions once a day. Agents and pipes never see that notice, and
 `TG_NO_UPDATE_CHECK=1` turns it off.
 
@@ -480,7 +482,9 @@ After `telegram onboard` it is already in mode `ask`: the agent asks you in the 
 Some hosted agent computers let only HTTPS out, which drops Telegram's TCP transport. The CLI then switches to MTProto over WebSocket (`wss://*.web.telegram.org`, the transport of web.telegram.org) by itself and remembers it for the profile. `TG_TRANSPORT=tcp|wss|auto` picks the transport by hand.
 
 **How do I update?**
-Run `telegram update`. It uses the same channel you installed from: Homebrew, npm or a release binary.
+Run `telegram update`. It uses the same channel you installed from: Homebrew, Scoop or npm. If you
+installed with the install script, run that script again (`telegram update` prints the command), and
+do not replace the binary by hand.
 If you installed the agent skill with `telegram skill install`, run that again to refresh it.
 
 ## Development

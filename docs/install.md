@@ -27,7 +27,11 @@ status=$?
 case "$status:$out" in
   '0:{"schema":1,"ok":true,'*) echo "installed: $out" ;;   # now read data.path from $out
   *)
-    echo "not installed (exit $status): $out" >&2   # empty $out: unknown, see below
+    if [ -z "$out" ]; then
+      echo "installation status unknown (exit $status): no JSON line, see below" >&2
+    else
+      echo "not installed (exit $status): $out" >&2
+    fi
     [ "$status" != 0 ] || status=1   # exit 0 without "ok":true is still a failure
     exit "$status"
     ;;
@@ -201,4 +205,6 @@ To switch an old install to the release binary, keep the old `telegram` until th
 Your login, profiles, write mode and MCP tokens live in `~/.config/tg` and the system keychain, not
 in the binary, so they keep working.
 
-`telegram update` does not upgrade this install yet; for now run the script again.
+`telegram update` does not upgrade this install yet: it recognizes it by `install.json` and prints
+the command that runs the script again. Do not replace the binary by hand, or the script refuses
+the path with `install_path_taken`.

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SetupResult } from '../src/setup-contract.js';
+import { detectInstall, updateCommandFor } from '../src/update.js';
 import { setupExitCode, setupResultErrors } from './setup-contract-check.js';
 import { assetName, canMakeXz, makeReleaseFixtures, releaseBase, type ReleaseFixtureOptions } from './helpers/release-fixtures.js';
 
@@ -225,6 +226,10 @@ describe.skipIf(process.platform === 'win32')('install.sh', () => {
       // The sum of the installed binary itself, which an upgrade checks before replacing it
       expect(manifest.binarySha256).toBe(sha256Of(readFileSync(bin)));
       expect(Object.keys(manifest)).toEqual(['schema', 'package', 'manager', 'path', 'version', 'tag', 'target', 'archive', 'sha256', 'binarySha256', 'installedAt']);
+      // telegram update recognizes this install and advises running the script again
+      const method = detectInstall(bin, '', true);
+      expect(method).toMatchObject({ kind: 'script', dir: s.installDir });
+      expect(updateCommandFor(method)).toMatch(/install\.sh \| TG_INSTALL_DIR=.* sh$/);
       // SHA256SUMS first, then exactly the archive it lists, over https only
       const base = releaseBase(VERSION);
       expect(r.requests.map(l => l.split(' ').pop())).toEqual([`${base}/SHA256SUMS`, `${base}/${assetName(VERSION, 'linux-x64', 'tar.gz')}`]);
@@ -948,13 +953,14 @@ exit 2
     const fakeCurl = `#!/bin/sh\nout=''\nwhile [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2 ;; --proto) shift 2 ;; *) shift ;; esac; done\n[ "$FAKE_CURL_EXIT" = 0 ] || exit "$FAKE_CURL_EXIT"\nprintf '%s' "$FAKE_SCRIPT" > "$out"\n`;
     const okJson = '{"schema":1,"ok":true,"problems":[],"data":{}}';
     it.each(SHELLS.flatMap(shell => [
-      [shell, 'curl fails', '22', '', 22],
-      [shell, 'the script installs', '0', `echo '${okJson}'`, 0],
-      [shell, 'the script exits 0 without JSON', '0', 'echo oops', 1],
-      [shell, 'the script arrives empty', '0', '', 1],
-      [shell, 'the script exits 0 with ok:false', '0', `echo '{"schema":1,"ok":false,"problems":[]}'`, 1],
-      [shell, 'the script needs a human', '0', `echo '{"schema":1,"ok":false,"problems":[]}'; exit 2`, 2],
-    ] as const))('%s: %s', (shell, _what, curlExit, script, want) => {
+      [shell, 'curl fails', '22', '', 22, 'unknown'],
+      [shell, 'the script installs', '0', `echo '${okJson}'`, 0, 'installed'],
+      [shell, 'the script exits 0 without JSON', '0', 'echo oops', 1, 'not installed'],
+      [shell, 'the script arrives empty', '0', '', 1, 'unknown'],
+      [shell, 'the script is killed before its JSON line', '0', 'kill -9 $$', 137, 'unknown'],
+      [shell, 'the script exits 0 with ok:false', '0', `echo '{"schema":1,"ok":false,"problems":[]}'`, 1, 'not installed'],
+      [shell, 'the script needs a human', '0', `echo '{"schema":1,"ok":false,"problems":[]}'; exit 2`, 2, 'not installed'],
+    ] as const))('%s: %s', (shell, _what, curlExit, script, want, says) => {
       expect(example).toContain('exit "$status"');
       // No JSON line is an unknown result, never stated as "nothing is installed"
       expect(doc).not.toMatch(/so nothing is installed/);
@@ -967,9 +973,14 @@ exit 2
         env: { PATH: `${dir}:${process.env.PATH}`, TMPDIR: dir, FAKE_CURL_EXIT: curlExit, FAKE_SCRIPT: script },
       });
       expect(r.status, r.stderr).toBe(want);
-      if (want === 0) expect(r.stdout).toContain('installed: ');
-      // The message shows the original status; 1 is only what the example exits with for a 0
-      else expect(r.stderr).toContain(`not installed (exit ${want === 1 ? 0 : want})`);
+      if (says === 'installed') expect(r.stdout).toContain('installed: ');
+      else {
+        // The message shows the original status; 1 is only what the example exits with for a 0.
+        // No output at all is an unknown result, never reported as "not installed".
+        const other = says === 'unknown' ? 'not installed' : 'installation status unknown';
+        expect(r.stderr).toContain(`${says === 'unknown' ? 'installation status unknown' : 'not installed'} (exit ${want === 1 ? 0 : want})`);
+        expect(r.stderr).not.toContain(other);
+      }
     });
   });
 });

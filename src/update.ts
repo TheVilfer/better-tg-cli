@@ -8,6 +8,7 @@ export const PACKAGE = 'better-tg-cli';
 const WIN = process.platform === 'win32';
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE}/latest`;
 const RELEASES_URL = 'https://github.com/TheVilfer/better-tg-cli/releases/latest';
+const INSTALL_SCRIPT_URL = `${RELEASES_URL}/download/install.sh`;
 const CHECK_INTERVAL_MS = 24 * 3600e3;
 export const BACKGROUND_CHECK_COMMAND = '__update-check';
 
@@ -16,7 +17,9 @@ export type InstallMethod =
   | { kind: 'npm' }
   | { kind: 'scoop' }
   | { kind: 'source'; root: string }
-  | { kind: 'binary'; path: string };
+  | { kind: 'binary'; path: string }
+  /** Placed by install.sh, which records it in install.json beside it with its SHA-256. */
+  | { kind: 'script'; path: string; dir: string };
 
 /**
  * Compares versions numerically. A pre-release (`0.35.0-rc.2`, from `npm i -g better-tg-cli@next`)
@@ -51,7 +54,7 @@ export function detectInstall(
   if (isBinary) {
     if (/\/(Cellar|linuxbrew)\//.test(execPath)) return { kind: 'brew' };
     if (/[\\/]scoop[\\/]apps[\\/]/i.test(execPath)) return { kind: 'scoop' };
-    return { kind: 'binary', path: execPath };
+    return installedByScript(execPath) ?? { kind: 'binary', path: execPath };
   }
   let script = scriptPath;
   try { script = realpathSync(scriptPath); } catch { /* keep as given */ }
@@ -61,6 +64,25 @@ export function detectInstall(
   if (existsSync(join(root, '.git'))) return { kind: 'source', root };
   return { kind: 'npm' };
 }
+
+/**
+ * install.sh writes install.json next to the binary it places. Replacing that binary by hand
+ * breaks the recorded binarySha256 and the script then refuses the path, so such an install is
+ * updated by running the script again.
+ */
+function installedByScript(execPath: string): InstallMethod | undefined {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dirname(execPath), 'install.json'), 'utf8')) as { manager?: unknown; path?: unknown };
+    if (manifest.manager !== 'user-binary' || typeof manifest.path !== 'string') return undefined;
+    const same = manifest.path === execPath || realpathSync(manifest.path) === realpathSync(execPath);
+    // The folder as install.sh spelled it, which is what it compares install.json with
+    return same ? { kind: 'script', path: execPath, dir: dirname(manifest.path) } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 export async function fetchLatestVersion(timeoutMs = 5000): Promise<string> {
   const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(timeoutMs) });
@@ -77,6 +99,7 @@ export function updateCommandFor(method: InstallMethod): string {
     case 'npm': return `npm install -g ${PACKAGE}@latest`;
     case 'source': return `git -C ${JSON.stringify(method.root)} pull --ff-only && npm --prefix ${JSON.stringify(method.root)} run build`;
     case 'binary': return `download the archive from ${RELEASES_URL} and replace ${method.path}`;
+    case 'script': return `curl -q --proto '=https' --tlsv1.2 -fsSL ${INSTALL_SCRIPT_URL} | TG_INSTALL_DIR=${shellQuote(method.dir)} sh`;
   }
 }
 
@@ -133,7 +156,7 @@ export function maybeNotifyUpdate(argv = process.argv.slice(2)): void {
 }
 
 export function runUpdate(method: InstallMethod): number {
-  if (method.kind === 'binary') return 1;
+  if (method.kind === 'binary' || method.kind === 'script') return 1;
   if (method.kind === 'source') {
     const dirty = spawnSync('git', ['-C', method.root, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' });
     if (dirty.stdout?.trim()) {
