@@ -63,6 +63,16 @@ describe('over MCP without a dialog, "approval needed" is a result, not an error
     expect(r.result.structuredContent).toMatchObject({ status: 'approval_required', rejected: { code: 'ZZZZZZ', reason: 'unknown_or_expired' } });
   });
 
+  it('an approval result masks gift links in its action, as every output is masked', () => {
+    const line = JSON.stringify({
+      error: 'approval_required', code: 'ABCDEF', expiresInMinutes: 10,
+      action: { description: '  Send a message\n  To: Gifts https://t.me/giftcode/AbC123xyz (supergroup, id -1)', argv: ['send', '-1', 'x'] },
+    });
+    const r = result({ argv: ['send', '-1', 'x'] }, { code: 3, timedOut: false, out: `${line}\n`, err: 'Approval needed' });
+    expect(r.structuredContent).toMatchObject({ status: 'approval_required', code: 'ABCDEF' });
+    expect(JSON.stringify(r)).not.toContain('AbC123xyz');
+  });
+
   it('other failures stay errors', () => {
     // with the exit code in structuredContent, as every non-approval result has it (agent-ux-cli)
     expect(result({ argv: ['send'] }, { code: 1, timedOut: false, out: '', err: 'Chat not found' })).toEqual({
@@ -107,6 +117,8 @@ describe('the dialog shows who gets the write, by name (5.2)', () => {
     expect(asked).toBe(false);
     expect(r.result.isError).toBe(true);
     expect(r.result.content[0].text).toMatch(/^Nothing was sent: [^]*Not sent, nothing to approve: No chat is titled exactly "Tea"/);
+    // The describe run's exit code comes back too (2: no chat has this exact title), as for any run
+    expect(r.result.structuredContent).toEqual({ exitCode: 2 });
   });
 
   it('childEnv sets the describe flag only for the describe run, never from the environment', () => {

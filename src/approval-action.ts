@@ -80,9 +80,11 @@ export function parsedAction(argv: string[]): ParsedAction {
 }
 
 /** A recipient as it was looked up for the approval: the chat it resolved to, or why it did not. */
+import type { ChatCandidate, Hint } from './errors.js';
+
 export type PeerInfo =
   | { ok: true; id: string; title: string; type: string; username?: string; self?: boolean }
-  | { ok: false; error: string; code?: string; exitCode?: number };
+  | { ok: false; error: string; code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint };
 
 interface Descriptor {
   verb: string;

@@ -218,7 +218,12 @@ describe('a file is approved and sent as one snapshot of its bytes', () => {
     expect(missing.code).toBe(2);
     expect(missing.err).toMatch(/File not found: .*missing\.pdf/);
     expect(missing.out).not.toMatch(/approval_required/);
-    // A file that exists but cannot be read reaches the guard's snapshot: nothing to approve, exit 1
+  });
+
+  // chmod 000 keeps the file readable on Windows and for root
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a file that exists but cannot be read gets no code either', () => {
+    const cli = account();
+    // It reaches the guard's snapshot: nothing to approve, exit 1
     const locked = join(home, 'locked.pdf');
     writeFileSync(locked, 'secret');
     chmodSync(locked, 0o000);

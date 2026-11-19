@@ -380,13 +380,17 @@ function cliBase(): string[] {
 }
 
 /** `describe`: the extra run before a dialog that only prints the action (DESCRIBE_ENV), set by gateWrite. */
-type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean };
+/** `refusedExit`: set by gateWrite when the describe run failed, so the refusal keeps the CLI's exit code. */
+type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean; refusedExit?: number };
 
 /** Every output the model gets, raw or curated, text or JSON, error or not: gift links masked, then capped. */
 const cap = (raw: string) => {
   const s = maskGiftCodes(raw);
   return s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
 };
+
+/** The same backstop for a structured value (an approval's action): gift links masked in every string. */
+const maskedValue = (v: unknown): unknown => (v === undefined ? v : JSON.parse(maskGiftCodes(JSON.stringify(v))));
 
 /** The environment of the CLI that runs one call. Exported for tests. */
 export function childEnv(plan: Plan): NodeJS.ProcessEnv {
@@ -453,9 +457,9 @@ export function result(plan: Pick<Plan, 'argv' | 'stdin'>, r: RunOutput): ToolRe
         structuredContent: {
           status: 'approval_required',
           code: pending.code,
-          action: pending.action,
+          action: maskedValue(pending.action),
           expiresInMinutes: pending.expiresInMinutes,
-          ...(pending.rejected ? { rejected: pending.rejected } : {}),
+          ...(pending.rejected ? { rejected: maskedValue(pending.rejected) } : {}),
           retry: { tool: 'telegram_write', arguments: args },
         },
       };
@@ -551,7 +555,7 @@ async function runCli(plan: Plan): Promise<ToolResult> {
 }
 
 /** What a describe run reported: the action as the user should read it, and the hash to approve. */
-export type Described = { hash: string; description: string } | { error: string };
+export type Described = { hash: string; description: string } | { error: string; exitCode?: number };
 
 /** Runs the write once in describe mode (DESCRIBE_ENV): it prints the action and exits before writing. */
 export async function describeWithCli(plan: Plan, run: (p: Plan) => Promise<RunOutput> = runRaw): Promise<Described> {
@@ -564,7 +568,7 @@ export async function describeWithCli(plan: Plan, run: (p: Plan) => Promise<RunO
     } catch { /* falls through */ }
   }
   const shown = [r.err.trim(), r.out.split('\n').filter(l => !l.startsWith(DESCRIBE_MARK)).join('\n').trim()].filter(Boolean).join('\n');
-  return { error: shown || (r.timedOut ? 'Timed out while preparing the approval' : `exit ${r.code}`) };
+  return { error: shown || (r.timedOut ? 'Timed out while preparing the approval' : `exit ${r.code}`), ...(r.code !== null && !r.timedOut ? { exitCode: r.code } : {}) };
 }
 
 type RpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown>; result?: unknown };
@@ -609,7 +613,11 @@ export async function gateWrite(plan: Plan, input: Record<string, unknown>, elic
   // This process has no parser and no connection: the CLI itself describes the action (recipient
   // looked up by name) and computes the hash its own guard will check, then exits without writing
   const described = await describe(plan);
-  if ('error' in described) return `Nothing was sent: ${described.error}`;
+  if ('error' in described) {
+    // The CLI's exit code (2 usage, 5 not logged in …) goes back with the refusal
+    plan.refusedExit = described.exitCode;
+    return `Nothing was sent: ${described.error}`;
+  }
   const approved = await elicit(`The agent wants to change something in your Telegram:\n${described.description}\n\nApprove this one action?`);
   if (!approved) return 'The user did not approve this write. Nothing was sent.';
   plan.approval = createApproval(described.hash, account, 'elicitation');
@@ -651,7 +659,11 @@ export async function handleMessage(msg: RpcMessage, run = runCli, options: McpO
       if (typeof plan === 'string') return reply(text(plan, true));
       if (!plan.readOnly) {
         const refused = await gateWrite(plan, input, options.elicit, options.describe);
-        if (refused) return reply(text(refused, true));
+        if (refused) {
+          // Masked like every output; a failed describe run keeps the CLI's exit code
+          const exitCode = (plan as Plan).refusedExit;
+          return reply({ ...text(cap(refused), true), ...(exitCode !== undefined ? { structuredContent: { exitCode } } : {}) });
+        }
       }
       return reply(await run(plan));
     }

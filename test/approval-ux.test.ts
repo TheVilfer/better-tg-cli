@@ -119,6 +119,13 @@ describe('the person sees who gets the write, by name (4.1)', () => {
     expect(r.code).toBe(2);
     expect(r.err).toMatch(/Not sent, nothing to approve: No chat is titled exactly "Tea".*-1004001 supergroup Team(;|$)/m);
     expect(r.json).toBeUndefined();
+    // With --json: one error line whose candidates are fields, not text in the message (agent-ux-cli)
+    const j = account()(['send', 'Tea', 'hi', '--json']);
+    expect(j.code).toBe(2);
+    expect(j.out.trim().split('\n')).toHaveLength(1);
+    expect(j.json!.error).toMatchObject({ code: 'chat_not_exact', candidates: expect.arrayContaining([{ id: '-1004001', title: 'Team', type: 'supergroup' }]) });
+    expect(j.json!.error.message).toMatch(/^Not sent, nothing to approve: No chat is titled exactly "Tea"/);
+    expect(j.json!.error.message).not.toMatch(/-1004001|\\u\{a\}/);
   });
 
   it('a chat title cannot forge a line of its own', () => {

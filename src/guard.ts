@@ -13,7 +13,7 @@ import { lookupPeers } from './peer-lookup.js';
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 import { getSessionString } from './config.js';
-import { CliError, errorDetails, errorJson, EXIT, ExitSignal, wantsJson } from './errors.js';
+import { CliError, errorDetails, errorJson, EXIT, ExitSignal, wantsJson, type ChatCandidate, type Hint } from './errors.js';
 
 /**
  * Set by the MCP server only (childEnv strips it otherwise) for one extra run of a write before it
@@ -31,11 +31,10 @@ export const EXIT_DESCRIBED = 4;
  * ({"error":{"code","message","hint"?}}, as fail() prints), and the prose on stderr in any case,
  * since the person or the agent reads it there. The exit code is the error's own.
  */
-function stop(error: CliError, argv: string[] = process.argv.slice(2)): never {
-  const { code, message, hint } = errorDetails(error);
-  if (wantsJson(argv)) console.log(errorJson({ code, message, ...(hint ? { hint } : {}) }));
-  console.error(chalk.red(error.summary));
-  if (error.hint) console.error(chalk.gray(typeof error.hint === 'string' ? error.hint : error.hint.join(' ')));
+function stop(error: CliError, argv: string[] = process.argv.slice(2), prose?: string): never {
+  if (wantsJson(argv)) console.log(errorJson(errorDetails(error)));
+  console.error(chalk.red(prose ?? error.summary));
+  if (error.hint && prose === undefined) console.error(chalk.gray(typeof error.hint === 'string' ? error.hint : error.hint.join(' ')));
   process.exit(error.exitCode);
 }
 
@@ -137,10 +136,15 @@ interface Scope {
  * no code. It keeps the code and exit code of the error behind it (an ambiguous name stays a usage
  * error, exit 2), or `nothing_to_approve`, exit 1.
  */
-const nothingToApprove = (argv: string[], message: string, why: { code?: string; exitCode?: number } = {}): never => {
-  // The message may quote what was typed: never let it act on the terminal
+type Why = { code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint };
+const nothingToApprove = (argv: string[], text: string, why: Why = {}): never => {
   const known = why.code && why.code !== 'error';
-  return stop(new CliError(`Not sent, nothing to approve: ${oneLine(message)}`, known ? why.code! : 'nothing_to_approve', known ? why.exitCode ?? EXIT.ERROR : EXIT.ERROR), argv);
+  // JSON: the error's own message, candidates and hint as fields; the prose: the whole text as one
+  // line, since it may quote what was typed and must never act on the terminal
+  const error = new CliError(`Not sent, nothing to approve: ${oneLine(why.message ?? text)}`,
+    known ? why.code! : 'nothing_to_approve', known ? why.exitCode ?? EXIT.ERROR : EXIT.ERROR,
+    { ...(why.candidates ? { candidates: why.candidates } : {}), ...(why.hint ? { hint: why.hint } : {}) });
+  return stop(error, argv, `Not sent, nothing to approve: ${oneLine(text)}`);
 };
 
 /**
@@ -161,10 +165,8 @@ async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope>
     // A process.exit() already on its way (installDrainingExit) keeps its code
     if (e instanceof ExitSignal) throw e;
     // Not logged in (5), no network (1) …: the write could not run either
-    const { code, exitCode } = errorDetails(e);
-    stop(new CliError(`Not sent: could not look up the recipient (${oneLine(e instanceof Error ? e.message : String(e))}).`, code, exitCode, {
-      ...(e instanceof CliError && e.hint ? { hint: e.hint } : {}),
-    }), argv);
+    const { code, exitCode, message, hint } = errorDetails(e);
+    stop(new CliError(`Not sent: could not look up the recipient (${oneLine(message)}).`, code, exitCode, hint ? { hint } : {}), argv);
   }
   // Every recipient is approved as the ID it resolves to; one that does not resolve (the write
   // would fail, or find someone else) gets no code
@@ -174,7 +176,9 @@ async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope>
     prepared = await prepareAction(action);
   } catch (e) {
     if (e instanceof ExitSignal) throw e;
-    return nothingToApprove(argv, e instanceof Error ? e.message : String(e), errorDetails(e));
+    // Its lines (a hint, a list of buttons) joined into one, as the recipient lookup does
+    const text = (e instanceof Error ? e.message : String(e)).split('\n').map(l => l.trim()).filter(Boolean).join('; ');
+    return nothingToApprove(argv, text, errorDetails(e));
   }
   return { covered, stdin, action, peers, prepared, hash: approvalHash(action, peers, stdin, prepared.bound) };
 }
