@@ -56,7 +56,7 @@ const link = vi.hoisted(() => ({ connectOk: false }));
 vi.mock('../src/transport.js', () => ({
   connectClient: async () => {
     telegram.connected++;
-    if (link.connectOk) return { connected: true, isUserAuthorized: async () => true, destroy: async () => {} };
+    if (link.connectOk) return { connected: true, invoke: async () => ({}), destroy: async () => {} };
     throw new Error('connected to Telegram');
   },
   // getClient may ask which transport to use before it connects

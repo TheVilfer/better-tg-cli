@@ -28,7 +28,6 @@ vi.mock('../src/confirm.js', () => ({ confirmByHuman: async (q: string) => (fake
 vi.mock('../src/write-store.js', async orig => ({
   ...(await orig<typeof import('../src/write-store.js')>()),
   hasHumanChannel: () => true,
-  mayTrustUnconfirmedChoice: () => false,
   setWriteValue: (v: string) => (fake.written.push(v), true),
   deleteWriteValue: () => { fake.written.push('<deleted>'); },
 }));
@@ -77,7 +76,7 @@ describe('a dead session is told apart from a missing one and from no network (2
     expect(await sessionState()).toBe('alive');
     fake.clientError = expired();
     expect(await sessionState()).toBe('expired');
-    fake.clientError = Object.assign(new Error('AUTH_KEY_UNREGISTERED'), {});
+    fake.clientError = Object.assign(new Error('RPCError 401: AUTH_KEY_UNREGISTERED'), { errorMessage: 'AUTH_KEY_UNREGISTERED' });
     expect(await sessionState()).toBe('expired');
     fake.clientError = new Error('connect ETIMEDOUT 149.154.167.50:443');
     await expect(sessionState()).rejects.toThrow(/ETIMEDOUT/);

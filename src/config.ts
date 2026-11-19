@@ -247,6 +247,12 @@ export function getSessionString(): string | undefined {
   return config.sessionString;
 }
 
+/** The stored session as it is now, past this process's one-second cache (another process may have logged in). */
+export function freshSessionString(): string | undefined {
+  cachedConfig = null;
+  return getSessionString();
+}
+
 export function clearSessionString(): void {
   // Delete from secret store
   secretDelete('sessionString');

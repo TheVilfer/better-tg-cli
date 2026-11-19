@@ -65,11 +65,37 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   );
   clientSession = sessionString;
 
-  if (!await clientInstance.isUserAuthorized()) {
-    throw new Error(`${SESSION_EXPIRED} ${loginHint()}`);
-  }
+  await assertAuthorized(clientInstance);
 
   return clientInstance;
+}
+
+/**
+ * RPC errors that mean Telegram no longer accepts this session (logged out elsewhere, revoked, the
+ * account deleted or banned): only these make a stored login "expired". Anything else (no network,
+ * a timeout, flood wait) is not a reason to log in again and replace the session.
+ */
+export const AUTH_ERRORS = new Set([
+  'AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'AUTH_KEY_PERM_EMPTY', 'SESSION_REVOKED', 'SESSION_EXPIRED',
+  'USER_DEACTIVATED', 'USER_DEACTIVATED_BAN',
+]);
+
+export function isAuthError(e: unknown): boolean {
+  const code = (e as { errorMessage?: unknown } | undefined)?.errorMessage;
+  return typeof code === 'string' && AUTH_ERRORS.has(code);
+}
+
+/**
+ * Checks the session with the call teleproto's isUserAuthorized() makes, but keeps the reason:
+ * isUserAuthorized() answers false on any failure, so a network error would read as "logged out".
+ */
+async function assertAuthorized(client: TelegramClient): Promise<void> {
+  try {
+    await client.invoke(new Api.updates.GetState());
+  } catch (e) {
+    if (isAuthError(e)) throw new Error(`${SESSION_EXPIRED} ${loginHint()}`);
+    throw e;
+  }
 }
 
 export async function createClient(apiId: number, apiHash: string): Promise<TelegramClient> {

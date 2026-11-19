@@ -27,18 +27,20 @@ function humanSpan(seconds: number): string {
  * - neither, and no secret store: the click on the local page is taken as is, because there the
  *   mode is unprotected anyway (src/write-store.ts);
  * - neither, but a secret store: refused, the person runs `telegram write-access` in a terminal.
+ *
+ * `fromModel`: the page's link went through the model (telegram_setup over MCP), so a click there
+ * may be the model's own. Then "ask" and "on" both need the person in a dialog or terminal, on every
+ * platform; without such a channel the choice is refused (`needs_terminal`), unprotected or not.
  */
-export async function applyModeChoice(choice: ModeChoice, options: { alreadyConfirmed?: boolean; confirmAsk?: boolean } = {}): Promise<ModeResult> {
+export async function applyModeChoice(choice: ModeChoice, options: { alreadyConfirmed?: boolean; fromModel?: boolean } = {}): Promise<ModeResult> {
   if (choice.mode === 'read-only') {
     deleteWriteValue();
     return { ok: true };
   }
-  // `confirmAsk`: "ask" is gated like "on", for a page whose link the model itself handed out
-  // (telegram_setup over MCP), where a click could come from the model rather than the person
-  if ((choice.mode === 'on' || options.confirmAsk) && !options.alreadyConfirmed) {
+  if ((choice.mode === 'on' || options.fromModel) && !options.alreadyConfirmed) {
     if (hasHumanChannel()) {
       if (!(await confirmByHuman(modeQuestion(choice.mode, choice.forSeconds)))) return { ok: false, error: 'not_confirmed' };
-    } else if (!mayTrustUnconfirmedChoice()) {
+    } else if (options.fromModel || !mayTrustUnconfirmedChoice()) {
       return { ok: false, error: 'needs_terminal' };
     }
   }
