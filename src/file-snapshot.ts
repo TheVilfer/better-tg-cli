@@ -23,6 +23,7 @@ export function fileSnapshot(path: string): FileSnapshot {
   const key = resolve(path);
   const known = taken.get(key);
   if (known) return known;
+  if (sealed) throw new Error(`${path} is not the file that was approved; nothing was sent. Run the command again for a new approval.`);
   let real: string;
   try {
     real = realpathSync(key);
@@ -41,9 +42,19 @@ export function fileSnapshot(path: string): FileSnapshot {
   return snap;
 }
 
+/**
+ * After an approval that covers files: from now on only those snapshots exist, and a path the
+ * approval did not read is refused instead of read (the write can only send what was approved).
+ */
+let sealed = false;
+export function sealFileSnapshots(): void {
+  sealed = true;
+}
+
 /** Drops the snapshots, as a new process starts without them (tests that play two processes in one). */
 export function forgetFileSnapshots(): void {
   taken.clear();
+  sealed = false;
 }
 
 /** What the approval binds for a file: its real path and the digest of the snapshot. */

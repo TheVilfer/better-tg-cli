@@ -76,7 +76,7 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
  * a timeout, flood wait) is not a reason to log in again and replace the session.
  */
 export const AUTH_ERRORS = new Set([
-  'AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'AUTH_KEY_PERM_EMPTY', 'SESSION_REVOKED', 'SESSION_EXPIRED',
+  'AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'AUTH_KEY_PERM_EMPTY', 'AUTH_KEY_DUPLICATED', 'SESSION_REVOKED', 'SESSION_EXPIRED',
   'USER_DEACTIVATED', 'USER_DEACTIVATED_BAN',
 ]);
 
@@ -2341,11 +2341,12 @@ export async function deleteChatMessages(
   chatIdentifier: string,
   msgIds: number[],
   revoke: boolean
-): Promise<{ chatTitle: string; count: number }> {
+): Promise<{ chatTitle: string; count: number; forEveryone: boolean }> {
   const entity = await resolveChat(client, chatIdentifier);
   await assertMessagesInChat(client, entity, msgIds);
   await client.deleteMessages(entity, msgIds, { revoke });
-  return { chatTitle: getChatTitle(entity), count: msgIds.length };
+  // What Telegram did, not what was asked: a channel or supergroup ignores "just for me"
+  return { chatTitle: getChatTitle(entity), count: msgIds.length, forEveryone: revoke || deletesForEveryone(entity) };
 }
 
 /** The message IDs of `delete` (`123` or `123,124`), as the command parses them. */

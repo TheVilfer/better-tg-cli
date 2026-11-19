@@ -2,7 +2,7 @@ import {
   assertMessagesInChat, buttonFingerprint, deletesForEveryone, expectButton, findButton, getClient, parseIdList, resolveChat,
   type ButtonInfo, type ClickSelector,
 } from './client.js';
-import { fileSnapshot, snapshotDigest } from './file-snapshot.js';
+import { fileSnapshot, sealFileSnapshots, snapshotDigest } from './file-snapshot.js';
 import { descriptorOf, oneLine, type ParsedAction } from './approval-action.js';
 
 /**
@@ -68,6 +68,7 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     const snap = fileSnapshot(path);
     prepared.bound.push(['file', name, snapshotDigest(snap)]);
     prepared.lines.push(`  File size: ${snap.bytes.length} bytes (the approval covers exactly these bytes)`);
+    prepared.onApproved = sealFileSnapshots;
   }
 
   if (action.command === 'delete') {

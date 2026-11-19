@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { getClient, deleteChatMessages, disconnectClient } from '../client.js';
+import { getClient, deleteChatMessages, disconnectClient, parseIdList } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
@@ -10,11 +10,11 @@ export const deleteCommand = new Command('delete')
   .description('Delete one or more messages')
   .argument('<chat>', 'Chat name, username (@user), or ID')
   .argument('<messageIds>', 'Message ID, or comma-separated IDs (e.g. 123 or 123,124)')
-  .option('--just-me', 'Delete only for you (do not revoke for everyone)')
+  .option('--just-me', 'Delete only for you, in private chats and basic groups (channels and supergroups always delete for everyone)')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageIds, options) => {
     await assertWriteEnabled();
-    const ids = messageIds.split(',').map((s: string) => parseInt(s.trim(), 10)).filter((n: number) => Number.isInteger(n));
+    const ids = parseIdList(messageIds);
     if (ids.length === 0) {
       console.error('Provide at least one numeric message ID');
       process.exit(1);
@@ -26,8 +26,8 @@ export const deleteCommand = new Command('delete')
       const result = await deleteChatMessages(client, chat, ids, revoke);
       auditLog({ timestamp: new Date().toISOString(), command: 'delete', target: chat, message: `[${ids.join(',')}] revoke=${revoke}`, result: { success: true } });
       spinner.stop();
-      if (options.json) console.log(formatJson({ chat: result.chatTitle, deleted: ids, revoke }));
-      else console.log(chalk.green(`✓ Deleted ${result.count} message(s) in "${result.chatTitle}"${revoke ? ' (for everyone)' : ' (just for you)'}`));
+      if (options.json) console.log(formatJson({ chat: result.chatTitle, deleted: ids, revoke: result.forEveryone }));
+      else console.log(chalk.green(`✓ Deleted ${result.count} message(s) in "${result.chatTitle}"${result.forEveryone ? ' (for everyone)' : ' (just for you)'}`));
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'delete', target: chat, message: `[${ids.join(',')}]`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });

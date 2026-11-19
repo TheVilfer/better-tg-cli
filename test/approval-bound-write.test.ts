@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { TelegramClient } from 'teleproto';
 import { buttonFingerprint, clickButton, disconnectClient, expectButton, getClient, resolveChat, sendFileMessage, setProfilePhoto } from '../src/client.js';
 import { lookupPeers } from '../src/peer-lookup.js';
-import { fileSnapshot, forgetFileSnapshots } from '../src/file-snapshot.js';
+import { fileSnapshot, forgetFileSnapshots, sealFileSnapshots } from '../src/file-snapshot.js';
 import { seedWorld } from '../src/mock/world.js';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
 
@@ -79,6 +79,22 @@ describe('an upload sends the snapshot the approval hashed, never the path again
     const { client, got } = recorder();
     await setProfilePhoto(client, f);
     expect(await bytesOf(got[0])).toBe('approved photo');
+  });
+});
+
+describe('after an approval that covers files, only those files can be sent', () => {
+  it('a path the approval did not read is refused, not read', async () => {
+    const approved = join(dir, 'approved.bin');
+    const other = join(dir, 'other.bin');
+    writeFileSync(approved, 'yes');
+    writeFileSync(other, 'no');
+    fileSnapshot(approved);
+    sealFileSnapshots();
+    const { client, got } = recorder();
+    await expect(sendFileMessage(client, 'me', other)).rejects.toThrow(/not the file that was approved; nothing was sent/);
+    expect(got).toEqual([]);
+    await sendFileMessage(client, 'me', approved);
+    expect(await bytesOf(got[0])).toBe('yes');
   });
 });
 

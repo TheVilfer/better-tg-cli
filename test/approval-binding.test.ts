@@ -72,6 +72,7 @@ import { apiCommand } from '../src/commands/api.js';
 import { sendFileCommand } from '../src/commands/send-file.js';
 import { registerGeneratedCommands } from '../src/commands/generated.js';
 import { trackActiveCommand } from '../src/approval-action.js';
+import { forgetFileSnapshots } from '../src/file-snapshot.js';
 import { configDir } from '../src/paths.js';
 import { getSessionString, saveConfig, setSessionString } from '../src/config.js';
 import { describeInProcess } from './helpers/describe-in-process.js';
@@ -170,6 +171,7 @@ describe('a raw API approval covers the body, in every form that reads it from s
   beforeEach(() => {
     file = join(mkdtempSync(join(tmpdir(), 'tg-binding-')), 'photo.png');
     writeFileSync(file, 'png');
+    forgetFileSnapshots(); // each test plays new processes; file snapshots are per process
   });
 
   it.each([

@@ -122,6 +122,15 @@ describe('every recipient, in every role, is approved as the ID it resolves to',
     expect((cli.world().chats.find(c => c.id === 4001) as any).bannedUsers.map((b: any) => b.userId)).toEqual([1002]);
   });
 
+  it('kick by name: the write removes the user the approval named (no second lookup that cannot find them)', () => {
+    const cli = account();
+    const asked = cli(['kick', '-1004001', 'Bob Sample', '--json']);
+    expect(asked.json!.action.description).toContain('User: Bob Sample (user, @bob_sample, id 1002)');
+    const r = cli(['kick', '-1004001', 'Bob Sample'], { approve: asked.json!.code });
+    expect(r.code).toBe(0);
+    expect((cli.world().chats.find(c => c.id === 4001) as any).bannedUsers.map((b: any) => b.userId)).toEqual([1002]);
+  });
+
   it('api: a chat inside the params ({"_chat"}) is a recipient: shown, bound by ID, refused when it changed', () => {
     const cli = account();
     const params = JSON.stringify({ peer: { _chat: '@alice_example' }, id: [1], revoke: true });
@@ -166,6 +175,17 @@ describe('delete touches only messages of the chat the person saw', () => {
     expect(cli(['delete', '1001', '4'], { approve: asked.json!.code }).code).toBe(0);
     expect(cli.chat(1001).messages.map(m => m.id)).not.toContain(4);
     expect(cli.chat(3001).messages.map(m => m.id)).toContain(4);
+  });
+
+  it('never reports "just for you" where Telegram deleted for everyone', () => {
+    const cli = account();
+    const r = cli(['delete', '-1004001', '3', '--just-me', '--json'], { env: { TG_MOCK_ASK: '' } });
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ revoke: true });
+    const text = cli(['delete', '-1004001', '2', '--just-me'], { env: { TG_MOCK_ASK: '' } });
+    expect(text.out).toContain('(for everyone)');
+    expect(text.out).not.toContain('just for you');
+    expect(cli(['delete', '1001', '4', '--just-me', '--json'], { env: { TG_MOCK_ASK: '' } }).json).toMatchObject({ revoke: false });
   });
 });
 
