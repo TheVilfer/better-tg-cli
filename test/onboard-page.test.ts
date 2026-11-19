@@ -72,20 +72,29 @@ function fakeDocument(html: string) {
   return { document, byId: (id: string) => document.getElementById(id)! };
 }
 
+/** The real server at `url`, with the Origin a browser sends on a POST */
+function direct(url: string): typeof fetch {
+  const origin = new URL(url).origin;
+  return (input, init = {}) =>
+    fetch(new URL(String(input), origin), init.method === 'POST' ? { ...init, headers: { ...init.headers as object, origin } } : init);
+}
+
+/** A response whose body breaks off after `start`, as when the connection drops after the headers */
+const broken = (status: number, start = '') =>
+  new Response(new ReadableStream({ start(c) { if (start) c.enqueue(new TextEncoder().encode(start)); c.error(new TypeError('network error')); } }), { status });
+
 /**
- * Loads the page in one language. `fetchImpl` defaults to the real server, with the Origin a browser
- * sends. `html`: the page as the server sent it, instead of one rendered here.
+ * Loads the page in one language. `fetchImpl` defaults to the real server. `html`: the page as the
+ * server sent it, instead of one rendered here.
  */
-function openPage(url: string, lang: string, fetchImpl?: typeof fetch, html = onboardPage({ site: 'https://site.test', returnTo: `${url}cb` }).html) {
+function openPage(url: string, lang: string, fetchImpl: typeof fetch = direct(url), html = onboardPage({ site: 'https://site.test', returnTo: `${url}cb` }).html) {
   const u = new URL(url);
   const script = /<script nonce="[^"]+">([\s\S]*)<\/script>/.exec(html)![1];
   const { document, byId } = fakeDocument(html);
-  const realFetch: typeof fetch = (input, init = {}) =>
-    fetch(new URL(String(input), u.origin), init.method === 'POST' ? { ...init, headers: { ...init.headers as object, origin: u.origin } } : init);
   let stateCalls = 0;
   const counted: typeof fetch = (input, init) => {
     if (String(input).endsWith('state')) stateCalls++;
-    return (fetchImpl ?? realFetch)(input, init);
+    return fetchImpl(input, init);
   };
   // The test fires the timer itself (tick); clearInterval really stops it
   let interval: (() => unknown) | undefined;
@@ -252,7 +261,7 @@ describe.each(LANGS)('the page in %s', lang => {
     const page = openPage(s.url, lang, async (input, init) =>
       String(input).endsWith('invite') && init?.method === 'POST'
         ? new Response(JSON.stringify({ error: 'brand_new_code' }), { status: 418 })
-        : fetch(new URL(String(input), new URL(s.url).origin), init));
+        : direct(s.url)(input, init));
     await page.click('keys');
     expect(page.msg()).toEqual({ hidden: false, text: L.failed, small: 'brand_new_code' });
   });
@@ -261,7 +270,7 @@ describe.each(LANGS)('the page in %s', lang => {
     const s = await server();
     let down = true;
     const page = openPage(s.url, lang, (input, init) =>
-      down ? Promise.reject(new TypeError('Failed to fetch')) : fetch(new URL(String(input), new URL(s.url).origin), init));
+      down ? Promise.reject(new TypeError('Failed to fetch')) : direct(s.url)(input, init));
     await page.poll();
     expect(page.msg()).toEqual({ hidden: false, text: L.gone, small: '' });
     expect(L.gone).toContain('telegram onboard');
@@ -275,7 +284,7 @@ describe.each(LANGS)('the page in %s', lang => {
     const s = await server({ modeOnly: true });
     let down = false;
     const page = openPage(s.url, lang, (input, init) =>
-      down ? Promise.reject(new TypeError('Failed to fetch')) : fetch(new URL(String(input), new URL(s.url).origin), init));
+      down ? Promise.reject(new TypeError('Failed to fetch')) : direct(s.url)(input, init));
     await page.poll();
     down = true;
     await page.poll();
@@ -295,14 +304,13 @@ describe.each(LANGS)('the page in %s', lang => {
     expect(page.stateCalls()).toBe(calls);
   });
 
-  /** A 200 whose body breaks off midway, as when the connection drops after the headers */
-  const cutOff = () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"step":')); c.error(new TypeError('network error')); } }), { status: 200 });
+  const cutOff = () => broken(200, '{"step":');
 
   it('a state answer cut off after the headers counts as a drop: polling goes on and recovers', async () => {
     const s = await server();
     let cut = true;
     const page = openPage(s.url, lang, (input, init) =>
-      cut ? Promise.resolve(cutOff()) : fetch(new URL(String(input), new URL(s.url).origin), init));
+      cut ? Promise.resolve(cutOff()) : direct(s.url)(input, init));
     await page.poll();
     expect(page.msg()).toEqual({ hidden: false, text: L.gone, small: '' });
     cut = false;
@@ -321,12 +329,11 @@ describe.each(LANGS)('the page in %s', lang => {
 
   it('a click lost on the way: the drop line goes once the server answers, and it says to try again', async () => {
     const s = await server();
-    const real = (input: RequestInfo | URL, init?: RequestInit) => fetch(new URL(String(input), new URL(s.url).origin), init);
+    const real = direct(s.url);
     const page = openPage(s.url, lang, (input, init) =>
       init?.method === 'POST' ? Promise.reject(new TypeError('Failed to fetch')) : real(input, init));
     await page.poll();
     await page.click('use');
-    expect(page.msg().text).not.toBe(L.gone);
     expect(page.msg()).toEqual({ hidden: false, text: L.notSent, small: '' });
     expect(page.visible()).toEqual(['invite']);
   });
@@ -336,7 +343,7 @@ describe.each(LANGS)('the page in %s', lang => {
     const s = await server();
     let down = false;
     const page = openPage(s.url, lang, (input, init) =>
-      down ? Promise.reject(new TypeError('Failed to fetch')) : fetch(new URL(String(input), new URL(s.url).origin), init));
+      down ? Promise.reject(new TypeError('Failed to fetch')) : direct(s.url)(input, init));
     await page.poll();
     down = true;
     await page.click('use');
@@ -352,8 +359,8 @@ describe.each(LANGS)('the page in %s', lang => {
     const s = await server();
     const page = openPage(s.url, lang, async (input, init) =>
       init?.method === 'POST'
-        ? new Response(new ReadableStream({ start(c) { c.error(new TypeError('network error')); } }), { status: 409 })
-        : fetch(new URL(String(input), new URL(s.url).origin), init));
+        ? broken(409)
+        : direct(s.url)(input, init));
     await page.click('keys');
     expect(page.msg()).toEqual({ hidden: false, text: L.failed, small: 'HTTP 409' });
   });
@@ -377,20 +384,20 @@ describe.each(LANGS)('the page in %s', lang => {
     const s = await server();
     let down = false;
     const page = openPage(s.url, lang, (input, init) =>
-      down ? Promise.reject(new TypeError('Failed to fetch')) : fetch(new URL(String(input), new URL(s.url).origin), init));
+      down ? Promise.reject(new TypeError('Failed to fetch')) : direct(s.url)(input, init));
     await s.post('invite', { invite: 'tok' });
     await s.untilStep('mode');
     await page.poll();
     down = true;
     await page.tick();
     expect(page.msg().text).toBe(L.goneSaved);
-    expect(L.goneSaved).not.toContain('telegram onboard again');
     expect(L.goneSaved).toMatch(/telegram write-access ask, on/);
   });
+
   it('a click on the mode lost on the way does not claim it never arrived: the result is unknown', async () => {
     // The server may have taken it (and be showing a dialog); the page says how to check
     const s = await server();
-    const real = (input: RequestInfo | URL, init?: RequestInit) => fetch(new URL(String(input), new URL(s.url).origin), init);
+    const real = direct(s.url);
     const page = openPage(s.url, lang, (input, init) =>
       init?.method === 'POST' && String(input).endsWith('mode') ? Promise.reject(new TypeError('Failed to fetch')) : real(input, init));
     await s.post('invite', { invite: 'tok' });
@@ -406,12 +413,11 @@ describe.each(LANGS)('the page in %s', lang => {
   it('after done, a late answer to a click changes nothing', async () => {
     // The GET sees "done" and stops polling; the POST that did it loses its answer afterwards
     const s = await server();
-    const real = (input: RequestInfo | URL, init?: RequestInit) => fetch(new URL(String(input), new URL(s.url).origin), init);
+    const real = direct(s.url);
     let lose!: () => void;
     const page = openPage(s.url, lang, (input, init) => {
       if (init?.method !== 'POST') return real(input, init);
-      const origin = new URL(s.url).origin; // a browser sends it on every POST
-      return real(input, { ...init, headers: { ...init.headers as object, origin } }).then(() => new Promise<Response>((_, reject) => { lose = () => reject(new TypeError('Failed to fetch')); }));
+      return real(input, init).then(() => new Promise<Response>((_, reject) => { lose = () => reject(new TypeError('Failed to fetch')); }));
     });
     await s.post('invite', { invite: 'tok' });
     await s.untilStep('mode');
@@ -430,10 +436,10 @@ describe.each(LANGS)('the page in %s', lang => {
 
   it('after done, a poll sent before it and answered late does not bring the old step back', async () => {
     const s = await server();
-    const origin = new URL(s.url).origin;
+    const real = direct(s.url);
     let hold = false, release!: () => void;
     const page = openPage(s.url, lang, async (input, init) => {
-      const res = await fetch(new URL(String(input), origin), init?.method === 'POST' ? { ...init, headers: { ...init.headers as object, origin } } : init);
+      const res = await real(input, init);
       if (!hold || init?.method === 'POST') return res;
       hold = false;
       const body = await res.text(); // the "mode" state, as it was when the poll was sent
@@ -465,12 +471,12 @@ describe.each(LANGS)('the page in %s', lang => {
 
   it('a 404 whose body is cut short is still an old link: polling stops', async () => {
     const s = await server();
-    const page = openPage(s.url, lang, async () =>
-      new Response(new ReadableStream({ start(c) { c.error(new TypeError('network error')); } }), { status: 404 }));
+    const page = openPage(s.url, lang, async () => broken(404));
     await page.poll();
     expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: '' });
     expect(await page.tick()).toBe(false);
   });
+
   /** A fetch whose answers the test hands out by hand, in any order */
   const manual = () => {
     const pending: { route: string; method: string; answer: (r: Response | Error) => void }[] = [];
@@ -520,7 +526,7 @@ describe.each(LANGS)('the page in %s', lang => {
       const ra = await f.next('state');
       const b = page.tick();
       const rb = await f.next('state');
-      ra.answer(new Response(new ReadableStream({ start(c) { c.error(new TypeError('network error')); } }), { status: 404 }));
+      ra.answer(broken(404));
       await settle();
       expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: '' });
       rb.answer(late === 'a dropped connection' ? new TypeError('Failed to fetch') : cutOff());

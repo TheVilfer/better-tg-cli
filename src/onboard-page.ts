@@ -61,8 +61,6 @@ const en = {
 };
 
 type Strings = typeof en;
-/** Every error code the local server (src/onboard.ts) can answer with */
-export type ErrorCode = keyof Strings['errors'];
 
 const es: Strings = {
   title: 'Inicia sesión en Telegram para Better-TG-CLI',
@@ -182,7 +180,7 @@ const ru: Strings = {
 
 export const STRINGS = { en, es, ru };
 
-/** `modeOnly`: the page of `write-access` alone, known before the first /state answer (which may not come). */
+/** `modeOnly`: the page of `write-access` alone, so it is right even if no /state answer comes. */
 export function onboardPage(options: { site: string; returnTo: string; modeOnly?: boolean }): { html: string; csp: string } {
   const nonce = randomBytes(16).toString('base64');
   const csp = [
@@ -287,13 +285,12 @@ for (const el of document.querySelectorAll('[data-ph]')) el.placeholder = L[el.d
 const modeTitle = () => { document.title = L.modeTitle; document.querySelector('h1').textContent = L.modeTitle; document.querySelector('h1 + p').hidden = true; };
 const $ = id => document.getElementById(id);
 const base = location.pathname.replace(/cb$/, '');
-// The last step the server reported; the page starts on the login key, or on the mode for write-access alone
+// The last step the server reported
 let modeOnly = ${options.modeOnly ? 'true' : 'false'}, step = modeOnly ? 'mode' : 'invite';
-// Its own heading from the start, even if the first /state answer never comes
 if (modeOnly) modeTitle();
 // What the line under the form is about, so a newer state can drop it once it no longer holds:
-// 'net' a dropped connection (sent: during a click), 'act' the answer to a click on that step,
-// 'state' an error the state itself carries
+// 'net' a dropped connection (sent: during a click), 'act' the answer to a click, 'state' an error
+// the state itself carries
 let shown = null;
 // A line of text, and the code or server detail under it in small print
 const msg = (t, small, kind, sent) => {
@@ -304,11 +301,11 @@ const msg = (t, small, kind, sent) => {
   shown = t ? { kind: kind || 'act', step, sent: !!sent } : null;
 };
 const MODE_NAMES = { 'read-only': 'roName', ask: 'askName', on: 'onName' };
-// 'offline' is a dropped connection: what to do depends on how far it got (logged in or not, or
-// write-access alone). Anything else is a code from the server, known or not.
+// 'offline' is a dropped connection: what to do depends on how far it got. Anything else is a code
+// from the server, known or not.
 function explain(code, detail, mode) {
   if (code === 'offline') return [modeOnly ? L.goneMode : step === 'mode' ? L.goneSaved : L.gone];
-  if (!code || !Object.hasOwn(L.errors, code)) return [L.failed, [code, detail].filter(Boolean).join(': ')];
+  if (!Object.hasOwn(L.errors, code)) return [L.failed, [code, detail].filter(Boolean).join(': ')];
   let text = L.errors[code];
   if (code === 'store_failed' && mode && MODE_NAMES[mode]) text += ' ' + L.inEffect.replace('{mode}', L[MODE_NAMES[mode]]);
   return [text, detail];
@@ -323,18 +320,18 @@ async function post(route, body) {
   try { res = await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
   catch { throw { code: 'offline' }; }
   if (res.ok) return;
-  // The server said no; a body cut short leaves only the status
+  // A body cut short leaves only the status
   let data = {};
-  try { data = JSON.parse(await res.text()); } catch { /* the status is all there is */ }
+  try { data = JSON.parse(await res.text()); } catch { /* keep the status */ }
   throw { code: data.error || 'HTTP ' + res.status, detail: data.message };
 }
 async function act(route, body, btn) {
   msg(''); if (btn) btn.disabled = true;
-  // The click belongs to the step it was made on. Once the page has moved past it (to the next step,
-  // or done), a late answer to it (or its loss) changes nothing: the state already shows the outcome
+  // Once the page has moved past the step of the click, its late answer (or loss) changes nothing:
+  // the state already shows the outcome
   const at = step;
   try { await post(route, body); } catch (e) { if (step === at) fail(e.code, e.detail, undefined, 'act', true); } finally { if (btn) btn.disabled = false; }
-  // The state may hold more (the mode in effect after a store failure), and the next step
+  // The state may hold more (the mode in effect after a store failure) and the next step
   await poll();
 }
 
@@ -356,30 +353,27 @@ let last = '', timer, modeSeeded = false;
 async function poll() {
   if (!timer) return;
   let res, text, s = null;
-  // No answer at all, or one cut off midway: the command may have been stopped, or the connection
-  // dropped for a moment. Say what to do and keep trying, so the page comes back by itself if the server does.
-  // A click lost on the way stays lost while the server is still away (act() polls right after it)
-  const away = () => fail('offline', '', undefined, 'net', !!(shown && shown.kind === 'net' && shown.sent));
-  // Once polling has stopped (done, or an old link), a poll still on its way says nothing new,
-  // not even that it failed: no further poll would follow to take that back
+  // No answer, or one cut off midway: say what to do and keep trying, so the page recovers by itself.
+  // A click lost on the way stays marked as lost while the server is away (act() polls right after it)
+  const away = () => fail('offline', '', undefined, 'net', shown && shown.kind === 'net' && shown.sent);
+  // Once polling has stopped (done, or an old link), a poll still on its way changes nothing: no
+  // later poll would take it back
   try { res = await fetch(base + 'state', { cache: 'no-store' }); } catch { if (timer) away(); return; }
-  // A body cut short: for a 200 the state may follow on the next try; an error status is the answer already
+  // A body cut short: for a 200 the state may come on the next try; an error status is the answer
   try { text = await res.text(); } catch { if (res.ok) { if (timer) away(); return; } }
   if (!timer) return;
-  try { s = JSON.parse(text); } catch { /* a whole answer that is not JSON, or none: not the state */ }
-  // An answer, but not the state: the server is there and says no (an old link, a wrong address)
+  try { s = JSON.parse(text); } catch { /* not the state */ }
+  // An answer, but not the state: the server says no (an old link, a wrong address)
   if (!res.ok || !s || typeof s.step !== 'string') {
     fail(s && s.error || (res.status === 404 ? 'not_found' : 'HTTP ' + res.status));
     clearInterval(timer); timer = undefined; return;
   }
   modeOnly = !!s.modeOnly;
-  // Drop a line this state no longer backs: a drop (the server answers again; a click lost on the
-  // way is said so), the answer to a click on a step left behind, or a state error that is gone
+  // Drop a line this state no longer backs. A click lost in a drop may still have reached the server
+  // (a saved mode, an open dialog), so the page says the outcome is unknown, not that it failed
   if (shown) {
-    // Lost on the way or only its answer lost: the server may have taken it (a mode it saved, or a
-    // dialog it shows now), so the page cannot say it did not arrive
     if (shown.kind === 'net') msg(shown.sent && s.step === shown.step ? (s.step === 'mode' ? L.notSentMode : L.notSent) : '');
-    else if (s.step === 'done' || s.step !== shown.step || (shown.kind === 'state' && !s.error)) msg('');
+    else if (s.step !== shown.step || (shown.kind === 'state' && !s.error)) msg('');
   }
   step = s.step;
   for (const id of ['invite', 'connecting', 'scan', 'password', 'mode', 'done', 'error']) $(id).hidden = s.step !== id;
@@ -388,7 +382,7 @@ async function poll() {
   // qrSvg is rendered by this local CLI from the Telegram login token, not taken from any site
   if (s.step === 'scan' && s.qrSvg !== last) { $('qr').innerHTML = s.qrSvg; last = s.qrSvg; }
   if (s.step === 'password') { $('hint').textContent = s.hint || '—'; if (s.error) fail(s.error, '', undefined, 'state'); }
-  // A mode that was not saved (also the default one right after the login) stays on this step
+  // A mode that was not saved, including the default one right after the login
   if (s.step === 'mode' && s.error) fail(s.error, '', s.mode, 'state');
   if (s.step === 'error') $('errtext').textContent = s.error || '';
   if (s.step === 'done') {

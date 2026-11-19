@@ -40,17 +40,14 @@ export async function applyModeChoice(choice: ModeChoice, options: { alreadyConf
       return { ok: false, error: 'needs_terminal' };
     }
   }
-  // The end is fixed once, right before the write (a dialog above may have waited minutes), and
-  // reported as written, so the caller can compare it with what the store holds afterwards
-  const now = Date.now();
-  if (!setWriteValue(encodeWriteState(choice.forSeconds, now, choice.mode))) return { ok: false, error: 'store_failed' };
-  return { ok: true, until: choice.forSeconds ? new Date((Math.floor(now / 1000) + choice.forSeconds) * 1000) : undefined };
+  // The end is fixed after any dialog above and reported as written, so the caller can compare it
+  // with what the store holds afterwards
+  const value = encodeWriteState(choice.forSeconds, Date.now(), choice.mode);
+  if (!setWriteValue(value)) return { ok: false, error: 'store_failed' };
+  return { ok: true, until: parseWriteState(value).until };
 }
 
-/**
- * The write mode the store holds right now (read back, not what was asked for), and when it ends.
- * A fresh read: another process may have run `telegram write-access` meanwhile.
- */
+/** The write mode the store holds now, and when it ends; read fresh, as another process may have changed it. */
 export function savedMode(): SavedMode {
   const { mode, until } = parseWriteState(getWriteValue(true));
   return until && mode !== 'read-only' ? { mode, until } : { mode };

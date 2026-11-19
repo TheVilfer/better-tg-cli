@@ -48,7 +48,7 @@ export type OnboardEvent =
 
 /** A write mode picked on the page: how long it lasts, if it should end by itself. */
 export interface ModeChoice { mode: WriteMode; forSeconds?: number }
-/** `until`: the end the store was given (whole seconds), set right before the write; none for no end */
+/** `until`: the end that was written (whole seconds); none for no end */
 export type ModeResult = { ok: true; until?: Date } | { ok: false; error: 'not_confirmed' | 'needs_terminal' | 'store_failed' };
 /** A write mode as read back from the store, with the moment it ends if it ends by itself. */
 export interface SavedMode { mode: WriteMode; until?: Date }
@@ -78,9 +78,8 @@ export interface OnboardOptions {
   /** What the profile is set to right after the login, before (or without) a choice on the page */
   defaultMode?: WriteMode;
   /**
-   * Reads the write mode back from the store. With it the page reports only a mode that was
-   * actually saved, with the asked-for end: a store that refused the value (or kept an older one)
-   * leaves the step open with `store_failed`.
+   * Reads the write mode back from the store, so only a mode actually saved with the asked-for end
+   * counts: otherwise the step stays open with `store_failed`.
    */
   currentMode?(): SavedMode;
   /** How long the mode step waits for a choice (tests); 10 minutes by default */
@@ -133,12 +132,9 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
     options.currentMode ? options.currentMode() : expected && { mode: expected };
 
   /**
-   * The store holds exactly the choice: the same mode and, for "ask" and "on", the same end. With no
-   * span nothing may end it. With a span the end must be the one written (`written`, fixed right
-   * before the write, in whole seconds), to the second: a dialog may keep the write waiting for
-   * minutes, so a window around the click would let an older end through. So an older value with the
-   * same mode name ("on" for good, or "on" until an earlier hour) does not pass. An applyMode that
-   * does not say which end it wrote cannot be checked, so that counts as not saved.
+   * The store holds exactly the choice: the same mode and, for "ask" and "on", the same end. A timed
+   * choice must match the end applyMode reports as written (`written`) to the second, so an older
+   * value with the same mode name does not pass; without `written` it cannot be checked and fails.
    */
   function holds(saved: SavedMode | undefined, choice: ModeChoice, written: Date | undefined): boolean {
     if (!options.currentMode) return true; // nothing to check against
@@ -191,7 +187,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       set({ user: result.user, mode: options.defaultMode });
       let modeError: string | undefined;
       if (options.applyMode && options.defaultMode) {
-        // The session is saved either way; a mode the store refused must not show up as in effect
+        // The session is saved either way; a refused mode must not show up as in effect
         const choice: ModeChoice = { mode: options.defaultMode };
         const applied = await options.applyMode(choice).catch((): ModeResult => ({ ok: false, error: 'store_failed' }));
         const saved = readBack(applied.ok ? options.defaultMode : undefined);
@@ -288,7 +284,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
         // May show a dialog (macOS, Windows) or a terminal prompt and wait for the person
         const result = await options.applyMode(choice);
         const saved = readBack(result.ok ? mode : state.mode);
-        // A store that said yes but kept the old value (or the old end) counts as a failure too
+        // A store that said yes but kept the old value (or end) fails too
         const error = !result.ok ? result.error : !holds(saved, choice, result.until) ? 'store_failed' : undefined;
         if (error) {
           state.error = error;
