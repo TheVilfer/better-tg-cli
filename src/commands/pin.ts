@@ -30,7 +30,7 @@ export const pinCommand = new Command('pin')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({ chat: result.chatTitle, messageId: id, pinned: true }));
+        console.log(formatJson({ ok: true, action: 'pin', ...await chatRef(client, chat), chat: result.chatTitle, messageId: id, pinned: true }));
       } else {
         console.log(chalk.green(`✓ Pinned #${id} in "${result.chatTitle}"`));
       }
@@ -69,7 +69,7 @@ export const unpinCommand = new Command('unpin')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({ chat: result.chatTitle, messageId: id ?? null, unpinnedAll: result.all }));
+        console.log(formatJson({ ok: true, action: 'unpin', ...await chatRef(client, chat), chat: result.chatTitle, messageId: id ?? null, unpinnedAll: result.all }));
       } else if (result.all) {
         console.log(chalk.green(`✓ Unpinned all messages in "${result.chatTitle}"`));
       } else {

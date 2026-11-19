@@ -54,17 +54,22 @@ export const sendFileCommand = new Command('send-file')
         result: { success: true, messageId: result.id },
       });
 
+      const ref = await chatRef(client, target);
       spinner.succeed(chalk.green('File sent'));
 
       if (options.json) {
         console.log(formatJson({
+          ok: true,
+          action: 'send-file',
+          ...ref,
+          messageId: result.id,
           id: result.id,
           date: result.date ? new Date(result.date * 1000).toISOString() : null,
           file: absPath,
           caption: options.caption ?? null,
         }));
       } else {
-        console.log(chalk.gray(`Message ID: ${result.id}`));
+        console.log(chalk.gray(`Message ID: ${result.id} in ${ref.chatTitle} (${ref.chatId})`));
       }
 
       await disconnectClient();

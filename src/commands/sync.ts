@@ -262,6 +262,8 @@ export const syncCommand = new Command('sync')
 
       let synced = 0;
       let newMessages = 0;
+      // What happened to each chat: the agent needs the file path and whether anything was new
+      const report: { chatId: string; title: string; file: string; added: number; lastId?: number }[] = [];
       for (const chat of chats) {
         try {
           spinner.text = `Syncing "${chat.title}"...`;
@@ -284,6 +286,8 @@ export const syncCommand = new Command('sync')
           const { messages } = await getMessages(client, chat.id, fetchOptions);
 
           if (messages.length === 0) {
+            const lastId = meta[chat.id]?.lastMessageId;
+            report.push({ chatId: chat.id, title: chat.title, file: filePath, added: 0, ...(lastId ? { lastId } : {}) });
             continue;
           }
 
@@ -322,6 +326,7 @@ export const syncCommand = new Command('sync')
 
           synced++;
           newMessages += messages.length;
+          report.push({ chatId: chat.id, title: chat.title, file: filePath, added: messages.length, lastId: meta[chat.id].lastMessageId });
         } catch (error) {
           if (error instanceof ExportPathError) throw error;
           // Skip chats that fail
@@ -331,13 +336,21 @@ export const syncCommand = new Command('sync')
 
       writeSyncMeta(outputDir, meta);
 
-      spinner.succeed(chalk.green(`Synced ${newMessages} messages from ${synced} chats to ${outputDir}`));
+      const upToDate = report.length - synced;
+      spinner.succeed(chalk.green(`Synced ${newMessages} new messages in ${synced} chats to ${outputDir}${upToDate ? ` (${upToDate} already up to date)` : ''}`));
+      if (options.json) {
+        console.log(formatJson({ output: outputDir, added: newMessages, chats: report }));
+      } else if (report.length <= 10) {
+        for (const r of report) {
+          console.log(r.added
+            ? `${r.title} (${r.chatId}): +${r.added} (last #${r.lastId}) → ${r.file}`
+            : `${r.title} (${r.chatId}): up to date${r.lastId ? ` (last #${r.lastId})` : ''} → ${r.file}`);
+        }
+      }
 
       await disconnectClient();
       process.exit(0);
     } catch (error) {
-      spinner.fail('Sync failed');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Sync failed');
     }
   });

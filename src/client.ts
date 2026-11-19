@@ -267,6 +267,8 @@ export interface MessageInfo {
   chatTitle?: string;
   /** Comment/reply count for channel posts and thread roots. */
   replies?: number;
+  /** Forum topic of the message (1 = General), set when a whole forum is read without --topic. */
+  topicId?: number;
   /** Opt-in (`--full`): every other useful field of the Message. Absent in default output. */
   full?: MessageFull;
 }
@@ -845,7 +847,10 @@ export async function getMessages(
       }
       if (messages.length >= limit) break;
 
-      messages.push(await toMessageInfo(client, msg, { full }));
+      const info = await toMessageInfo(client, msg, { full });
+      // A whole forum mixes its topics: label each message with its own
+      if (forum && !thread) info.topicId = msg.replyTo?.forumTopic ? (msg.replyTo.replyToTopId ?? msg.replyTo.replyToMsgId ?? 1) : 1;
+      messages.push(info);
     }
 
     if (reachedMinDate) break;
@@ -1065,7 +1070,7 @@ export async function searchMessages(
   client: TelegramClient,
   query: string,
   options: SearchOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle?: string }[]> {
+): Promise<{ messages: MessageInfo[]; chatTitle?: string; chatId?: string; hasMore?: boolean }[]> {
   const { chat, limit = 50, minDate, maxDate, from, type, full } = options;
   if (type && !SEARCH_FILTERS[type]) {
     throw new Error(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
@@ -1099,12 +1104,14 @@ export async function searchMessages(
     );
 
     const messages: MessageInfo[] = [];
+    // Every result carries its chat ID, as in global search, so a reply needs no second lookup
+    const chatId = utils.getPeerId(entity).toString();
     if ('messages' in res) {
       for (const msg of res.messages) {
-        if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg, { full }));
+        if (msg instanceof Api.Message) messages.push({ ...(await toMessageInfo(client, msg, { full })), chatId });
       }
     }
-    return [{ messages, chatTitle: getChatTitle(entity) }];
+    return [{ messages, chatTitle: getChatTitle(entity), chatId, ...(messages.length >= limit ? { hasMore: true } : {}) }];
   }
 
   // Global search: results span chats, so tag each message with its chat
@@ -1131,7 +1138,7 @@ export async function searchMessages(
       messages.push(info);
     }
   }
-  return [{ messages }];
+  return [{ messages, ...(messages.length >= limit ? { hasMore: true } : {}) }];
 }
 
 export async function sendMessage(

@@ -19,13 +19,11 @@ export const markReadCommand = new Command('mark-read')
       const result = await markChatRead(client, chat);
       auditLog({ timestamp: new Date().toISOString(), command: 'mark-read', target: chat, result: { success: true } });
       spinner.stop();
-      if (options.json) console.log(formatJson({ chat: result.chatTitle, read: true }));
+      if (options.json) console.log(formatJson({ ok: true, action: 'mark-read', ...await chatRef(client, chat), chat: result.chatTitle, read: true }));
       else console.log(chalk.green(`✓ Marked "${result.chatTitle}" as read`));
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'mark-read', target: chat, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to mark read');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to mark read');
     }
   });

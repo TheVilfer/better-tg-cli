@@ -28,13 +28,11 @@ export const editCommand = new Command('edit')
       const result = await editMessageText(client, chat, id, text, { parseMode });
       auditLog({ timestamp: new Date().toISOString(), command: 'edit', target: chat, message: `#${id}`, result: { success: true, messageId: id } });
       spinner.stop();
-      if (options.json) console.log(formatJson({ chat: result.chatTitle, messageId: result.id, edited: true }));
+      if (options.json) console.log(formatJson({ ok: true, action: 'edit', ...await chatRef(client, chat), chat: result.chatTitle, messageId: result.id, edited: true }));
       else console.log(chalk.green(`✓ Edited #${id} in "${result.chatTitle}"`));
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'edit', target: chat, message: `#${id}`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to edit');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to edit');
     }
   });

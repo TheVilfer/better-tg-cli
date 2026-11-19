@@ -106,6 +106,15 @@ export function formatMediaLabel(media: MediaInfo): string {
 
 // --- Compact (non-TTY) output: one line per item, IDs first, for agents and pipes ---
 
+/** The local time zone the plain output uses, once per header: "Europe/Moscow, UTC+3". */
+export function timeZoneLabel(now = new Date()): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
+  const offset = -now.getTimezoneOffset();
+  const abs = Math.abs(offset);
+  const minutes = abs % 60 ? `:${String(abs % 60).padStart(2, '0')}` : '';
+  return `${zone}, UTC${offset < 0 ? '-' : '+'}${Math.floor(abs / 60)}${minutes}`;
+}
+
 function isoMinute(date: Date): string {
   const p = (n: number) => n.toString().padStart(2, '0');
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`;
@@ -133,18 +142,19 @@ function compactMessage(msg: MessageInfo, maxText?: number, chatTitle?: string):
   const sender = rawSender === (msg.chatTitle ?? chatTitle) ? '' : ` ${rawSender}`;
   const reply = msg.replyToMsgId ? ` ↩${msg.replyToMsgId}` : '';
   const where = msg.chatTitle ? ` [${msg.chatTitle}${msg.chatId ? ' ' + msg.chatId : ''}]` : '';
+  const topic = msg.topicId ? ` [topic ${msg.topicId}]` : '';
   const media = msg.media ? `[${formatMediaLabel(msg.media)}] ` : '';
   // Collapse blank lines and indent continuation lines under the header
   const text = truncate(msg.text, maxText).replace(/\n\s*\n/g, '\n').trim().replace(/\n/g, '\n  ');
   const comments = msg.replies ? ` 💬${msg.replies}` : '';
   const stats = msg.full ? formatStatsSuffix(msg.full) : '';
-  const lines = [`#${msg.id} ${isoMinute(msg.date)}${where}${sender}${reply}${comments}${stats}: ${media}${text || (media ? '' : '(no text)')}`.trimEnd()];
+  const lines = [`#${msg.id} ${isoMinute(msg.date)}${where}${topic}${sender}${reply}${comments}${stats}: ${media}${text || (media ? '' : '(no text)')}`.trimEnd()];
   if (msg.buttons) lines.push(compactButtons(msg.buttons));
   return lines.join('\n');
 }
 
 function compactChat(chat: ChatInfo, previewMax: number): string {
-  const flags = [chat.muted ? 'muted' : '', chat.archived ? 'archived' : ''].filter(Boolean).join(',');
+  const flags = [chat.bot ? 'bot' : '', chat.muted ? 'muted' : '', chat.archived ? 'archived' : ''].filter(Boolean).join(',');
   const user = chat.username ? ` @${chat.username}` : '';
   const unread = chat.unreadCount > 0 ? ` unread=${chat.unreadCount}` : '';
   const preview = chat.lastMessage && previewMax > 0 ? ` | ${oneLine(chat.lastMessage, previewMax)}` : '';
@@ -173,23 +183,26 @@ export function formatChats(chats: ChatInfo[], previewMax = 60): string {
 }
 
 export function formatMessages(messages: MessageInfo[], chatTitle?: string, maxText?: number): string {
+  // Times are local: the header names the zone once, so a reader elsewhere does not misread them
+  const zone = `(times in ${timeZoneLabel()})`;
   if (!isTTY) {
     const body = messages.map(m => compactMessage(m, maxText, chatTitle)).join('\n');
-    return chatTitle ? `# ${chatTitle}\n${body}` : body;
+    return chatTitle ? `# ${chatTitle} ${zone}\n${body}` : body;
   }
   const lines: string[] = [];
 
   if (chatTitle) {
-    lines.push(chalk.bold.blue(`\n--- ${chatTitle} ---\n`));
+    lines.push(chalk.bold.blue(`\n--- ${chatTitle} ---`) + chalk.gray(` ${zone}\n`));
   }
 
   for (const msg of messages) {
     const time = formatTime(msg.date);
     const sender = msg.isOutgoing ? chalk.green('You') : chalk.cyan(msg.sender);
     const reply = msg.replyToMsgId ? chalk.gray(` [reply to #${msg.replyToMsgId}]`) : '';
+    const topic = msg.topicId ? chalk.gray(` [topic ${msg.topicId}]`) : '';
 
     const stats = msg.full ? chalk.gray(formatStatsSuffix(msg.full)) : '';
-    lines.push(`${chalk.gray(time)} ${sender}${reply}${stats}:`);
+    lines.push(`${chalk.gray(time)}${topic} ${sender}${reply}${stats}:`);
     if (msg.media) {
       lines.push(`  ${chalk.magenta(`[${formatMediaLabel(msg.media)}]`)}`);
     }

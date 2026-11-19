@@ -39,7 +39,7 @@ export const reactCommand = new Command('react')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({ chat: result.chatTitle, messageId: id, ...result }));
+        console.log(formatJson({ ok: true, action: 'react', ...await chatRef(client, chat), chat: result.chatTitle, messageId: id, ...result }));
       } else if (result.removed) {
         console.log(chalk.green(`✓ Removed your reaction on #${id} in "${result.chatTitle}"`));
       } else {

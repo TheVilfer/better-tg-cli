@@ -24,13 +24,11 @@ export const deleteCommand = new Command('delete')
       const result = await deleteChatMessages(client, chat, ids, revoke);
       auditLog({ timestamp: new Date().toISOString(), command: 'delete', target: chat, message: `[${ids.join(',')}] revoke=${revoke}`, result: { success: true } });
       spinner.stop();
-      if (options.json) console.log(formatJson({ chat: result.chatTitle, deleted: ids, revoke }));
+      if (options.json) console.log(formatJson({ ok: true, action: 'delete', ...await chatRef(client, chat), chat: result.chatTitle, messageIds: ids, deleted: ids, revoke }));
       else console.log(chalk.green(`✓ Deleted ${result.count} message(s) in "${result.chatTitle}"${revoke ? ' (for everyone)' : ' (just for you)'}`));
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'delete', target: chat, message: `[${ids.join(',')}]`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to delete');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to delete');
     }
   });

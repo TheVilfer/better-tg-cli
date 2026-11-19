@@ -41,7 +41,9 @@ export const forwardCommand = new Command('forward')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({ ...result, messageIds: ids }));
+        const to = await chatRef(client, toChat);
+        const from = await chatRef(client, fromChat);
+        console.log(formatJson({ ok: true, action: 'forward', ...to, fromChatId: from.chatId, ...result, messageIds: ids }));
       } else {
         console.log(chalk.green(`✓ Forwarded ${result.count} message(s) from "${result.fromTitle}" to "${result.toTitle}"`));
       }

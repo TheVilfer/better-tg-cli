@@ -62,15 +62,14 @@ export const searchCommand = new Command('search')
           if (format === 'markdown') {
             console.log(formatMessagesMarkdown(result.messages, result.chatTitle));
           } else {
-            console.log(formatMessages(result.messages, result.chatTitle));
+            console.log(formatMessages(result.messages, result.chatTitle ?? `Results for "${query}"`));
           }
+          if (result.hasMore) console.log(`… more may exist: raise -n (now ${options.limit}) or narrow with --since/--until`);
         }
       }
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Search failed');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Search failed');
     }
   });
