@@ -3,6 +3,7 @@ import { readStdinOnce } from '../text.js';
 import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { runApiMethod } from '../api-run.js';
 import { apiRefusalReason, isApiReadMethod } from '../api-methods.js';
+import { mcpApiAllowlistRefusal } from '../mcp-api-allowlist.js';
 import chalk from '../colors.js';
 import { methodDoc, paramDoc, docsUrl } from '../tl-docs.js';
 import {
@@ -298,8 +299,10 @@ export function buildLeaf(nsKebab: string, methodKebab: string, className: strin
   const auditCommand = nsKebab ? `${nsKebab} ${methodKebab}` : methodKebab;
   leaf.action(async (opts: Record<string, unknown>) => {
     // Refuse before validating params, so a refused method reports the refusal (not a missing flag).
-    if (refusal) {
-      console.error(chalk.red(refusal));
+    // Over MCP, a method off the allowlist (src/mcp-api-allowlist.ts) is refused here too.
+    const blocked = refusal ?? mcpApiAllowlistRefusal(className);
+    if (blocked) {
+      console.error(chalk.red(blocked));
       process.exit(1);
       return;
     }

@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
 import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_STARS_REFUSAL } from './api-methods.js';
+import { isMcpApiAllowed, notOnMcpAllowlist } from './mcp-api-allowlist.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
 import { paramsOf } from './commands/generated.js';
 import { actionHash, createApproval, describeAction, readsStdin, STDIN_IN_APPROVAL_ENV } from './approval.js';
@@ -219,7 +220,9 @@ function hasPaidKey(json: string): boolean {
 }
 
 function byMethod(method: string, label: string, args: string[], valued: Set<string>): CallClass {
-  const refusal = apiRefusalReason(method);
+  // Only allowlisted TL methods run over MCP (src/mcp-api-allowlist.ts); the denylist reason is
+  // reported when there is one, since such a method is refused in a terminal too.
+  const refusal = apiRefusalReason(method) ?? (isMcpApiAllowed(method) ? null : notOnMcpAllowlist(method));
   if (refusal) return { group: 'never', reason: refusal };
   // A call that would spend Stars (a paid search, a paid message or forward) never runs over MCP, in
   // any write mode. Params read from stdin (`-p -`) are not visible here; the CLI refuses those on the

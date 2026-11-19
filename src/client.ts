@@ -3064,7 +3064,10 @@ export async function invokeApi(
   rawParams: Record<string, unknown> = {},
 ): Promise<unknown> {
   const { resolveApiMethod, mcpPaidStarsRefusal, geoParamRefusal } = await import('./api-methods.js');
+  const { mcpApiAllowlistRefusal } = await import('./mcp-api-allowlist.js');
   const { ctor, className } = resolveApiMethod(methodName);
+  const notAllowed = mcpApiAllowlistRefusal(className);
+  if (notAllowed) throw new Error(notAllowed);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
   // Checked again on the fields the request really carries (Stars over MCP, coordinates)

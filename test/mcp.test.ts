@@ -163,19 +163,20 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['account', 'delete-passkey', '--id', 'x'], 'never'],
   [['api', 'account.InitPasskeyRegistration'], 'never'],
   [['account', 'init-passkey-registration'], 'never'],
-  [['api', 'account.GetPasskeys'], 'read'],
-  [['api', 'help.GetConfig'], 'read'],
+  [['api', 'account.GetPasskeys'], 'never'], // a read, but off the MCP allowlist
+  [['api', 'help.GetConfig'], 'never'], // off the MCP allowlist
+  [['api', 'messages.GetHistory'], 'read'],
   [['api', 'contacts.Block'], 'write'],
   [['api'], 'invalid'],
   [['messages', 'get-history'], 'read'],
   [['messages', 'send-message'], 'write'],
-  [['ping'], 'write'],
+  [['ping'], 'never'], // off the MCP allowlist
   [['contacts'], 'read'],
   [['contacts', 'block'], 'write'],
   [['stats', '@chat'], 'read'],
-  [['stats', 'get-broadcast-stats'], 'read'],
+  [['stats', 'get-broadcast-stats'], 'never'], // off the MCP allowlist
   [['help'], 'read'],
-  [['help', 'get-config'], 'read'],
+  [['help', 'get-config'], 'never'], // off the MCP allowlist
   // Not commands: refused, including future administrative commands until they get a group
   [['messages'], 'unknown'],
   [['messages', 'bogus'], 'unknown'],

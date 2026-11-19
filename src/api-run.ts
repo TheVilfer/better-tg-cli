@@ -1,5 +1,6 @@
 import { getClient, invokeApi, serializeApiResult, disconnectClient } from './client.js';
 import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, plainParams } from './api-methods.js';
+import { mcpApiAllowlistRefusal } from './mcp-api-allowlist.js';
 import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
 import chalk from './colors.js';
@@ -24,7 +25,9 @@ export async function runApiMethod(
   // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid call
   // over MCP) apply.
   params = plainParams(params);
-  const refusal = apiRefusalReason(canonical, params) ?? mcpPaidStarsRefusal(canonical, params);
+  // Over MCP only allowlisted methods run (src/mcp-api-allowlist.ts); the denylist reason wins
+  // when there is one, since such a method is refused in a terminal too.
+  const refusal = apiRefusalReason(canonical, params) ?? mcpApiAllowlistRefusal(canonical) ?? mcpPaidStarsRefusal(canonical, params);
   if (refusal) {
     console.error(chalk.red(refusal));
     process.exit(1);

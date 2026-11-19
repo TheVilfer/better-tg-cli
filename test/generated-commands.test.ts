@@ -112,10 +112,11 @@ describe('MCP routing of the top-level generated form', () => {
     expect(planCall('telegram_write', { args: ['messages', 'get-history'] })).toMatch(/use telegram_read/);
     expect(planCall('telegram_write', { args: ['messages', 'send-message', '--peer', '@x'] })).toMatchObject({ readOnly: false });
     expect(planCall('telegram_read', { args: ['messages', 'send-message'] })).toMatch(/use telegram_write/);
-    // root method (Ping is not read-prefixed → a write)
-    expect(planCall('telegram_write', { args: ['ping'] })).toMatchObject({ readOnly: false });
+    // root method: Ping is off the MCP allowlist, so it is refused on both tools
+    expect(planCall('telegram_write', { args: ['ping'] })).toMatch(/not available over MCP/);
     // reclassified side-effecting read
-    expect(planCall('telegram_read', { args: ['messages', 'get-messages-views', '--peer', '@x', '--id', '1'] })).toMatch(/use telegram_write/);
+    expect(planCall('telegram_read', { args: ['messages', 'get-bot-callback-answer', '--peer', '@x', '--msg-id', '1'] })).toMatch(/use telegram_write/);
+    expect(planCall('telegram_write', { args: ['messages', 'get-messages-views', '--peer', '@x', '--id', '1'] })).toMatch(/not available over MCP/); // off the allowlist
     // refusals
     expect(planCall('telegram_read', { args: ['account', 'delete-account'] })).toMatch(/irreversible/);
     expect(planCall('telegram_read', { args: ['auth', 'send-code'] })).toMatch(/login|session/i);
@@ -123,11 +124,11 @@ describe('MCP routing of the top-level generated form', () => {
 
   it('keeps curated classification for clash commands when the operand is not a method', () => {
     expect(planCall('telegram_read', { args: ['stats', '@chat'] })).toMatchObject({ readOnly: true }); // curated read
-    expect(planCall('telegram_read', { args: ['stats', 'get-broadcast-stats', '--channel', '@c'] })).toMatchObject({ readOnly: true }); // generated read
+    expect(planCall('telegram_read', { args: ['stats', 'get-broadcast-stats', '--channel', '@c'] })).toMatch(/not available over MCP/); // generated, off the allowlist
     expect(planCall('telegram_read', { args: ['contacts'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['stories', '@u'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['help'] })).toMatchObject({ readOnly: true });
-    expect(planCall('telegram_read', { args: ['help', 'get-config'] })).toMatchObject({ readOnly: true });
+    expect(planCall('telegram_read', { args: ['help', 'get-config'] })).toMatch(/not available over MCP/); // generated, off the allowlist
     // auth login (no method) stays a terminal-only command
     expect(planCall('telegram_read', { args: ['auth'] })).toMatch(/not available over MCP/);
   });

@@ -83,8 +83,11 @@ for a method with no curated command, or when you need the exact raw TL object.
 share one classification: reads are `Get*`/`Check*`/`Search*`/`Resolve*` (run free, go through
 `telegram_read`), everything else is a write (needs `telegram write-access on`; `telegram_write` over
 MCP). Paying, account deletion, session termination, 2FA/phone changes and location sharing are
-**always refused** (the command still exists and refuses). Use `api` for scripted JSON params; use
-the typed command for a command line.
+**always refused** (the command still exists and refuses). Over MCP only an allowlist of about a
+hundred methods runs (reading messages, dialogs, chats, users, search; sending, editing, reacting,
+pinning, voting, basic chat admin; listed in `docs/api-coverage.md`); any other method is refused
+there with "not available over MCP", so ask the user to run it in a terminal. Use `api` for scripted
+JSON params; use the typed command for a command line.
 
 `telegram <namespace> <method>`: the TL class name lower-cased and kebab-cased —
 `messages.GetHistory` → `telegram messages get-history`, `help.GetConfig` → `telegram help get-config`;

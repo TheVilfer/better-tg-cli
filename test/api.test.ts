@@ -142,10 +142,12 @@ describe('MCP routing of the api command', () => {
   });
 
   it('read methods go to telegram_read, writes to telegram_write, refusals never run', () => {
-    expect(planCall('telegram_read', { args: ['api', 'help.GetConfig'] })).toMatchObject({ readOnly: true });
+    expect(planCall('telegram_read', { args: ['api', 'messages.GetHistory'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['api', 'contacts.Block', '--params', '{}'] })).toMatch(/use telegram_write/);
     expect(planCall('telegram_write', { args: ['api', 'contacts.Block'] })).toMatchObject({ readOnly: false });
-    expect(planCall('telegram_write', { args: ['api', 'help.GetConfig'] })).toMatch(/use telegram_read/);
+    expect(planCall('telegram_write', { args: ['api', 'messages.GetHistory'] })).toMatch(/use telegram_read/);
+    // A read off the MCP allowlist is refused on both tools
+    expect(planCall('telegram_read', { args: ['api', 'help.GetConfig'] })).toMatch(/not available over MCP/);
     expect(planCall('telegram_read', { args: ['api', 'account.DeleteAccount'] })).toMatch(/irreversible/);
     expect(planCall('telegram_write', { args: ['api', 'payments.SendStarsForm'] })).toMatch(/payment|Stars/);
     expect(planCall('telegram_read', { args: ['api'] })).toMatch(/needs a method/);
@@ -154,7 +156,9 @@ describe('MCP routing of the api command', () => {
     expect(planCall('telegram_read', { args: ['api', 'contacts.GetLocated'] })).toMatch(/location|geolocation/i);
     expect(planCall('telegram_write', { args: ['api', 'account.SetPrivacy'] })).toMatch(/privacy/i);
     // A reclassified side-effecting read is a write, not a read.
-    expect(planCall('telegram_read', { args: ['api', 'messages.GetMessagesViews'] })).toMatch(/use telegram_write/);
+    expect(planCall('telegram_read', { args: ['api', 'messages.GetBotCallbackAnswer'] })).toMatch(/use telegram_write/);
+    // messages.GetMessagesViews is one too, but it is off the MCP allowlist
+    expect(planCall('telegram_write', { args: ['api', 'messages.GetMessagesViews'] })).toMatch(/not available over MCP/);
   });
 });
 
