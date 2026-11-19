@@ -55,7 +55,7 @@ const en = {
     not_waiting_for_mode: 'The write mode can\'t be changed right now: it was saved already, the time to choose ran out, or a confirmation window is still open (answer it). Wait for the page to update.',
     bad_mode: 'Pick one of the options, then press Save.',
     not_confirmed: 'Not confirmed in the dialog. Choose again.',
-    needs_terminal: 'This computer can only confirm that in a terminal. Run telegram write-access on there.',
+    needs_terminal: 'This computer can only confirm that in a terminal. Run {cmd} there.',
     store_failed: 'Couldn\'t save the write mode: this computer\'s secret store refused it. Choose again, or run telegram write-access ask, on or off in a terminal.',
   },
 };
@@ -115,7 +115,7 @@ const es: Strings = {
     not_waiting_for_mode: 'Ahora no se puede cambiar el modo de escritura: ya se guardó, se acabó el tiempo para elegir o sigue abierta una ventana de confirmación (respóndela). Espera a que la página se actualice.',
     bad_mode: 'Elige una de las opciones y pulsa Guardar.',
     not_confirmed: 'No se confirmó en el diálogo. Elige de nuevo.',
-    needs_terminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí telegram write-access on.',
+    needs_terminal: 'Este equipo solo puede confirmarlo en una terminal. Ejecuta allí {cmd}.',
     store_failed: 'No se pudo guardar el modo de escritura: el almacén de secretos de este equipo lo rechazó. Elige de nuevo o ejecuta telegram write-access ask, on u off en una terminal.',
   },
 };
@@ -173,7 +173,7 @@ const ru: Strings = {
     not_waiting_for_mode: 'Режим записи сейчас не поменять: он уже сохранён, время на выбор вышло или ещё открыто окно подтверждения (ответьте в нём). Дождитесь, пока страница обновится.',
     bad_mode: 'Выберите один из вариантов и нажмите «Сохранить».',
     not_confirmed: 'В диалоге не подтвердили. Выберите ещё раз.',
-    needs_terminal: 'На этом компьютере это подтверждается только в терминале. Запустите там telegram write-access on.',
+    needs_terminal: 'На этом компьютере это подтверждается только в терминале. Запустите там {cmd}.',
     store_failed: 'Не удалось сохранить режим записи: хранилище секретов этого компьютера его не приняло. Выберите ещё раз или выполните в терминале telegram write-access ask, on или off.',
   },
 };
@@ -303,16 +303,18 @@ const msg = (t, small, kind, sent) => {
 const MODE_NAMES = { 'read-only': 'roName', ask: 'askName', on: 'onName' };
 // 'offline' is a dropped connection: what to do depends on how far it got. Anything else is a code
 // from the server, known or not.
-function explain(code, detail, mode) {
+// span: the term of the refused choice ('1h', '1d', '1w', or none for no end), so the command in the
+// hint asks for that term, never more
+function explain(code, detail, mode, span) {
   if (code === 'offline') return [modeOnly ? L.goneMode : step === 'mode' ? L.goneSaved : L.gone];
   if (!Object.hasOwn(L.errors, code)) return [L.failed, [code, detail].filter(Boolean).join(': ')];
-  let text = L.errors[code];
+  let text = L.errors[code].replace('{cmd}', 'telegram write-access on' + (/^[1-9][0-9]*[mhdw]$/.test(span || '') ? ' --for ' + span : ''));
   // Nothing changed: name the mode read back from the store, never a guess (it may be "on" already)
   if ((code === 'store_failed' || code === 'needs_terminal') && mode && MODE_NAMES[mode]) text += ' ' + L.inEffect.replace('{mode}', L[MODE_NAMES[mode]]);
   return [text, detail];
 }
-const fail = (code, detail, mode, kind, sent) => {
-  const [t, small] = explain(code, detail, mode);
+const fail = (code, detail, mode, kind, sent, span) => {
+  const [t, small] = explain(code, detail, mode, span);
   msg(t, small, code === 'offline' ? 'net' : kind, sent);
 };
 
@@ -324,14 +326,14 @@ async function post(route, body) {
   // A body cut short leaves only the status
   let data = {};
   try { data = JSON.parse(await res.text()); } catch { /* keep the status */ }
-  throw { code: data.error || 'HTTP ' + res.status, detail: data.message };
+  throw { code: data.error || 'HTTP ' + res.status, detail: data.message, span: data.for };
 }
 async function act(route, body, btn) {
   msg(''); if (btn) btn.disabled = true;
   // Once the page has moved past the step of the click, its late answer (or loss) changes nothing:
   // the state already shows the outcome
   const at = step;
-  try { await post(route, body); } catch (e) { if (step === at) fail(e.code, e.detail, undefined, 'act', true); } finally { if (btn) btn.disabled = false; }
+  try { await post(route, body); } catch (e) { if (step === at) fail(e.code, e.detail, undefined, 'act', true, e.span); } finally { if (btn) btn.disabled = false; }
   // The state may hold more (the mode in effect after a store failure) and the next step
   await poll();
 }
@@ -384,7 +386,7 @@ async function poll() {
   if (s.step === 'scan' && s.qrSvg !== last) { $('qr').innerHTML = s.qrSvg; last = s.qrSvg; }
   if (s.step === 'password') { $('hint').textContent = s.hint || '—'; if (s.error) fail(s.error, '', undefined, 'state'); }
   // A mode that was not saved, including the default one right after the login
-  if (s.step === 'mode' && s.error) fail(s.error, '', s.mode, 'state');
+  if (s.step === 'mode' && s.error) fail(s.error, '', s.mode, 'state', false, s.errorFor);
   if (s.step === 'error') $('errtext').textContent = s.error || '';
   if (s.step === 'done') {
     const u = s.user || {};

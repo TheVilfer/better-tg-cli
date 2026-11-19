@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { LoginDriver } from '../src/auth.js';
 import { startOnboarding, type ModeResult, type OnboardSession, type SavedMode } from '../src/onboard.js';
 import { onboardPage, STRINGS } from '../src/onboard-page.js';
-import type { WriteMode } from '../src/write-state.js';
+import { parseForDuration, type WriteMode } from '../src/write-state.js';
 
 /**
  * The onboarding page's own script, run in node:vm against a tiny fake DOM and the real local
@@ -246,9 +246,32 @@ describe.each(LANGS)('the page in %s', lang => {
     page.byId('for').value = '1d';
     await page.click('modego');
     expect(page.visible()).toEqual(['mode']);
-    expect(page.msg()).toEqual({ hidden: false, text: `${E.needs_terminal} ${L.inEffect.replace('{mode}', L[name])}`, small: '' });
+    expect(page.msg()).toEqual({ hidden: false, text: `${E.needs_terminal.replace('{cmd}', 'telegram write-access on --for 1d')} ${L.inEffect.replace('{mode}', L[name])}`, small: '' });
     // No promise of a mode that may not be the one in effect
     expect(E.needs_terminal).not.toMatch(/before each|antes de cada|перед каждой/);
+  });
+
+  // The command in the hint asks for the term the person picked: plain "on" would grant it with no end
+  it.each([['1h', ' --for 1h'], ['1d', ' --for 1d'], ['1w', ' --for 1w'], ['', '']] as const)('"on" needs a terminal: the hint keeps the term (%s)', async (span, flag) => {
+    const s = await server({ modeOnly: true, needsTerminal: true, stored: { mode: 'read-only' } });
+    const page = openPage(s.url, lang);
+    await page.poll();
+    page.pick('on');
+    page.byId('for').value = span;
+    await page.click('modego');
+    const cmd = `telegram write-access on${flag}`;
+    const text = page.msg().text;
+    expect(text).toBe(`${E.needs_terminal.replace('{cmd}', cmd)} ${L.inEffect.replace('{mode}', L.roName)}`);
+    // The literal command, then the end of the sentence: a plain "on" in place of a timed one fails
+    expect(text).toMatch(new RegExp(`${cmd}[.\\s]`));
+    if (!span) expect(text).not.toContain('--for');
+    // The flag is one `write-access --for` takes, for the same term the page offered
+    else expect(parseForDuration(span)).toBe({ '1h': 3600, '1d': 86_400, '1w': 604_800 }[span]);
+    expect(text).not.toContain('{cmd}');
+    // The term is read from the state too, so a reloaded page names it as well
+    const fresh = openPage(s.url, lang);
+    await fresh.poll();
+    expect(fresh.msg().text).toBe(text);
   });
 
   it('done shows the saved mode', async () => {
