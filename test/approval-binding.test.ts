@@ -48,6 +48,8 @@ vi.mock('../src/client.js', async orig => ({
 // Under the real getClient (taken with importActual): the connection it would open
 vi.mock('../src/transport.js', () => ({
   connectClient: async () => { telegram.connected++; throw new Error('connected to Telegram'); },
+  // getClient may ask which transport to use before it connects
+  transportSetting: () => 'auto',
 }));
 
 import { actionHash, consumeApproval, createApproval, EXIT_NEEDS_APPROVAL, STDIN_IN_APPROVAL_ENV } from '../src/approval.js';
