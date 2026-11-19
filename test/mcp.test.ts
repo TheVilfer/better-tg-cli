@@ -124,7 +124,10 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['write-access', 'on'], 'never'],
   [['write-access', 'ask'], 'never'],
   [['write-access', 'off'], 'never'],
-  [['write-access', '--json'], 'never'],
+  // ... as text or as JSON: the read-only status form
+  [['write-access', '--json'], 'read'],
+  [['write-access', '--json', 'on'], 'never'],
+  [['write-access', '--for', '1h'], 'never'],
   // Administrative and interactive commands, with any arguments
   [['auth'], 'never'],
   [['auth', '--phone', '+1'], 'never'],
