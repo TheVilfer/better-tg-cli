@@ -75,6 +75,7 @@ function sessionFingerprint(key: Buffer, session: string | undefined): string {
  * getClient() builds its client only from this same session, so a login as someone else between
  * the guard and the connection cannot carry the approved write to the new account.
  */
+export const ANOTHER_ACCOUNT = 'the approval was given while another account was logged in';
 let approvedSession: string | undefined;
 
 /** Whether this process used an approval for another session than the one it is about to connect with. */
@@ -191,7 +192,7 @@ export function consumeApproval(code: string, hash: string, session: string | un
   const got = Buffer.from(typeof pending.mac === 'string' ? pending.mac : '', 'hex');
   if (got.length !== expected.length || !timingSafeEqual(got, expected)) return { ok: false, reason: 'the approval record is not genuine' };
   if (!(pending.expiresAt > now)) return { ok: false, reason: 'unknown or expired approval code' };
-  if (pending.session !== sessionFingerprint(signing, session)) return { ok: false, reason: 'the approval was given while another account was logged in' };
+  if (pending.session !== sessionFingerprint(signing, session)) return { ok: false, reason: ANOTHER_ACCOUNT };
   if (pending.hash !== hash) return { ok: false, reason: 'the approval was for a different command or text' };
   approvedSession = session ?? '';
   return { ok: true, via: pending.via };

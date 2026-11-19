@@ -277,6 +277,26 @@ describe('an approval belongs to the account it was given for', () => {
     expect(telegram.reached).toBe(0);
   });
 
+  it('nor when the mode also turned "on" while the dialog was open', async () => {
+    const args = ['api', 'messages.SendMessage', '--params', '{"peer":{"_chat":"me"},"message":"hi","randomId":1}'];
+    const plan: { argv: string[]; readOnly: boolean; stdin?: string; approval?: string } = { argv: args, readOnly: false };
+    // The yes was given for A; meanwhile B logs in and write mode becomes "on"
+    const refused = await gateWrite(plan, {}, async () => {
+      saveLogin('session-of-account-B', { apiId: 1, apiHash: 'h' }, false);
+      store.values.set('writeEnabled', 'true');
+      return true;
+    });
+    expect(refused).toBeUndefined();
+    const env = childEnv(plan);
+    process.env.TG_APPROVE = env.TG_APPROVE;
+    process.env[STDIN_IN_APPROVAL_ENV] = env[STDIN_IN_APPROVAL_ENV];
+    stdin.text = plan.stdin ?? '';
+    const r = await cli(args);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/another account was logged in/);
+    expect(telegram.reached).toBe(0);
+  });
+
   it('the client connects only with the session the approval was checked against', async () => {
     const { getClient } = await vi.importActual<typeof import('../src/client.js')>('../src/client.js');
     saveConfig({ apiId: 1, apiHash: 'h' });

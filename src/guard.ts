@@ -3,7 +3,7 @@ import { describeWriteState, parseWriteState } from './write-state.js';
 import chalk from './colors.js';
 import { setStrictChatResolution } from './resolve-mode.js';
 import { isMock } from './paths.js';
-import { actionHash, consumeApproval, createApproval, describeAction, EXIT_NEEDS_APPROVAL, readsStdin, APPROVAL_TTL_MS, STDIN_IN_APPROVAL_ENV } from './approval.js';
+import { ANOTHER_ACCOUNT, actionHash, consumeApproval, createApproval, describeAction, EXIT_NEEDS_APPROVAL, readsStdin, APPROVAL_TTL_MS, STDIN_IN_APPROVAL_ENV } from './approval.js';
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 import { getSessionString } from './config.js';
@@ -38,17 +38,38 @@ export function assertWriteEnabled(argv: string[] = process.argv.slice(2), opts:
     process.exit(1);
   }
   if (state.mode === 'ask') requireApproval(argv, opts.readsStdin === true);
-  else setWriteContext({ writeMode: 'on', ...unprotectedFlag() });
+  else {
+    // A code given for this call (the MCP dialog's yes) still binds it to the account it was
+    // approved in, even if the mode turned "on" meanwhile: another account must not inherit it
+    if (process.env.TG_APPROVE) refuseOtherAccount(argv, opts.readsStdin === true);
+    setWriteContext({ writeMode: 'on', ...unprotectedFlag() });
+  }
   setStrictChatResolution(true);
 }
 
 const unprotectedFlag = () => (isWriteModeProtected() ? {} : { unprotected: true as const });
 
-/** Write mode "ask": go on only with a matching approval code, otherwise print the action and stop. */
-function requireApproval(argv: string[], parsedReadsStdin: boolean): void {
+/** What an approval for this call covers: the args and, when anything reads it, stdin. */
+function approvalScope(argv: string[], parsedReadsStdin: boolean): { covered: boolean; stdin: string | undefined; hash: string } {
   const covered = parsedReadsStdin || readsStdin(argv) || stdinWasRead() || process.env[STDIN_IN_APPROVAL_ENV] === '1';
   const stdin = covered ? readStdinOnce() : undefined;
-  const hash = actionHash(argv, stdin);
+  return { covered, stdin, hash: actionHash(argv, stdin) };
+}
+
+/** Write mode "on" with a code for this call: refuse when it was approved in another account. */
+function refuseOtherAccount(argv: string[], parsedReadsStdin: boolean): void {
+  const { covered, hash } = approvalScope(argv, parsedReadsStdin);
+  const used = consumeApproval(process.env.TG_APPROVE!, hash, getSessionString());
+  if (!used.ok && used.reason === ANOTHER_ACCOUNT) {
+    console.error(chalk.red(`Not sent: ${used.reason}. Run the command again.`));
+    process.exit(1);
+  }
+  if (used.ok && !covered) sealStdin();
+}
+
+/** Write mode "ask": go on only with a matching approval code, otherwise print the action and stop. */
+function requireApproval(argv: string[], parsedReadsStdin: boolean): void {
+  const { covered, stdin, hash } = approvalScope(argv, parsedReadsStdin);
   // One read of the account for both the check and a new code; getClient() connects with it only
   const session = getSessionString();
   const given = process.env.TG_APPROVE;
