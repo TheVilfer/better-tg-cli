@@ -28,7 +28,15 @@ export const checkCommand = new Command('check')
       await disconnectClient();
       return;
     }
-    if (!isConfigured()) {
+    let configured: boolean;
+    try {
+      configured = isConfigured();
+    } catch (error) {
+      // e.g. the secret store could not be read while config.json5 holds a secret (see loadConfig)
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+    if (!configured) {
       const p = profile();
       console.log(chalk.red(p
         ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram auth [--test-dc]`

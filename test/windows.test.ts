@@ -34,6 +34,16 @@ describe('DPAPI secret store', () => {
     expect(existsSync(file)).toBe(false); // nothing left, no file
   });
 
+  it('a strict read tells a missing key from a file it cannot decrypt (the migration needs it)', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
+    expect(dpapiStore(() => file, fake).getStrict('k')).toEqual({ ok: true, value: null }); // no file yet
+    dpapiStore(() => file, fake).set('k', 'v');
+    expect(dpapiStore(() => file, fake).getStrict('k')).toEqual({ ok: true, value: 'v' });
+    expect(dpapiStore(() => file, fake).getStrict('other')).toEqual({ ok: true, value: null });
+    const broken = dpapiStore(() => file, { protect: () => { throw new Error('no'); }, unprotect: () => { throw new Error('no'); } });
+    expect(broken.getStrict('k')).toEqual({ ok: false, reason: 'Windows DPAPI read failed: no' });
+  });
+
   it('reads nothing from a file it cannot decrypt', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'tg-dpapi-')), 'secrets.dpapi');
     dpapiStore(() => file, fake).set('k', 'v');

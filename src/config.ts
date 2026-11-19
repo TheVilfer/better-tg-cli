@@ -9,6 +9,7 @@ import {
   migrateSecretsToStore,
   secretDelete,
   secretGet,
+  secretMigrationError,
   secretSet,
 } from './secrets.js';
 
@@ -77,7 +78,9 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
   // Migrate secrets from file → secret store on first load (one-time per process). Never in a read
   // (TG_READ_ONLY, the MCP read tool): a read changes nothing in the profile, neither file nor store.
   if (!process.env.TG_READ_ONLY && isSecretStoreAvailable()) {
-    const cleaned = migrateSecretsToStore(fileConfig as Record<string, unknown>, warn);
+    // Its conflict warning goes to stderr on its own: callers such as getSessionString() silence
+    // `warn`, and the user must still see that the file holds a different account.
+    const cleaned = migrateSecretsToStore(fileConfig as Record<string, unknown>);
     if (cleaned !== fileConfig) {
       // Secrets were migrated — rewrite the file without them
       try {
@@ -87,6 +90,10 @@ export function loadConfig(warn: (message: string) => void = console.warn): TgCo
         // Non-fatal: secrets are already in keychain, file cleanup can retry next time
       }
     }
+    // A key the store could not read: the file copy may be another account, so stop here rather
+    // than connect with it (a read skips the migration and is not affected).
+    const readError = secretMigrationError();
+    if (readError) throw new Error(readError);
   }
 
   // Build config: file values + secret store overlay for secrets
@@ -146,10 +153,12 @@ export function saveConfig(config: Partial<TgConfig>): void {
     }
   }
 
-  // Strip secrets from existing file data if secret store is available
+  // Drop the file copy of a secret this call saves to the store. Other secrets in the file stay: one
+  // left there by the migration is a conflicting account or a failed store write, and a save of an
+  // unrelated setting (the WSS transport, testServers) must not delete its only copy.
   if (isSecretStoreAvailable()) {
     for (const key of Object.keys(existing)) {
-      if (isSecretKey(key)) {
+      if (isSecretKey(key) && key in config && !(key in fileData)) {
         delete (existing as Record<string, unknown>)[key];
       }
     }
@@ -186,6 +195,7 @@ export function isConfigured(): boolean {
 export function setInviteCredentials(apiId: number): void {
   if (isSecretStoreAvailable()) secretDelete('apiHash');
   saveConfig({ apiId, credentialSource: 'invite' });
+  removeFileKey('apiHash');
 }
 
 export function setCredentials(apiId: number, apiHash: string): void {
@@ -212,15 +222,18 @@ export function getSessionString(): string | undefined {
 export function clearSessionString(): void {
   // Delete from secret store
   secretDelete('sessionString');
+  removeFileKey('sessionString');
+}
 
-  // Delete from file
+/** Remove one key from config.json5 (a secret saveConfig no longer strips on unrelated saves). */
+function removeFileKey(key: string): void {
   const path = getGlobalConfigPath();
   if (existsSync(path)) {
     try {
       const raw = readFileSync(path, 'utf8');
       const parsed = parseConfigText(raw);
-      if (isPlainObject(parsed)) {
-        delete parsed.sessionString;
+      if (isPlainObject(parsed) && key in parsed) {
+        delete parsed[key];
         writeFileSync(path, stringifyConfig(parsed), { encoding: 'utf8', mode: 0o600 });
       }
     } catch {

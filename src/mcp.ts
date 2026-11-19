@@ -6,6 +6,7 @@ import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
 import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_READ_REFUSAL } from './api-methods.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
+import { paramsOf } from './commands/generated.js';
 import { actionHash, createApproval, describeAction, readsStdin } from './approval.js';
 import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
@@ -131,7 +132,7 @@ export function classifyCall(args: string[]): CallClass {
     } catch (e) {
       return { group: 'unknown', reason: `${e instanceof Error ? e.message : String(e)} See telegram_help.` };
     }
-    return byMethod(className, `api ${className}`, args);
+    return byMethod(className, `api ${className}`, args, API_VALUED_OPTIONS);
   }
   // Generated top-level API commands — `telegram <namespace> <method>`, `telegram <root-method>`,
   // and a method on a clash namespace (`stats get-broadcast-stats`) — classified by the underlying
@@ -140,7 +141,7 @@ export function classifyCall(args: string[]): CallClass {
   const className = resolveGeneratedCommand(args);
   if (className) {
     const second = args[1];
-    return byMethod(className, second && !second.startsWith('-') ? `${cmd} ${second}` : cmd, args);
+    return byMethod(className, second && !second.startsWith('-') ? `${cmd} ${second}` : cmd, args, generatedValuedOptions(className));
   }
   // `help` / `help <command>` is a harmless listing (its help.* methods were handled above).
   if (cmd === 'help' || READ_COMMANDS.has(cmd)) return { group: 'read', label: cmd };
@@ -169,13 +170,25 @@ const unknown = (cmd: string): CallClass => ({ group: 'unknown', reason: `Unknow
 /** The options that carry JSON params: `api -p/--params`, a generated command's `--json-params`. */
 const PARAMS_OPTION = /^(-p|--params|--json-params)$/;
 
+/** `api` has no valued options besides -p/--params, which asksPaidStars reads as params anyway. */
+const API_VALUED_OPTIONS = new Set<string>();
+
+/** A generated command's options that take a value: every non-`true` param, and `--json-params`. */
+function generatedValuedOptions(className: string): Set<string> {
+  const out = new Set(['--json-params']);
+  for (const p of paramsOf(className)) if (!p.trueFlag) out.add(`--${p.kebab}`);
+  return out;
+}
+
 /**
  * Whether a call asks to pay Stars: the generated `--allow-paid-stars` option, or a top-level
  * `allowPaidStars` in the JSON of a params option. Only option names and the params object count,
- * so a query that merely contains the word (`--query allowPaidStars`) stays a free read. Read calls
- * get no stdin, so `-p -` cannot hide it here; the CLI checks the built request again.
+ * so a query that merely contains the word (`--query allowPaidStars`) stays a free read. The value
+ * of an option in `valued` is skipped as commander would consume it, so `--query
+ * '--allow-paid-stars=5'` is a search for that text, not a payment. Read calls get no stdin, so
+ * `-p -` cannot hide it here; the CLI checks the built request again.
  */
-function asksPaidStars(args: string[]): boolean {
+function asksPaidStars(args: string[], valued: Set<string>): boolean {
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
     if (a === '--') break;
@@ -185,7 +198,10 @@ function asksPaidStars(args: string[]): boolean {
     if (inline) json = inline[2];
     else if (PARAMS_OPTION.test(a)) json = args[++i]; // the value is the next argument
     else if (/^-p./s.test(a)) json = a.slice(2); // `-p{…}`
-    else continue;
+    else {
+      if (valued.has(a)) i++; // its value is data, whatever it looks like
+      continue;
+    }
     if (json !== undefined && hasPaidKey(json)) return true;
   }
   return false;
@@ -202,12 +218,12 @@ function hasPaidKey(json: string): boolean {
   }
 }
 
-function byMethod(method: string, label: string, args: string[]): CallClass {
+function byMethod(method: string, label: string, args: string[], valued: Set<string>): CallClass {
   const refusal = apiRefusalReason(method);
   if (refusal) return { group: 'never', reason: refusal };
   // A read that would spend Stars never runs over MCP, in any write mode (the CLI refuses it too,
   // on the built request, see mcpPaidReadRefusal).
-  if (isApiReadMethod(method) && asksPaidStars(args)) return { group: 'never', reason: PAID_READ_REFUSAL };
+  if (isApiReadMethod(method) && asksPaidStars(args, valued)) return { group: 'never', reason: PAID_READ_REFUSAL };
   return { group: isApiReadMethod(method) ? 'read' : 'write', label };
 }
 

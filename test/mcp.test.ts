@@ -191,6 +191,11 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['api', 'channels.SearchPosts', '--params', '{"allow\\u0050aidStars":10}'], 'never'],
   // The word itself in a query, a nested key or a null value is a free search (round 2)
   [['channels', 'search-posts', '--query', 'allowPaidStars'], 'read'],
+  // commander consumes a valued option's next argument, dash or not: this is a search for the text
+  [['channels', 'search-posts', '--query', '--allow-paid-stars=5'], 'read'],
+  [['channels', 'search-posts', '--query', '--allow-paid-stars', '--limit', '5'], 'read'],
+  [['channels', 'search-posts', '--json-params', '{}', '--allow-paid-stars', '5'], 'never'],
+  [['api', 'channels.SearchPosts', '-p', '{"query":"x"}', '--allow-paid-stars=5'], 'never'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"allowPaidStars"}'], 'read'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"x","offsetPeer":{"allowPaidStars":1}}'], 'read'],
   [['api', 'channels.SearchPosts', '--params', '{"query":"x","allowPaidStars":null}'], 'read'],

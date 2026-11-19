@@ -1,6 +1,7 @@
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { configFile, secretPrefix } from './paths.js';
+import type { StrictRead } from './keychain.js';
 
 let opAvailableCache: boolean | null = null;
 let opBinaryPath: string | null = null;
@@ -113,6 +114,42 @@ export function opGet(key: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * `op read` exits 1 both for a missing item and for any other failure (network, auth, rate limit),
+ * and its messages are not a stable interface. So a failed read is "missing" only when the vault
+ * listing succeeds and has no item of that name; anything else is a failed read.
+ */
+export function opGetStrict(key: string): StrictRead {
+  if (!isOnePasswordAvailable()) return { ok: false, reason: '1Password is not available' };
+  const run = (args: string[]) => spawnSync(getOpBinary()!, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    timeout: 60_000,
+    env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
+  });
+  const failed = (r: ReturnType<typeof run>, what: string): StrictRead => {
+    const why = (r.error?.message || r.stderr || '').trim().split('\n')[0];
+    return { ok: false, reason: `1Password ${what} failed (exit ${r.status ?? 'none'}${why ? `: ${why}` : ''})` };
+  };
+  const vault = resolveVault()!;
+  const name = itemName(key);
+  const r = run(['read', `op://${vault}/${name}/credential`]);
+  if (r.status === 0 && !r.error) return { ok: true, value: r.stdout.trim() || null };
+  const list = run(['item', 'list', '--vault', vault, '--format', 'json']);
+  if (list.status !== 0 || list.error) return failed(r, 'read');
+  let items: unknown;
+  try {
+    items = JSON.parse(list.stdout || '[]');
+  } catch {
+    return failed(r, 'read');
+  }
+  if (!Array.isArray(items)) return failed(r, 'read');
+  // The item exists but has no readable credential: not a missing key, so treat it as a failure
+  if (items.some(i => (i as { title?: unknown })?.title === name)) return failed(r, 'read');
+  return { ok: true, value: null };
 }
 
 interface OpField { id?: string; label?: string; type?: string; value?: string }

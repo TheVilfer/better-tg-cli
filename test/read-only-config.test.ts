@@ -5,10 +5,15 @@ import { join } from 'node:path';
 // An in-memory Keychain under the real secrets.ts, so the real migration code runs and the real
 // Keychain is never touched; 1Password, Secret Service and DPAPI are off.
 const store = vi.hoisted(() => new Map<string, string>());
+// Keys whose next strict read fails once (a locked Keychain, 1Password offline)
+const failNextRead = vi.hoisted(() => new Set<string>());
 vi.mock('../src/keychain.js', async orig => ({
   ...(await orig<typeof import('../src/keychain.js')>()),
   isKeychainAvailable: () => true,
   keychainGet: (k: string) => store.get(k) ?? null,
+  keychainGetStrict: (k: string) => failNextRead.delete(k)
+    ? { ok: false, reason: 'macOS Keychain read failed (exit 36: User interaction is not allowed.)' }
+    : { ok: true, value: store.get(k) ?? null },
   keychainSet: (k: string, v: string) => (store.set(k, v), true),
   keychainDelete: (k: string) => store.delete(k),
 }));
@@ -35,6 +40,7 @@ beforeEach(async () => {
   file = join(dir, 'config.json5');
   mkdirSync(dir, { recursive: true });
   store.clear();
+  failNextRead.clear();
 });
 afterEach(() => {
   process.env = { ...saved };
@@ -102,11 +108,16 @@ describe('whoami → write resolve the same account', () => {
     let { config } = await modules();
     expect(config.getSessionString()).toBe('session-A');
 
-    // the next write (telegram_write, its own process): the migration runs, but the store stays A
+    // the next write (telegram_write, its own process): the migration runs, but the store stays A.
+    // getClient() reads through isConfigured()/getSessionString(), which silence loadConfig's
+    // parse warnings; the conflict warning must reach stderr anyway.
     delete process.env.TG_READ_ONLY;
     ({ config } = await modules());
     const warnings: string[] = [];
-    expect(config.loadConfig(m => warnings.push(m)).sessionString).toBe('session-A');
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(m => { warnings.push(String(m)); });
+    expect(config.isConfigured()).toBe(true);
+    expect(config.getSessionString()).toBe('session-A');
+    errSpy.mockRestore();
     expect(config.loadConfig().apiHash).toBe('store-hash');
     expect(store.get('sessionString')).toBe('session-A');
     expect(store.get('apiHash')).toBe('store-hash');
@@ -135,9 +146,110 @@ describe('whoami → write resolve the same account', () => {
     store.set('sessionString', 'session-A');
     const { config } = await modules();
     const warnings: string[] = [];
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(m => { warnings.push(String(m)); });
     config.loadConfig(m => warnings.push(m));
+    errSpy.mockRestore();
     expect(warnings).toEqual([]);
     expect(store.get('sessionString')).toBe('session-A');
     expect(readFileSync(file, 'utf8')).not.toMatch(/session-A/);
+  });
+
+  // Review round 3: a failed store read is not "no session"
+  it('a one-time read failure of the stored session: the write stops, nothing changes, the next run uses A', async () => {
+    const before = '{"apiId": 1, "sessionString": "session-B"}';
+    writeFileSync(file, before);
+    store.set('sessionString', 'session-A');
+    failNextRead.add('sessionString');
+    let { config } = await modules();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => config.getSessionString()).toThrow(/Could not read sessionString from the secret store \(macOS Keychain read failed.*nothing was changed/s);
+    // the same process keeps refusing (the migration runs once, the error stays)
+    expect(() => config.isConfigured()).toThrow(/secret store/);
+    errSpy.mockRestore();
+    expect(store.get('sessionString')).toBe('session-A');
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    // the error names no secret
+    try { config.loadConfig(() => {}); } catch (e) { expect(String(e)).not.toMatch(/session-[AB]/); }
+
+    // the store reads again: the next run resolves A, and B is still not written anywhere
+    ({ config } = await modules());
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(config.getSessionString()).toBe('session-A');
+    quiet.mockRestore();
+    expect(store.get('sessionString')).toBe('session-A');
+  });
+
+  // Only the migration reads strictly. The overlay after it (and a read's overlay) still uses the
+  // lenient secretGet, so a failed overlay read would fall back to the file copy; that is issue #115.
+  it('a read (TG_READ_ONLY) skips the migration, so its strict read is never made and never stops it', async () => {
+    writeFileSync(file, '{"apiId": 1, "sessionString": "session-B"}');
+    store.set('sessionString', 'session-A');
+    failNextRead.add('sessionString');
+    process.env.TG_READ_ONLY = '1';
+    const { config } = await modules();
+    expect(config.getSessionString()).toBe('session-A');
+  });
+
+  it('a WSS fallback in a write keeps the conflicting file session (only transport is saved)', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "file-hash", "sessionString": "session-B"}');
+    store.set('apiHash', 'store-hash');
+    store.set('sessionString', 'session-A');
+    vi.resetModules();
+    const config = await import('../src/config.js');
+    const { connectClient } = await import('../src/transport.js');
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(config.getSessionString()).toBe('session-A'); // the migration ran and kept B in the file
+    errSpy.mockRestore();
+    const make = (t: string) => ({
+      connect: async () => { if (t === 'tcp') throw Object.assign(new Error('NetSocket was closed'), { name: 'NetSocketClosedError' }); return true; },
+      destroy: async () => {},
+    }) as never;
+    await connectClient(make, { setting: 'auto', notice: () => {} });
+    const text = readFileSync(file, 'utf8');
+    expect(text).toMatch(/transport.*wss/);
+    expect(text).toMatch(/session-B/);
+    expect(text).toMatch(/file-hash/);
+    expect(store.get('sessionString')).toBe('session-A');
+  });
+
+  it('saving a secret still drops its own file copy, and only that one', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "file-hash", "sessionString": "session-B"}');
+    store.set('apiHash', 'store-hash');
+    store.set('sessionString', 'session-A');
+    const { config } = await modules();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    config.setSessionString('session-C');
+    errSpy.mockRestore();
+    expect(store.get('sessionString')).toBe('session-C');
+    const text = readFileSync(file, 'utf8');
+    expect(text).not.toMatch(/session-B/);
+    expect(text).toMatch(/file-hash/);
+  });
+
+  it('a failed read of one key changes nothing for the other either: the file stays as it is', async () => {
+    const before = '{"apiId": 1, "apiHash": "file-hash", "sessionString": "session-B"}';
+    writeFileSync(file, before);
+    store.set('sessionString', 'session-A'); // apiHash is not in the store: it alone would migrate
+    failNextRead.add('sessionString');
+    const { config } = await modules();
+    expect(() => config.loadConfig(() => {})).toThrow(/Could not read sessionString/);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(store.has('apiHash')).toBe(false);
+  });
+
+  it('getClient() stops with the store error and never connects', async () => {
+    writeFileSync(file, '{"apiId": 1, "apiHash": "h", "sessionString": "session-B"}');
+    store.set('sessionString', 'session-A');
+    failNextRead.add('sessionString');
+    vi.resetModules();
+    const connectClient = vi.fn();
+    vi.doMock('../src/transport.js', () => ({ connectClient }));
+    try {
+      const { getClient } = await import('../src/client.js');
+      await expect(getClient()).rejects.toThrow(/Could not read sessionString from the secret store/);
+      expect(connectClient).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock('../src/transport.js');
+    }
   });
 });
