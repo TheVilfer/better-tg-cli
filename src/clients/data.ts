@@ -134,11 +134,12 @@ export function casesOf<V extends string>(cell: Cell<V>): Case<V>[] {
 export const UPDATE_NOTICE = 'Unknown in every client until seen live. Over MCP the notice is never part of a tool result: the commands the server runs get `TG_NO_UPDATE_CHECK=1` (`src/mcp.ts`). When an agent runs the `telegram` CLI, the notice goes to stderr only if stderr is a terminal, `CI` and `TG_NO_UPDATE_CHECK` are unset and a newer version is already cached (`src/update.ts`), so an agent that runs commands in a pseudo-terminal may see it.';
 
 /**
- * The approval columns describe the local stdio server (`telegram mcp`). Two routes are G2 in
+ * The approval columns describe the local stdio server (`telegram mcp`), unless a case names its
+ * route (the Claude Code plugin, Grok Bot's Remote HTTPS). Two routes are G2 in
  * every client: the skill (the agent runs the `telegram` CLI in a shell, which prints a one-time
  * code) and `telegram mcp --http`, which never asks the client for a form (`src/mcp-http.ts`).
  */
-export const ROUTE_NOTE = 'Write approval, refusal, headless and sandbox describe the local MCP server (`telegram mcp`). The skill route (the agent runs the `telegram` CLI in a shell) and `telegram mcp --http` are G2 in every client: the CLI prints a one-time code, and the HTTP server never asks the client for a form.';
+export const ROUTE_NOTE = 'Where write approval, refusal, headless and sandbox name no route, they describe the local MCP server (`telegram mcp`); a labelled case (the Claude Code plugin, Grok Bot\'s Remote HTTPS) describes the route it names. The skill route (the agent runs the `telegram` CLI in a shell) and `telegram mcp --http` are G2 in every client: the CLI prints a one-time code, and the HTTP server never asks the client for a form.';
 
 // Sources, shortened where several cells cite them
 const CC = 'https://code.claude.com/docs/en';
@@ -224,8 +225,10 @@ export const CLIENTS: ClientRecord[] = [
     gui: unknown(`Widely reported, not in the official docs: a Dock-launched app lacks the login-shell PATH, so ${ABS_PATH}.`),
     headless: na(),
     sandbox: cell('outside', [doc(`${CD}/custom/remote-mcp.md`)]),
-    http: cell('oauth-only', [doc(`${CD}/building/authentication.md`)],
-      'Remote servers are connectors, as on claude.ai; a static header exists only as an org-wide beta.'),
+    http: varies([
+      whenUnknown('org in the `static_headers` beta', 'Remote servers are connectors, as on claude.ai; the docs do not say whether the beta header reaches Desktop.'),
+      when('other organizations', 'oauth-only', [doc(`${CD}/building/authentication.md`)]),
+    ]),
   },
   {
     id: 'claude-ai',
@@ -244,7 +247,11 @@ export const CLIENTS: ClientRecord[] = [
     gui: na(),
     headless: na(),
     sandbox: cell('cloud', [doc(`${CD}/building/index.md`)], 'Calls come from Anthropic\'s cloud.'),
-    http: cell('oauth-only', [doc(`${CD}/building/authentication.md`)], 'A static header exists only in the org-wide `static_headers` beta.'),
+    http: varies([
+      when('org in the `static_headers` beta', 'bearer', [doc(`${CD}/building/authentication.md`)],
+        'An org Owner enters one `Authorization` header, sent for every member (a limited set of organizations).'),
+      when('other organizations', 'oauth-only', [doc(`${CD}/building/authentication.md`)]),
+    ]),
   },
   {
     id: 'cursor',
@@ -296,7 +303,8 @@ export const CLIENTS: ClientRecord[] = [
     config: cell('`~/.copilot/mcp-config.json` (`tools` is required), `.mcp.json`', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)]),
     elicitation: varies([
       when('interactive', 'form', [doc('https://github.com/github/copilot-cli/blob/main/changelog.md', '1.0.114')]),
-      whenUnknown('Autopilot', 'Autopilot answers the form itself; which answer it gives is not documented.'),
+      when('Autopilot', 'form', [doc('https://github.com/github/copilot-cli/blob/main/changelog.md', '1.0.64')],
+        'Autopilot answers the form itself instead of showing it; which answer it gives is not documented.'),
     ], 'URL mode: unverified.'),
     stdioEnv: cell('allowlist', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)], '`PATH`, a small platform set and `env`.'),
     toolTimeout: cell('30 s', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)],
@@ -304,8 +312,20 @@ export const CLIENTS: ClientRecord[] = [
     approvalDefault: cell('ask', [doc(`${GHCLI}/how-tos/copilot-cli/use-copilot-cli/allowing-tools`)]),
     install: cell('config', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)], '`copilot mcp add`, with `"tools": ["*"]`.'),
     read: cell('expected', [doc(`${GHCLI}/reference/copilot-cli-reference/cli-config-dir-reference`)], 'Fails inside `/sandbox`, where the Keychain is closed by default.'),
+    approval: varies([
+      when('interactive', 'G1', [doc('https://github.com/github/copilot-cli/blob/main/changelog.md', '1.0.114')]),
+      when('Autopilot', 'G1', [doc('https://github.com/github/copilot-cli/blob/main/changelog.md', '1.0.64')],
+        'The form goes to Autopilot, which answers it instead of the human.'),
+    ]),
+    refusal: varies([
+      when('interactive', 'refused', [doc('https://github.com/github/copilot-cli/blob/main/changelog.md', '1.0.114')]),
+      whenUnknown('Autopilot', 'Whether Autopilot accepts, declines or cancels the form is not documented, so the write may run without the human.'),
+    ]),
     gui: na(),
-    headless: unknown('`-p` shows no approval prompts; what it does with an elicitation is not documented.'),
+    headless: varies([
+      whenUnknown('`-p`', 'Shows no approval prompts; what it does with an elicitation is not documented.'),
+      whenUnknown('Autopilot', 'Autopilot answers the form itself; whether the write runs is not documented.'),
+    ]),
     sandbox: cell('opt-in', [doc(`${GHCLI}/reference/copilot-cli-reference/cli-config-dir-reference`)],
       '`sandbox.enabled` (off by default) also wraps MCP servers; `keychainAccess` defaults to false.'),
     http: cell('bearer', [doc(`${GHCLI}/how-tos/copilot-cli/customize-copilot/add-mcp-servers`)]),
@@ -545,9 +565,9 @@ export const CLIENTS: ClientRecord[] = [
     install: cell('config', [doc(`${GOOSE_DOC}/guides/config-files.md`)]),
     read: cell('expected', [src(`${GOOSE_SRC}/crates/oi-kit-agent/src/mcp/stdio.rs`)]),
     gui: varies([
-      when('Desktop on macOS, Linux', 'ok', [src(`${GOOSE_SRC}/ui/desktop/src/loginShellPath.ts`)],
+      when('Desktop on macOS, Linux without Flatpak', 'ok', [src(`${GOOSE_SRC}/ui/desktop/src/loginShellPath.ts`)],
         'Only PATH comes from the login shell; other exported variables (`TG_PROFILE`) are missing.'),
-      whenUnknown('Desktop on Windows, Flatpak', 'The login-shell PATH lookup is skipped.'),
+      whenUnknown('Desktop on Windows, Linux Flatpak', 'The login-shell PATH lookup is skipped.'),
     ]),
     headless: cell('aborts', [src(`${GOOSE_SRC}/crates/goose-cli/src/session/mod.rs`)],
       '`goose run` aborts the whole run when a write asks for approval.'),
@@ -715,19 +735,30 @@ export function outcomeCells(c: ClientRecord): Record<(typeof LIVE_REQUIRED)[num
 }
 
 const hasLive = (cell: { evidence: Evidence[] }) => cell.evidence.some(e => e.level === 'live');
+const liveVersions = (k: Case) => new Set(k.evidence.flatMap(e => (e.level === 'live' ? [e.version] : [])));
 
 /**
- * Supported only when install, read, approval and refusal were each seen live in every
- * configuration the record lists, and reading was seen working. Derived approval and refusal
- * never carry a live entry, so both must be recorded. Unsupported when there is no way to
- * install it today. Everything else is untested.
+ * Supported only when, in every configuration the record lists, install, read, approval and
+ * refusal were all seen live in that same configuration with the same client version, and reading
+ * was seen working. A configuration is a case label; a plain cell covers every label, and a
+ * `varies` cell without a case for a label fails it. Checks seen in different versions or
+ * configurations never add up. Derived approval and refusal never carry a live entry, so both must
+ * be recorded. Unsupported when there is no way to install it today. Everything else is untested.
  */
 export function statusOf(c: ClientRecord): Status {
   if (casesOf(c.install).every(k => k.value === 'none')) return 'unsupported';
-  const cells = outcomeCells(c);
-  const live = Object.values(cells).every(cell => casesOf(cell).every(hasLive));
-  const reads = casesOf(c.read).every(k => k.value === 'works');
-  return live && reads ? 'supported' : 'untested';
+  const cells = Object.values(outcomeCells(c));
+  const labels = [...new Set(cells.flatMap(cell => (cell.cases ?? []).map(k => k.when)))];
+  const supportedIn = (label: string) => {
+    const found = cells.map(cell => (cell.cases ? cell.cases.find(k => k.when === label) : casesOf(cell)[0]));
+    if (found.some(k => !k)) return false;
+    const read = c.read.cases ? c.read.cases.find(k => k.when === label) : casesOf(c.read)[0];
+    if (read?.value !== 'works') return false;
+    // One client version seen live in all four
+    const [first, ...rest] = (found as Case[]).map(liveVersions);
+    return [...first].some(v => rest.every(s => s.has(v)));
+  };
+  return (labels.length ? labels : ['']).every(supportedIn) ? 'supported' : 'untested';
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -771,7 +802,8 @@ export function validate(clients: ClientRecord[]): string[] {
         }
         // A claim about our server working there can only come from running it there
         if (k.value === 'works' && !hasLive(k)) problems.push(`${at}: "works" without a live entry`);
-        if (name === 'update' && k.value === 'shown' && !hasLive(k)) problems.push(`${at}: "shown" without a live entry`);
+        // Whether the notice reached the agent, or did not, is only seen by running the client
+        if (name === 'update' && (k.value === 'shown' || k.value === 'none') && !hasLive(k)) problems.push(`${at}: "${k.value}" without a live entry`);
       }
     }
     // Reading is expected only where the stdio environment of the same configuration is known

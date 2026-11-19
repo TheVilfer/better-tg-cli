@@ -3,8 +3,9 @@
 <!-- Generated from src/clients/data.ts by scripts/compat-matrix.ts. Do not edit by hand; run `bun scripts/compat-matrix.ts`. -->
 
 How Better-TG-CLI behaves inside each agent client, and how we know it. A client is
-**supported** only after install, reading, write approval and refusal were each seen working
-with a named client version on a named date (`live`). Everything else comes from the client's
+**supported** only after install, reading, write approval and refusal were all seen working
+in the same configuration with one named client version, on a named date (`live`), in every
+configuration the client lists. Everything else comes from the client's
 docs or source and says what we expect, not what we saw.
 
 Supported: **0** of 22. Untested: 22. Not possible yet: 0.
@@ -22,11 +23,11 @@ Supported: **0** of 22. Untested: 22. Not possible yet: 0.
 | Client | Status | Install | Read | Write approval² | Refusal² | Update notice¹ | GUI | Headless² | Sandbox² | HTTP |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Claude Code | untested | stdio (`claude mcp add`): config (doc); plugin: plugin (doc) | expected (doc) | stdio (`claude mcp add`): G1 (doc); plugin: G2 (doc) | stdio (`claude mcp add`): refused (doc); plugin: chat (doc) | ? | n/a | `-p --permission-prompts none`, no hook answers: refused (doc); plain `-p`: ? | outside (doc) | bearer (doc) |
-| Claude Desktop (chat) | untested | mcpb (doc) | expected (doc) | G2 (report) | chat (report) | ? | ? | n/a | outside (doc) | oauth-only (doc) |
-| claude.ai | untested | beta (doc) | ? | G2 (doc) | chat (doc) | ? | n/a | n/a | cloud (doc) | oauth-only (doc) |
+| Claude Desktop (chat) | untested | mcpb (doc) | expected (doc) | G2 (report) | chat (report) | ? | ? | n/a | outside (doc) | org in the `static_headers` beta: ?; other organizations: oauth-only (doc) |
+| claude.ai | untested | beta (doc) | ? | G2 (doc) | chat (doc) | ? | n/a | n/a | cloud (doc) | org in the `static_headers` beta: bearer (doc); other organizations: oauth-only (doc) |
 | Cursor | untested | plugin (doc) | ? | IDE: G1 (doc); CLI: ? | IDE: refused (doc); CLI: ? | ? | ? | `agent -p`, tool not allowed: refused (doc); `agent -p`, tool allowed: ? | ? | bearer (doc) |
 | VS Code Copilot | untested | config (doc) | ? | G1 (doc) | refused (doc) | ? | ? | refused (doc) | opt-in (doc) | bearer (doc) |
-| Copilot CLI | untested | config (doc) | expected (doc) | interactive: G1 (doc); Autopilot: ? | interactive: refused (doc); Autopilot: ? | ? | n/a | ? | opt-in (doc) | bearer (doc) |
+| Copilot CLI | untested | config (doc) | expected (doc) | interactive: G1 (doc); Autopilot: G1 (doc) | interactive: refused (doc); Autopilot: ? | ? | n/a | `-p`: ?; Autopilot: ? | opt-in (doc) | bearer (doc) |
 | Codex | untested | plugin (doc) | expected (src) | G1 (src) | refused (src) | ? | ? | refused (src) | outside (doc) | bearer (doc) |
 | ChatGPT | untested | tunnel (doc) | ? | ? | ? | ? | n/a | n/a | URL: cloud (doc); Secure MCP Tunnel: outside (doc) | oauth-only (doc) |
 | Gemini CLI | untested | extension (doc) | expected (src) | G2 (src) | chat (src) | ? | n/a | policy chose `ask_user`: refused (doc); tool allowed (`trust`, an allow rule): ? | opt-in (doc) | bearer (doc) |
@@ -37,7 +38,7 @@ Supported: **0** of 22. Untested: 22. Not possible yet: 0.
 | Grok Bot | untested | Remote HTTPS: ui (doc); cloud Command: ? | ? | Remote HTTPS: G2 (doc); cloud Command: ? | Remote HTTPS: chat (doc); cloud Command: ? | ? | n/a | n/a | cloud (doc) | bearer (doc) |
 | Hermes Agent | untested | catalog (doc) | expected (doc) | G1 (src) | refused (src) | ? | ? | refused (doc) | ? | bearer (doc) |
 | OpenCode | untested | config (doc) | expected (src) | V2: G1 (src); V1: G2 (src) | V2: refused (src); V1: chat (src) | ? | path (report) | V2 `opencode run`: refused (src); V1: ? | ? | bearer (doc) |
-| Goose | untested | config (doc) | expected (src) | G1 (src) | refused (src) | ? | Desktop on macOS, Linux: ok (src); Desktop on Windows, Flatpak: ? | aborts (src) | ? | bearer (doc) |
+| Goose | untested | config (doc) | expected (src) | G1 (src) | refused (src) | ? | Desktop on macOS, Linux without Flatpak: ok (src); Desktop on Windows, Linux Flatpak: ? | aborts (src) | ? | bearer (doc) |
 | Factory Droid | untested | config (doc) | ? | ? | ? | ? | ? | ? | opt-in (doc) | bearer (doc) |
 | Amp | untested | config (doc) | ? | ? | ? | ? | ? | ? | ? | bearer (doc) |
 | Warp | untested | config (doc) | expected (src) | G2 (src) | chat (src) | ? | ok (src) | ? | ? | bearer (doc) |
@@ -46,7 +47,7 @@ Supported: **0** of 22. Untested: 22. Not possible yet: 0.
 
 ¹ Unknown in every client until seen live. Over MCP the notice is never part of a tool result: the commands the server runs get `TG_NO_UPDATE_CHECK=1` (`src/mcp.ts`). When an agent runs the `telegram` CLI, the notice goes to stderr only if stderr is a terminal, `CI` and `TG_NO_UPDATE_CHECK` are unset and a newer version is already cached (`src/update.ts`), so an agent that runs commands in a pseudo-terminal may see it.
 
-² Write approval, refusal, headless and sandbox describe the local MCP server (`telegram mcp`). The skill route (the agent runs the `telegram` CLI in a shell) and `telegram mcp --http` are G2 in every client: the CLI prints a one-time code, and the HTTP server never asks the client for a form.
+² Where write approval, refusal, headless and sandbox name no route, they describe the local MCP server (`telegram mcp`); a labelled case (the Claude Code plugin, Grok Bot's Remote HTTPS) describes the route it names. The skill route (the agent runs the `telegram` CLI in a shell) and `telegram mcp --http` are G2 in every client: the CLI prints a one-time code, and the HTTP server never asks the client for a form.
 
 - **Install:** `plugin`, `extension`, `catalog` (a plugin directory or catalog), `mcpb` (a Claude Desktop extension), `config` (an entry in the client's MCP config), `ui` (added in the client's settings), `tunnel` (through the vendor's tunnel to a server on the user's machine), `beta` (only in a limited beta), `none` (no way today).
 - **Read:** `works` (seen live), `expected` (nothing known stands in the way), `blocked`.
@@ -66,7 +67,7 @@ Supported: **0** of 22. Untested: 22. Not possible yet: 0.
 | claude.ai | Customize › Connectors › Add custom connector (a public URL) (doc) | none (doc) | n/a | 240 s (doc) | hints (doc) |
 | Cursor | `~/.cursor/mcp.json`, project `.cursor/mcp.json`, plugins (doc) | IDE: form (doc); CLI: ? | ? | ~60 s (report) | ask (doc) |
 | VS Code Copilot | `~/.copilot/mcp-config.json`, workspace `.mcp.json` (doc) | form+url (doc) | ? | ? | ask (doc) |
-| Copilot CLI | `~/.copilot/mcp-config.json` (`tools` is required), `.mcp.json` (doc) | interactive: form (doc); Autopilot: ? | allowlist (doc) | 30 s (doc) | ask (doc) |
+| Copilot CLI | `~/.copilot/mcp-config.json` (`tools` is required), `.mcp.json` (doc) | interactive: form (doc); Autopilot: form (doc) | allowlist (doc) | 30 s (doc) | ask (doc) |
 | Codex | `~/.codex/config.toml` `[mcp_servers.<name>]`, plugins (doc) | form+url (src) | allowlist (src) | 60 s (doc) | hints (doc) |
 | ChatGPT | chatgpt.com/plugins › Add custom MCP server (URL or tunnel) (doc) | ? | ? | 120 s (doc) | hints (doc) |
 | Gemini CLI | `~/.gemini/settings.json` `mcpServers`, extensions (doc) | none (src) | filtered (src) | 10 min (doc) | ask (doc) |
@@ -159,8 +160,10 @@ Status: **untested**. surfaces: desktop.
 - **Headless or unattended:** `n/a`
 - **Sandbox:** `outside`  
   doc: [claude.com/docs/connectors/custom/remote-mcp.md](https://claude.com/docs/connectors/custom/remote-mcp.md)
-- **HTTP (`telegram mcp --http`):** `oauth-only`. Remote servers are connectors, as on claude.ai; a static header exists only as an org-wide beta.  
-  doc: [claude.com/docs/connectors/building/authentication.md](https://claude.com/docs/connectors/building/authentication.md)
+- **HTTP (`telegram mcp --http`):** depends on the configuration
+  - org in the `static_headers` beta: unknown. Remote servers are connectors, as on claude.ai; the docs do not say whether the beta header reaches Desktop.
+  - other organizations: `oauth-only`  
+    doc: [claude.com/docs/connectors/building/authentication.md](https://claude.com/docs/connectors/building/authentication.md)
 
 ### claude.ai (`claude-ai`)
 
@@ -187,8 +190,11 @@ Status: **untested**. surfaces: web.
 - **Headless or unattended:** `n/a`
 - **Sandbox:** `cloud`. Calls come from Anthropic's cloud.  
   doc: [claude.com/docs/connectors/building/index.md](https://claude.com/docs/connectors/building/index.md)
-- **HTTP (`telegram mcp --http`):** `oauth-only`. A static header exists only in the org-wide `static_headers` beta.  
-  doc: [claude.com/docs/connectors/building/authentication.md](https://claude.com/docs/connectors/building/authentication.md)
+- **HTTP (`telegram mcp --http`):** depends on the configuration
+  - org in the `static_headers` beta: `bearer`. An org Owner enters one `Authorization` header, sent for every member (a limited set of organizations).  
+    doc: [claude.com/docs/connectors/building/authentication.md](https://claude.com/docs/connectors/building/authentication.md)
+  - other organizations: `oauth-only`  
+    doc: [claude.com/docs/connectors/building/authentication.md](https://claude.com/docs/connectors/building/authentication.md)
 
 ### Cursor (`cursor`)
 
@@ -263,7 +269,8 @@ Status: **untested**. surfaces: cli. version seen: 1.0.114.
 - **Approval form (elicitation):** depends on the configuration. URL mode: unverified.
   - interactive: `form`  
     doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
-  - Autopilot: unknown. Autopilot answers the form itself; which answer it gives is not documented.
+  - Autopilot: `form`. Autopilot answers the form itself instead of showing it; which answer it gives is not documented.  
+    doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.64
 - **stdio environment:** `allowlist`. `PATH`, a small platform set and `env`.  
   doc: [docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
 - **Tool-call timeout:** `30 s`. Per-server `timeout`; an approval that takes longer may be cut off.  
@@ -277,14 +284,17 @@ Status: **untested**. surfaces: cli. version seen: 1.0.114.
 - **Write approval:** depends on the configuration
   - interactive: `G1`  
     doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
-  - Autopilot: unknown. Depends on whether the client advertises elicitation.
+  - Autopilot: `G1`. The form goes to Autopilot, which answers it instead of the human.  
+    doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.64
 - **Refusal:** depends on the configuration
   - interactive: `refused`  
     doc: [github.com/github/copilot-cli/blob/main/changelog.md](https://github.com/github/copilot-cli/blob/main/changelog.md), 1.0.114
-  - Autopilot: unknown
+  - Autopilot: unknown. Whether Autopilot accepts, declines or cancels the form is not documented, so the write may run without the human.
 - **Update notice:** unknown, see the note under the table.
 - **GUI launch:** `n/a`
-- **Headless or unattended:** unknown. `-p` shows no approval prompts; what it does with an elicitation is not documented.
+- **Headless or unattended:** depends on the configuration
+  - `-p`: unknown. Shows no approval prompts; what it does with an elicitation is not documented.
+  - Autopilot: unknown. Autopilot answers the form itself; whether the write runs is not documented.
 - **Sandbox:** `opt-in`. `sandbox.enabled` (off by default) also wraps MCP servers; `keychainAccess` defaults to false.  
   doc: [docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)
 - **HTTP (`telegram mcp --http`):** `bearer`  
@@ -635,9 +645,9 @@ Status: **untested**. surfaces: cli, desktop. version seen: v1.60.1.
   doc: [goose-docs.ai/docs/guides/mcp-elicitation.md](https://goose-docs.ai/docs/guides/mcp-elicitation.md); src: [github.com/aaif-goose/goose/blob/e196781/crates/oi-kit-agent/src/mcp/client.rs](https://github.com/aaif-goose/goose/blob/e196781/crates/oi-kit-agent/src/mcp/client.rs)
 - **Update notice:** unknown, see the note under the table.
 - **GUI launch:** depends on the configuration
-  - Desktop on macOS, Linux: `ok`. Only PATH comes from the login shell; other exported variables (`TG_PROFILE`) are missing.  
+  - Desktop on macOS, Linux without Flatpak: `ok`. Only PATH comes from the login shell; other exported variables (`TG_PROFILE`) are missing.  
     src: [github.com/aaif-goose/goose/blob/e196781/ui/desktop/src/loginShellPath.ts](https://github.com/aaif-goose/goose/blob/e196781/ui/desktop/src/loginShellPath.ts)
-  - Desktop on Windows, Flatpak: unknown. The login-shell PATH lookup is skipped.
+  - Desktop on Windows, Linux Flatpak: unknown. The login-shell PATH lookup is skipped.
 - **Headless or unattended:** `aborts`. `goose run` aborts the whole run when a write asks for approval.  
   src: [github.com/aaif-goose/goose/blob/e196781/crates/goose-cli/src/session/mod.rs](https://github.com/aaif-goose/goose/blob/e196781/crates/goose-cli/src/session/mod.rs)
 - **Sandbox:** unknown

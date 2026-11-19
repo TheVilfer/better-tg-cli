@@ -78,6 +78,45 @@ describe('compatibility matrix', () => {
     expect(statusOf(approvalOnly)).toBe('untested');
   });
 
+  it('checks seen live in different configurations do not add up to supported', () => {
+    const base = byId('opencode');
+    const at = (version: string) => ({ level: 'live', version, date: '2026-11-20' }) as const;
+    // Install and read live in V1 and V2, approval only in V1, refusal only in V2 (cases)
+    const byCase: ClientRecord = {
+      ...base,
+      install: { value: 'varies', evidence: [], cases: [
+        { when: 'V1', value: 'config', evidence: [at('1.19.6')] }, { when: 'V2', value: 'config', evidence: [at('2.0.0')] }] },
+      read: { value: 'varies', evidence: [], cases: [
+        { when: 'V1', value: 'works', evidence: [at('1.19.6')] }, { when: 'V2', value: 'works', evidence: [at('2.0.0')] }] },
+      approval: { value: 'varies', evidence: [], cases: [{ when: 'V1', value: 'G2', evidence: [at('1.19.6')] }] },
+      refusal: { value: 'varies', evidence: [], cases: [{ when: 'V2', value: 'refused', evidence: [at('2.0.0')] }] },
+    };
+    expect(validate([byCase])).toEqual([]);
+    expect(statusOf(byCase)).toBe('untested');
+    // The same on plain cells: the live entries name different client versions
+    const byVersion: ClientRecord = {
+      ...base,
+      install: { value: 'config', evidence: [at('1.19.6'), at('2.0.0')] },
+      read: { value: 'works', evidence: [at('1.19.6'), at('2.0.0')] },
+      approval: { value: 'G2', evidence: [at('1.19.6')] },
+      refusal: { value: 'refused', evidence: [at('2.0.0')] },
+    };
+    expect(validate([byVersion])).toEqual([]);
+    expect(statusOf(byVersion)).toBe('untested');
+    // One version that passed all four is enough
+    expect(statusOf({ ...byVersion, refusal: { value: 'refused', evidence: [at('1.19.6')] } })).toBe('supported');
+    // Every configuration must pass all four in one version
+    const bothCases: ClientRecord = {
+      ...byCase,
+      approval: { value: 'varies', evidence: [], cases: [
+        { when: 'V1', value: 'G2', evidence: [at('1.19.6')] }, { when: 'V2', value: 'G1', evidence: [at('2.0.0')] }] },
+      refusal: { value: 'varies', evidence: [], cases: [
+        { when: 'V1', value: 'chat', evidence: [at('1.19.6')] }, { when: 'V2', value: 'refused', evidence: [at('2.0.0')] }] },
+    };
+    expect(statusOf(bothCases)).toBe('supported');
+    expect(statusOf({ ...bothCases, read: { value: 'works', evidence: [at('1.19.6')] } })).toBe('untested');
+  });
+
   it('a client is not possible yet only when no install route exists', () => {
     expect(statusOf({ ...byId('chatgpt'), install: { value: 'none', evidence: byId('chatgpt').install.evidence } })).toBe('unsupported');
     expect(statusOf(byId('chatgpt'))).toBe('untested');
@@ -138,7 +177,13 @@ describe('compatibility matrix', () => {
     const row = (id: string) => renderCompatibility([byId(id)]).split('\n').find(l => l.startsWith(`| ${byId(id).name} |`))!;
     expect(row('opencode')).toContain('| V2: G1 (src); V1: G2 (src) | V2: refused (src); V1: chat (src) |');
     expect(row('claude-code')).toContain('| stdio (`claude mcp add`): G1 (doc); plugin: G2 (doc) | stdio (`claude mcp add`): refused (doc); plugin: chat (doc) |');
-    expect(row('github-copilot')).toContain('| interactive: G1 (doc); Autopilot: ? | interactive: refused (doc); Autopilot: ? |');
+    // Autopilot gets the form (G1) but answers it itself: what that does to the write is unknown
+    expect(row('github-copilot')).toContain('| interactive: G1 (doc); Autopilot: G1 (doc) | interactive: refused (doc); Autopilot: ? |');
+    expect(row('github-copilot')).toContain('| `-p`: ?; Autopilot: ? |');
+    expect(casesOf(approvalOf(byId('github-copilot')))[1].note).toMatch(/instead of the human/);
+    // HTTP depends on whether the organization is in the static_headers beta
+    expect(row('claude-ai')).toContain('| org in the `static_headers` beta: bearer (doc); other organizations: oauth-only (doc) |');
+    expect(row('claude-desktop')).toContain('| org in the `static_headers` beta: ?; other organizations: oauth-only (doc) |');
     expect(row('grok-bot')).toContain('| Remote HTTPS: G2 (doc); cloud Command: ? | Remote HTTPS: chat (doc); cloud Command: ? |');
     expect(row('cline')).toContain('| VS Code: ?; CLI: expected (src) |');
     expect(row('claude-code')).toContain('| stdio (`claude mcp add`): config (doc); plugin: plugin (doc) |');
@@ -150,6 +195,7 @@ describe('compatibility matrix', () => {
     expect(cc).toEqual(['stdio (`claude mcp add`)=G1', 'plugin=G2']);
     expect(casesOf(approvalOf(byId('grok-bot')))[0]).toMatchObject({ when: 'Remote HTTPS', value: 'G2' });
     expect(renderCompatibility()).toContain('`telegram mcp --http` are G2 in every client');
+    expect(renderCompatibility()).toMatch(/Where write approval, refusal, headless and sandbox name no route/);
     // G1 means the client got the form, not that a human answered it
     expect(approvalOf(byId('codex')).note).toMatch(/auto_review/);
     expect(renderCompatibility()).toMatch(/The server checks the answer, not who gave it/);
@@ -188,12 +234,20 @@ describe('compatibility matrix', () => {
     expect(warp).toMatch(/CLI \(macOS\) `~\/\.warp_cli\/\.mcp\.json`/);
     expect(byId('aside').stdioEnv.value).toBe('unknown');
     expect(byId('hermes').elicitation.value).toBe('form+url');
+    // A Linux Flatpak build matches only the unknown case
+    expect(casesOf(byId('goose').gui).map(k => `${k.when}=${k.value}`)).toEqual(['Desktop on macOS, Linux without Flatpak=ok', 'Desktop on Windows, Linux Flatpak=unknown']);
     expect(casesOf(byId('cursor').headless).map(k => k.value)).toEqual(['refused', 'unknown']);
     expect(casesOf(byId('gemini-cli').headless).map(k => k.value)).toEqual(['refused', 'unknown']);
     expect(casesOf(byId('claude-code').headless).map(k => k.value)).toEqual(['refused', 'unknown']);
   });
 
   it('the update notice is unknown per client, and the note says when it can appear', () => {
+    // Not seeing the notice is an observation too: both values need a live run
+    for (const value of ['none', 'shown'] as const) {
+      const guess = { ...byId('codex'), update: { value, evidence: byId('codex').config.evidence } };
+      expect(validate([guess]).join('\n')).toMatch(new RegExp(`codex\\.update: "${value}" without a live entry`));
+      expect(validate([{ ...guess, update: { value, evidence: [LIVE] } }])).toEqual([]);
+    }
     const md = renderCompatibility();
     expect(md).toMatch(/\| Codex \|(?: [^|]+ \|){5} \? \|/);
     expect(md).toMatch(/never part of a tool result/);
