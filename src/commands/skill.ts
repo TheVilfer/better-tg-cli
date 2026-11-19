@@ -47,8 +47,12 @@ const status = new Command('status')
       return;
     }
     for (const r of rows) {
-      const state = r.state.kind === 'linked' ? `linked → ${r.state.target}` : r.state.kind;
+      const state = r.state.kind === 'linked' ? `linked → ${r.state.target}`
+        : r.state.kind === 'broken-link' ? `broken-link → ${r.state.target} (missing)` : r.state.kind;
       console.log(`${r.agent.id.padEnd(15)} ${(r.detected ? state : `${state}, agent not found`).padEnd(28)} ${r.path}`);
+      if (r.state.kind === 'broken-link') {
+        console.log(`${''.padEnd(15)} the link points at a folder that no longer exists: remove ${r.path}, then run telegram skill install -a ${r.agent.id}`);
+      }
     }
   });
 
