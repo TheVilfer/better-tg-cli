@@ -330,8 +330,10 @@ async function post(route, body) {
 }
 async function act(route, body, btn) {
   msg(''); if (btn) btn.disabled = true;
-  // Once done, a late answer to a click (or its loss) changes nothing: the server has moved on
-  try { await post(route, body); } catch (e) { if (step !== 'done') fail(e.code, e.detail, undefined, 'act', true); } finally { if (btn) btn.disabled = false; }
+  // The click belongs to the step it was made on. Once the page has moved past it (to the next step,
+  // or done), a late answer to it (or its loss) changes nothing: the state already shows the outcome
+  const at = step;
+  try { await post(route, body); } catch (e) { if (step === at) fail(e.code, e.detail, undefined, 'act', true); } finally { if (btn) btn.disabled = false; }
   // The state may hold more (the mode in effect after a store failure), and the next step
   await poll();
 }
@@ -358,11 +360,12 @@ async function poll() {
   // dropped for a moment. Say what to do and keep trying, so the page comes back by itself if the server does.
   // A click lost on the way stays lost while the server is still away (act() polls right after it)
   const away = () => fail('offline', '', undefined, 'net', !!(shown && shown.kind === 'net' && shown.sent));
-  try { res = await fetch(base + 'state', { cache: 'no-store' }); } catch { if (step !== 'done') away(); return; }
+  // Once polling has stopped (done, or an old link), a poll still on its way says nothing new,
+  // not even that it failed: no further poll would follow to take that back
+  try { res = await fetch(base + 'state', { cache: 'no-store' }); } catch { if (timer) away(); return; }
   // A body cut short: for a 200 the state may follow on the next try; an error status is the answer already
-  try { text = await res.text(); } catch { if (res.ok) { if (step !== 'done') away(); return; } }
-  // A poll sent before "done" and answered after it says nothing new
-  if (step === 'done') return;
+  try { text = await res.text(); } catch { if (res.ok) { if (timer) away(); return; } }
+  if (!timer) return;
   try { s = JSON.parse(text); } catch { /* a whole answer that is not JSON, or none: not the state */ }
   // An answer, but not the state: the server is there and says no (an old link, a wrong address)
   if (!res.ok || !s || typeof s.step !== 'string') {

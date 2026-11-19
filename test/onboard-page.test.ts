@@ -471,4 +471,62 @@ describe.each(LANGS)('the page in %s', lang => {
     expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: '' });
     expect(await page.tick()).toBe(false);
   });
+  /** A fetch whose answers the test hands out by hand, in any order */
+  const manual = () => {
+    const pending: { route: string; method: string; answer: (r: Response | Error) => void }[] = [];
+    const fetchImpl: typeof fetch = (input, init) => new Promise<Response>((resolve, reject) => {
+      pending.push({ route: String(input).split('/').pop()!, method: init?.method ?? 'GET', answer: r => r instanceof Error ? reject(r) : resolve(r) });
+    });
+    const next = async (route: string) => {
+      for (let i = 0; i < 100; i++) {
+        const k = pending.findIndex(p => p.route === route);
+        if (k >= 0) return pending.splice(k, 1)[0];
+        await new Promise(r => setTimeout(r, 1));
+      }
+      throw new Error(`no ${route} request`);
+    };
+    return { fetchImpl, next };
+  };
+  const settle = () => new Promise(r => setTimeout(r, 5));
+  const state = (s: object) => new Response(JSON.stringify(s), { status: 200 });
+
+  it('a password POST whose answer is lost after the page moved on to the mode says nothing about the mode', async () => {
+    const f = manual();
+    const page = openPage('http://127.0.0.1:1/s/x/', lang, f.fetchImpl);
+    // The poll the page sends as it loads
+    (await f.next('state')).answer(state({ step: 'password', hint: 'h' }));
+    await settle();
+    expect(page.visible()).toEqual(['password']);
+    const clicked = page.click('pwgo');
+    const pw = await f.next('password');
+    // The server took the password: the next poll shows the mode step
+    const tick = page.tick();
+    (await f.next('state')).answer(state({ step: 'mode', mode: 'ask' }));
+    await tick;
+    expect(page.visible()).toEqual(['mode']);
+    // Only now the answer to the password POST is lost
+    pw.answer(new TypeError('Failed to fetch'));
+    (await f.next('state')).answer(state({ step: 'mode', mode: 'ask' })); // act() polls after it
+    await clicked;
+    expect(page.visible()).toEqual(['mode']);
+    expect(page.msg().hidden).toBe(true);
+  });
+
+  for (const late of ['a dropped connection', 'a body cut short'] as const) {
+    it(`after an old link stopped polling, ${late} on a poll still on its way keeps the old-link text`, async () => {
+      const f = manual();
+      const page = openPage('http://127.0.0.1:1/s/x/', lang, f.fetchImpl);
+      // The poll the page sends as it loads, and a timer tick while it is still on its way
+      const ra = await f.next('state');
+      const b = page.tick();
+      const rb = await f.next('state');
+      ra.answer(new Response(new ReadableStream({ start(c) { c.error(new TypeError('network error')); } }), { status: 404 }));
+      await settle();
+      expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: '' });
+      rb.answer(late === 'a dropped connection' ? new TypeError('Failed to fetch') : cutOff());
+      await b;
+      expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: '' });
+      expect(await page.tick()).toBe(false);
+    });
+  }
 });
