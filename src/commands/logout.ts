@@ -22,7 +22,7 @@ export const logoutCommand = new Command('logout')
         result: { success: true },
       });
 
-      spinner.succeed(chalk.green('Logged out. Run "tg auth" to re-authenticate.'));
+      spinner.succeed(chalk.green('Logged out. To log in again, run "telegram onboard" (a person at their own terminal can use "telegram auth --qr").'));
     } catch (error) {
       auditLog({
         timestamp: new Date().toISOString(),

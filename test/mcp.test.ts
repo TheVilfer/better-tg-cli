@@ -301,7 +301,7 @@ describe('planCall', () => {
   it('refuses excluded, unknown, flag-first and unbounded calls', () => {
     expect(planCall('telegram_write', { args: ['auth'] })).toMatch(/not available over MCP/);
     expect(planCall('telegram_write', { args: ['transfer-owner', 'g', 'u'] })).toMatch(/not available/);
-    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/changed in a terminal/);
+    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/changed by the user, not over MCP.*telegram_setup/);
     expect(planCall('telegram_read', { args: ['write-access'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['--help'] })).toMatch(/command name/);
     expect(planCall('telegram_read', { args: ['nope'] })).toMatch(/Unknown command/);
@@ -364,7 +364,7 @@ describe.concurrent.each([
 
     expect(code).toBe(0);
     expect(lines.map(l => l.id)).toEqual([1, 2, 3, 4, 5, 6]); // in order, nothing for the notification
-    expect(lines[1].result.tools.map((t: any) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write']);
+    expect(lines[1].result.tools.map((t: any) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write', 'telegram_setup']);
     expect(lines[2].result.content[0].text).toMatch(/read <chat>/);
     // Unconfigured profile has no write access: the guard refuses, reported as a tool error
     expect(lines[3].result.isError).toBe(true);
@@ -414,7 +414,7 @@ describe.concurrent.each([
       }
       for (const l of lines) {
         expect(l.result.isError).toBe(true);
-        expect(l.result.content[0].text).toMatch(/not available over MCP|changed in a terminal|Unknown command/);
+        expect(l.result.content[0].text).toMatch(/not available over MCP|changed by the user|Unknown command/);
       }
       expect(readdirSync(home, { recursive: true })).toEqual([]);
     } finally {
