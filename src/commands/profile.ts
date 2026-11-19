@@ -7,6 +7,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail, usageError } from '../errors.js';
 
 export const setNameCommand = new Command('set-name')
   .description('Update your own first (and optional last) name')
@@ -26,9 +27,7 @@ export const setNameCommand = new Command('set-name')
       else console.log(chalk.green(`✓ Name updated to "${name}"`));
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to update name');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to update name');
     }
   });
 
@@ -48,9 +47,7 @@ export const setBioCommand = new Command('set-bio')
       else console.log(chalk.green('✓ Bio updated'));
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to update bio');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to update bio');
     }
   });
 
@@ -71,9 +68,7 @@ export const setUsernameCommand = new Command('set-username')
       else console.log(chalk.green(`✓ Username set to @${clean}`));
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to set username');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to set username');
     }
   });
 
@@ -82,12 +77,10 @@ export const setAvatarCommand = new Command('set-avatar')
   .argument('<path>', 'Path to an image file')
   .option('--json', 'Output as JSON')
   .action(async (path, options) => {
-    assertWriteEnabled();
+    // A local mistake first: a missing file never costs an approval
     const filePath = resolve(path);
-    if (!existsSync(filePath)) {
-      console.error(`File not found: ${filePath}`);
-      process.exit(1);
-    }
+    if (!existsSync(filePath)) fail(usageError(`File not found: ${filePath}`));
+    assertWriteEnabled();
     const spinner = ora('Uploading profile photo...').start();
     try {
       const client = await getClient();
@@ -98,8 +91,6 @@ export const setAvatarCommand = new Command('set-avatar')
       else console.log(chalk.green('✓ Profile photo updated'));
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to set profile photo');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to set profile photo');
     }
   });

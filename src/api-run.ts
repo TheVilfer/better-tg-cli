@@ -3,8 +3,8 @@ import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, mcpParamRefusal, 
 import { mcpApiAllowlistRefusal } from './mcp-api-allowlist.js';
 import { assertWriteEnabled } from './guard.js';
 import { auditLog } from './audit.js';
-import chalk from './colors.js';
 import ora from './spinner.js';
+import { CliError, EXIT, fail } from './errors.js';
 
 /**
  * One execution path for every raw TL call, shared by the generic `api` command and the generated
@@ -29,10 +29,7 @@ export async function runApiMethod(
   // when there is one, since such a method is refused in a terminal too.
   const refusal = apiRefusalReason(canonical, params) ?? mcpApiAllowlistRefusal(canonical) ?? mcpPaidStarsRefusal(canonical, params)
     ?? mcpParamRefusal(canonical, params);
-  if (refusal) {
-    console.error(chalk.red(refusal));
-    process.exit(1);
-  }
+  if (refusal) fail(new CliError(refusal, 'refused', EXIT.ERROR));
 
   // A read that may spend Stars (allowPaidStars) or add a view (increment) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
@@ -53,8 +50,6 @@ export async function runApiMethod(
     if (isWrite) {
       auditLog({ timestamp: new Date().toISOString(), command: auditCommand, target: canonical, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
     }
-    spinner.fail(`${canonical} failed`);
-    console.error(error instanceof Error ? error.message : error);
-    process.exit(1);
+    fail(error, spinner, `${canonical} failed`);
   }
 }

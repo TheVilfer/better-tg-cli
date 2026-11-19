@@ -1,21 +1,23 @@
 import { Command } from 'commander';
-import { getClient, getDialogs, disconnectClient } from '../client.js';
+import { getClient, getDialogs, disconnectClient, CHAT_TYPES, matchesChatType } from '../client.js';
 import type { ChatInfo } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { formatChats, truncate } from '../formatters/plain.js';
 import { formatChatsMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { choiceOption, nonNegativeInt, positiveInt } from '../args.js';
 
 export const chatsCommand = new Command('chats')
   .description('List chats (IDs first; use the ID in other commands)')
-  .option('-n, --limit <number>', 'Maximum number of chats', '100')
-  .option('--type <type>', 'Filter by type: user, group, supergroup, channel')
+  .option('-n, --limit <number>', 'Maximum number of chats', positiveInt, 100)
+  .addOption(choiceOption('--type <type>', 'Filter by type (user includes bots)', CHAT_TYPES))
   .option('-q, --query <text>', 'Only chats whose title or @username contains this text')
   .option('--unread', 'Only chats with unread messages')
   .option('--unmuted', 'Hide muted chats')
   .option('--archived', 'List the archive folder instead of the main list')
-  .option('--preview <chars>', 'Last-message preview length (0 = none)', '60')
+  .option('--preview <chars>', 'Last-message preview length (0 = none)', nonNegativeInt, 60)
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
   .action(async (options) => {
@@ -23,12 +25,12 @@ export const chatsCommand = new Command('chats')
 
     try {
       const client = await getClient();
-      const limit = parseInt(options.limit);
+      const limit = options.limit;
       const filtering = options.type || options.query || options.unread || options.unmuted;
       // Filters apply after fetching, so scan a wider window when filtering
       let chats = await getDialogs(client, filtering ? Math.max(limit, 500) : limit, { archived: options.archived });
 
-      if (options.type) chats = chats.filter(c => c.type === options.type);
+      if (options.type) chats = chats.filter(c => matchesChatType(c, options.type));
       if (options.query) {
         const q = options.query.toLowerCase();
         chats = chats.filter(c => c.title.toLowerCase().includes(q) || c.username?.toLowerCase().includes(q));
@@ -37,7 +39,7 @@ export const chatsCommand = new Command('chats')
       if (options.unmuted) chats = chats.filter(c => !c.muted);
       chats = chats.slice(0, limit);
 
-      const preview = parseInt(options.preview);
+      const preview = options.preview;
       const trimmed: ChatInfo[] = chats.map(c => ({
         ...c,
         lastMessage: preview > 0 && c.lastMessage ? truncate(c.lastMessage, preview) : undefined,
@@ -58,8 +60,6 @@ export const chatsCommand = new Command('chats')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch chats');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch chats');
     }
   });

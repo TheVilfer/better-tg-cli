@@ -6,6 +6,8 @@ import {
   kebabCase,
 } from '../generated-registry.js';
 import { methodSchema, namespaceSchema, allNamespacesSchema } from './generated.js';
+import { isTTY } from '../spinner.js';
+import { fail as report, usageError } from '../errors.js';
 
 /**
  * `telegram schema [<namespace> [<method>]]` — the machine-readable companion to `--help`. Prints
@@ -28,8 +30,9 @@ export const schemaCommand = new Command('schema')
     '  telegram schema ping                  a root-level method',
   ].join('\n'))
   .action((target: string[]) => {
-    const out = (obj: unknown) => console.log(JSON.stringify(obj, null, 2));
-    const fail = (msg: string) => { console.error(msg); process.exit(1); };
+    // Indented for a person at a terminal, one line for an agent or a pipe (as every --json output)
+    const out = (obj: unknown) => console.log(isTTY ? JSON.stringify(obj, null, 2) : JSON.stringify(obj));
+    const fail = (msg: string): never => report(usageError(msg, 'List what exists: telegram schema'));
 
     if (target.length === 0) return out(allNamespacesSchema());
 

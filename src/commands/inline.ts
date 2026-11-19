@@ -4,12 +4,14 @@ import { assertWriteEnabled } from '../guard.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const inlineCommand = new Command('inline')
   .description('Query an inline bot (like typing "@bot query" in Telegram); a write: the bot gets the query and your user ID')
   .argument('<bot>', 'Inline bot username (@bot)')
   .argument('<query>', 'The inline query text')
-  .option('-n, --limit <number>', 'Max results to show', '20')
+  .option('-n, --limit <number>', 'Max results to show', positiveInt, 20)
   .option('--json', 'Output as JSON')
   .action(async (bot, query, options) => {
     // The query and the user's ID go to an external bot, so it needs write access like a send
@@ -17,7 +19,7 @@ export const inlineCommand = new Command('inline')
     const spinner = ora(`Querying ${bot} "${query}"...`).start();
     try {
       const client = await getClient();
-      const result = await queryInlineBot(client, bot, query, parseInt(options.limit, 10));
+      const result = await queryInlineBot(client, bot, query, options.limit);
       spinner.stop();
       if (options.json) {
         console.log(formatJson(result));
@@ -33,8 +35,6 @@ export const inlineCommand = new Command('inline')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to query inline bot');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to query inline bot');
     }
   });

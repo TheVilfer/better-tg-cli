@@ -6,6 +6,7 @@ import { formatMessagesMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const scheduledCommand = new Command('scheduled')
   .description('List messages scheduled to send later in a chat (create them with `send --schedule`)')
@@ -33,8 +34,6 @@ export const scheduledCommand = new Command('scheduled')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch scheduled messages');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch scheduled messages');
     }
   });

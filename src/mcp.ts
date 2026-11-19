@@ -8,7 +8,7 @@ import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_STARS_REFUSAL
 import { isMcpApiAllowed, notOnMcpAllowlist } from './mcp-api-allowlist.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
 import { paramsOf } from './commands/generated.js';
-import { actionHash, createApproval, describeAction, readsStdin, STDIN_IN_APPROVAL_ENV } from './approval.js';
+import { actionHash, createApproval, describeAction, EXIT_NEEDS_APPROVAL, readsStdin, STDIN_IN_APPROVAL_ENV } from './approval.js';
 import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock } from './paths.js';
@@ -115,8 +115,8 @@ export function classifyCall(args: string[]): CallClass {
   if (NEVER_COMMANDS.has(cmd) && !resolveGeneratedCommand(args)) {
     return { group: 'never', reason: `"${cmd}" is not available over MCP; the user runs it in a terminal` };
   }
-  // MCP only shows the write mode; any argument would change it
-  if (cmd === 'write-access' && args.length > 1) {
+  // MCP only shows the write mode (as text or --json); any other argument would change it
+  if (cmd === 'write-access' && !args.slice(1).every(a => a === '--json')) {
     return { group: 'never', reason: 'Write access is changed in a terminal (`telegram write-access ask|on|off`), not over MCP' };
   }
   if (cmd === 'watch' && !args.some(a => /^(-t|-n|--timeout|--limit)(=|$)/.test(a))) {
@@ -237,7 +237,7 @@ export const TOOLS = [
     name: 'telegram_help',
     title: 'Telegram CLI reference',
     description: 'List telegram CLI commands and flags. Pass grep to filter (e.g. "thread", "search"). Call this before guessing flags.',
-    inputSchema: { type: 'object', properties: { grep: { type: 'string' } } },
+    inputSchema: { type: 'object', properties: { grep: { type: 'string', description: 'Only commands whose name, description or flags mention this word, e.g. "thread"' } } },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
@@ -250,7 +250,7 @@ export const TOOLS = [
       'A new public-post search (channels.SearchPosts) may use up the free daily search quota.',
     inputSchema: {
       type: 'object',
-      properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1 } },
+      properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'CLI argv, command first, one item per word: ["read","@user","-n","20"]' } },
       required: ['args'],
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
@@ -266,7 +266,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        args: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        args: { type: 'array', items: { type: 'string' }, minItems: 1, description: 'CLI argv, command first, one item per word: ["send","-1004001","-"] (text in stdin)' },
         stdin: { type: 'string', description: 'Text for a "-" argument (message body), avoids quoting issues' },
         approval: {
           type: 'string',
@@ -279,7 +279,12 @@ export const TOOLS = [
   },
 ];
 
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
+type ToolResult = {
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+  /** How the CLI ended: its exit code (0 ok, 1 runtime, 2 usage, 4 write disabled, 5 not logged in) and its stderr. */
+  structuredContent?: { exitCode: number; stderr?: string };
+};
 
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) });
 
@@ -363,10 +368,32 @@ export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   return env;
 }
 
-export function result(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
+/** Whether stdout is one JSON value (a --json result or error), to keep stderr out of it. */
+function isJson(out: string): boolean {
+  const t = out.trim();
+  if (!/^[[{]/.test(t)) return false;
+  try {
+    JSON.parse(t);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The tool result of one CLI run. Exported for tests. */
+export function cliResult(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
   if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out)}`, true);
-  if (code !== 0) return text(cap([err.trim(), out.trim()].filter(Boolean).join('\n')) || `exit ${code}`, true);
-  return text(cap(out.trimEnd() || err.trim() || '(no output)'));
+  // The approval result keeps its own shape (the approval flow owns it)
+  if (code === EXIT_NEEDS_APPROVAL) return text(cap([err.trim(), out.trim()].filter(Boolean).join('\n')) || `exit ${code}`, true);
+  const exitCode = code ?? 1;
+  // The exit code says what kind of failure it was; stderr (diagnostics such as the MOCK MODE
+  // banner) stays out of a JSON text, so the model can parse it
+  const structuredContent = { exitCode, ...(err.trim() ? { stderr: cap(err.trim()) } : {}) };
+  if (exitCode !== 0) {
+    const body = isJson(out) ? out.trim() : [err.trim(), out.trim()].filter(Boolean).join('\n');
+    return { ...text(cap(body) || `exit ${exitCode}`, true), structuredContent };
+  }
+  return { ...text(cap(out.trimEnd() || err.trim() || '(no output)')), structuredContent };
 }
 
 /** Claude Desktop runs extensions in an Electron utility process whose execPath is an app helper
@@ -395,7 +422,7 @@ function runChild(plan: Plan): Promise<ToolResult> {
     child.on('error', e => { clearTimeout(timer); resolve(text(`Failed to start the CLI: ${e.message}`, true)); });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      resolve(result(code, signal === 'SIGKILL', out, err));
+      resolve(cliResult(code, signal === 'SIGKILL', out, err));
     });
   });
 }
@@ -425,7 +452,7 @@ function runWorker(plan: Plan): Promise<ToolResult> {
       if (--pending) return;
       clearTimeout(timer);
       if (failure && !timedOut) err = [err, failure.message].filter(Boolean).join('\n');
-      resolve(result(failure && exitCode === 0 ? 1 : exitCode, timedOut, out, err));
+      resolve(cliResult(failure && exitCode === 0 ? 1 : exitCode, timedOut, out, err));
     };
     worker.stdout.on('end', done);
     worker.stderr.on('end', done);

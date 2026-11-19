@@ -12,7 +12,8 @@ code. This file only covers behaviour that the flag list can't tell you.
 - `--thread <id>` reads comments under a channel post, or replies to a message in a group.
   Channel comments live in the linked discussion group, so the output reports `threadChatId`.
   Reply there with `telegram reply <threadChatId> <commentId> ...`.
-- `--topic <id>` reads a forum topic. List topics with `telegram topics <chat>`.
+- `--topic <id>` reads a forum topic: a forum supergroup, or a bot that shows its chat as topics.
+  List topics with `telegram topics <chat>`. On any other chat it is `not_a_forum` (exit 2).
 - `--from` works with plain reads and threads. `search --from` needs `--chat`, because Telegram
   global search has no sender filter.
 - `get <chat> <ids...>` fetches exact messages. Missing IDs go to stderr in text mode, or to a
@@ -68,17 +69,27 @@ code. This file only covers behaviour that the flag list can't tell you.
 
 - Off a TTY (agents and pipes), output is compact: one line per item with the ID first, JSON on
   one line, and null or empty fields dropped. Set `TG_JSON_PRETTY=1` to indent JSON.
-- Message line format: `#id YYYY-MM-DD HH:MM Sender ↩replyTo 💬comments: [media] text`. Continuation lines
-  are indented. The sender is omitted when it is the chat itself, as in channel posts.
-- Chat line format: `id type [muted,archived] unread=N Title @username | preview`.
+- Message line format: `#id YYYY-MM-DD HH:MM [topic N] Sender ↩replyTo 💬comments: [media] text`.
+  Continuation lines are indented. The sender is omitted when it is the chat itself, as in channel
+  posts. Times are local; the `# Title (times in Europe/Berlin, UTC+1)` header names the zone.
+  `[topic N]` appears when a whole forum is read without `--topic`. A page with older messages
+  after it ends with `… more: --before <id>` (only when one was seen, never on the last page).
+- Chat line format: `id type [bot,muted,archived] unread=N Title @username | preview`. Bots have
+  type `user` and the flag `bot`; `--type bot` lists only bots, `--type user` still includes them.
+- Chat and user IDs are strings (`"-1004001"`), message IDs are numbers.
 - JSON shapes:
 
 | Command | Shape |
 |---|---|
 | `chats`, `contacts`, `members` | array |
-| `read`, `get` | `{chatTitle, messages[], threadChatId?, missing?}` |
-| `search` | array of `{chatTitle?, messages[]}`; global hits add `chatId` and `chatTitle` to each message |
-| `inbox` | `{totalUnread, chatsWithUnread, chats[]}` (totals cover all chats, `chats` is cut to `-n`) |
+| `read`, `get` | `{chatTitle, messages[], chatId, threadChatId?, missing?, hasMore?, nextBefore?}`; `hasMore` only when an older message was seen, and `nextBefore` goes to `--before` for that page; an empty `--unread` page still has `chatTitle` and `chatId`; in a forum each message has `topicId` |
+| `search` | array of `{chatTitle?, chatId?, messages[], hasMore?}`; every message has `id` and `chatId`, global hits also `chatTitle`; `hasMore`: there are results past `-n` |
+| `send`, `reply`, `send-file`, `edit`, `delete`, `react`, `pin`, `unpin` | `{ok: true, action, chatId, chatTitle, messageId \| messageIds, …}` plus the older fields of each command |
+| `forward` | `{ok: true, action, chatId, chatTitle, fromChatId, messageIds, forwardedIds, count, …}`: `messageIds` are the **source** IDs (in `fromChatId`); `forwardedIds` are the copies in `chatId`, use them to reply or edit |
+| `mark-read` | `{ok: true, action, chatId, chatTitle, chat, read: true}` (no message ID) |
+| `check`, `write-access` | object with `writeMode` (`read-only`, `ask`, `on`); `check` adds `configured`, `authenticated`, `account` |
+| `sync` | `{output, added, chats: [{chatId, title, file, added, lastId}], failed?: [{chatId, title, code, error}]}`; any failed chat makes the exit code 1 |
+| `inbox` | `{totalUnread, chatsWithUnread, chats[]}` (totals cover all chats, `chats` is cut to `-n`; `-n 0` gives the totals only) |
 | `info` | object |
 | `topics` | `{chatTitle, topics[]}` |
 
@@ -377,7 +388,12 @@ method's `--help` lists its own "Common errors" when the docs provide them.
     (`["account","delete-account","--help"]`) — help prints, it never executes the method. Add no
     other args: with extra args (`["send","@x","--","--help"]`) the call is classified normally.
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
-    Showing its status is allowed (a generated `auth.*` method is refused, not run).
+    Showing its status is a read: `["write-access"]` or `["write-access","--json"]` (a generated
+    `auth.*` method is refused, not run).
+- **Results:** the text is the CLI's stdout; when that is one JSON value (a `--json` result or
+  error) it is the whole text, and stderr (diagnostics such as the mock banner) stays out of it.
+  `structuredContent` carries `{exitCode, stderr?}`, so a failure keeps its kind (1 runtime, 2 usage,
+  4 write access off, 5 not logged in). The approval result (exit 3) is unchanged.
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
 - **Execution:** each call is a separate CLI process with no stdin (a worker thread inside Claude
@@ -392,13 +408,48 @@ method's `--help` lists its own "Common errors" when the docs provide them.
 ## Chat identifiers
 
 `me` / `self` / `saved` / `Saved Messages` / `Избранное` → your Saved Messages. A numeric ID must
-exactly match a dialog ID (the `id` from `chats`). `@username` resolves exactly. Anything else
-matches titles.
+exactly match a dialog ID (the `id` from `chats`). `@username` resolves exactly, and so does a link:
+`https://t.me/name`, `t.me/name/123`, `t.me/c/<id>/…` (a private channel by ID) and
+`tg://resolve?domain=name` are never matched against titles. An invite link (`t.me/+…`) is refused
+(exit 2): join it first. Anything else matches titles.
 
-- **Reads:** an exact title first, then a substring.
+- **Reads:** an exact title, or a substring that only one title contains. A substring of several
+  titles, or a title shared by several chats, is refused (exit 2) with the candidates, as for writes.
 - **Writes** (every command gated by write access) accept only an exact, unique title. A substring
-  or a title shared by several chats is refused with up to 5 candidates (`id type title @username`).
+  or a title shared by several chats is refused with up to 5 candidates (`id type title`).
   Retry with the ID.
+- **Unique means the whole list.** A title is matched against every dialog: when the first 500 are
+  a full page, the list is read on, up to 5000. Past that a title is never proven unique and is
+  refused with `ambiguous_or_unverified` (exit 2): use the ID or @username.
+- A chat that is not found exits 1 with the closest titles; its `hint` is the argv of the command
+  that lists matching chats, `["chats","-q",<text>,"--preview","0"]` (in text, a quoted command).
+
+## Errors and exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | runtime error: Telegram refused, network, chat or message not found |
+| 2 | usage: unknown option, a value that does not parse, an ambiguous chat name |
+| 3 | write approval needed (mode `ask`) |
+| 4 | write access is disabled (`telegram write-access ask`) |
+| 5 | not logged in, or the session ended (`telegram onboard`) |
+
+With `--json` stdout always holds exactly one JSON object, the result or an error (questions to the
+user go to stderr). An error is `{"error":{"code","message","hint"?,"candidates"?,
+"retryAfterSeconds"?}}`; `code` is stable (`chat_not_found`, `ambiguous_chat`,
+`ambiguous_or_unverified`, `not_a_forum`, `invalid_argument`, `usage`, `write_disabled`,
+`not_configured`, `session_expired`, `network`, `flood_wait`, `telegram_rpc` …). `hint` is prose,
+or an argv array of a `telegram` command built from your own text: run it as is, never through a
+shell. Candidates are `{id, title, type}`. Exit 3 keeps its own line,
+`{"error":"approval_required",…}`. A bad number or value never becomes a default or an empty
+result: it exits 2 before anything is sent (and before an approval is asked for). Numbers are
+limited to Telegram's 32-bit range; a time or duration that computes to no real date is refused.
+
+Telegram ending the session (`AUTH_KEY_UNREGISTERED`, `SESSION_REVOKED`, `SESSION_EXPIRED`,
+`USER_DEACTIVATED` …) is `session_expired`, exit 5, whether at connect or on a later call; a network
+failure (`network`) or a rate limit (`flood_wait`, with `retryAfterSeconds`) is exit 1, so retry
+those instead of logging in again.
 
 ## Troubleshooting
 

@@ -4,6 +4,8 @@ import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
 import { connectClient, transportSetting } from './transport.js';
 import { isStrictChatResolution } from './resolve-mode.js';
+import { CliError, EXIT, formatCandidates, sessionEndedBy, shellCommand, usageError } from './errors.js';
+import type { ChatCandidate } from './errors.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
 import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
@@ -34,7 +36,7 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   // (a second read after the 1 s cache could see something else or fail)
   const config = snapshot ?? loadConfig(() => {});
   if (!isConfigured(config)) {
-    throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
+    throw new CliError('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.', 'not_configured', EXIT.NOT_LOGGED_IN);
   }
 
   const { apiId, apiHash } = getCredentials(config);
@@ -52,16 +54,30 @@ export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
     { setting: transportSetting(undefined, config) },
   );
 
-  if (!await clientInstance.isUserAuthorized()) {
-    const invited = config.credentialSource === 'invite';
-    throw new Error(
-      invited
-        ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'
-        : 'Not authenticated. Run "telegram onboard" or "telegram auth --qr" to log in.'
-    );
-  }
+  await checkSession(clientInstance, config.credentialSource === 'invite');
 
   return clientInstance;
+}
+
+/**
+ * Whether the saved login still works, by the reason a probe fails: an auth error (the session was
+ * revoked, expired, its key dropped) is "log in again", exit 5; anything else (no network,
+ * FLOOD_WAIT) is thrown as it is and keeps its own code. teleproto's isUserAuthorized() is not
+ * used: it answers false for any failure, a dropped connection included.
+ */
+export async function checkSession(client: Pick<TelegramClient, 'invoke'>, invited = false): Promise<void> {
+  try {
+    await client.invoke(new Api.updates.GetState());
+  } catch (error) {
+    const ended = sessionEndedBy(error);
+    if (!ended) throw error;
+    throw new CliError(
+      invited
+        ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'
+        : 'Not authenticated. Run "telegram onboard" or "telegram auth --qr" to log in.',
+      'session_expired', EXIT.NOT_LOGGED_IN,
+    );
+  }
 }
 
 export async function createClient(apiId: number, apiHash: string): Promise<TelegramClient> {
@@ -86,6 +102,7 @@ export async function disconnectClient(): Promise<void> {
   }
   resolvedChatCache.clear();
   dialogsCache = null;
+  allDialogsCache = null;
 }
 
 // Cache resolved chat entities by identifier (normalized) to avoid re-fetching
@@ -96,12 +113,34 @@ const resolvedChatCache = new Map<string, ResolvedEntity>();
 // must not refetch the full dialog list for every chat.
 let dialogsCache: ReturnType<TelegramClient['getDialogs']> | null = null;
 
+/** One page of dialogs: enough for IDs and most accounts. */
+export const DIALOG_PAGE = 500;
+/** How far a title lookup reads before it gives up proving a title unique. */
+export const DIALOG_MAX = 5000;
+
 function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['getDialogs']> {
   if (!dialogsCache) {
-    dialogsCache = client.getDialogs({ limit: 500 });
+    dialogsCache = client.getDialogs({ limit: DIALOG_PAGE });
     dialogsCache.catch(() => { dialogsCache = null; });
   }
   return dialogsCache;
+}
+
+let allDialogsCache: Promise<{ dialogs: Dialogs; complete: boolean }> | null = null;
+
+/**
+ * The dialog list a title is matched against, and whether it is the whole list. A full first page
+ * may be cut: a chat with the same title can sit beyond it, so the list is read on (once per
+ * process) up to DIALOG_MAX dialogs. Past that a title is never proven unique.
+ */
+async function dialogsForTitles(client: TelegramClient): Promise<{ dialogs: Dialogs; complete: boolean }> {
+  const first = await getDialogsCached(client);
+  if (first.length < DIALOG_PAGE) return { dialogs: first, complete: true };
+  if (!allDialogsCache) {
+    allDialogsCache = client.getDialogs({ limit: DIALOG_MAX }).then(dialogs => ({ dialogs, complete: dialogs.length < DIALOG_MAX }));
+    allDialogsCache.catch(() => { allDialogsCache = null; });
+  }
+  return allDialogsCache;
 }
 
 function cacheKey(identifier: string): string {
@@ -116,10 +155,20 @@ export async function getMe(client: TelegramClient): Promise<Api.User> {
   return me;
 }
 
+/** Values of `--type` in chats and inbox: the chat types plus "bot" (users that are bots). */
+export const CHAT_TYPES = ['user', 'bot', 'group', 'supergroup', 'channel'] as const;
+
+/** Whether a chat passes `--type`: "user" keeps its old meaning (bots included), "bot" only bots. */
+export function matchesChatType(chat: Pick<ChatInfo, 'type' | 'bot'>, type: string): boolean {
+  return type === 'bot' ? chat.type === 'user' && !!chat.bot : chat.type === type;
+}
+
 export interface ChatInfo {
   id: string;
   title: string;
   type: 'user' | 'group' | 'supergroup' | 'channel';
+  /** A bot account (type stays "user"); `--type bot` lists only these. */
+  bot?: boolean;
   username?: string;
   unreadCount: number;
   lastMessage?: string;
@@ -143,11 +192,13 @@ export async function getDialogs(
     let type: ChatInfo['type'] = 'user';
     let title = dialog.title || 'Unknown';
     let username: string | undefined;
+    let bot: boolean | undefined;
 
     if (dialog.isUser) {
       type = 'user';
       const entity = dialog.entity as Api.User;
       username = entity.username ?? undefined;
+      bot = entity.bot || undefined;
     } else if (dialog.entity instanceof Api.Channel) {
       // Check Channel first: GramJS reports megagroups as isGroup too
       type = dialog.entity.megagroup ? 'supergroup' : 'channel';
@@ -160,6 +211,7 @@ export async function getDialogs(
       id: dialog.id?.toString() || '',
       title,
       type,
+      bot,
       username,
       unreadCount: dialog.unreadCount,
       lastMessage: dialog.message instanceof Api.Message ? messageText(dialog.message) : undefined,
@@ -213,7 +265,7 @@ export type ButtonType =
   | 'unknown';
 
 export interface ButtonInfo {
-  /** 1-based flat index across all rows (what the user passes to `tg click`). */
+  /** 1-based flat index across all rows (what the user passes to `telegram click`). */
   index: number;
   row: number;
   col: number;
@@ -252,6 +304,8 @@ export interface MessageInfo {
   chatTitle?: string;
   /** Comment/reply count for channel posts and thread roots. */
   replies?: number;
+  /** Forum topic of the message (1 = General), set when a whole forum is read without --topic. */
+  topicId?: number;
   /** Opt-in (`--full`): every other useful field of the Message. Absent in default output. */
   full?: MessageFull;
 }
@@ -620,25 +674,7 @@ function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
   return undefined;
 }
 
-export function parseTimeOffset(offset: string): Date {
-  const now = new Date();
-  const match = offset.match(/^(\d+)([mhdw])$/);
-  if (!match) {
-    // Absolute dates: "2026-09-01", "2026-09-01T12:00"
-    const abs = Date.parse(offset);
-    if (!Number.isNaN(abs)) return new Date(abs);
-    throw new Error(`Invalid time: ${offset}. Use "30m", "1h", "7d", "2w" or a date like "2026-09-01"`);
-  }
-  const value = parseInt(match[1]);
-  const unit = match[2];
-  switch (unit) {
-    case 'm': return new Date(now.getTime() - value * 60 * 1000);
-    case 'h': return new Date(now.getTime() - value * 60 * 60 * 1000);
-    case 'd': return new Date(now.getTime() - value * 24 * 60 * 60 * 1000);
-    case 'w': return new Date(now.getTime() - value * 7 * 24 * 60 * 60 * 1000);
-    default: throw new Error(`Unknown time unit: ${unit}`);
-  }
-}
+export { parseTimeOffset } from './time.js';
 
 /** Convert a raw message into the CLI's MessageInfo shape. Pass `full` to attach MessageFull. */
 export async function toMessageInfo(client: TelegramClient, msg: Api.Message, opts: { full?: boolean } = {}): Promise<MessageInfo> {
@@ -831,21 +867,31 @@ export interface GetMessagesOptions {
   from?: string;
   /** Read the replies thread of this message (channel post comments or a forum topic ID). */
   thread?: number;
+  /** `thread` is a forum topic: refuse a chat that is not a forum instead of reading an empty thread. */
+  topic?: boolean;
   /** Attach MessageFull to each message (the `--full` flag). */
   full?: boolean;
+  /** Look for one message past `limit`, so `hasMore` is known, never guessed from a full page. */
+  probe?: boolean;
 }
 
 export async function getMessages(
   client: TelegramClient,
   chatIdentifier: string,
   options: GetMessagesOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; threadChatId?: string }> {
-  const { limit = 50, offsetId, minDate, maxDate, minId, from, thread, full } = options;
+): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; threadChatId?: string; forum?: boolean; hasMore?: boolean }> {
+  const { offsetId, minDate, maxDate, minId, from, thread, full } = options;
+  const wanted = options.limit ?? 50;
+  // With probe: one more than asked; finding it proves there is a next page
+  const limit = options.probe ? wanted + 1 : wanted;
   let threadChatId: string | undefined;
 
   // Find the chat by name or username
   const entity = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(entity);
+  const chatId = utils.getPeerId(entity).toString();
+  const forum = hasTopics(entity);
+  if (options.topic && !forum) throw notAForum(entity);
   const fromUser = from ? await resolveChat(client, from) : undefined;
 
   const messages: MessageInfo[] = [];
@@ -910,7 +956,10 @@ export async function getMessages(
       }
       if (messages.length >= limit) break;
 
-      messages.push(await toMessageInfo(client, msg, { full }));
+      const info = await toMessageInfo(client, msg, { full });
+      // A whole forum mixes its topics: label each message with its own
+      if (forum && !thread) info.topicId = msg.replyTo?.forumTopic ? (msg.replyTo.replyToTopId ?? msg.replyTo.replyToMsgId ?? 1) : 1;
+      messages.push(info);
     }
 
     if (reachedMinDate) break;
@@ -935,7 +984,9 @@ export async function getMessages(
     if (batch.length < batchLimit) break;
   }
 
-  return { messages, chatTitle, threadChatId };
+  const hasMore = messages.length > wanted;
+  if (hasMore) messages.length = wanted;
+  return { messages, chatTitle, chatId, threadChatId, ...(forum ? { forum } : {}), ...(options.probe ? { hasMore } : {}) };
 }
 
 /** Fetch specific messages by ID (missing/deleted IDs are skipped). */
@@ -944,7 +995,7 @@ export async function getMessagesByIds(
   chatIdentifier: string,
   ids: number[],
   options: { full?: boolean } = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; missing: number[] }> {
+): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; missing: number[] }> {
   const entity = await resolveChat(client, chatIdentifier);
   const raw = await client.getMessages(entity, { ids });
   const messages: MessageInfo[] = [];
@@ -955,7 +1006,7 @@ export async function getMessagesByIds(
       found.add(msg.id);
     }
   }
-  return { messages, chatTitle: getChatTitle(entity), missing: ids.filter(id => !found.has(id)) };
+  return { messages, chatTitle: getChatTitle(entity), chatId: utils.getPeerId(entity).toString(), missing: ids.filter(id => !found.has(id)) };
 }
 
 export async function downloadMessageMedia(
@@ -1130,13 +1181,13 @@ export async function searchMessages(
   client: TelegramClient,
   query: string,
   options: SearchOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle?: string }[]> {
+): Promise<{ messages: MessageInfo[]; chatTitle?: string; chatId?: string; hasMore?: boolean }[]> {
   const { chat, limit = 50, minDate, maxDate, from, type, full } = options;
   if (type && !SEARCH_FILTERS[type]) {
-    throw new Error(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
+    throw usageError(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
   }
   if (from && !chat) {
-    throw new Error('--from needs --chat (Telegram global search cannot filter by sender)');
+    throw usageError('--from needs --chat (Telegram global search cannot filter by sender)');
   }
   const filter = type ? SEARCH_FILTERS[type]() : new Api.InputMessagesFilterEmpty();
   const minTs = minDate ? Math.floor(minDate.getTime() / 1000) : 0;
@@ -1156,7 +1207,7 @@ export async function searchMessages(
         maxDate: maxTs,
         offsetId: 0,
         addOffset: 0,
-        limit,
+        limit: limit + 1,
         maxId: 0,
         minId: 0,
         hash: bigInt(0),
@@ -1164,12 +1215,14 @@ export async function searchMessages(
     );
 
     const messages: MessageInfo[] = [];
+    // Every result carries its chat ID, as in global search, so a reply needs no second lookup
+    const chatId = utils.getPeerId(entity).toString();
     if ('messages' in res) {
-      for (const msg of res.messages) {
-        if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg, { full }));
+      for (const msg of res.messages.slice(0, limit)) {
+        if (msg instanceof Api.Message) messages.push({ ...(await toMessageInfo(client, msg, { full })), chatId });
       }
     }
-    return [{ messages, chatTitle: getChatTitle(entity) }];
+    return [{ messages, chatTitle: getChatTitle(entity), chatId, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) }];
   }
 
   // Global search: results span chats, so tag each message with its chat
@@ -1182,13 +1235,13 @@ export async function searchMessages(
       offsetRate: 0,
       offsetPeer: new Api.InputPeerEmpty(),
       offsetId: 0,
-      limit,
+      limit: limit + 1,
     })
   );
 
   const messages: MessageInfo[] = [];
   if ('messages' in res) {
-    for (const msg of res.messages) {
+    for (const msg of res.messages.slice(0, limit)) {
       if (!(msg instanceof Api.Message)) continue;
       const info = await toMessageInfo(client, msg, { full });
       info.chatId = utils.getPeerId(msg.peerId).toString();
@@ -1196,7 +1249,18 @@ export async function searchMessages(
       messages.push(info);
     }
   }
-  return [{ messages }];
+  return [{ messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) }];
+}
+
+/**
+ * Whether a search has results past the first `limit`: the extra one asked for came back, or the
+ * exact total says so (the server may cap a page below limit + 1). A full page alone proves nothing.
+ */
+function searchHasMore(res: object, limit: number): boolean {
+  const r = res as { messages?: unknown[]; count?: unknown; inexact?: unknown };
+  const got = r.messages?.length ?? 0;
+  if (got > limit) return true;
+  return typeof r.count === 'number' && !r.inexact && r.count > got;
 }
 
 export async function sendMessage(
@@ -1427,6 +1491,15 @@ export async function getAdminGroups(client: TelegramClient): Promise<ChatInfo[]
 
 export type ResolvedEntity = Api.User | Api.Chat | Api.Channel;
 
+/**
+ * Whether a chat has forum topics: a forum supergroup, or the private chat with a bot that shows
+ * its chats as topics (botForumView); the topic methods take either peer.
+ */
+export function hasTopics(entity: ResolvedEntity): boolean {
+  if (entity instanceof Api.Channel) return !!entity.forum;
+  return entity instanceof Api.User && !!entity.bot && !!entity.botForumView;
+}
+
 export async function resolveChat(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
   const key = `${isStrictChatResolution() ? 'strict:' : ''}${cacheKey(identifier)}`;
   const cached = resolvedChatCache.get(key);
@@ -1446,17 +1519,27 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     return await client.getMe();
   }
 
+  // A t.me link names its chat exactly: never a title search ("Team https://t.me/x" titles)
+  const link = parseChatLink(identifier);
+  if (link?.invite) {
+    throw usageError(`${identifier} is an invite link; it does not name a chat you can read or write`,
+      'Join it first (telegram join <link>), then use the chat ID from telegram chats.');
+  }
+  if (link?.id) identifier = link.id;
+
   // Check if it's a username (starts with @)
-  if (identifier.startsWith('@')) {
-    const entity = await client.getEntity(identifier);
+  const username = link?.username ? `@${link.username}` : identifier.startsWith('@') ? identifier : undefined;
+  if (username) {
+    const entity = await client.getEntity(username);
     if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
       return entity;
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   }
 
-  const dialogs = await getDialogsCached(client);
   const isNumericId = /^-?\d+$/.test(identifier);
+  // IDs are matched in the first page (then asked of Telegram); titles need the whole list
+  const { dialogs, complete } = isNumericId ? { dialogs: await getDialogsCached(client), complete: true } : await dialogsForTitles(client);
 
   let dialog;
   if (isNumericId) {
@@ -1465,23 +1548,39 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
   } else {
     const needle = identifier.trim().toLowerCase();
     const exact = dialogs.filter(d => d.title?.trim().toLowerCase() === needle);
-    if (isStrictChatResolution()) {
-      // Writes: exactly one exact title, or refuse with the candidates
-      if (exact.length > 1) {
-        throw new Error(`"${identifier}" matches ${exact.length} chats; use an ID:\n${describeCandidates(exact)}`);
+    // Never a silent pick between several chats: the caller would act on (or report) the wrong one
+    if (exact.length > 1) {
+      throw new CliError(`"${identifier}" matches ${exact.length} chats; use an ID`, 'ambiguous_chat', EXIT.USAGE, {
+        candidates: chatCandidates(exact), hint: 'Run the command again with one of these IDs.',
+        text: `"${identifier}" matches ${exact.length} chats; use an ID:\n${describeCandidates(exact)}`,
+      });
+    }
+    dialog = exact[0];
+    if (!dialog) {
+      const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
+      if (isStrictChatResolution() && partial.length) {
+        // Writes: exactly one exact title, or refuse with the candidates
+        throw new CliError(`No chat is titled exactly "${identifier}"; writes need an ID, @username or the exact title`, 'chat_not_exact', EXIT.USAGE, {
+          candidates: chatCandidates(partial), hint: 'Run the command again with one of these IDs.',
+          text: `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial)}`,
+        });
       }
-      dialog = exact[0];
-      if (!dialog) {
-        const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
-        if (partial.length) {
-          throw new Error(
-            `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial)}`,
-          );
-        }
+      // Reads: one partial match is fine, several are a question for the caller
+      if (partial.length > 1) {
+        throw new CliError(`"${identifier}" is part of ${partial.length} chat titles; use an ID or the exact title`, 'ambiguous_chat', EXIT.USAGE, {
+          candidates: chatCandidates(partial), hint: 'Run the command again with one of these IDs.',
+          text: `"${identifier}" is part of ${partial.length} chat titles; use an ID or the exact title:\n${describeCandidates(partial)}`,
+        });
       }
-    } else {
-      // Reads: exact title first, then partial match
-      dialog = exact[0] ?? dialogs.find(d => d.title?.toLowerCase().includes(needle));
+      dialog = partial[0];
+    }
+    // One match in a cut list proves nothing: another chat beyond the cut may have the same title
+    if (dialog && !complete) {
+      const matched = exact.length ? exact : [dialog];
+      throw new CliError(`"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title; use an ID or @username`, 'ambiguous_or_unverified', EXIT.USAGE, {
+        candidates: chatCandidates(matched), hint: 'Run the command again with this ID, or with the chat\'s @username.',
+        text: `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title. Use an ID or @username:\n${describeCandidates(matched)}`,
+      });
     }
   }
 
@@ -1500,18 +1599,94 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   } catch {
-    throw new Error(`Chat not found: ${identifier}`);
+    throw chatNotFound(identifier, dialogs);
   }
 }
 
-function describeCandidates(dialogs: Awaited<ReturnType<TelegramClient['getDialogs']>>): string {
-  const lines = dialogs.slice(0, 5).map(d => {
-    const kind = d.isUser ? 'user' : d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
-    const username = (d.entity as { username?: string } | undefined)?.username;
-    return `  ${d.id} ${kind} ${d.title}${username ? ` @${username}` : ''}`;
+type Dialogs = Awaited<ReturnType<TelegramClient['getDialogs']>>;
+
+function dialogKind(d: Dialogs[number]): string {
+  if (d.isUser) return (d.entity as Api.User | undefined)?.bot ? 'bot' : 'user';
+  return d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
+}
+
+/** Candidates show only what tells chats apart: ID, title, type (never a @username). */
+function chatCandidates(dialogs: Dialogs, max = 5): ChatCandidate[] {
+  return dialogs.slice(0, max).map(d => ({ id: String(d.id), title: d.title ?? '', type: dialogKind(d) }));
+}
+
+/**
+ * What a t.me link (or tg://resolve) names: a public @username, a private channel by its ID
+ * (t.me/c/<id>/…), or an invite. Anything that is not a link is undefined.
+ */
+export function parseChatLink(text: string): { username?: string; id?: string; invite?: boolean } | undefined {
+  const value = text.trim();
+  const tg = /^tg:\/\/resolve\?(?:.*&)?domain=([A-Za-z0-9_]{4,})/i.exec(value);
+  if (tg) return { username: tg[1] };
+  const m = /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/(.+)$/i.exec(value);
+  if (!m) return undefined;
+  const path = m[1].split(/[?#]/)[0].replace(/\/+$/, '');
+  if (/^(\+|joinchat\/)/i.test(path)) return { invite: true };
+  const priv = /^c\/(\d+)(?:\/\d+)*$/i.exec(path);
+  if (priv) return { id: `-100${priv[1]}` };
+  const user = /^(?:s\/)?([A-Za-z][A-Za-z0-9_]{3,})(?:\/\d+)*$/.exec(path);
+  return user ? { username: user[1] } : undefined;
+}
+
+function describeCandidates(dialogs: Dialogs): string {
+  return formatCandidates(chatCandidates(dialogs), dialogs.length);
+}
+
+/** Edit distance, for "did you mean" (titles are short, so the quadratic table is fine). */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/** "Chat not found" with the closest titles (by the whole title or one of its words) and the next command. */
+function chatNotFound(identifier: string, dialogs: Dialogs): CliError {
+  const needle = identifier.trim().replace(/^@/, '').toLowerCase();
+  const limit = Math.max(1, Math.floor(needle.length / 3));
+  const scored = dialogs
+    .map(d => {
+      const title = (d.title ?? '').toLowerCase();
+      const words = [title, ...title.split(/\s+/)].filter(Boolean);
+      return { d, score: Math.min(...words.map(w => editDistance(needle, w))) };
+    })
+    .filter(x => needle && x.score <= limit)
+    .sort((a, b) => a.score - b.score);
+  const candidates = chatCandidates(scored.map(x => x.d));
+  // An argv, not a shell line: the text came from the caller. --preview 0: titles, no message text
+  const hint = ['chats', '-q', identifier, '--preview', '0'];
+  return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
+    candidates, hint,
+    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', `List matching chats: ${shellCommand(hint)}`].filter(Boolean).join('\n'),
   });
-  if (dialogs.length > 5) lines.push(`  … and ${dialogs.length - 5} more`);
-  return lines.join('\n');
+}
+
+/**
+ * The chat an identifier resolves to (cached after the command's own call): its ID and title.
+ * `topic`: the caller reads a forum topic, so a chat without topics is refused as getMessages does.
+ */
+export async function chatRef(client: TelegramClient, identifier: string, options: { topic?: boolean } = {}): Promise<{ chatId: string; chatTitle: string }> {
+  const entity = await resolveChat(client, identifier);
+  if (options.topic && !hasTopics(entity)) throw notAForum(entity);
+  return { chatId: utils.getPeerId(entity).toString(), chatTitle: getChatTitle(entity) };
+}
+
+function notAForum(entity: ResolvedEntity): CliError {
+  return new CliError(`${getChatTitle(entity)} (${utils.getPeerId(entity)}) is not a forum, so it has no topics`, 'not_a_forum', EXIT.USAGE, {
+    hint: 'Read it without --topic; for the comments of one message use --thread <id>.',
+  });
 }
 
 function getChatTitle(entity: ResolvedEntity): string {
@@ -1550,6 +1725,10 @@ export function parseDuration(duration: string): { seconds: number; isForever: b
     default: throw new Error(`Unknown duration unit: ${unit}`);
   }
 
+  // Telegram takes the end as an int of Unix seconds: a longer one would wrap to some other date
+  if (!Number.isSafeInteger(seconds) || Math.floor(Date.now() / 1000) + seconds > MAX_INT32) {
+    throw new Error(`Duration ${duration} is too long; use "forever" for no end`);
+  }
   return { seconds, isForever: false };
 }
 
@@ -2024,7 +2203,7 @@ export async function forwardMessages(
   msgIds: number[],
   toChat: string,
   options: { silent?: boolean; dropAuthor?: boolean } = {}
-): Promise<{ count: number; fromTitle: string; toTitle: string }> {
+): Promise<{ count: number; fromTitle: string; toTitle: string; forwardedIds: number[] }> {
   const from = await resolveChat(client, fromChat);
   const to = await resolveChat(client, toChat);
 
@@ -2048,9 +2227,10 @@ export async function forwardMessages(
   }
 
   // forwardMessages throws if the forward fails; on success every requested id
-  // was forwarded. The returned array under-reports (a GramJS quirk), so we
-  // report the requested count instead.
-  await client.forwardMessages(to, {
+  // was forwarded. The returned array under-reports (a GramJS quirk), so the
+  // count is the requested one; forwardedIds are only the copies Telegram's
+  // answer confirms (their IDs in the destination chat).
+  const sent = await client.forwardMessages(to, {
     messages: msgIds,
     fromPeer: from,
     silent: options.silent,
@@ -2061,6 +2241,7 @@ export async function forwardMessages(
     count: msgIds.length,
     fromTitle: getChatTitle(from),
     toTitle: getChatTitle(to),
+    forwardedIds: (sent ?? []).filter((m): m is Api.Message => m instanceof Api.Message).map(m => m.id),
   };
 }
 
@@ -2236,7 +2417,10 @@ async function pressButton(
   const match = findRawButton(markup, layout, selector);
   if (!match) {
     const label = selector.index != null ? `#${selector.index}` : selector.dataBase64 != null ? `data ${selector.dataBase64}` : `"${selector.text}"`;
-    throw new Error(`Button ${label} not found on message #${msgId}`);
+    const available = layout.rows.flat().map(b => `[${b.index}] ${b.text || '(no label)'}`).join(', ');
+    throw new CliError(`Button ${label} not found on message #${msgId}`, 'button_not_found', EXIT.ERROR, {
+      hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
+    });
   }
 
   const { raw, info } = match;
@@ -3084,8 +3268,8 @@ export async function getForumTopics(
   options: { limit?: number; query?: string } = {}
 ): Promise<{ chatTitle: string; topics: ForumTopicInfo[] }> {
   const entity = await resolveChat(client, chatIdentifier);
-  if (!(entity instanceof Api.Channel) || !entity.forum) {
-    throw new Error(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups)`);
+  if (!hasTopics(entity)) {
+    throw new CliError(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups and bots with topics)`, 'not_a_forum', EXIT.USAGE);
   }
   const res = await client.invoke(
     new Api.messages.GetForumTopics({
@@ -3110,7 +3294,7 @@ export async function getForumTopics(
       });
     }
   }
-  return { chatTitle: entity.title, topics };
+  return { chatTitle: getChatTitle(entity), topics };
 }
 
 /** Public t.me link to a message (private chats/groups have no message links). */
@@ -4065,9 +4249,9 @@ export const permissionPresets = { MUTE_RIGHTS };
 
 // --- Forum topics: create / edit / close / reopen / pin (write) -------------------------------
 
-async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<Api.Channel> {
+async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<ResolvedEntity> {
   const entity = await resolveChat(client, chatIdentifier);
-  if (!(entity instanceof Api.Channel) || !entity.forum) throw new Error(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`);
+  if (!hasTopics(entity)) throw new CliError(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`, 'not_a_forum', EXIT.USAGE);
   return entity;
 }
 

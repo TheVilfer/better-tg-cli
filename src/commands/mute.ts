@@ -1,13 +1,15 @@
 import { Command } from 'commander';
-import { getClient, muteChat, disconnectClient } from '../client.js';
+import { getClient, muteChat, disconnectClient, parseDuration } from '../client.js';
+import { checkedBy } from '../args.js';
 import { assertWriteEnabled } from '../guard.js';
 import ora from '../spinner.js';
 import { formatJson } from '../formatters/json.js';
+import { fail } from '../errors.js';
 
 export const muteCommand = new Command('mute')
   .description('Mute a chat')
   .argument('<chat>', 'Chat name, username, or ID')
-  .option('-d, --duration <duration>', 'Duration (1h, 8h, 1d, 1w, or forever)', 'forever')
+  .option('-d, --duration <duration>', 'Duration (1h, 8h, 1d, 1w, or forever)', checkedBy(parseDuration), 'forever')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
     assertWriteEnabled();
@@ -36,8 +38,6 @@ export const muteCommand = new Command('mute')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to mute chat');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to mute chat');
     }
   });

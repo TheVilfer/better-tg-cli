@@ -3,6 +3,7 @@ import { getClient, getMe, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { formatUser } from '../formatters/plain.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const whoamiCommand = new Command('whoami')
   .description('Show logged-in account information')
@@ -35,8 +36,6 @@ export const whoamiCommand = new Command('whoami')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to get account info');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to get account info');
     }
   });

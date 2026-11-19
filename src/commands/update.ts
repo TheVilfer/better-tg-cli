@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { formatJson } from '../formatters/json.js';
 import { VERSION } from '../version.js';
+import { CliError, EXIT, fail } from '../errors.js';
 import {
   compareVersions, detectInstall, fetchLatestVersion, runUpdate, updateCommandFor, writeCache,
 } from '../update.js';
@@ -16,8 +17,7 @@ export const updateCommand = new Command('update')
       latest = await fetchLatestVersion();
       writeCache({ checkedAt: Date.now(), latest });
     } catch (error) {
-      console.error(`Could not check for updates: ${error instanceof Error ? error.message : error}`);
-      process.exit(1);
+      fail(new CliError(`Could not check for updates: ${error instanceof Error ? error.message : error}`, 'update_check_failed', EXIT.ERROR));
     }
     const newer = compareVersions(latest, VERSION) > 0;
     const command = updateCommandFor(method);

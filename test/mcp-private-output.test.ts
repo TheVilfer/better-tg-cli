@@ -12,7 +12,7 @@ import {
 } from '../src/client.js';
 import { mcpParamRefusal } from '../src/api-methods.js';
 import { isMcpApiAllowed, mcpApiAllowlistRefusal } from '../src/mcp-api-allowlist.js';
-import { classifyCall, result as mcpToolResult } from '../src/mcp.js';
+import { classifyCall, cliResult as mcpToolResult } from '../src/mcp.js';
 import { maskGiftCodes } from '../src/mcp-output.js';
 
 // Over MCP (TG_MCP on every call, TG_READ_ONLY on the read tool) the model must not see login codes,

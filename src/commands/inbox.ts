@@ -1,18 +1,20 @@
 import { Command } from 'commander';
-import { getClient, getDialogs, disconnectClient } from '../client.js';
+import { getClient, getDialogs, disconnectClient, CHAT_TYPES, matchesChatType } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { formatInbox, truncate } from '../formatters/plain.js';
 import { formatInboxMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { choiceOption, nonNegativeInt } from '../args.js';
 
 export const inboxCommand = new Command('inbox')
   .description('Show unread messages summary (most unread first)')
-  .option('-n, --limit <number>', 'Show at most N chats (totals still count all)', '30')
+  .option('-n, --limit <number>', 'Show at most N chats (totals still count all; 0 = totals only)', nonNegativeInt, 30)
   .option('--unmuted', 'Hide muted chats (usually what a human actually reads)')
   .option('--include-archived', 'Also count archived chats (Telegram itself does not badge them)')
-  .option('--type <type>', 'Filter by type: user, group, supergroup, channel')
-  .option('--preview <chars>', 'Last-message preview length (0 = none)', '50')
+  .addOption(choiceOption('--type <type>', 'Filter by type (user includes bots)', CHAT_TYPES))
+  .option('--preview <chars>', 'Last-message preview length (0 = none)', nonNegativeInt, 50)
   .option('--full', "Include full stats of each chat's last message (views, reactions, …)")
   .option('--stats', 'Alias for --full')
   .option('--json', 'Output as JSON')
@@ -26,12 +28,12 @@ export const inboxCommand = new Command('inbox')
       let unreadChats = chats.filter(c => c.unreadCount > 0);
       if (!options.includeArchived) unreadChats = unreadChats.filter(c => !c.archived);
       if (options.unmuted) unreadChats = unreadChats.filter(c => !c.muted);
-      if (options.type) unreadChats = unreadChats.filter(c => c.type === options.type);
+      if (options.type) unreadChats = unreadChats.filter(c => matchesChatType(c, options.type));
       unreadChats.sort((a, b) => b.unreadCount - a.unreadCount);
 
       const totals = { chats: unreadChats.length, unread: unreadChats.reduce((sum, c) => sum + c.unreadCount, 0) };
-      const preview = parseInt(options.preview);
-      const shown = unreadChats.slice(0, parseInt(options.limit)).map(c => ({
+      const preview = options.preview;
+      const shown = unreadChats.slice(0, options.limit).map(c => ({
         ...c,
         lastMessage: preview > 0 && c.lastMessage ? truncate(c.lastMessage, preview) : undefined,
       }));
@@ -51,8 +53,6 @@ export const inboxCommand = new Command('inbox')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch inbox');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch inbox');
     }
   });

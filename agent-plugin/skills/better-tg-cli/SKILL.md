@@ -29,7 +29,7 @@ Before you use an unfamiliar flag, run `telegram help-all -g <word>`. It is gene
   - never join, invite or add people in bulk;
   - ask the user before any operation that touches more than a few chats or messages;
   - on a rate-limit error (`FLOOD_WAIT`), stop and report the wait instead of retrying in a loop.
-- **Chat identifiers.** `me` means Saved Messages. A numeric ID matches exactly: use the ID shown first in `chats`, `inbox` and `search` output. `@username` resolves exactly. Other text matches titles: by substring for reads, but writes need an exact, unique title, otherwise they refuse and list candidate IDs. Prefer IDs.
+- **Chat identifiers.** `me` means Saved Messages. A numeric ID matches exactly: use the ID shown first in `chats`, `inbox` and `search` output. `@username` resolves exactly. A `t.me` link resolves exactly too. Other text matches titles: reads take an exact title or a substring only one title contains, writes need an exact, unique title. A name that fits several chats (or can't be proven unique) is refused (exit 2) with candidate IDs; a name that fits none is "not found" (exit 1). Prefer IDs.
 - **Save tokens.**
   - Start with `inbox --unmuted`, `chats -q <name>` or `search` instead of a full `read`.
   - Add `--max-text 200` when skimming, then `get <chat> <id>` for the messages that matter.
@@ -139,6 +139,7 @@ purpose for each of the 25 namespaces.
 | `read`, `get` | `{chatTitle, messages[]}` |
 | `search` | array of `{messages[]}`; global hits carry `chatId` and `chatTitle` |
 | `inbox` | `{totalUnread, chatsWithUnread, chats[]}`; totals cover all chats even when `-n` cuts the list, and archived chats are skipped unless you pass `--include-archived` |
+| `forward` | `messageIds` are the source IDs; reply to or edit the copies by `forwardedIds` (in `chatId`) |
 
 - **Chat objects:** `id`, `title`, `type`, `username`, `unreadCount`, `muted`, `archived`, `lastMessage`.
 - **Messages:** `id`, `date`, `sender`, `senderId`, `text`, `replyToMsgId`, `isOutgoing`, `media`, `buttons`, `replies` (the comment count).

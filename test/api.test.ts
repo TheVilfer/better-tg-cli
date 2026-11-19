@@ -199,7 +199,8 @@ describe('api: paid reads and login tokens', () => {
 
   it.each(PAID)('in a terminal a paid search stays a write behind the write guard: %j', args => {
     const r = run(args, {});
-    expect(r.status).toBe(1);
+    // 4: write access is off on this fresh profile; 1: no secret store to read the mode from
+    expect([1, 4]).toContain(r.status);
     expect(r.stderr).not.toMatch(/Refused over MCP/);
     expect(r.stderr).toMatch(/Write access|secret store/);
   }, 30_000);

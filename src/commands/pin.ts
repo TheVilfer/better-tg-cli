@@ -1,26 +1,24 @@
 import { Command } from 'commander';
-import { getClient, pinChatMessage, unpinChatMessage, disconnectClient } from '../client.js';
+import { getClient, pinChatMessage, unpinChatMessage, disconnectClient, chatRef } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const pinCommand = new Command('pin')
   .description('Pin a message in a chat')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageId>', 'Message ID (the #number shown by `tg read`)')
+  .argument('<messageId>', 'Message ID (the #number shown by `telegram read`)', positiveInt)
   .option('--notify', 'Notify chat members about the pin (default: silent)')
   .option('--one-side', 'In a private chat, pin only on your side')
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
     assertWriteEnabled();
 
-    const id = parseInt(messageId, 10);
-    if (!Number.isInteger(id)) {
-      console.error('Message ID must be a number');
-      process.exit(1);
-    }
+    const id: number = messageId;
 
     const spinner = ora(`Pinning #${id} in "${chat}"...`).start();
 
@@ -32,7 +30,7 @@ export const pinCommand = new Command('pin')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({ chat: result.chatTitle, messageId: id, pinned: true }));
+        console.log(formatJson({ ok: true, action: 'pin', ...await chatRef(client, chat), chat: result.chatTitle, messageId: id, pinned: true }));
       } else {
         console.log(chalk.green(`✓ Pinned #${id} in "${result.chatTitle}"`));
       }
@@ -40,28 +38,19 @@ export const pinCommand = new Command('pin')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'pin', target: chat, message: `#${id}`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to pin');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to pin');
     }
   });
 
 export const unpinCommand = new Command('unpin')
   .description('Unpin a message (or all pinned messages) in a chat')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('[messageId]', 'Message ID to unpin; omit to unpin all messages')
+  .argument('[messageId]', 'Message ID to unpin; omit to unpin all messages', positiveInt)
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
     assertWriteEnabled();
 
-    let id: number | undefined;
-    if (messageId != null) {
-      id = parseInt(messageId, 10);
-      if (!Number.isInteger(id)) {
-        console.error('Message ID must be a number');
-        process.exit(1);
-      }
-    }
+    const id: number | undefined = messageId;
 
     const spinner = ora(id == null ? `Unpinning all in "${chat}"...` : `Unpinning #${id} in "${chat}"...`).start();
 
@@ -73,7 +62,7 @@ export const unpinCommand = new Command('unpin')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({ chat: result.chatTitle, messageId: id ?? null, unpinnedAll: result.all }));
+        console.log(formatJson({ ok: true, action: 'unpin', ...await chatRef(client, chat), chat: result.chatTitle, messageId: id ?? null, unpinnedAll: result.all }));
       } else if (result.all) {
         console.log(chalk.green(`✓ Unpinned all messages in "${result.chatTitle}"`));
       } else {
@@ -83,8 +72,6 @@ export const unpinCommand = new Command('unpin')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'unpin', target: chat, message: id == null ? '(all)' : `#${id}`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to unpin');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to unpin');
     }
   });

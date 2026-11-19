@@ -5,6 +5,7 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const createGroupCommand = new Command('create-group')
   .description('Create a new group with members')
@@ -24,9 +25,7 @@ export const createGroupCommand = new Command('create-group')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'create-group', target: title, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to create group');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to create group');
     }
   });
 
@@ -49,8 +48,6 @@ export const createChannelCommand = new Command('create-channel')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'create-channel', target: title, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to create channel');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to create channel');
     }
   });

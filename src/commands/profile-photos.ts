@@ -4,17 +4,19 @@ import { formatJson } from '../formatters/json.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const profilePhotosCommand = new Command('profile-photos')
   .description("List a user's profile photos (use `avatar` to download one)")
   .argument('<user>', 'User name, username (@user), ID, or "me"')
-  .option('-n, --limit <number>', 'Max photos to list', '50')
+  .option('-n, --limit <number>', 'Max photos to list', positiveInt, 50)
   .option('--json', 'Output as JSON')
   .action(async (user, options) => {
     const spinner = ora(`Fetching profile photos for "${user}"...`).start();
     try {
       const client = await getClient();
-      const { title, count, photos } = await getProfilePhotos(client, user, { limit: parseInt(options.limit, 10) });
+      const { title, count, photos } = await getProfilePhotos(client, user, { limit: options.limit });
       spinner.stop();
       if (getOutputFormat(options) === 'json') {
         console.log(formatJson({ user: title, count, photos }));
@@ -28,8 +30,6 @@ export const profilePhotosCommand = new Command('profile-photos')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch profile photos');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch profile photos');
     }
   });

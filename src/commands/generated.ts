@@ -4,7 +4,7 @@ import apiDefinitions from 'teleproto/tl/generated/api-definitions.js';
 import { runApiMethod } from '../api-run.js';
 import { apiRefusalReason, isApiReadMethod } from '../api-methods.js';
 import { mcpApiAllowlistRefusal, isMcpApiAllowed } from '../mcp-api-allowlist.js';
-import chalk from '../colors.js';
+import { CliError, EXIT, fail, usageError } from '../errors.js';
 import { methodDoc, paramDoc, docsUrl } from '../tl-docs.js';
 import {
   isGeneratedNamespace,
@@ -318,18 +318,13 @@ export function buildLeaf(nsKebab: string, methodKebab: string, className: strin
     // Refuse before validating params, so a refused method reports the refusal (not a missing flag).
     // Over MCP, a method off the allowlist (src/mcp-api-allowlist.ts) is refused here too.
     const blocked = refusal ?? mcpApiAllowlistRefusal(className);
-    if (blocked) {
-      console.error(chalk.red(blocked));
-      process.exit(1);
-      return;
-    }
+    if (blocked) fail(new CliError(blocked, 'refused', EXIT.ERROR));
     let params: Record<string, unknown>;
     try {
       params = buildParams(className, opts);
     } catch (e) {
-      console.error(e instanceof Error ? e.message : String(e));
-      process.exit(1);
-      return;
+      // A missing or malformed flag: the command line is wrong
+      fail(usageError(e instanceof Error ? e.message : String(e), `See telegram ${auditCommand} --help`));
     }
     await runApiMethod(className, params, { auditCommand, paramsFromStdin: opts.jsonParams === '-' });
   });
@@ -466,8 +461,7 @@ export function buildHelpCommand(program: Command): Command {
       if (isGeneratedNamespace(topic)) { buildNamespaceGroup(topic).outputHelp(); return; }
       const rootClass = rootMethodClassName(topic);
       if (rootClass) { buildLeaf('', topic, rootClass, true).outputHelp(); return; }
-      console.error(`Unknown help topic "${topic}". Run "telegram --help" or "telegram help-all".`);
-      process.exit(1);
+      fail(usageError(`Unknown help topic "${topic}"`, 'Run "telegram --help" or "telegram help-all".'));
     });
   return help;
 }

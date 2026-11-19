@@ -248,7 +248,7 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
 
   it('help: `help <method>` runs it, `help <command>` shows help', async () => {
     expect(await fails('help', 'get-config')).toMatch(/help\.GetConfig/); // ran the method (mock: unimplemented)
-    expect(await run('help', 'stats')).toMatch(/Usage: tg stats/);
+    expect(await run('help', 'stats')).toMatch(/Usage: telegram stats/);
     expect(await run('help', 'messages')).toMatch(/get-history/); // namespace help lists methods
   }, 30_000);
 
@@ -339,7 +339,7 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
 
   it('a clash command --help shows curated usage plus a generated-methods pointer', async () => {
     const help = await run('stats', '--help');
-    expect(help).toMatch(/Usage: tg stats \[options\] <chat>/); // curated usage intact
+    expect(help).toMatch(/Usage: telegram stats \[options\] <chat>/); // curated usage intact
     expect(help).toMatch(/Generated API methods \(telegram stats <method>/);
     expect(help).toMatch(/get-broadcast-stats/);
   }, 30_000);
