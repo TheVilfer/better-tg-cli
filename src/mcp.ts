@@ -447,10 +447,15 @@ export interface McpOptions {
  */
 export async function gateWrite(plan: Plan, input: Record<string, unknown>, elicit?: McpOptions['elicit']): Promise<string | undefined> {
   const given = typeof input.approval === 'string' && input.approval.trim() ? input.approval.trim() : undefined;
-/** The environment of the CLI that runs one call. Exported for tests. */
-export function childEnv(plan: Plan): NodeJS.ProcessEnv {
-  // TG_MCP: local file writes (download, sync, avatar) follow the write mode, see assertLocalWriteAllowed
-  const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1', TG_MCP: '1' };
+  // Before any look at the mode: the child reads the mode again and may already see "ask" where
+  // this process saw "on", so a model's code passed on here could skip this client's dialog.
+  if (elicit && given) {
+    return 'This client asks the user directly, so approval codes are not accepted here. Call telegram_write again without "approval"; the user gets a dialog.';
+  }
+  // The child gets this exact stdin, and an approval covers all of it, whatever the args say
+  // (`-p-` reads stdin too): childEnv tells the child's guard to hash stdin the same way.
+  plan.stdin ??= '';
+  if (isMock() || parseWriteState(getWriteValue(true)).mode !== 'ask') {
     plan.approval = given;
     return undefined;
   }
