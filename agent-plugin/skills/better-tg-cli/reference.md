@@ -353,8 +353,10 @@ method's `--help` lists its own "Common errors" when the docs provide them.
     `retry.arguments` is the exact call to make after the user's yes.
   - `telegram_setup {}`: for "Not configured", an expired session or "Write access is disabled". The
     server opens the onboarding page on this computer (or, when logged in but read-only, only its mode
-    choice) and returns the link for the user: `structuredContent` `{status:"open_page", step:"login"|"mode", url, sessionExpired?}`
-    or `{status:"ready", mode}`. The user logs in and picks the mode there; the tool takes no arguments.
+    choice) and returns the link for the user: `structuredContent` `{status:"open_page", step:"login"|"mode", url, sessionExpired?, readOnly?}`
+    or `{status:"ready", mode}`. The user logs in and picks the mode there ("ask" or "on" only after a
+    system dialog or terminal prompt; a `--read-only` server offers no mode); the tool takes no arguments.
+    Nothing reports when they finish: wait for the user's message, then check `whoami` and `write-access`.
 
   `args` is the CLI argv with the command first, for example `["read","@x","-n","20"]`. `stdin`
   fills a `-` text argument.
