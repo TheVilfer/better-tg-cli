@@ -50,5 +50,5 @@ export const apiCommand = new Command('api')
       process.exit(1);
     }
 
-    await runApiMethod(canonical, parsed, { auditCommand: 'api' });
+    await runApiMethod(canonical, parsed, { auditCommand: 'api', paramsFromStdin: options.params === '-' });
   });

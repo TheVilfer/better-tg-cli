@@ -7,10 +7,11 @@ import { VERSION } from './version.js';
 import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_STARS_REFUSAL } from './api-methods.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
 import { paramsOf } from './commands/generated.js';
-import { actionHash, createApproval, describeAction, readsStdin } from './approval.js';
+import { actionHash, createApproval, describeAction, readsStdin, STDIN_IN_APPROVAL_ENV } from './approval.js';
 import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock } from './paths.js';
+import { getSessionString } from './config.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -340,13 +341,17 @@ type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: stri
 const cap = (s: string) =>
   s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
 
-function childEnv(plan: Plan): NodeJS.ProcessEnv {
+/** The environment of the CLI that runs one call. Exported for tests. */
+export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   // TG_MCP: local file writes (download, sync, avatar) follow the write mode, see assertLocalWriteAllowed
   const env: NodeJS.ProcessEnv = { ...process.env, TG_NO_UPDATE_CHECK: '1', TG_MCP: '1' };
   if (plan.readOnly) env.TG_READ_ONLY = '1';
   // Only the approval for this call, never one inherited from the server's own environment
   delete env.TG_APPROVE;
+  delete env[STDIN_IN_APPROVAL_ENV];
   if (plan.approval && !plan.readOnly) env.TG_APPROVE = plan.approval;
+  // The write guard then hashes stdin into the approval, as gateWrite did
+  if (!plan.readOnly && plan.stdin !== undefined) env[STDIN_IN_APPROVAL_ENV] = '1';
   return env;
 }
 
@@ -442,6 +447,14 @@ export interface McpOptions {
  */
 export async function gateWrite(plan: Plan, input: Record<string, unknown>, elicit?: McpOptions['elicit']): Promise<string | undefined> {
   const given = typeof input.approval === 'string' && input.approval.trim() ? input.approval.trim() : undefined;
+  // Before any look at the mode: the child reads the mode again and may already see "ask" where
+  // this process saw "on", so a model's code passed on here could skip this client's dialog.
+  if (elicit && given) {
+    return 'This client asks the user directly, so approval codes are not accepted here. Call telegram_write again without "approval"; the user gets a dialog.';
+  }
+  // The child gets this exact stdin, and an approval covers all of it, whatever the args say
+  // (`-p-` reads stdin too): childEnv tells the child's guard to hash stdin the same way.
+  plan.stdin ??= '';
   if (isMock() || parseWriteState(getWriteValue(true)).mode !== 'ask') {
     plan.approval = given;
     return undefined;
@@ -450,13 +463,13 @@ export async function gateWrite(plan: Plan, input: Record<string, unknown>, elic
     plan.approval = given;
     return undefined;
   }
-  if (given) {
-    return 'This client asks the user directly, so approval codes are not accepted here. Call telegram_write again without "approval"; the user gets a dialog.';
-  }
-  const stdin = readsStdin(plan.argv) ? (plan.stdin ?? '') : undefined;
-  const approved = await elicit(`The agent wants to change something in your Telegram:\n${describeAction(plan.argv, stdin)}\n\nApprove this one action?`);
+  const shown = plan.stdin !== '' || readsStdin(plan.argv) ? plan.stdin : undefined;
+  // The account the user is asked about, read before the dialog opens: a login as someone else
+  // while the user is answering must not move the approval to that account
+  const account = getSessionString();
+  const approved = await elicit(`The agent wants to change something in your Telegram:\n${describeAction(plan.argv, shown)}\n\nApprove this one action?`);
   if (!approved) return 'The user did not approve this write. Nothing was sent.';
-  plan.approval = createApproval(actionHash(plan.argv, stdin), 'elicitation');
+  plan.approval = createApproval(actionHash(plan.argv, plan.stdin), account, 'elicitation');
   return undefined;
 }
 

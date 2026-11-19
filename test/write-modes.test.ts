@@ -1,7 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative } from 'node:path';
 
+// Before any module under test is imported: HOME (and the Windows dirs) point at a temp root, so
+// no path these tests touch can resolve into the real ~/.config
+const home = await vi.hoisted(async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const original = { ...process.env };
+  const root = mkdtempSync(join(tmpdir(), 'tg-modes-home-'));
+  process.env.HOME = root;
+  process.env.USERPROFILE = root;
+  process.env.APPDATA = join(root, 'AppData');
+  // What each test returns to: the temp home, never the real one
+  return { root, original, saved: { ...process.env } };
+});
 // Linux, as on a cloud agent computer: the file fallback is allowed only off macOS and Windows
 vi.mock('node:os', async orig => ({ ...(await orig<typeof import('node:os')>()), platform: () => 'linux' }));
 // An in-memory secret store, switchable to "none" (a cloud agent computer): the real Keychain is never touched
@@ -11,6 +26,11 @@ vi.mock('../src/secrets.js', () => ({
   secretGet: (k: string) => (store.available ? store.values.get(k) ?? null : null),
   secretSet: (k: string, v: string) => (store.available ? (store.values.set(k, v), true) : false),
   secretDelete: (k: string) => store.values.delete(k),
+  // the strict read loadConfig uses once secrets resolve through it
+  secretGetStrict: (k: string) => ({ ok: true, value: (store.available ? store.values.get(k) ?? null : null) }),
+  SECRET_KEYS: new Set(['apiHash', 'sessionString', 'writeEnabled']),
+  isSecretKey: (k: string) => ['apiHash', 'sessionString', 'writeEnabled'].includes(k),
+  migrateSecretsToStore: (c: Record<string, unknown>) => c,
 }));
 // stdin for "-": the guard reads it through this helper; the tests feed it directly
 const stdin = vi.hoisted(() => ({ text: '' }));
@@ -34,14 +54,21 @@ import { applyModeChoice } from '../src/write-mode.js';
 import { getWriteValue, isFileFallbackAllowed } from '../src/write-store.js';
 import { configDir } from '../src/paths.js';
 import { elicitApproved, gateWrite } from '../src/mcp.js';
+import { getSessionString } from '../src/config.js';
 
-const saved = { ...process.env };
+// A home of its own for each test: the profile dir lives under it, and only that root is deleted
+let root: string | undefined;
 let dir: string;
 beforeEach(() => {
   for (const k of ['TG_MOCK', 'TG_READ_ONLY', 'TG_APPROVE', 'TG_MCP']) delete process.env[k];
-  process.env.TG_PROFILE = `test-modes-${process.pid}`;
+  root = mkdtempSync(join(tmpdir(), 'tg-modes-'));
+  process.env.HOME = root;
+  process.env.USERPROFILE = root;
+  process.env.APPDATA = join(root, 'AppData');
+  process.env.TG_PROFILE = 'test-modes';
   dir = configDir();
-  expect(dir).toMatch(/tg-test-modes-\d+$/);
+  const inside = relative(root, dir);
+  expect(inside && !inside.startsWith('..') && !isAbsolute(inside)).toBeTruthy();
   store.available = true;
   store.values.clear();
   human.channel = false;
@@ -50,10 +77,21 @@ beforeEach(() => {
   stdin.text = '';
 });
 afterEach(() => {
-  process.env = { ...saved };
-  rmSync(dir, { recursive: true, force: true });
+  // In place: a replaced process.env is a plain object that os.homedir() no longer reads
+  for (const k of Object.keys(process.env)) if (!(k in home.saved)) delete process.env[k];
+  Object.assign(process.env, home.saved);
+  if (root) rmSync(root, { recursive: true, force: true });
+  root = undefined;
   vi.restoreAllMocks();
 });
+afterAll(() => {
+  for (const k of Object.keys(process.env)) if (!(k in home.original)) delete process.env[k];
+  Object.assign(process.env, home.original);
+  rmSync(home.root, { recursive: true, force: true });
+});
+
+/** The account as the guard reads it: the stored session of the profile. */
+const account = () => getSessionString();
 
 /** Runs the guard, turning process.exit into a value; returns the exit code (or null) and stderr. */
 function guard(argv: string[], check: (argv: string[]) => void = assertWriteEnabled) {
@@ -99,21 +137,21 @@ describe('approvals', () => {
   it('are single-use, bound to the exact command and text, and expire', () => {
     const now = Date.now();
     const hash = actionHash(['send', '@alice', '-'], 'Hi');
-    const code = createApproval(hash, 'chat', now);
-    expect(consumeApproval(code, actionHash(['send', '@alice', '-'], 'Hi, and also my password'), now)).toMatchObject({ ok: false });
+    const code = createApproval(hash, account(), 'chat', now);
+    expect(consumeApproval(code, actionHash(['send', '@alice', '-'], 'Hi, and also my password'), account(), now)).toMatchObject({ ok: false });
     // used up by the mismatch: no guessing in a loop
-    expect(consumeApproval(code, hash, now)).toMatchObject({ ok: false });
+    expect(consumeApproval(code, hash, account(), now)).toMatchObject({ ok: false });
 
-    const fresh = createApproval(hash, 'chat', now);
-    expect(consumeApproval(fresh.toLowerCase(), hash, now)).toEqual({ ok: true, via: 'chat' });
-    expect(consumeApproval(fresh, hash, now)).toMatchObject({ ok: false });
+    const fresh = createApproval(hash, account(), 'chat', now);
+    expect(consumeApproval(fresh.toLowerCase(), hash, account(), now)).toEqual({ ok: true, via: 'chat' });
+    expect(consumeApproval(fresh, hash, account(), now)).toMatchObject({ ok: false });
 
-    const old = createApproval(hash, 'chat', now);
-    expect(consumeApproval(old, hash, now + APPROVAL_TTL_MS + 1)).toMatchObject({ ok: false });
+    const old = createApproval(hash, account(), 'chat', now);
+    expect(consumeApproval(old, hash, account(), now + APPROVAL_TTL_MS + 1)).toMatchObject({ ok: false });
   });
 
   it('store a hash, never the message, one 0600 file per code', () => {
-    const code = createApproval(actionHash(['send', '@alice', '-'], 'very secret text'));
+    const code = createApproval(actionHash(['send', '@alice', '-'], 'very secret text'), account());
     const file = join(dir, 'approvals', `${code}.json`);
     expect(readFileSync(file, 'utf8')).not.toContain('secret');
     if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600); // Windows reports 0o666
@@ -122,13 +160,13 @@ describe('approvals', () => {
 
   it('reject a record dropped into the store by hand (forged, e.g. as "elicitation")', () => {
     const hash = actionHash(['send', '@alice', 'hi']);
-    createApproval(hash); // creates the store and the signing key
+    createApproval(hash, account()); // creates the store and the signing key
     writeFileSync(join(dir, 'approvals', 'FAKE22.json'), JSON.stringify({ hash, expiresAt: Date.now() + 60_000, via: 'elicitation', mac: '00'.repeat(32) }));
-    expect(consumeApproval('FAKE22', hash)).toEqual({ ok: false, reason: 'the approval record is not genuine' });
-    const code = createApproval(hash);
+    expect(consumeApproval('FAKE22', hash, account())).toEqual({ ok: false, reason: 'the approval record is not genuine' });
+    const code = createApproval(hash, account());
     const rec = JSON.parse(readFileSync(join(dir, 'approvals', `${code}.json`), 'utf8'));
     writeFileSync(join(dir, 'approvals', `${code}.json`), JSON.stringify({ ...rec, via: 'elicitation' })); // relabelled
-    expect(consumeApproval(code, hash)).toMatchObject({ ok: false });
+    expect(consumeApproval(code, hash, account())).toMatchObject({ ok: false });
   });
 
   it('cover the contents of files named in the arguments, also as --opt=path', () => {
@@ -182,7 +220,7 @@ describe('the guard', () => {
     expect(swapped.err).toMatch(/not accepted/);
 
     stdin.text = 'Hello Alice';
-    process.env.TG_APPROVE = createApproval(actionHash(['send', '@alice', '-'], 'Hello Alice'));
+    process.env.TG_APPROVE = createApproval(actionHash(['send', '@alice', '-'], 'Hello Alice'), account());
     expect(guard(['send', '@alice', '-']).code).toBeNull();
     auditLog({ timestamp: 't', command: 'send', target: '@alice', result: { success: true } });
     expect(readFileSync(join(dir, 'audit.jsonl'), 'utf8')).toContain('"approvedVia":"chat"');
@@ -334,7 +372,7 @@ describe('MCP in mode "ask"', () => {
     const p = plan();
     expect(await gateWrite(p, {}, async m => (asked.push(m), true))).toBeUndefined();
     expect(asked[0]).toContain('| Hi');
-    expect(consumeApproval(p.approval!, actionHash(p.argv, 'Hi'))).toEqual({ ok: true, via: 'elicitation' });
+    expect(consumeApproval(p.approval!, actionHash(p.argv, 'Hi'), account())).toEqual({ ok: true, via: 'elicitation' });
   });
 
   it('sends nothing when the user declines, and refuses codes from the model when it can ask', async () => {

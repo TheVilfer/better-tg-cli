@@ -13,6 +13,7 @@ export function errorMessage(error: unknown): string {
 }
 
 let stdinText: string | undefined;
+let stdinSealed = false;
 
 /**
  * All of stdin, read once and kept: the write guard reads it first (an approval in "ask" mode
@@ -23,8 +24,20 @@ export function primeStdin(text: string): void {
 }
 
 export function readStdinOnce(): string {
+  // An approval in mode "ask" that did not cover stdin: a body read from it now would be unapproved
+  if (stdinSealed) throw new Error('This command reads stdin, but its approval did not cover stdin. Run it again to get an approval that does.');
   stdinText ??= readFileSync(0, 'utf-8');
   return stdinText;
+}
+
+/** Whether something already read stdin (the command parsed its body before the write guard ran). */
+export function stdinWasRead(): boolean {
+  return stdinText !== undefined;
+}
+
+/** Called by the write guard after an approval that does not cover stdin: any later read fails. */
+export function sealStdin(): void {
+  stdinSealed = true;
 }
 
 export function readTextArg(value: string): string {

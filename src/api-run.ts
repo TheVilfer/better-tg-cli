@@ -16,7 +16,7 @@ import ora from './spinner.js';
 export async function runApiMethod(
   canonical: string,
   params: Record<string, unknown>,
-  options: { auditCommand?: string } = {},
+  options: { auditCommand?: string; paramsFromStdin?: boolean } = {},
 ): Promise<void> {
   const auditCommand = options.auditCommand ?? 'api';
 
@@ -32,7 +32,7 @@ export async function runApiMethod(
 
   // A read that may spend Stars (allowPaidStars) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
-  if (isWrite) assertWriteEnabled();
+  if (isWrite) assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true });
 
   const spinner = ora(`Calling ${canonical}...`).start();
   try {

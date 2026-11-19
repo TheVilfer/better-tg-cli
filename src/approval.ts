@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configFile } from './paths.js';
 import { isSecretStoreAvailable, secretGet, secretSet } from './secrets.js';
@@ -24,6 +24,8 @@ interface Pending {
   hash: string;
   expiresAt: number;
   via: ApprovedVia;
+  /** The account the approval was given for: a fingerprint of the profile's session, never the session itself */
+  session: string;
   /** HMAC over the record with a key from the secret store: a file dropped in by hand doesn't verify */
   mac: string;
 }
@@ -54,7 +56,36 @@ function signingKey(): Buffer {
 }
 
 function sign(key: Buffer, code: string, p: Omit<Pending, 'mac'>): string {
-  return createHmac('sha256', key).update(JSON.stringify([code, p.hash, p.expiresAt, p.via])).digest('hex');
+  return createHmac('sha256', key).update(JSON.stringify([code, p.hash, p.expiresAt, p.via, p.session])).digest('hex');
+}
+
+/**
+ * Which account an approval belongs to: an HMAC of the stored session under the signing key, so the
+ * record names the session without revealing it. A logout and a login as someone else in the same
+ * profile change it, and a code given for the old account no longer matches. The caller passes the
+ * session it read when the action was shown (the MCP server reads it before opening the dialog), so
+ * a login as someone else while the user is still answering does not move the approval to them.
+ */
+function sessionFingerprint(key: Buffer, session: string | undefined): string {
+  return createHmac('sha256', key).update(`tg-approval-session\0${session ?? ''}`).digest('hex');
+}
+
+/**
+ * The session an approval was checked against in this process (undefined: none was used).
+ * getClient() builds its client only from this same session, so a login as someone else between
+ * the guard and the connection cannot carry the approved write to the new account.
+ */
+export const ANOTHER_ACCOUNT = 'the approval was given while another account was logged in';
+let approvedSession: string | undefined;
+
+/** Whether this process used an approval for another session than the one it is about to connect with. */
+export function approvedForAnotherSession(session: string): boolean {
+  return approvedSession !== undefined && approvedSession !== session;
+}
+
+/** Drops every pending approval of this profile; logout and login call it, since codes belong to the old account. */
+export function clearApprovals(): void {
+  rmSync(storeDir(), { recursive: true, force: true });
 }
 
 export const APPROVAL_TTL_MS = 10 * 60_000;
@@ -109,14 +140,25 @@ export function readsStdin(argv: string[]): boolean {
   return argv.some(a => a === '-' || a.endsWith('=-'));
 }
 
-/** Records a pending approval for this action and returns its code. */
-export function createApproval(hash: string, via: ApprovedVia = 'chat', now = Date.now()): string {
+/**
+ * Set by the MCP server for a write it hands stdin to: the child's guard then hashes all of stdin,
+ * as the server did when it asked the user. It can only add stdin to an approval, never drop it.
+ */
+export const STDIN_IN_APPROVAL_ENV = 'TG_APPROVAL_STDIN';
+
+/**
+ * Records a pending approval for this action and returns its code. `account` is the stored session
+ * as it was when the action was shown to the user (getSessionString() at that moment), never read
+ * here: by now someone else may be logged in.
+ */
+export function createApproval(hash: string, account: string | undefined, via: ApprovedVia = 'chat', now = Date.now()): string {
   prune(now);
   if (!existsSync(storeDir())) mkdirSync(storeDir(), { recursive: true, mode: 0o700 });
   const key = signingKey();
+  const session = sessionFingerprint(key, account);
   for (;;) {
     const code = newCode();
-    const record = { hash, expiresAt: now + APPROVAL_TTL_MS, via };
+    const record = { hash, expiresAt: now + APPROVAL_TTL_MS, via, session };
     try {
       // wx: never overwrite another pending code
       writeFileSync(join(storeDir(), `${code}.json`), JSON.stringify({ ...record, mac: sign(key, code, record) }), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
@@ -128,10 +170,12 @@ export function createApproval(hash: string, via: ApprovedVia = 'chat', now = Da
 }
 
 /**
- * Uses up an approval: it must exist, be unexpired and match this exact action. Returns how it was
- * approved, or why not. A code is single-use even when it does not match (no guessing in a loop).
+ * Uses up an approval: it must exist, be unexpired, match this exact action and the account in
+ * `session` (the stored session this process will connect with). Returns how it was approved, or
+ * why not. A code is single-use even when it does not match (no guessing in a loop).
  */
-export function consumeApproval(code: string, hash: string, now = Date.now()): { ok: true; via: ApprovedVia } | { ok: false; reason: string } {
+export function consumeApproval(code: string, hash: string, session: string | undefined, now = Date.now()): { ok: true; via: ApprovedVia } | { ok: false; reason: string } {
+  approvedSession = undefined;
   const key = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{6}$/.test(key)) return { ok: false, reason: 'unknown or expired approval code' };
   const file = join(storeDir(), `${key}.json`);
@@ -143,11 +187,14 @@ export function consumeApproval(code: string, hash: string, now = Date.now()): {
   } catch {
     return { ok: false, reason: 'unknown or expired approval code' };
   }
-  const expected = Buffer.from(sign(signingKey(), key, pending), 'hex');
+  const signing = signingKey();
+  const expected = Buffer.from(sign(signing, key, pending), 'hex');
   const got = Buffer.from(typeof pending.mac === 'string' ? pending.mac : '', 'hex');
   if (got.length !== expected.length || !timingSafeEqual(got, expected)) return { ok: false, reason: 'the approval record is not genuine' };
   if (!(pending.expiresAt > now)) return { ok: false, reason: 'unknown or expired approval code' };
+  if (pending.session !== sessionFingerprint(signing, session)) return { ok: false, reason: ANOTHER_ACCOUNT };
   if (pending.hash !== hash) return { ok: false, reason: 'the approval was for a different command or text' };
+  approvedSession = session ?? '';
   return { ok: true, via: pending.via };
 }
 

@@ -311,7 +311,7 @@ export function buildLeaf(nsKebab: string, methodKebab: string, className: strin
       process.exit(1);
       return;
     }
-    await runApiMethod(className, params, { auditCommand });
+    await runApiMethod(className, params, { auditCommand, paramsFromStdin: opts.jsonParams === '-' });
   });
   return leaf;
 }

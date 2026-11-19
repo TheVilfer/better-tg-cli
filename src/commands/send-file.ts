@@ -22,7 +22,7 @@ export const sendFileCommand = new Command('send-file')
   .option('--reply-to <id>', 'Reply to a specific message ID')
   .option('--json', 'Output as JSON')
   .action(async (target, filePath, options) => {
-    assertWriteEnabled();
+    assertWriteEnabled(undefined, { readsStdin: options.caption === '-' });
     if (options.caption) options.caption = readTextArg(options.caption);
 
     const absPath = resolve(filePath);
