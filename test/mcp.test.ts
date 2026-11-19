@@ -163,19 +163,20 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['account', 'delete-passkey', '--id', 'x'], 'never'],
   [['api', 'account.InitPasskeyRegistration'], 'never'],
   [['account', 'init-passkey-registration'], 'never'],
-  [['api', 'account.GetPasskeys'], 'read'],
-  [['api', 'help.GetConfig'], 'read'],
+  [['api', 'account.GetPasskeys'], 'never'], // a read, but off the MCP allowlist
+  [['api', 'help.GetConfig'], 'never'], // off the MCP allowlist
+  [['api', 'messages.GetHistory'], 'read'],
   [['api', 'contacts.Block'], 'write'],
   [['api'], 'invalid'],
   [['messages', 'get-history'], 'read'],
   [['messages', 'send-message'], 'write'],
-  [['ping'], 'write'],
+  [['ping'], 'never'], // off the MCP allowlist
   [['contacts'], 'read'],
   [['contacts', 'block'], 'write'],
   [['stats', '@chat'], 'read'],
-  [['stats', 'get-broadcast-stats'], 'read'],
+  [['stats', 'get-broadcast-stats'], 'never'], // off the MCP allowlist
   [['help'], 'read'],
-  [['help', 'get-config'], 'read'],
+  [['help', 'get-config'], 'never'], // off the MCP allowlist
   // Not commands: refused, including future administrative commands until they get a group
   [['messages'], 'unknown'],
   [['messages', 'bogus'], 'unknown'],
@@ -217,12 +218,13 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['api', 'messages.SendMessage', '--params', '{"peer":"@c","message":"hi"}'], 'write'],
   [['messages', 'send-message', '--peer', '@c', '--message', '--allow-paid-stars=5'], 'write'],
   [['api', 'messages.SendMessage', '-p', '-'], 'write'], // stdin params: the CLI refuses a paid body
-  // Recovery-email management and Passport values never run; an inline query is a read
+  // Recovery-email management and Passport values never run; an inline query is a write
   [['api', 'account.ResendPasswordEmail'], 'never'],
   [['account', 'cancel-password-email'], 'never'],
   [['api', 'account.GetAllSecureValues'], 'never'],
   [['account', 'get-secure-value'], 'never'],
-  [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'read'],
+  [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'write'],
+  [['inline', '@bot', 'cats'], 'write'],
   [['api', 'account.GetAuthorizationForm', '-p', '{"botId":1,"scope":"x","publicKey":"k"}'], 'never'],
   [['account', 'get-authorization-form', '--bot-id', '1'], 'never'],
   // A geo group is classified on its method (a write); the CLI child refuses geoPoint/address

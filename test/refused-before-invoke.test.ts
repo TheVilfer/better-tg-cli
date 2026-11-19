@@ -83,13 +83,13 @@ it('control: an ordinary write runs in mode "on" (so the spies above would see a
   expect(invokeApi).toHaveBeenCalledTimes(1);
 });
 
-// A paid message, media, album or forward (allowPaidStars) over MCP, in write mode "on":
+// A paid message, media or album (allowPaidStars) over MCP, in write mode "on" (a raw forward is
+// off the MCP allowlist altogether):
 // [class name, namespace, generated method, the free params]
 const PAID: [string, string, string, Record<string, unknown>][] = [
   ['messages.SendMessage', 'messages', 'send-message', { peer: '@c', message: 'hi' }],
-  ['messages.SendMedia', 'messages', 'send-media', { peer: '@c', message: '', media: { _: 'inputMediaEmpty' } }],
+  ['messages.SendMedia', 'messages', 'send-media', { peer: '@c', message: '', media: { _: 'inputMediaDice', emoticon: '🎲' } }],
   ['messages.SendMultiMedia', 'messages', 'send-multi-media', { peer: '@c', multiMedia: [] }],
-  ['messages.ForwardMessages', 'messages', 'forward-messages', { fromPeer: '@a', toPeer: '@c', id: [1] }],
   ['channels.SearchPosts', 'channels', 'search-posts', { query: 'x', offsetPeer: { _: 'inputPeerEmpty' }, limit: 10 }],
 ];
 
@@ -126,14 +126,14 @@ describe('the free forms still run over MCP in mode "on"', () => {
     expect(invokeApi).toHaveBeenCalledTimes(3);
   });
 
-  it('an inline query without coordinates reaches invoke, raw and generated', async () => {
-    process.env.TG_READ_ONLY = '1';
+  it('an inline query without coordinates reaches invoke as a write, raw and generated', async () => {
     const params = { bot: '@b', peer: 'me', query: 'x', offset: '' };
     await apiCommand.parseAsync(['messages.GetInlineBotResults', '--params', JSON.stringify(params)], { from: 'user' });
     await buildLeaf('messages', 'get-inline-bot-results', 'messages.GetInlineBotResults', true)
       .parseAsync(['--bot', '@b', '--peer', 'me', '--query', 'x', '--offset', ''], { from: 'user' });
     expect(invokeApi).toHaveBeenCalledTimes(2);
-    expect(assertWriteEnabled).not.toHaveBeenCalled();
+    // The query and the user's ID go to the bot, so it passes the write guard
+    expect(assertWriteEnabled).toHaveBeenCalledTimes(2);
   });
 
   it('a channel created without a location reaches invoke, raw and generated', async () => {

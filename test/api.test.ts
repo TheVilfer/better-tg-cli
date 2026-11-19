@@ -84,10 +84,16 @@ describe('api refusals', () => {
 });
 
 describe('api hardening: side-effecting reads reclassified', () => {
-  it('treats view-increment and callback Get* methods as writes', () => {
-    for (const m of ['messages.GetMessagesViews', 'messages.GetBotCallbackAnswer', 'ephemeral.GetCallbackAnswer']) {
+  it('treats callback and inline-query Get* methods as writes', () => {
+    for (const m of ['messages.GetBotCallbackAnswer', 'ephemeral.GetCallbackAnswer', 'messages.GetInlineBotResults']) {
       expect(isApiReadMethod(m), m).toBe(false);
     }
+  });
+
+  it('GetMessagesViews is a read only without increment', () => {
+    expect(isApiReadMethod('messages.GetMessagesViews')).toBe(true);
+    expect(isApiReadCall('messages.GetMessagesViews', { peer: 'me', id: [1], increment: false })).toBe(true);
+    expect(isApiReadCall('messages.GetMessagesViews', { peer: 'me', id: [1], increment: true })).toBe(false);
   });
 
   it('keeps genuinely read-only Get*/listing methods as reads', () => {
@@ -142,10 +148,12 @@ describe('MCP routing of the api command', () => {
   });
 
   it('read methods go to telegram_read, writes to telegram_write, refusals never run', () => {
-    expect(planCall('telegram_read', { args: ['api', 'help.GetConfig'] })).toMatchObject({ readOnly: true });
+    expect(planCall('telegram_read', { args: ['api', 'messages.GetHistory'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['api', 'contacts.Block', '--params', '{}'] })).toMatch(/use telegram_write/);
     expect(planCall('telegram_write', { args: ['api', 'contacts.Block'] })).toMatchObject({ readOnly: false });
-    expect(planCall('telegram_write', { args: ['api', 'help.GetConfig'] })).toMatch(/use telegram_read/);
+    expect(planCall('telegram_write', { args: ['api', 'messages.GetHistory'] })).toMatch(/use telegram_read/);
+    // A read off the MCP allowlist is refused on both tools
+    expect(planCall('telegram_read', { args: ['api', 'help.GetConfig'] })).toMatch(/not available over MCP/);
     expect(planCall('telegram_read', { args: ['api', 'account.DeleteAccount'] })).toMatch(/irreversible/);
     expect(planCall('telegram_write', { args: ['api', 'payments.SendStarsForm'] })).toMatch(/payment|Stars/);
     expect(planCall('telegram_read', { args: ['api'] })).toMatch(/needs a method/);
@@ -154,7 +162,11 @@ describe('MCP routing of the api command', () => {
     expect(planCall('telegram_read', { args: ['api', 'contacts.GetLocated'] })).toMatch(/location|geolocation/i);
     expect(planCall('telegram_write', { args: ['api', 'account.SetPrivacy'] })).toMatch(/privacy/i);
     // A reclassified side-effecting read is a write, not a read.
-    expect(planCall('telegram_read', { args: ['api', 'messages.GetMessagesViews'] })).toMatch(/use telegram_write/);
+    expect(planCall('telegram_read', { args: ['api', 'messages.GetBotCallbackAnswer'] })).toMatch(/use telegram_write/);
+    // So is an inline query: the bot gets the query and the user's ID
+    expect(planCall('telegram_read', { args: ['api', 'messages.GetInlineBotResults'] })).toMatch(/use telegram_write/);
+    // GetMessagesViews is a read; the CLI refuses increment over MCP
+    expect(planCall('telegram_read', { args: ['api', 'messages.GetMessagesViews'] })).toMatchObject({ readOnly: true });
   });
 });
 

@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { isCompiledBinary } from './update.js';
 import { VERSION } from './version.js';
 import { isApiReadMethod, apiRefusalReason, resolveApiMethod, PAID_STARS_REFUSAL } from './api-methods.js';
+import { isMcpApiAllowed, notOnMcpAllowlist } from './mcp-api-allowlist.js';
 import { isGeneratedNamespace, resolveGeneratedCommand, rootMethodClassName } from './generated-registry.js';
 import { paramsOf } from './commands/generated.js';
 import { actionHash, createApproval, describeAction, readsStdin, STDIN_IN_APPROVAL_ENV } from './approval.js';
@@ -12,6 +13,7 @@ import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock } from './paths.js';
 import { getSessionString } from './config.js';
+import { maskGiftCodes } from './mcp-output.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -29,7 +31,7 @@ const MAX_OUTPUT = 100_000;
  * guarded write can never run through it even if this list is wrong. */
 export const READ_COMMANDS = new Set([
   'check', 'whoami', 'chats', 'read', 'get', 'info', 'topics', 'link', 'contacts', 'search',
-  'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'inline', 'watch', 'contact', 'members',
+  'inbox', 'buttons', 'pinned', 'reactions', 'stories', 'watch', 'contact', 'members',
   'admins', 'groups', 'folders', 'folder', 'write-access', 'drafts', 'admin-log', 'profile-photos',
   'permissions', 'stats', 'scheduled', 'sessions', 'stars', 'invites', 'schema',
 ]);
@@ -38,7 +40,7 @@ export const READ_COMMANDS = new Set([
  * sync, avatar). A command in no list is refused, so a new command stays off MCP until it is
  * classified here. */
 export const WRITE_COMMANDS = new Set([
-  'send', 'reply', 'send-file', 'edit', 'delete', 'forward', 'react', 'click', 'poll', 'vote',
+  'send', 'reply', 'send-file', 'edit', 'delete', 'forward', 'react', 'click', 'inline', 'poll', 'vote',
   'pin', 'unpin', 'mark-read', 'mark-unread', 'typing', 'mute', 'unmute', 'archive', 'unarchive',
   'pin-chat', 'unpin-chat', 'delete-dialog', 'folder-add', 'folder-remove', 'block', 'unblock',
   'add-contact', 'del-contact', 'join', 'leave', 'invite-link', 'create-group', 'create-channel',
@@ -219,7 +221,9 @@ function hasPaidKey(json: string): boolean {
 }
 
 function byMethod(method: string, label: string, args: string[], valued: Set<string>): CallClass {
-  const refusal = apiRefusalReason(method);
+  // Only allowlisted TL methods run over MCP (src/mcp-api-allowlist.ts); the denylist reason is
+  // reported when there is one, since such a method is refused in a terminal too.
+  const refusal = apiRefusalReason(method) ?? (isMcpApiAllowed(method) ? null : notOnMcpAllowlist(method));
   if (refusal) return { group: 'never', reason: refusal };
   // A call that would spend Stars (a paid search, a paid message or forward) never runs over MCP, in
   // any write mode. Params read from stdin (`-p -`) are not visible here; the CLI refuses those on the
@@ -242,7 +246,8 @@ export const TOOLS = [
     description:
       'Run a read-only telegram CLI command on the user\'s account, e.g. ["inbox","-n","10"], ["read","@user","-n","20"], ["search","invoice","--chat","Work"]. ' +
       'args[0] is the command; chats are an ID, @username, "me" or a title. Output is compact text (add "--json" for JSON). ' +
-      'Add "--full" (read/get/search/inbox/watch) for complete per-message stats: views, forwards, full reactions, comments, flags, media detail. watch needs -t or -n.',
+      'Add "--full" (read/get/search/inbox/watch) for complete per-message stats: views, forwards, full reactions, comments, flags, media detail. watch needs -t or -n. ' +
+      'A new public-post search (channels.SearchPosts) may use up the free daily search quota.',
     inputSchema: {
       type: 'object',
       properties: { args: { type: 'array', items: { type: 'string' }, minItems: 1 } },
@@ -338,8 +343,11 @@ function cliBase(): string[] {
 
 type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string };
 
-const cap = (s: string) =>
-  s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
+/** Every output the model gets, raw or curated, text or JSON, error or not: gift links masked, then capped. */
+const cap = (raw: string) => {
+  const s = maskGiftCodes(raw);
+  return s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
+};
 
 /** The environment of the CLI that runs one call. Exported for tests. */
 export function childEnv(plan: Plan): NodeJS.ProcessEnv {
@@ -355,7 +363,7 @@ export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   return env;
 }
 
-function result(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
+export function result(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
   if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out)}`, true);
   if (code !== 0) return text(cap([err.trim(), out.trim()].filter(Boolean).join('\n')) || `exit ${code}`, true);
   return text(cap(out.trimEnd() || err.trim() || '(no output)'));
