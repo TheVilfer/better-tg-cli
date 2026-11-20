@@ -9,19 +9,21 @@ import { fail } from '../errors.js';
 import { choiceOption, nonNegativeInt } from '../args.js';
 
 /**
- * Where a chat stands in the inbox: people first, then groups and channels, muted chats last
- * (a muted supergroup with a huge counter is rarely what the user reads first). Most unread first
- * within each.
+ * Where a chat stands in the inbox: people first, then bots, then groups and channels, muted chats
+ * last (a muted supergroup with a huge counter is rarely what the user reads first). Most unread
+ * first within each.
  */
 function inboxRank(chat: ChatInfo): number {
-  if (chat.muted) return 2;
-  return chat.type === 'user' ? 0 : 1;
+  if (chat.muted) return 3;
+  if (chat.type === 'user') return chat.bot ? 1 : 0;
+  return 2;
 }
 
 export const inboxCommand = new Command('inbox')
-  .description('Show unread messages summary: private chats, then groups and channels, muted chats last')
+  .description('Show unread messages summary: people first, then bots, then groups and channels, muted chats last')
   .option('-n, --limit <number>', 'Show at most N chats (totals still count all; 0 = totals only)', nonNegativeInt, 30)
   .option('--unmuted', 'Hide muted chats (usually what a human actually reads)')
+  .option('--no-bots', 'Hide chats with bots')
   .option('--include-archived', 'Also count archived chats (Telegram itself does not badge them)')
   .addOption(choiceOption('--type <type>', 'Filter by type (user includes bots)', CHAT_TYPES))
   .option('--preview <chars>', 'Last-message preview length (0 = none)', nonNegativeInt, 50)
@@ -38,6 +40,7 @@ export const inboxCommand = new Command('inbox')
       let unreadChats = chats.filter(c => c.unreadCount > 0);
       if (!options.includeArchived) unreadChats = unreadChats.filter(c => !c.archived);
       if (options.unmuted) unreadChats = unreadChats.filter(c => !c.muted);
+      if (options.bots === false) unreadChats = unreadChats.filter(c => !c.bot);
       if (options.type) unreadChats = unreadChats.filter(c => matchesChatType(c, options.type));
       unreadChats.sort((a, b) => inboxRank(a) - inboxRank(b) || b.unreadCount - a.unreadCount);
 
