@@ -113,7 +113,7 @@ yourself.
 | 5 | not logged in, or the session ended | [log in](#log-in) |
 
 With `--json` stdout holds exactly one JSON value, the result or
-`{"error":{"code","message","hint"?,"candidates"?,"retryAfterSeconds"?}}`. Stable codes include
+`{"error":{"code","message","hint"?,"command"?,"candidates"?,"retryAfterSeconds"?}}`. Stable codes include
 `chat_not_found`, `ambiguous_chat`, `chat_not_exact`, `ambiguous_or_unverified`, `not_a_forum`,
 `invalid_argument`, `usage`, `write_disabled`, `not_configured`, `session_expired`, `network`,
 `flood_wait`, `telegram_rpc` and `refused`. Exit 3 has its own line, `{"error":"approval_required",…}`.

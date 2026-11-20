@@ -68,14 +68,14 @@ describe('mock account: reads go through the real client code', () => {
 
   it('searches one chat and globally, with type and sender filters', async () => {
     const client = mock();
-    const [global] = await searchMessages(client, 'deadline');
+    const global = await searchMessages(client, 'deadline');
     expect(global.messages).toHaveLength(1);
     expect(global.messages[0]).toMatchObject({ chatId: '1001', text: 'Can we talk about the deadline tomorrow?' });
 
-    const [photos] = await searchMessages(client, '', { type: 'photo' });
+    const photos = await searchMessages(client, '', { type: 'photo' });
     expect(photos.messages.map(m => m.chatTitle).sort()).toEqual(['Alice Example', 'Mock News']);
 
-    const [fromBob] = await searchMessages(client, '', { chat: 'Team', from: '@bob_sample' });
+    const fromBob = await searchMessages(client, '', { chat: 'Team', from: '@bob_sample' });
     expect(fromBob.messages.map(m => m.text)).toEqual(['CI is green again']);
   });
 

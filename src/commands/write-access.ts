@@ -21,7 +21,7 @@ export const writeAccessCommand = new Command('write-access')
   .argument('[action]', 'ask, on, off, or omit to show status')
   .option('--for <duration>', 'With "ask" or "on": back to read-only automatically after 30m / 2h / 1d / 1w', checkedBy(parseForDuration))
   .option('--no-open', 'Without a terminal or dialog: print the page URL instead of opening a browser')
-  .option('--json', 'Print the resulting status as JSON: {writeMode, writeUntil?, writeModeProtected, secretStore, profile}')
+  .option('--json', 'Print the resulting status as JSON: {writeMode, writes, writeUntil?, writeModeProtected, secretStore, profile}')
   .action(async (action: string | undefined, options: { for?: string; open: boolean; json?: boolean }) => {
     if (action && !['ask', 'on', 'off'].includes(action)) {
       fail(usageError(`Unknown action: ${action}`, 'Usage: telegram write-access [ask|on|off] [--for 1h] [--json]'));

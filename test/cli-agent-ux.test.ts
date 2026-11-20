@@ -169,7 +169,9 @@ describe('chat names', () => {
     expect(r.err).toMatch(/Chat not found: Tem\nClosest titles:\n {2}-1004001 supergroup Team\n/);
     expect(r.err).toMatch(/List matching chats: telegram chats -q Tem --preview 0/);
     const json = jsonError(cli(['read', 'Tem', '--json']).out);
-    expect(json).toMatchObject({ code: 'chat_not_found', hint: ['chats', '-q', 'Tem', '--preview', '0'] });
+    expect(json).toMatchObject({
+      code: 'chat_not_found', hint: 'List matching chats: telegram chats -q Tem --preview 0', command: ['chats', '-q', 'Tem', '--preview', '0'],
+    });
     expect(json.candidates[0]).toMatchObject({ id: '-1004001', title: 'Team' });
   }, 30_000);
 
@@ -195,10 +197,14 @@ describe('output shapes', () => {
     expect(JSON.parse(cli(['read', 'Team', '-n', '1', '--json']).out)).toMatchObject({ chatTitle: 'Team', chatId: '-1004001' });
     expect(JSON.parse(cli(['get', 'Team', '3', '--json']).out)).toMatchObject({ chatTitle: 'Team', chatId: '-1004001' });
     const inChat = JSON.parse(cli(['search', 'green', '--chat', 'Team', '--json']).out);
-    expect(inChat[0]).toMatchObject({ chatTitle: 'Team', chatId: '-1004001' });
-    expect(inChat[0].messages[0]).toMatchObject({ id: 3, chatId: '-1004001' });
+    // One flat object like read, never an array around it
+    expect(inChat).toMatchObject({ query: 'green', chatTitle: 'Team', chatId: '-1004001' });
+    expect(inChat.messages[0]).toMatchObject({ id: 3, chatId: '-1004001' });
     const global = JSON.parse(cli(['search', 'green', '--json']).out);
-    for (const m of global[0].messages) expect(m).toMatchObject({ id: expect.any(Number), chatId: expect.any(String) });
+    expect(Array.isArray(global)).toBe(false);
+    expect(global.query).toBe('green');
+    expect(global.chatId).toBeUndefined();
+    for (const m of global.messages) expect(m).toMatchObject({ id: expect.any(Number), chatId: expect.any(String), chatTitle: expect.any(String) });
   }, 30_000);
 
   it('3.6 a full page says how to get the next one; a short page does not', () => {
@@ -254,8 +260,8 @@ describe('output shapes', () => {
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/^# Results for "" \(times in .+, UTC[+-]\d/m);
     expect(r.out).toMatch(/^… more exist: raise -n \(now 1\)/m);
-    expect(JSON.parse(cli(['search', '', '-n', '1', '--json']).out)[0].hasMore).toBe(true);
-    expect(JSON.parse(cli(['search', 'green', '--chat', 'Team', '--json']).out)[0].hasMore).toBeUndefined();
+    expect(JSON.parse(cli(['search', '', '-n', '1', '--json']).out).hasMore).toBe(true);
+    expect(JSON.parse(cli(['search', 'green', '--chat', 'Team', '--json']).out).hasMore).toBeUndefined();
   }, 30_000);
 
   it('6.2 a message without media says how to look at it', () => {
@@ -263,7 +269,8 @@ describe('output shapes', () => {
     expect(r.code).toBe(1);
     expect(jsonError(r.out)).toEqual({
       code: 'no_media', message: 'Message #3 has no downloadable media',
-      hint: 'Check the message: telegram get "Team" 3 (media shows as [photo …] or [document …]).',
+      hint: 'Check the message: telegram get Team 3 (media shows as [photo …] or [document …]).',
+      command: ['get', 'Team', '3'],
     });
   }, 30_000);
 

@@ -34,8 +34,8 @@ server (`telegram mcp`) and an agent skill.
 $ telegram inbox -n 3
 48 unread in 7 chats (showing 3)
 1234567890 user unread=2 Alice @alice | see you at 7?
--1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | anyone tried 1.90?
 -1009876543 channel unread=5 Changelog | v2.4 is out
+-1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | anyone tried 1.90?
 $ telegram read @alice -n 1 --json
 {"chatTitle":"Alice","messages":[{"id":812,"date":"2026-09-27T10:02:11.000Z","sender":"Alice","senderId":"1234567890","text":"see you at 7?"}]}
 ```

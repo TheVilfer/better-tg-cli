@@ -21,7 +21,7 @@ The contract is opt-in per command. Output that exists today stays exactly as it
   not start (for example the secret store could not be read) and has exited with code 1.
 - `telegram mcp` writes only JSON-RPC messages to stdout.
 - An ordinary command run with `--json` that fails prints one line `{"error":{"code","message",
-  "hint"?,"candidates"?,"retryAfterSeconds"?}}` on stdout (exit 3 keeps its own
+  "hint"?,"command"?,"candidates"?,"retryAfterSeconds"?}}` on stdout (exit 3 keeps its own
   `{"error":"approval_required",...}` line). That is not a contract result: it has no `schema`.
 
 Tests in `test/setup-contract.test.ts` pin these shapes. A command that adopts the contract later

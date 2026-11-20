@@ -28,7 +28,7 @@ export const EXIT_CODES_HELP = [
   '  3  write approval needed (write mode "ask"; see the printed action)',
   '  4  write access is disabled (telegram write-access)',
   '  5  not logged in, or the session ended (telegram onboard)',
-  'With --json an error is one line on stdout: {"error":{"code","message","hint"?,"candidates"?}}',
+  'With --json an error is one line on stdout: {"error":{"code","message","hint"?,"command"?,"candidates"?}}',
   '(exit 3 prints its own {"error":"approval_required",...} line).',
 ].join('\n');
 
@@ -39,26 +39,26 @@ export interface ChatCandidate {
   type: string;
 }
 
-/**
- * The next step. A string is prose or a fixed command; an array is the argv of a `telegram`
- * command built from the caller's own text (run it as is, never through a shell).
- */
-export type Hint = string | string[];
+/** The next step for a person or an agent, always one human-readable string. */
+export type Hint = string;
 
 /** A `telegram` argv as one line a POSIX shell runs unchanged (each odd argument single-quoted). */
 export function shellCommand(argv: string[]): string {
   return ['telegram', ...argv.map(a => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)].join(' ');
 }
 
-const hintText = (hint?: Hint) => (Array.isArray(hint) ? shellCommand(hint) : hint);
-
 export interface ErrorDetails {
   /** Stable snake_case id an agent can branch on */
   code: string;
   /** One line, without the candidate list or the hint */
   message: string;
-  /** The next step: a command or an action */
+  /** The next step in words (a fixed command may be quoted in it) */
   hint?: Hint;
+  /**
+   * A ready `telegram` command to run next, as argv without "telegram", built from the caller's own
+   * text: run it as is, never through a shell. The hint names the same command in shell form.
+   */
+  command?: string[];
   candidates?: ChatCandidate[];
   retryAfterSeconds?: number;
 }
@@ -72,6 +72,7 @@ export class CliError extends Error {
   readonly exitCode: number;
   readonly summary: string;
   readonly hint?: Hint;
+  readonly command?: string[];
   readonly candidates?: ChatCandidate[];
   readonly retryAfterSeconds?: number;
 
@@ -79,7 +80,7 @@ export class CliError extends Error {
     summary: string,
     code: string,
     exitCode: number = EXIT.ERROR,
-    extra: { hint?: Hint; candidates?: ChatCandidate[]; retryAfterSeconds?: number; text?: string } = {},
+    extra: { hint?: Hint; command?: string[]; candidates?: ChatCandidate[]; retryAfterSeconds?: number; text?: string } = {},
   ) {
     super(extra.text ?? humanText(summary, extra.candidates, extra.hint));
     this.name = 'CliError';
@@ -87,6 +88,7 @@ export class CliError extends Error {
     this.exitCode = exitCode;
     this.summary = summary;
     this.hint = extra.hint;
+    this.command = extra.command;
     this.candidates = extra.candidates;
     this.retryAfterSeconds = extra.retryAfterSeconds;
   }
@@ -104,7 +106,7 @@ export function formatCandidates(candidates: ChatCandidate[], total = candidates
 }
 
 function humanText(summary: string, candidates?: ChatCandidate[], hint?: Hint): string {
-  return [summary, candidates?.length ? formatCandidates(candidates) : '', hintText(hint) ?? ''].filter(Boolean).join('\n');
+  return [summary, candidates?.length ? formatCandidates(candidates) : '', hint ?? ''].filter(Boolean).join('\n');
 }
 
 /**
@@ -142,6 +144,7 @@ export function errorDetails(error: unknown): ErrorDetails & { exitCode: number 
     return {
       code: error.code, message: error.summary, exitCode: error.exitCode,
       ...(error.hint ? { hint: error.hint } : {}),
+      ...(error.command ? { command: error.command } : {}),
       ...(error.candidates?.length ? { candidates: error.candidates } : {}),
       ...(error.retryAfterSeconds !== undefined ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
     };
@@ -171,11 +174,12 @@ export function wantsJson(argv: string[] = process.argv.slice(2)): boolean {
 
 /** The one JSON line an error prints with --json. */
 export function errorJson(details: ErrorDetails): string {
-  const { code, message, hint, candidates, retryAfterSeconds } = details;
+  const { code, message, hint, command, candidates, retryAfterSeconds } = details;
   return JSON.stringify({
     error: {
       code, message,
       ...(hint ? { hint } : {}),
+      ...(command ? { command } : {}),
       ...(candidates?.length ? { candidates } : {}),
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     },
@@ -198,7 +202,7 @@ export function fail(error: unknown, spinner?: Spinner, label?: string): never {
     if (spinner && label && !process.env.TG_MCP) spinner.fail(label);
     else spinner?.stop();
     const text = error instanceof CliError ? error.message
-      : [details.message, hintText(details.hint)].filter(Boolean).join('\n');
+      : [details.message, details.hint].filter(Boolean).join('\n');
     console.error(text);
   }
   process.exit(details.exitCode);

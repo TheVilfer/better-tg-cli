@@ -6,6 +6,7 @@ import { connectClient } from './transport.js';
 import { loadConfig, saveConfig, setCredentials, setInviteCredentials, setSessionString } from './config.js';
 import { prompt, promptHidden } from './prompt.js';
 import { clearApprovals } from './approval.js';
+import { clearDialogCache } from './dialog-cache.js';
 
 async function askOwnCredentials(): Promise<{ apiId: number; apiHash: string }> {
   console.log('To get your API credentials:');
@@ -87,8 +88,9 @@ export function saveLogin(session: string, creds: { apiId: number; apiHash: stri
   // Only touch the flag when it is or was set, so ordinary configs stay unchanged
   if (testServers || loadConfig(() => {}).testServers) saveConfig({ testServers });
   setSessionString(session);
-  // A new login (maybe another account): approvals given before it do not carry over
+  // A new login (maybe another account): approvals and the dialog list of the old one do not carry over
   clearApprovals();
+  clearDialogCache();
 }
 
 export interface LoginUser { id: string; name: string; username?: string }

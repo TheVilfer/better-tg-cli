@@ -26,10 +26,10 @@ export async function lookupPeers(values: string[]): Promise<Map<string, PeerInf
       if (e instanceof ExitSignal) throw e;
       // The whole message (it may list the candidates), as one line
       // and the error's own code and exit code (an ambiguous name is a usage error, exit 2)
-      const { code, exitCode, message, candidates, hint, retryAfterSeconds } = errorDetails(e);
+      const { code, exitCode, message, candidates, hint, command, retryAfterSeconds } = errorDetails(e);
       out.set(v, {
         ok: false, error: (e instanceof Error ? e.message : String(e)).split('\n').map(l => l.trim()).filter(Boolean).join('; ').replace(/:; /g, ': '),
-        code, exitCode, message, ...(candidates ? { candidates } : {}), ...(hint ? { hint } : {}),
+        code, exitCode, message, ...(candidates ? { candidates } : {}), ...(hint ? { hint } : {}), ...(command ? { command } : {}),
         ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       });
     }

@@ -2,9 +2,9 @@ import { Command } from 'commander';
 import { loginHint } from '../login-hint.js';
 import { getClient, getMe, disconnectClient } from '../client.js';
 import { isConfigured, loadConfig, secretFileConflicts, secretSource, type TgConfig } from '../config.js';
-import { configDir, isMock, profile } from '../paths.js';
+import { configDir, isMock, isMockAsk, profile } from '../paths.js';
 import { mockStatePath } from '../mock/world.js';
-import { getSecretBackendLabel, writeStatus, type WriteStatus } from '../status.js';
+import { getSecretBackendLabel, writesLine, writesOf, writeStatus, type WriteStatus } from '../status.js';
 import { describeWriteState, parseWriteState } from '../write-state.js';
 import { getWriteValue } from '../write-store.js';
 import { transportSetting } from '../transport.js';
@@ -29,7 +29,7 @@ function writeModeLine(w: WriteStatus): string {
 
 /**
  * `check --json`: one object, also on failure (then with `error`, and the exit code of that error).
- * {configured, authenticated, account?, writeMode, writeUntil?, writeModeProtected, secretStore,
+ * {configured, authenticated, account?, writeMode, writes, writeUntil?, writeModeProtected, secretStore,
  *  profile, transport, testServers, version, mock?, error?}
  */
 export const checkCommand = new Command('check')
@@ -39,17 +39,22 @@ export const checkCommand = new Command('check')
     const json = !!options.json;
     if (isMock()) {
       const me = await getMe(await getClient());
+      // The guard is skipped under TG_MOCK (writes only change the local state file), unless
+      // TG_MOCK_ASK rehearses mode "ask"
+      const mode = isMockAsk() ? 'ask' : 'on';
       if (json) {
         console.log(JSON.stringify({
           configured: true, authenticated: true, mock: true,
           account: { id: me.id.toString(), ...(me.username ? { username: me.username } : {}) },
-          // The guard is skipped under TG_MOCK: writes only change the local state file
-          writeMode: 'on', writeModeProtected: false, profile: profile() || null, version: VERSION,
+          writeMode: mode, writes: writesOf(mode), writeModeProtected: false, profile: profile() || null, version: VERSION,
         }));
       } else {
         console.log(chalk.green('Mock mode: no Telegram session is used'));
+        console.log(chalk.bold(writesLine(mode)));
         console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
-        console.log('Write mode: on (mock: writes only change the state file, no approval)');
+        console.log(mode === 'ask'
+          ? 'Write mode: ask (mock: TG_MOCK_ASK rehearses approvals; writes only change the state file)'
+          : 'Write mode: on (mock: writes only change the state file, no approval)');
         console.log(`State file: ${mockStatePath()} (delete it to start over)`);
       }
       await disconnectClient();
@@ -108,6 +113,7 @@ export const checkCommand = new Command('check')
         }));
       } else {
         spinner.succeed(chalk.green('Session valid'));
+        console.log(chalk.bold(writesLine(write.writeMode)));
         console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
         console.log(`Session stored in: ${sessionStorageLabel(config)}`);
         console.log(writeModeLine(write));
@@ -128,6 +134,7 @@ export const checkCommand = new Command('check')
           error: {
             code: details.code, message: details.message,
             ...(details.hint ? { hint: details.hint } : {}),
+            ...(details.command ? { command: details.command } : {}),
             ...(details.retryAfterSeconds !== undefined ? { retryAfterSeconds: details.retryAfterSeconds } : {}),
           },
         }));
@@ -137,7 +144,7 @@ export const checkCommand = new Command('check')
       if (!ended) {
         spinner.fail(chalk.red(details.code === 'flood_wait' ? 'Could not check the session: Telegram rate limit' : 'Could not check the session'));
         console.error(details.message);
-        if (details.hint) console.error(typeof details.hint === 'string' ? details.hint : details.hint.join(' '));
+        if (details.hint) console.error(details.hint);
         console.error('The stored login was not judged; this is no reason to log in again.');
         process.exit(details.exitCode);
       }

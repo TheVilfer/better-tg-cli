@@ -27,18 +27,19 @@ are real output of the mock account (`TG_MOCK`), in UTC.
   proven unique (`ambiguous_or_unverified`, exit 2): use the ID or @username.
 
 A name that fits several chats is refused with candidates, and a name that fits none is
-`chat_not_found` (exit 1) with the closest titles and a `hint` to run:
+`chat_not_found` (exit 1) with the closest titles, a `hint` and a `command` to run:
 
 ```
 $ telegram read Tea --json
 {"error":{"code":"ambiguous_chat","message":"\"Tea\" is part of 2 chat titles; use an ID or the exact title","hint":"Run the command again with one of these IDs.","candidates":[{"id":"-1004001","title":"Team","type":"supergroup"},{"id":"-1004002","title":"Team Design","type":"supergroup"}]}}
 [exit 2]
 $ telegram read Tem --json
-{"error":{"code":"chat_not_found","message":"Chat not found: Tem","hint":["chats","-q","Tem","--preview","0"],"candidates":[{"id":"-1004001","title":"Team","type":"supergroup"},{"id":"-1004002","title":"Team Design","type":"supergroup"}]}}
+{"error":{"code":"chat_not_found","message":"Chat not found: Tem","hint":"List matching chats: telegram chats -q Tem --preview 0","command":["chats","-q","Tem","--preview","0"],"candidates":[{"id":"-1004001","title":"Team","type":"supergroup"},{"id":"-1004002","title":"Team Design","type":"supergroup"}]}}
 [exit 1]
 ```
 
-An argv `hint` is a `telegram` command built from your own text: run it as is, never through a shell.
+`hint` is always one line of text for a person. `command`, when present, is the argv of the
+`telegram` command to run next, built from your own text: run it as is, never through a shell.
 
 ## Chat and message IDs
 
@@ -55,14 +56,14 @@ $ telegram get -1004001 1
 #1 2026-11-15 00:59 Alice: Release checklist is in the doc: https://example.com/checklist
 ```
 
-In JSON every search hit has `id` and `chatId`, with `--chat` too; `read` and `get` give `chatId`
-at the top:
+In JSON a search is one object like `read`; every hit has `id` and `chatId`, with `--chat` too, and
+a global hit also `chatTitle`. `read` and `get` give `chatId` at the top:
 
 ```
 $ telegram search checklist -n 5 --json
-[{"messages":[{"id":1,"date":"2026-11-15T00:59:37.000Z","sender":"Alice","senderId":"1001","text":"Release checklist is in the doc: https://example.com/checklist","isOutgoing":false,"chatId":"-1004001","chatTitle":"Team"}]}]
+{"query":"checklist","messages":[{"id":1,"date":"2026-11-15T00:59:37.000Z","sender":"Alice","senderId":"1001","text":"Release checklist is in the doc: https://example.com/checklist","isOutgoing":false,"chatId":"-1004001","chatTitle":"Team"}]}
 $ telegram search green --chat Team --json
-[{"messages":[{"id":3,"date":"2026-11-20T00:19:37.000Z","sender":"Bob","senderId":"1002","text":"CI is green again","isOutgoing":false,"chatId":"-1004001"}],"chatTitle":"Team","chatId":"-1004001"}]
+{"query":"green","chatTitle":"Team","chatId":"-1004001","messages":[{"id":3,"date":"2026-11-20T00:19:37.000Z","sender":"Bob","senderId":"1002","text":"CI is green again","isOutgoing":false,"chatId":"-1004001"}]}
 ```
 
 Comments under a channel post live in another chat: reply there with `threadChatId` (see below).
@@ -72,8 +73,8 @@ Comments under a channel post live in another chat: reply there with `threadChat
 ```
 $ telegram inbox --unmuted -n 20
 10 unread in 5 chats
--3001 group unread=3 Family | Who is bringing dessert?
 1001 user unread=2 Alice Example @alice_example | Ping me when you are free
+-3001 group unread=3 Family | Who is bringing dessert?
 -1004003 supergroup unread=2 Dev Forum @mock_forum | Thanks! Any ETA?
 -1005001 channel unread=2 Mock News @mock_news | Weekly digest: three things shipped
 -1004001 supergroup unread=1 Team @mock_team | CI is green again
@@ -85,6 +86,9 @@ $ telegram inbox -n 0 --json
   passes them, `-n` only cuts the list, and `-n 0` gives the totals alone. Archived chats are
   skipped unless you pass `--include-archived`; `--unmuted` drops muted ones. So "all unread" means
   "all unread in the first 500 dialogs, after these filters": say which filters you used.
+- Order: private chats, then groups and channels, muted chats last; most unread first within each.
+  Every chat in JSON has `"muted": true|false`, and a muted one says `muted` in text. For triage
+  use `--unmuted`: a muted supergroup with hundreds unread is rarely what the user wants first.
 - `inbox` and `chats` shorten the last message with `--preview <chars>` (`0` = none); they have no
   `--max-text`.
 - `read <chat> --unread` returns what comes after the read marker, still capped by `-n`. It does not
@@ -201,13 +205,14 @@ Off a terminal, output is compact: one line per item, ID first, empty fields dro
 |---|---|
 | `chats`, `contacts`, `members` | array |
 | `read`, `get` | `{chatTitle, chatId, messages[], threadChatId?, missing?, hasMore?, nextBefore?}`; `read` of a forum's whole history (no `--topic`/`--thread`) adds `topicId` to each message |
-| `search` | array of `{chatTitle?, chatId?, messages[], hasMore?}`; every message has `id` and `chatId`, global hits also `chatTitle` |
-| `inbox` | `{totalUnread, chatsWithUnread, chats[]}` |
+| `search` | `{query, chatTitle?, chatId?, messages[], hasMore?}` (chat fields with `--chat`); every message has `id` and `chatId`, global hits also `chatTitle` |
+| `inbox` | `{totalUnread, chatsWithUnread, chats[]}`; each chat has `muted` |
 | `topics` | `{chatTitle, topics[]}` |
 | `info`, `whoami`, `check`, `write-access` | object |
 
 Messages carry `id`, `date`, `sender`, `senderId`, `text`, `replyToMsgId`, `isOutgoing`, `media`,
-`buttons` and `replies` when set. Results of writes are in [writing.md](writing.md#results).
+`buttons` and `replies` when set. `isOutgoing` is true for every message the account itself wrote,
+also one saved or sent from another device. The chat with yourself is titled `Saved Messages`. Results of writes are in [writing.md](writing.md#results).
 
 ## Other reads
 
