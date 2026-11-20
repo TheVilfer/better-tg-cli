@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { CLIENTS, LIVE_REQUIRED, approvalOf, casesOf, outcomeCells, refusalOf, statusOf, validate, type ClientRecord } from '../src/clients/data.js';
-import { DOC_PATH, renderCompatibility, strongest } from '../src/clients/matrix.js';
+import { esc, DOC_PATH, renderCompatibility, strongest } from '../src/clients/matrix.js';
 import { knownAgents } from '../src/skill-install.js';
 
 // The clients issue #109 names, by id. Adding one is fine; dropping one should be a decision.
@@ -302,5 +302,12 @@ describe('compatibility matrix', () => {
   it('never points the public doc at local-only files', () => {
     const md = renderCompatibility();
     expect(md).not.toMatch(/(^|[\s(`])\.dev\/|CLAUDE\.local|PROFILE\.md|PLAN\.md|research-[\w-]+\.md|part-[\w-]+\.md/m);
+  });
+});
+
+describe('a table cell', () => {
+  it('escapes a backslash before a pipe, so "a\\|b" cannot end the cell early', () => {
+    expect(esc('a\\|b')).toBe('a\\\\\\|b');
+    expect(esc('one\r\ntwo | three')).toBe('one two \\| three');
   });
 });
