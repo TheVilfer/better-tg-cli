@@ -15,3 +15,17 @@ const GIFT_LINK = /((?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/giftco
 export function maskGiftCodes(text: string): string {
   return text.replace(GIFT_LINK, `$1${GIFT_CODE_HIDDEN}`);
 }
+
+/**
+ * A login code spelled out after "code:" (`Login code: 52813`, `Код для входа в Telegram: 52813`), the
+ * form src/client.ts hides in a message of a login service. The $1 group is the lead-in.
+ */
+export const LOGIN_CODE_PHRASE = /((?:code|код)[^\n:：]{0,40}[:：]\s*)[A-Za-z0-9_-]+/giu;
+
+/**
+ * Whether a value the model sent holds something MCP output never repeats: a gift link's slug, or a
+ * login code after "code:". Such input is not echoed back (an approval's retry arguments).
+ */
+export function holdsMaskedValue(text: string): boolean {
+  return maskGiftCodes(text) !== text || new RegExp(LOGIN_CODE_PHRASE.source, LOGIN_CODE_PHRASE.flags).test(text);
+}

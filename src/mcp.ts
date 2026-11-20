@@ -14,7 +14,7 @@ import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock, isMockAsk } from './paths.js';
 import { getSessionString } from './config.js';
-import { maskGiftCodes } from './mcp-output.js';
+import { holdsMaskedValue, maskGiftCodes } from './mcp-output.js';
 import { checkSession, openSetupPage } from './setup.js';
 import { savedMode } from './write-mode.js';
 import { openBrowser } from './commands/onboard.js';
@@ -465,16 +465,23 @@ export function result(plan: Pick<Plan, 'argv' | 'stdin'>, r: RunOutput): ToolRe
   if (code === EXIT_NEEDS_APPROVAL) {
     const pending = approvalLine(out);
     if (pending) {
-      const args: Record<string, unknown> = { args: plan.argv, ...(plan.stdin ? { stdin: plan.stdin } : {}), approval: pending.code };
+      // A gift link or login code in the call is never echoed back: the model repeats its own call
+      // with the code added instead of copying the arguments from here
+      const sensitive = [...plan.argv, plan.stdin ?? ''].some(holdsMaskedValue);
+      const note = `The arguments are not repeated here because they hold a gift link or a login code. After the user's yes, call telegram_write again with exactly the same args and stdin as this call, plus "approval": "${pending.code}".`;
+      const retry = sensitive
+        ? { tool: 'telegram_write', sameArgumentsAsThisCall: true, arguments: { approval: pending.code }, note }
+        : { tool: 'telegram_write', arguments: { args: plan.argv, ...(plan.stdin ? { stdin: plan.stdin } : {}), approval: pending.code } };
+      const said = cap(err.trim());
       return {
-        content: [{ type: 'text', text: cap(err.trim()) }],
+        content: [{ type: 'text', text: sensitive ? `${said}\n${note}` : said }],
         structuredContent: {
           status: 'approval_required',
           code: pending.code,
           action: maskedValue(pending.action),
           expiresInMinutes: pending.expiresInMinutes,
           ...(pending.rejected ? { rejected: maskedValue(pending.rejected) } : {}),
-          retry: { tool: 'telegram_write', arguments: args },
+          retry,
         },
       };
     }

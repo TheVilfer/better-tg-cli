@@ -38,6 +38,27 @@ const call = (args: Record<string, unknown>) => ({ jsonrpc: '2.0', id: 1, method
 type Reply = { result: { content: { text: string }[]; isError?: boolean; structuredContent?: Record<string, any> } };
 
 describe('over MCP without a dialog, "approval needed" is a result, not an error (5.3)', () => {
+  it('a gift link or login code in the call is not echoed in retry: the model repeats its own call with the code', async () => {
+    const args = ['send', '-1004001', '-'];
+    const stdin = 'Your gift: https://t.me/giftcode/AbCd1234XyZ';
+    const first = await handleMessage(call({ args, stdin }), run) as Reply;
+    const s = first.result.structuredContent!;
+    expect(s.status).toBe('approval_required');
+    expect(s.retry).toMatchObject({ tool: 'telegram_write', sameArgumentsAsThisCall: true, arguments: { approval: s.code } });
+    expect(s.retry.arguments.args).toBeUndefined();
+    expect(s.retry.arguments.stdin).toBeUndefined();
+    expect(JSON.stringify(first.result)).not.toContain('AbCd1234XyZ');
+    expect(first.result.content[0].text).toContain(`exactly the same args and stdin as this call, plus "approval": "${s.code}"`);
+    // Repeating the original call with the code goes through
+    const second = await handleMessage(call({ args, stdin, approval: s.code }), run) as Reply;
+    expect(second.result.isError).toBeUndefined();
+    expect(second.result.content[0].text).toMatch(/Message ID: \d+/);
+
+    const login = await handleMessage(call({ args: ['send', '-1004001', 'Login code: 52813'] }), run) as Reply;
+    expect(login.result.structuredContent!.retry).toMatchObject({ sameArgumentsAsThisCall: true });
+    expect(JSON.stringify(login.result.structuredContent!.retry)).not.toContain('52813');
+  });
+
   it('has the code, the action and the exact retry call as structured content, and only MCP instructions as text', async () => {
     const first = await handleMessage(call({ args: ['send', '-1004001', '-'], stdin: 'See you at 7' }), run) as Reply;
     expect(first.result.isError).toBeUndefined();

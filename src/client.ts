@@ -14,7 +14,7 @@ import { isMock } from './paths.js';
 import { join } from 'path';
 import { isTTY } from './spinner.js';
 import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
-import { maskGiftCodes } from './mcp-output.js';
+import { LOGIN_CODE_PHRASE, maskGiftCodes } from './mcp-output.js';
 import { loginHint } from './login-hint.js';
 import { fileSnapshot, uploadable } from './file-snapshot.js';
 import { apiMarker, INVITE_LINK } from './approval-action.js';
@@ -588,7 +588,7 @@ function maskedForMcp<T>(msg: Api.Message, value: T): T {
  */
 export function maskLoginCodes(text: string): string {
   return text
-    .replace(/((?:code|код)[^\n:：]{0,40}[:：]\s*)[A-Za-z0-9_-]+/giu, `$1${LOGIN_CODE_HIDDEN}`)
+    .replace(LOGIN_CODE_PHRASE, `$1${LOGIN_CODE_HIDDEN}`)
     .replace(/(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_-])/g, LOGIN_CODE_HIDDEN);
 }
 
