@@ -160,7 +160,7 @@ export function exampleInvocation(nsKebab: string, methodKebab: string, classNam
 
 const ACCESS_NOTE: Record<Access, string> = {
   read: 'read — runs without write access',
-  write: 'write — needs `telegram write-access on`',
+  write: 'write — needs write access (mode "ask": the user approves each call)',
   refused: 'refused — always refused',
 };
 

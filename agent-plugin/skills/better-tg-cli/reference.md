@@ -276,9 +276,11 @@ command.
 ### Read vs write and refusals (both commands)
 
 - **Read vs write:** methods named `Get*`/`Check*`/`Search*`/`Resolve*` are reads and run without
-  write access (over MCP through the read tool, if the method is on the allowlist); everything else is a write that needs
-  `telegram write-access on` (the `telegram_write` MCP tool), goes through the write guard, and is
-  logged to the audit file.
+  write access (over MCP through the read tool, if the method is on the allowlist); everything else is
+  a write (the `telegram_write` MCP tool): it goes through the write guard and is logged to the audit
+  file. In mode `ask` a raw write asks for the user's approval of that one call, as any write does,
+  so `write-access on` is never needed for it. Writes despite the `Get` prefix:
+  `messages.GetBotCallbackAnswer` and `messages.GetInlineBotResults` (see below).
 - **Always refused**, even with write access (the command still exists and refuses, exit 1; its
   `--help` says "always refused"): the whole `auth.*` namespace (login/session — use `telegram auth`),
   account/session takeover and 2FA/password/phone changes, data export (takeout) and Passport

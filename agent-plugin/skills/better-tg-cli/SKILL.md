@@ -81,8 +81,10 @@ for a method with no curated command, or when you need the exact raw TL object.
 
 `telegram api` and the generated commands both reach 100% of the Telegram client API (JSON out) and
 share one classification: reads are `Get*`/`Check*`/`Search*`/`Resolve*` (run free, go through
-`telegram_read`), everything else is a write (needs `telegram write-access on`; `telegram_write` over
-MCP). Paying, account deletion, session termination, 2FA/phone changes and location sharing are
+`telegram_read`), everything else is a write (`telegram_write` over MCP). A raw write works in mode
+`ask` like any other write: the user approves each call, so never switch to `write-access on` for it.
+Two `Get*` methods are writes despite the name: `messages.GetBotCallbackAnswer` (presses a bot
+button) and `messages.GetInlineBotResults` (sends your query and user ID to the bot). Paying, account deletion, session termination, 2FA/phone changes and location sharing are
 **always refused** (the command still exists and refuses). Over MCP only an allowlist of about a
 hundred methods runs (reading messages, dialogs, chats, users, search; sending, editing, reacting,
 pinning, voting, basic chat admin; listed in `docs/api-coverage.md`); any other method is refused

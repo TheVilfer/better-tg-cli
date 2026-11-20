@@ -332,6 +332,21 @@ describe('12 the skill says what the CLI does', () => {
     expect(markRead[0]).not.toMatch(/messageId/);
     expect(ref).toMatch(/\| `forward` \|.*`messageIds` are the \*\*source\*\* IDs.*`forwardedIds`/);
   });
+
+  it('raw API writes work in mode "ask"; GetBotCallbackAnswer and GetInlineBotResults are named as writes', () => {
+    for (const f of ['SKILL.md', 'reference.md']) {
+      const text = read(f).replace(/\s+/g, ' ');
+      // Never "a raw write needs write-access on": in mode ask the user approves each call
+      expect(text, f).not.toMatch(/write \(needs `telegram write-access on`|a write that needs `telegram write-access on`/);
+      expect(text, f).toMatch(/mode `ask`/);
+      expect(text, f).toContain('GetBotCallbackAnswer');
+      expect(text, f).toContain('GetInlineBotResults');
+    }
+    const api = cli(['api', '--help']).out.replace(/\s+/g, ' ');
+    expect(api).not.toContain('write and needs `telegram write-access on`');
+    expect(api).toContain('messages.GetBotCallbackAnswer, messages.GetInlineBotResults');
+    expect(cli(['messages', 'send-message', '--help']).out).toMatch(/Access in a terminal: write — needs write access \(mode "ask": the user approves each call\)/);
+  }, 30_000);
 });
 
 describe('sync --media: a failed download is a failure that --resume retries', () => {
