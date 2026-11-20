@@ -28,7 +28,8 @@ const READ_PREFIX = /^(get|check|search|resolve)/;
 const FORCE_WRITE = new Set([
   'messages.getbotcallbackanswer', // presses a bot button
   'ephemeral.getcallbackanswer',
-  'messages.getmessagesviews', // increments the view counter when `increment` is set
+  // hands the query text and the user's ID to an external bot (updateBotInlineQuery)
+  'messages.getinlinebotresults',
 ]);
 
 /** Reads whose name does not start with a read prefix (none needed today; kept for review). */
@@ -48,7 +49,22 @@ export function isApiReadMethod(name: string): boolean {
  * covered too.
  */
 export function isApiReadCall(name: string, params?: Record<string, unknown>): boolean {
-  return isApiReadMethod(name) && !hasPaidStars(params);
+  return isApiReadMethod(name) && !hasPaidStars(params) && !incrementsViews(name, params);
+}
+
+/** `messages.GetMessagesViews` only reads the counters unless `increment` is set, which adds a view. */
+function incrementsViews(name: string, params?: Record<string, unknown>): boolean {
+  return name.toLowerCase() === 'messages.getmessagesviews' && !!params && isSet(params, 'increment');
+}
+
+/**
+ * An own field that teleproto would send: anything but null, undefined or false. An empty string
+ * counts, since it still sets the bit of a `true` flag (`{"allowPaidFloodskip": ""}`).
+ */
+function isSet(params: Record<string, unknown>, key: string): boolean {
+  if (!Object.hasOwn(params, key)) return false;
+  const v = params[key];
+  return v != null && v !== false;
 }
 
 /** An own, non-null `allowPaidStars` (0 included): the field teleproto copies into the request. */
@@ -70,6 +86,121 @@ export function mcpPaidStarsRefusal(_name: string, params?: Record<string, unkno
 }
 
 export const PAID_STARS_REFUSAL = 'Refused over MCP: allowPaidStars spends the user\'s Stars (a paid search, or a message to a chat that charges for it); do it in a terminal.';
+
+/** The constructor name of a TL value: the JSON `_` or the class of a built TL object. */
+function typeNameOf(value: object): string | undefined {
+  const v = value as { _?: unknown; className?: unknown; classType?: unknown };
+  if (typeof v._ === 'string') return v._;
+  if (v.classType === 'constructor' && typeof v.className === 'string') return v.className;
+  return undefined;
+}
+
+/** Visit every object in the params, at any depth, with the key that holds it. */
+function walkObjects(value: unknown, visit: (obj: Record<string, unknown>, key: string | undefined) => string | null, key?: string): string | null {
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const r = walkObjects(v, visit, key);
+      if (r) return r;
+    }
+    return null;
+  }
+  if (!value || typeof value !== 'object' || value instanceof Uint8Array) return null;
+  const obj = value as Record<string, unknown>;
+  const hit = visit(obj, key);
+  if (hit) return hit;
+  for (const [k, v] of Object.entries(obj)) {
+    const r = walkObjects(v, visit, k);
+    if (r) return r;
+  }
+  return null;
+}
+
+/** A location in any form: a geo point, geo media, a venue or a map block of a rich message. */
+const GEO_TYPE = /geo|venue|pageblockmap/i;
+
+/**
+ * Input media an MCP call may send (lowercase): a new or existing photo or document, a poll and a
+ * plain dice. Everything else is refused before teleproto sees it, MessageMedia* included: teleproto
+ * converts a `MessageMediaContact`, a `Message` or a venue into the matching InputMedia inside
+ * `client.invoke`, after the last check of the CLI.
+ */
+const MCP_INPUT_MEDIA = new Set([
+  'inputmediauploadedphoto', 'inputmediauploadeddocument', 'inputmediaphoto', 'inputmediadocument',
+  'inputmediapoll', 'inputmediadice',
+]);
+
+/** Fields of type InputMedia in the schema (`order` of bots.ReorderPreviewMedias is left out: that method is off the allowlist). */
+const INPUT_MEDIA_KEYS = new Set(['media', 'attachedMedia', 'solutionMedia', 'extendedMedia', 'invoiceMedia', 'newMedia']);
+
+/** The first value in an InputMedia field, at any depth, that is not on MCP_INPUT_MEDIA. */
+function mcpMediaRefusal(value: unknown): string | null {
+  const refuse = (type: string) => `Refused over MCP: ${type} is not a media type MCP sends; it may send an uploaded or existing photo or document, a poll or a dice.`;
+  const visit = (v: unknown): string | null => {
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        const r = visit(x);
+        if (r) return r;
+      }
+      return null;
+    }
+    if (!v || typeof v !== 'object' || v instanceof Uint8Array) return null;
+    for (const [k, x] of Object.entries(v)) {
+      if (INPUT_MEDIA_KEYS.has(k) && x != null && x !== false) {
+        for (const m of Array.isArray(x) ? x : [x]) {
+          const type = m && typeof m === 'object' ? typeNameOf(m) : undefined;
+          if (!type || !MCP_INPUT_MEDIA.has(type.toLowerCase())) return refuse(type ?? `a ${typeof m} in "${k}"`);
+        }
+      }
+      const r = visit(x);
+      if (r) return r;
+    }
+    return null;
+  };
+  return visit(value);
+}
+
+/**
+ * Params an allowlisted method may carry that go beyond what MCP allows, refused over MCP (TG_MCP
+ * or TG_READ_ONLY) in every write mode. Checked on the prototype-free params in runApiMethod and
+ * again on the built request in invokeApi; null in a terminal or when nothing matches.
+ */
+export function mcpParamRefusal(name: string, params?: Record<string, unknown>): string | null {
+  if (!process.env.TG_MCP && !process.env.TG_READ_ONLY) return null;
+  if (!params) return null;
+  const lower = name.toLowerCase();
+  if (isSet(params, 'allowPaidFloodskip')) {
+    return 'Refused over MCP: allowPaidFloodskip pays to skip the flood limit; do it in a terminal.';
+  }
+  const nested = walkObjects(params, (obj, key) => {
+    const type = typeNameOf(obj)?.toLowerCase();
+    if ((type === 'suggestedpost' || key === 'suggestedPost') && obj.price != null) {
+      return 'Refused over MCP: a suggested post with a price is paid by the user when the channel accepts it; do it in a terminal.';
+    }
+    if (type === 'inputmediastakedice') return 'Refused over MCP: a dice with a stake bets TON; do it in a terminal.';
+    if (type && GEO_TYPE.test(type)) return 'Refused over MCP: this carries a geographic location (a geo point, venue or map block).';
+    return null;
+  });
+  if (nested) return nested;
+  const media = mcpMediaRefusal(params);
+  if (media) return media;
+  // An empty referer imports nothing
+  if (lower === 'contacts.resolveusername' && isSet(params, 'referer') && params.referer !== '') {
+    return 'Refused over MCP: referer imports an affiliate link; resolve the username without it.';
+  }
+  if (lower === 'messages.exportchatinvite' && isSet(params, 'subscriptionPricing')) {
+    return 'Refused over MCP: subscriptionPricing makes joining paid; create the link without it, or in a terminal.';
+  }
+  if ((lower === 'contacts.block' || lower === 'contacts.unblock') && isSet(params, 'myStoriesFrom')) {
+    return 'Refused over MCP: myStoriesFrom changes who sees your stories; do it in a terminal.';
+  }
+  if (lower === 'messages.getbotcallbackanswer' && isSet(params, 'password')) {
+    return 'Refused over MCP: a button protected by the 2FA password is pressed in a terminal.';
+  }
+  if (lower === 'messages.getmessagesviews' && isSet(params, 'increment')) {
+    return 'Refused over MCP: increment adds a view; read the counters with increment=false.';
+  }
+  return null;
+}
 
 /**
  * A deep copy of request params made of prototype-free objects, so no field can be inherited (a JSON
@@ -237,7 +368,7 @@ export function apiRefusalReason(name: string, params?: Record<string, unknown>)
  * Coordinates in the params of an otherwise allowed request are refused everywhere (read tool and
  * `--read-only` included), like the other location refusals (geo media, GetLocated, EditLocation):
  * - `messages.GetInlineBotResults` with `geoPoint` hands the user's coordinates to the bot; an
- *   inline query without one stays a read;
+ *   inline query without one is a plain write (the bot still gets the query and the user's ID);
  * - `channels.CreateChannel` with `geoPoint` or `address` creates a public geo group at that
  *   place; a plain channel or group is still created.
  * Also checked on the built request in invokeApi.

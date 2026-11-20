@@ -268,7 +268,8 @@ take `--full` (alias `--stats`) to include every per-message statistic (views, f
 reaction breakdown, comments, flags, rich media metadata) — default output is unchanged without it.
 See all commands with `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
 explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
-`telegram api <namespace.Method>` reaches 100% of the Telegram client API, and every one of the 823
+`telegram api <namespace.Method>` reaches 100% of the Telegram client API in a terminal (over MCP only
+an allowlist of about a hundred methods runs, see [docs/api-coverage.md](docs/api-coverage.md)), and every one of the 823
 TL methods also has its own typed top-level command `telegram <namespace> <method>` (root methods
 like `telegram ping` too), generated from the schema with the same refusals and read/write guard as
 `api`. Where a namespace name collides with a curated command (`stats`, `stories`, `contacts`,

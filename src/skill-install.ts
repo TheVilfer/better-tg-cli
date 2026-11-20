@@ -45,6 +45,8 @@ export type SkillState =
   | { kind: 'outdated' }
   | { kind: 'missing' }
   | { kind: 'linked'; target: string }
+  /** A symlink whose target is gone: the agent has no skill, whatever the link says */
+  | { kind: 'broken-link'; target: string }
   | { kind: 'foreign' };
 
 export interface AgentStatus { agent: Agent; detected: boolean; path: string; state: SkillState }
@@ -65,7 +67,10 @@ function isOurFolder(path: string): boolean {
 export function skillState(path: string): SkillState {
   const st = lstat(path);
   if (!st) return { kind: 'missing' };
-  if (st.isSymbolicLink()) return { kind: 'linked', target: readlinkSync(path) };
+  if (st.isSymbolicLink()) {
+    // existsSync follows the link: false means it points at nothing
+    return { kind: existsSync(path) ? 'linked' : 'broken-link', target: readlinkSync(path) };
+  }
   if (!st.isDirectory() || !isOurFolder(path)) return { kind: 'foreign' };
   const same = Object.entries(SKILL_FILES).every(([file, content]) => {
     try { return readFileSync(join(path, file), 'utf8') === content; } catch { return false; }
@@ -94,8 +99,11 @@ export function installSkill(agent: Agent, options: { force?: boolean } = {}): I
   const path = join(agent.skillsDir, SKILL_NAME);
   const state = skillState(path);
   if (state.kind === 'installed') return { agent, path, action: 'unchanged' };
-  if (state.kind === 'linked') {
-    if (!options.force) return { agent, path, action: 'skipped', reason: `symlink to ${state.target}; --force replaces the link with a copy` };
+  if (state.kind === 'linked' || state.kind === 'broken-link') {
+    if (!options.force) {
+      const what = state.kind === 'broken-link' ? `broken symlink to ${state.target} (the target is gone)` : `symlink to ${state.target}`;
+      return { agent, path, action: 'skipped', reason: `${what}; --force replaces the link with a copy` };
+    }
     unlinkSync(path); // the link only, never what it points at
   }
   if (state.kind === 'foreign') return { agent, path, action: 'skipped', reason: 'something else lives there; not touching it' };
@@ -110,7 +118,7 @@ export function uninstallSkill(agent: Agent, options: { force?: boolean } = {}):
   const path = join(agent.skillsDir, SKILL_NAME);
   const state = skillState(path);
   if (state.kind === 'missing') return { agent, path, action: 'absent' };
-  if (state.kind === 'linked') {
+  if (state.kind === 'linked' || state.kind === 'broken-link') {
     if (!options.force) return { agent, path, action: 'skipped', reason: `symlink to ${state.target}; --force removes the link` };
     unlinkSync(path);
     return { agent, path, action: 'removed' };

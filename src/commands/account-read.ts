@@ -4,6 +4,8 @@ import { formatJson } from '../formatters/json.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const sessionsCommand = new Command('sessions')
   .description('List active login sessions (devices) on the account')
@@ -26,21 +28,19 @@ export const sessionsCommand = new Command('sessions')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch sessions');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch sessions');
     }
   });
 
 export const starsCommand = new Command('stars')
   .description('Show your Telegram Stars balance and recent transactions')
-  .option('-n, --limit <number>', 'Max transactions to list', '20')
+  .option('-n, --limit <number>', 'Max transactions to list', positiveInt, 20)
   .option('--json', 'Output as JSON')
   .action(async (options) => {
     const spinner = ora('Fetching Stars balance...').start();
     try {
       const client = await getClient();
-      const { balance, transactions } = await getStars(client, { limit: parseInt(options.limit, 10) });
+      const { balance, transactions } = await getStars(client, { limit: options.limit });
       spinner.stop();
       if (getOutputFormat(options) === 'json') {
         console.log(formatJson({ balance, transactions }));
@@ -53,9 +53,7 @@ export const starsCommand = new Command('stars')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch Stars');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch Stars');
     }
   });
 
@@ -64,10 +62,10 @@ export const invitesCommand = new Command('invites')
   .argument('<chat>', 'Chat name, username (@chat), or ID')
   .option('--revoked', 'List revoked links instead of active ones')
   .option('--requests', 'List pending join requests instead of invite links')
-  .option('-n, --limit <number>', 'Max items', '50')
+  .option('-n, --limit <number>', 'Max items', positiveInt, 50)
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
-    const limit = parseInt(options.limit, 10);
+    const limit = options.limit;
     const spinner = ora(`Fetching invites for "${chat}"...`).start();
     try {
       const client = await getClient();
@@ -96,8 +94,6 @@ export const invitesCommand = new Command('invites')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch invites');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch invites');
     }
   });

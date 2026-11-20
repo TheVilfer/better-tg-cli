@@ -1,7 +1,7 @@
 import { Api, utils, type TelegramClient } from 'teleproto';
 import { Dialog } from 'teleproto/tl/custom/dialog.js';
 import bigInt from 'big-integer';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
 import { loadWorld, mockStatePath, saveWorld, type MockButton, type MockChat, type MockMessage, type MockReply, type MockUser, type MockWorld } from './world.js';
 
@@ -39,6 +39,7 @@ export class MockClient {
       username: u.username,
       phone: u.phone,
       bot: u.bot,
+      botForumView: u.forumView,
       contact: u.contact,
       mutualContact: u.mutual,
       self: u.id === this.world.me,
@@ -146,10 +147,12 @@ export class MockClient {
   }
 
   async getMe(): Promise<Api.User> {
+    mockFailure();
     return this.user(this.findUser(this.world.me)!);
   }
 
   async getEntity(like: unknown): Promise<Entity> {
+    mockFailure();
     const { chat, user } = this.locate(like);
     if (chat) return this.entityOf(chat);
     if (user) return this.user(user);
@@ -364,9 +367,20 @@ export class MockClient {
     return this.message(chat, m);
   }
 
+  /**
+   * As in Telegram: a channel or supergroup deletes in that chat; anywhere else the request
+   * carries only message IDs, which are global to the account, so an ID that is not in the chat
+   * passed deletes the message that has it in another private chat or basic group.
+   */
   async deleteMessages(like: unknown, ids: number[]): Promise<unknown[]> {
     const chat = this.chat(like);
-    chat.messages = chat.messages.filter(m => !ids.includes(m.id));
+    const global = chat.kind === 'user' || chat.kind === 'group';
+    for (const id of ids) {
+      const owner = chat.messages.some(m => m.id === id) || !global
+        ? chat
+        : this.world.chats.find(c => (c.kind === 'user' || c.kind === 'group') && c.messages.some(m => m.id === id));
+      if (owner) owner.messages = owner.messages.filter(m => m.id !== id);
+    }
     this.save();
     return [];
   }
@@ -406,14 +420,30 @@ export class MockClient {
     return sent.map(m => this.message(to, m));
   }
 
+  /** A path is read as teleproto reads it; a named blob (the CLI's snapshot of a file) is taken as it is. */
+  private async fileOf(file: unknown): Promise<{ name: string; size: number }> {
+    if (typeof file === 'string') {
+      if (!existsSync(file)) throw new Error(`File not found: ${file}`);
+      return { name: basename(file), size: readFileSync(file).length };
+    }
+    const blob = file as { name?: unknown; arrayBuffer?: () => Promise<ArrayBuffer> };
+    if (typeof blob?.name !== 'string' || typeof blob.arrayBuffer !== 'function') throw new Error('Could not create file from the argument');
+    return { name: blob.name, size: (await blob.arrayBuffer()).byteLength };
+  }
+
+  async uploadFile(params: { file: unknown }): Promise<Api.InputFile> {
+    const { name } = await this.fileOf(params.file);
+    return new Api.InputFile({ id: bigInt(1), parts: 1, name, md5Checksum: '' });
+  }
+
   async sendFile(
     like: unknown,
-    params: { file: string; caption?: string; forceDocument?: boolean; replyTo?: number | { replyToMsgId?: number; topMsgId?: number } },
+    params: { file: unknown; caption?: string; forceDocument?: boolean; replyTo?: number | { replyToMsgId?: number; topMsgId?: number } },
   ): Promise<Api.Message> {
-    if (typeof params.file !== 'string' || !existsSync(params.file)) throw new Error(`File not found: ${String(params.file)}`);
+    const file = await this.fileOf(params.file);
     const chat = this.chat(like, true);
     const reply = typeof params.replyTo === 'object' ? params.replyTo : { replyToMsgId: params.replyTo, topMsgId: undefined };
-    const ext = extname(params.file).toLowerCase();
+    const ext = extname(file.name).toLowerCase();
     const kind: Media['kind'] = params.forceDocument
       ? 'document'
       : ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? 'photo'
@@ -424,7 +454,7 @@ export class MockClient {
       text: params.caption ?? '',
       replyTo: reply.replyToMsgId,
       thread: reply.topMsgId,
-      media: { kind, fileName: kind === 'photo' ? undefined : basename(params.file) },
+      media: { kind, fileName: kind === 'photo' ? undefined : file.name, size: file.size },
     });
     this.save();
     return this.message(chat, sent);
@@ -432,6 +462,9 @@ export class MockClient {
 
   /** Writes a placeholder: mock messages have no real file behind them. */
   async downloadMedia(message: Api.Message, params: { outputFile?: string } = {}): Promise<string | Buffer> {
+    if (this.chat(message.peerId).messages.find(m => m.id === message.id)?.media?.downloadFails) {
+      throw new Error('FILE_REFERENCE_EXPIRED: the mock media of this message cannot be downloaded');
+    }
     const content = Buffer.from(`mock media of message ${message.id}\n`);
     if (typeof params.outputFile !== 'string') return content;
     mkdirSync(dirname(params.outputFile), { recursive: true });
@@ -847,6 +880,34 @@ export class MockClient {
         this.save();
         return new Api.messages.AffectedHistory(args({ pts: 0, ptsCount: 0, offset: 0 }));
       }
+      case 'messages.CreateChat': {
+        const members: number[] = [];
+        for (const u of request.users ?? []) {
+          const user = this.locate(u).user;
+          if (!user) throw new Error('USER_ID_INVALID');
+          members.push(user.id);
+        }
+        const id = Math.max(3000, ...this.world.chats.filter(c => c.kind === 'group').map(c => c.id)) + 1;
+        const chat: MockChat = { id, kind: 'group', title: request.title, role: 'creator', members: [{ userId: this.world.me, role: 'creator' }, ...members.map(userId => ({ userId }))], messages: [] };
+        this.world.chats.push(chat);
+        this.save();
+        return new Api.messages.InvitedUsers({
+          updates: new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat) as Api.Chat], date: now(), seq: 0 })),
+          missingInvitees: [],
+        });
+      }
+      case 'channels.JoinChannel': {
+        const chat = this.chat(request.channel);
+        if (!chat.members?.some(m => m.userId === this.world.me)) (chat.members ??= []).push({ userId: this.world.me });
+        this.save();
+        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat) as Api.Channel], date: now(), seq: 0 }));
+      }
+      case 'photos.UploadProfilePhoto': {
+        const me = this.findUser(this.world.me)!;
+        me.profilePhotos = (me.profilePhotos ?? 0) + 1;
+        this.save();
+        return new Api.photos.Photo({ photo: new Api.PhotoEmpty({ id: bigInt(1) }), users: [] });
+      }
       case 'channels.LeaveChannel': {
         const chat = this.chat(request.channel);
         const i = this.world.chats.indexOf(chat);
@@ -1034,7 +1095,6 @@ export class MockClient {
   removeEventHandler(): void {}
 
   addEventHandler(): never { return notImplemented('live updates (`watch`)'); }
-  uploadFile(): never { return notImplemented('uploadFile (profile photos)'); }
 }
 
 /** The true boolean flags of a ChatBannedRights request object (the denied rights). */
@@ -1058,4 +1118,16 @@ export function createMockClient(path = mockStatePath()): TelegramClient {
     process.stderr.write('MOCK MODE (TG_MOCK): fake account, nothing reaches Telegram\n');
   }
   return new MockClient(loadWorld(path), world => saveWorld(world, path)) as unknown as TelegramClient;
+}
+
+/**
+ * TG_MOCK_FAIL rehearses a Telegram that cannot answer: `network` (no connection) or an RPC error
+ * such as `FLOOD_WAIT_30`, thrown by getMe and getEntity the way teleproto throws them.
+ */
+function mockFailure(): void {
+  const fail = process.env.TG_MOCK_FAIL;
+  if (!fail) return;
+  if (fail === 'network') throw Object.assign(new Error('connect ETIMEDOUT 149.154.167.50:443'), { code: 'ETIMEDOUT' });
+  const flood = /^FLOOD_WAIT_(\d+)$/.exec(fail);
+  throw Object.assign(new Error(`RPCError 420: ${fail}`), flood ? { errorMessage: 'FLOOD_WAIT', seconds: Number(flood[1]) } : { errorMessage: fail });
 }

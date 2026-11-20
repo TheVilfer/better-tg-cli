@@ -12,7 +12,8 @@ code. This file only covers behaviour that the flag list can't tell you.
 - `--thread <id>` reads comments under a channel post, or replies to a message in a group.
   Channel comments live in the linked discussion group, so the output reports `threadChatId`.
   Reply there with `telegram reply <threadChatId> <commentId> ...`.
-- `--topic <id>` reads a forum topic. List topics with `telegram topics <chat>`.
+- `--topic <id>` reads a forum topic: a forum supergroup, or a bot that shows its chat as topics.
+  List topics with `telegram topics <chat>`. On any other chat it is `not_a_forum` (exit 2).
 - `--from` works with plain reads and threads. `search --from` needs `--chat`, because Telegram
   global search has no sender filter.
 - `get <chat> <ids...>` fetches exact messages. Missing IDs go to stderr in text mode, or to a
@@ -68,17 +69,27 @@ code. This file only covers behaviour that the flag list can't tell you.
 
 - Off a TTY (agents and pipes), output is compact: one line per item with the ID first, JSON on
   one line, and null or empty fields dropped. Set `TG_JSON_PRETTY=1` to indent JSON.
-- Message line format: `#id YYYY-MM-DD HH:MM Sender ↩replyTo 💬comments: [media] text`. Continuation lines
-  are indented. The sender is omitted when it is the chat itself, as in channel posts.
-- Chat line format: `id type [muted,archived] unread=N Title @username | preview`.
+- Message line format: `#id YYYY-MM-DD HH:MM [topic N] Sender ↩replyTo 💬comments: [media] text`.
+  Continuation lines are indented. The sender is omitted when it is the chat itself, as in channel
+  posts. Times are local; the `# Title (times in Europe/Berlin, UTC+1)` header names the zone.
+  `[topic N]` appears when a whole forum is read without `--topic`. A page with older messages
+  after it ends with `… more: --before <id>` (only when one was seen, never on the last page).
+- Chat line format: `id type [bot,muted,archived] unread=N Title @username | preview`. Bots have
+  type `user` and the flag `bot`; `--type bot` lists only bots, `--type user` still includes them.
+- Chat and user IDs are strings (`"-1004001"`), message IDs are numbers.
 - JSON shapes:
 
 | Command | Shape |
 |---|---|
 | `chats`, `contacts`, `members` | array |
-| `read`, `get` | `{chatTitle, messages[], threadChatId?, missing?}` |
-| `search` | array of `{chatTitle?, messages[]}`; global hits add `chatId` and `chatTitle` to each message |
-| `inbox` | `{totalUnread, chatsWithUnread, chats[]}` (totals cover all chats, `chats` is cut to `-n`) |
+| `read`, `get` | `{chatTitle, messages[], chatId, threadChatId?, missing?, hasMore?, nextBefore?}`; `hasMore` only when an older message was seen, and `nextBefore` goes to `--before` for that page; an empty `--unread` page still has `chatTitle` and `chatId`; in a forum each message has `topicId` |
+| `search` | array of `{chatTitle?, chatId?, messages[], hasMore?}`; every message has `id` and `chatId`, global hits also `chatTitle`; `hasMore`: there are results past `-n` |
+| `send`, `reply`, `send-file`, `edit`, `delete`, `react`, `pin`, `unpin` | `{ok: true, action, chatId, chatTitle, messageId \| messageIds, …}` plus the older fields of each command |
+| `forward` | `{ok: true, action, chatId, chatTitle, fromChatId, messageIds, forwardedIds, count, …}`: `messageIds` are the **source** IDs (in `fromChatId`); `forwardedIds` are the copies in `chatId`, use them to reply or edit |
+| `mark-read` | `{ok: true, action, chatId, chatTitle, chat, read: true}` (no message ID) |
+| `check`, `write-access` | object with `writeMode` (`read-only`, `ask`, `on`); `check` adds `configured`, `authenticated`, `account` |
+| `sync` | `{output, added, chats: [{chatId, title, file, added, lastId}], failed?: [{chatId, title, code, error}]}`; any failed chat makes the exit code 1 |
+| `inbox` | `{totalUnread, chatsWithUnread, chats[]}` (totals cover all chats, `chats` is cut to `-n`; `-n 0` gives the totals only) |
 | `info` | object |
 | `topics` | `{chatTitle, topics[]}` |
 
@@ -90,10 +101,16 @@ code. This file only covers behaviour that the flag list can't tell you.
   terminal, otherwise a macOS or Windows dialog (it times out as "no" after 2 minutes). `--for`
   goes back to read-only automatically. `write-access off` needs no confirmation. The `onboard`
   page lets the user pick another mode. The mode lives in the secret store, not in the config file.
-- In mode `ask` a write exits with code 3 and prints the action and a code (with `--json`, a line
-  `{"error":"approval_required","code":…,"action":…}` on stdout). After the user says yes to that
-  exact action, rerun it with `TG_APPROVE=<code>`. The code works once, for 10 minutes, and only for
-  the same arguments and stdin text.
+- In mode `ask` a write exits with code 3 and prints the action and a code. The action reads as
+  words: what happens, the recipient by name, type, @username and ID (looked up first; a chat that is
+  not found stops the write with its candidates and no code), the topic or replied-to message, the
+  full text, and the raw command last. With `--json`, one line on stdout:
+  `{"error":"approval_required","code":…,"action":{"description","recipients","argv","stdin"?},"expiresInMinutes":10,"retry":{"argv":[…],"env":{"TG_APPROVE":…}},"rejected"?:{"code","reason","message"}}`.
+  After the user says yes to that exact action, rerun it with `TG_APPROVE=<code>` (stderr also gives
+  the PowerShell form). The code works once, for 10 minutes, for the same action: command, recipient
+  (by ID, so `@username` and the ID are the same), options and the exact stdin text and files. Flag
+  order and `--json` may differ. `rejected.reason` says why an old code failed: `unknown_or_expired`,
+  `different_action`, `another_account` or `not_genuine`. A code is used up even when it does not match.
 - Without a secret store (cloud agent computers, headless Linux) the mode is kept in a 0600 file in
   the profile and labelled "unprotected": an agent could edit it, just as it can read the session
   file there. Without a terminal, `write-access on` there opens a local page for the user.
@@ -169,6 +186,11 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
   run fetches everything after the checkpoint and ignores the default `--days` window, also when
   it starts a new file (an export from before the file name carried the chat ID).
+- With `--media`, a file that fails to download stops that chat just before its message: the chat
+  gets a `failed[]` entry (`code:"media_download_failed"`, `messageId`), the exit code is 1, and the
+  checkpoint stays before it, so `sync --resume --media` tries it again. After 3 failed runs the
+  file is given up: the message is exported with a "(download failed)" placeholder, its
+  `failed[]` entry has `skipped:true`, and the export moves on.
 
 ## Raw API (`telegram api` and `telegram <namespace> <method>`)
 
@@ -254,17 +276,34 @@ command.
 ### Read vs write and refusals (both commands)
 
 - **Read vs write:** methods named `Get*`/`Check*`/`Search*`/`Resolve*` are reads and run without
-  write access (available through the MCP read tool); everything else is a write that needs
-  `telegram write-access on` (the `telegram_write` MCP tool), goes through the write guard, and is
-  logged to the audit file.
+  write access (over MCP through the read tool, if the method is on the allowlist); everything else is
+  a write (the `telegram_write` MCP tool): it goes through the write guard and is logged to the audit
+  file. In mode `ask` a raw write asks for the user's approval of that one call, as any write does,
+  so `write-access on` is never needed for it. Writes despite the `Get` prefix:
+  `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer`, `messages.GetInlineBotResults`,
+  and `messages.GetMessagesViews` with `increment` (see below).
 - **Always refused**, even with write access (the command still exists and refuses, exit 1; its
   `--help` says "always refused"): the whole `auth.*` namespace (login/session — use `telegram auth`),
   account/session takeover and 2FA/password/phone changes, data export (takeout) and Passport
   identity docs, external-site login (url-auth), ownership transfer, money-withdrawal tokens and
   paying / Stars-spending, and anything that shares your phone number or location (including
-  contact/geo media in `SendMedia`). A few `Get*` methods that actually change state (e.g.
-  `messages.GetMessagesViews`) are treated as writes. Read-only payments (balances, transactions) and
-  session *listing* (`account.GetAuthorizations`) are allowed. Full table in `docs/api-coverage.md` §4.
+  contact/geo media in `SendMedia`). A few `Get*` methods that actually change state are treated
+  as writes: pressing a button (`messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer`), an inline query
+  (`messages.GetInlineBotResults`, the bot gets the query and your user ID), and
+  `messages.GetMessagesViews` with `increment`. Read-only payments (balances, transactions) and
+  session *listing* (`account.GetAuthorizations`) are allowed in a terminal. Full table in `docs/api-coverage.md` §4.
+- **Over MCP only an allowlist runs** (`docs/api-coverage.md` §5, about a hundred methods for messages,
+  dialogs, chats, users, search, reactions, pins, polls, bot buttons and basic chat admin). Any other
+  method is refused before anything runs, "not available over MCP; run it in a terminal". Each
+  method's `--help` and `schema` (`mcpAccess`) say how MCP treats it. Paid or risky params of allowed
+  methods (a priced suggested post, a stake, a location, a referer, media other than a photo,
+  document, poll or dice) are refused over MCP too, and a raw result there shows phone numbers,
+  birthdays, notes, locations, venue IDs and gift-code links as `"[redacted]"`. A raw forward is not
+  on the list; `forward` over MCP refuses a message with a contact card or a location. Over MCP every
+  output (raw and `read`, `search`, `chats`, `inbox`, `watch`, `buttons`, `click`…) shows login codes
+  in messages from Telegram (777000) and Verification Codes (489000) as `[login code hidden]`,
+  in their text, links, buttons, quotes and previews, and the slug of any gift link
+  (`t.me/giftcode/…`, `tg://giftcode?slug=…`) as `[gift code hidden]`.
 - Coverage of the full API is tracked in `docs/api-coverage.md` (regenerated by
   `scripts/api-coverage.mjs`).
 
@@ -341,7 +380,19 @@ method's `--help` lists its own "Common errors" when the docs provide them.
 - **Tools:**
   - `telegram_help {grep?}`;
   - `telegram_read {args}`, marked `readOnlyHint`;
-  - `telegram_write {args, stdin?}`, marked `destructiveHint`.
+  - `telegram_write {args, stdin?, approval?}`, marked `destructiveHint`. In mode `ask` without a
+    client dialog it returns a normal (non-error) result with `structuredContent`
+    `{status:"approval_required", code, action, expiresInMinutes, rejected?, retry:{tool, arguments}}`;
+    `retry.arguments` is the exact call to make after the user's yes. When the call held a gift link
+    or a login code, they are not echoed: `retry` is `{tool, sameArgumentsAsThisCall:true,
+    arguments:{approval}, note}`, so repeat your own call with the same args and stdin plus `approval`.
+    `action`, `rejected` and the text show them masked too; the user sees the action in full.
+  - `telegram_setup {}`: for "Not configured", an expired session or "Write access is disabled". The
+    server opens the onboarding page on this computer (or, when logged in but read-only, only its mode
+    choice) and returns the link for the user: `structuredContent` `{status:"open_page", step:"login"|"mode", url, sessionExpired?, readOnly?}`
+    or `{status:"ready", mode}`. The user logs in and picks the mode there ("ask" or "on" only after a
+    system dialog or terminal prompt; a `--read-only` server offers no mode); the tool takes no arguments.
+    Nothing reports when they finish: wait for the user's message, then check `whoami` and `write-access`.
 
   `args` is the CLI argv with the command first, for example `["read","@x","-n","20"]`. `stdin`
   fills a `-` text argument.
@@ -351,15 +402,26 @@ method's `--help` lists its own "Common errors" when the docs provide them.
     `avatar`).
   - `api` and the generated commands are classified per underlying method: a read goes through the
     read tool, a write through the write tool, a refused method never runs — `["messages","get-history",…]`
-    and `["ping"]` like `["api","messages.GetHistory",…]`. On a clash namespace the method form is
-    classified by its method (`["stats","get-broadcast-stats",…]`) while the curated form keeps its
-    own class (`["stats","@chat"]` is a read); `["auth","send-code"]` is refused.
+    like `["api","messages.GetHistory",…]`. Only the TL methods on the MCP allowlist run (section 5
+    of `docs/api-coverage.md`: messages, dialogs, chats, users, search, reactions, pins, polls, bot
+    buttons, basic chat admin); every other method is refused before anything runs, "not available
+    over MCP; run it in a terminal" (`["ping"]`, `["account","get-passkeys"]`). On a clash namespace
+    the method form is classified by its method (`["stats","get-broadcast-stats",…]` is refused, being
+    off the allowlist) while the curated form keeps its own class (`["stats","@chat"]` is a read);
+    `["auth","send-code"]` is refused.
   - Help is always a read: a bare help request (a command path plus `--help`/`-h`, optionally
     `--json`) and `telegram schema …` go through the read tool even for a write or refused method
     (`["account","delete-account","--help"]`) — help prints, it never executes the method. Add no
     other args: with extra args (`["send","@x","--","--help"]`) the call is classified normally.
   - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing `write-access`.
-    Showing its status is allowed (a generated `auth.*` method is refused, not run).
+    Showing its status is a read: `["write-access"]` or `["write-access","--json"]` (a generated
+    `auth.*` method is refused, not run). The refusals point at `telegram_setup` and the one
+    terminal command the user can run instead.
+- **Results:** the text is the CLI's stdout; when that is one JSON value (a `--json` result or
+  error) it is the whole text, and stderr (diagnostics such as the mock banner) stays out of it.
+  `structuredContent` carries `{exitCode, stderr?}`, so a failure keeps its kind (1 runtime, 2 usage,
+  4 write access off, 5 not logged in). A write waiting for approval (exit 3) has its own result,
+  `{status:"approval_required", …}` (above), and is not an error.
 - **Safety:** the read tool runs with `TG_READ_ONLY=1`, which blocks every guarded write even if a
   command were misclassified.
 - **Execution:** each call is a separate CLI process with no stdin (a worker thread inside Claude
@@ -374,13 +436,53 @@ method's `--help` lists its own "Common errors" when the docs provide them.
 ## Chat identifiers
 
 `me` / `self` / `saved` / `Saved Messages` / `Избранное` → your Saved Messages. A numeric ID must
-exactly match a dialog ID (the `id` from `chats`). `@username` resolves exactly. Anything else
-matches titles.
+exactly match a dialog ID (the `id` from `chats`). `@username` resolves exactly, and so does a link:
+`https://t.me/name`, `t.me/name/123`, `t.me/c/<id>/…` (a private channel by ID) and
+`tg://resolve?domain=name` are never matched against titles. An invite link (`t.me/+…`) is refused
+(exit 2): join it first. Anything else matches titles.
 
-- **Reads:** an exact title first, then a substring.
+- **Reads:** an exact title, or a substring that only one title contains. A substring of several
+  titles, or a title shared by several chats, is refused (exit 2) with the candidates, as for writes.
 - **Writes** (every command gated by write access) accept only an exact, unique title. A substring
-  or a title shared by several chats is refused with up to 5 candidates (`id type title @username`).
+  or a title shared by several chats is refused with up to 5 candidates (`id type title`).
   Retry with the ID.
+- **Unique means the whole list.** A title is matched against every dialog: when the first 500 are
+  a full page, the list is read on, up to 5000. Past that a title is never proven unique and is
+  refused with `ambiguous_or_unverified` (exit 2): use the ID or @username.
+- A chat that is not found exits 1 with the closest titles; its `hint` is the argv of the command
+  that lists matching chats, `["chats","-q",<text>,"--preview","0"]` (in text, a quoted command).
+
+## Errors and exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | runtime error: Telegram refused, network, chat or message not found |
+| 2 | usage: unknown option, a value that does not parse, an ambiguous chat name |
+| 3 | write approval needed (mode `ask`) |
+| 4 | write access is disabled (`telegram write-access ask`) |
+| 5 | not logged in, or the session ended (`telegram onboard`) |
+
+With `--json` stdout always holds exactly one JSON object, the result or an error (questions to the
+user go to stderr). An error is `{"error":{"code","message","hint"?,"candidates"?,
+"retryAfterSeconds"?}}`; `code` is stable (`chat_not_found`, `ambiguous_chat`,
+`ambiguous_or_unverified`, `not_a_forum`, `invalid_argument`, `usage`, `write_disabled`,
+`not_configured`, `session_expired`, `network`, `flood_wait`, `telegram_rpc` …). `hint` is prose,
+or an argv array of a `telegram` command built from your own text: run it as is, never through a
+shell. Candidates are `{id, title, type}`. Exit 3 keeps its own line,
+`{"error":"approval_required",…}`. A bad number or value never becomes a default or an empty
+result: it exits 2 before anything is sent (and before an approval is asked for). Numbers are
+limited to Telegram's 32-bit range; a time or duration that computes to no real date is refused.
+
+Telegram ending the session (`AUTH_KEY_UNREGISTERED`, `AUTH_KEY_DUPLICATED`, `SESSION_REVOKED`,
+`SESSION_EXPIRED`, `USER_DEACTIVATED` …) is `session_expired`, exit 5, whether at connect or on a
+later call; a network failure (`network`) or a rate limit (`flood_wait`, with `retryAfterSeconds`)
+is exit 1, so retry those instead of logging in again.
+
+In mode `ask` a write that could not run as shown (a recipient, file, message or button that cannot
+be found or read) gets no code: `Not sent, nothing to approve: …`, with the code and exit code of
+the error behind it (an ambiguous name stays exit 2) or `nothing_to_approve`, exit 1. A code that
+does not hold for this call is `approval_not_accepted` (or `approval_other_account`), exit 1.
 
 ## Troubleshooting
 
@@ -388,7 +490,9 @@ matches titles.
   secret path, closes when done, `--timeout` 15 min by default) where the user gets a login key from
   better-tg-cli.com (it comes back to the page by itself), or enters their own keys, then scans a QR
   code and types their 2FA password. Events: `url`, `waiting_invite`, `waiting_scan`, `need_password`,
-  `done` (exit 0), `error`, `timeout` (exit 1); `already_logged_in` exits 0 without changes.
+  `done` (exit 0), `error`, `timeout` (exit 1); `already_logged_in` exits 0 without changes. A stored
+  session Telegram no longer accepts gives `session_expired` and a new login on the same page (no
+  `logout` first); no network gives `error` and changes nothing. Over MCP, call `telegram_setup`.
   `--no-open` only prints the URL. You never get tokens, codes or passwords, and you must not ask
   for them or fill in the page. Without a browser on this machine (SSH), the user runs
   `telegram auth --qr` (own keys) or `telegram auth --login-key --qr` in their terminal; that is
@@ -403,9 +507,12 @@ matches titles.
   as `(no text)`.
 - `Write access is disabled`: the profile is read-only, or a `--for` window expired. Run
   `telegram write-access ask`, then ask the user before each write. `on` only when the user asks for
-  it; they confirm it in a dialog.
+  it; they confirm it in a dialog. Over MCP, call `telegram_setup` and give the user the link.
 - `Approval needed` (exit 3): mode `ask`. Show the action to the user, and after a yes rerun with
-  `TG_APPROVE=<code>`.
+  `TG_APPROVE=<code>`. If it comes back with `rejected`, the command differs from what was approved
+  (or the code was used or expired): ask again for the new action.
+- Secret store unavailable: the message gives one step for this OS (unlock the macOS login keychain,
+  check Windows PowerShell for DPAPI, unlock the Linux keyring), then `telegram check`. Never install a keyring.
 - `FLOOD_WAIT` (rate limit): waits of up to 60 s are retried automatically, and stderr says
   `Telegram rate limit on <method>: waiting Ns`. Longer waits fail with the wait in the error
   message. `TG_FLOOD_WAIT_MAX=<seconds>` changes the limit: `0` fails fast, a larger value suits

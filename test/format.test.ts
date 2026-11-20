@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatJson } from '../src/formatters/json.js';
-import { formatChats, formatMessages, truncate } from '../src/formatters/plain.js';
+import { formatChats, formatMessages, timeZoneLabel, truncate } from '../src/formatters/plain.js';
 import type { ChatInfo, MessageInfo } from '../src/client.js';
 
 describe('truncate', () => {
@@ -46,6 +46,16 @@ const msg = (over: Partial<MessageInfo>): MessageInfo => ({
 });
 
 describe('compact message lines', () => {
+  it('names the time zone of the local times once, in the header', () => {
+    expect(timeZoneLabel()).toMatch(/^.+, UTC[+-]\d{1,2}(:\d\d)?$/);
+    expect(timeZoneLabel()).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(formatMessages([msg({})], 'Team').split('\n')[0]).toBe(`# Team (times in ${timeZoneLabel()})`);
+  });
+
+  it('labels the forum topic of each message', () => {
+    expect(formatMessages([msg({ topicId: 10 })])).toBe('#10 2026-09-27 13:05 [topic 10] Alice: hi');
+  });
+
   it('puts the ID first on one line', () => {
     expect(formatMessages([msg({})])).toBe('#10 2026-09-27 13:05 Alice: hi');
   });
@@ -58,7 +68,7 @@ describe('compact message lines', () => {
   });
 
   it('omits the sender when it is the chat itself (channel posts)', () => {
-    expect(formatMessages([msg({ sender: 'News' })], 'News')).toBe('# News\n#10 2026-09-27 13:05: hi');
+    expect(formatMessages([msg({ sender: 'News' })], 'News')).toBe(`# News (times in ${timeZoneLabel()})\n#10 2026-09-27 13:05: hi`);
   });
 
   it('tags cross-chat results with the chat', () => {

@@ -3,6 +3,7 @@ import { getClient, getUserStories, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const storiesCommand = new Command('stories')
   .description("List a user's currently active stories")
@@ -27,8 +28,6 @@ export const storiesCommand = new Command('stories')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch stories');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch stories');
     }
   });

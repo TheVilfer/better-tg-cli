@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -98,6 +98,27 @@ describe('install / uninstall', () => {
     expect(lstatSync(path).isSymbolicLink()).toBe(false);
     expect(readFileSync(join(checkout, 'SKILL.md'), 'utf8')).toBe('---\nname: better-tg-cli\n---\nlocal edits\n');
     expect(readdirSync(checkout)).toEqual(['SKILL.md']);
+  });
+
+  it('calls a link into a folder that no longer exists broken-link, not linked', () => {
+    const home = fakeHome();
+    const a = agent(home, 'codex');
+    const gone = join(home, 'moved-away', 'better-tg-cli');
+    mkdirSync(gone, { recursive: true });
+    mkdirSync(a.skillsDir, { recursive: true });
+    const path = join(a.skillsDir, SKILL_NAME);
+    symlinkSync(gone, path, process.platform === 'win32' ? 'junction' : 'dir');
+    rmSync(join(home, 'moved-away'), { recursive: true });
+
+    const state = agentStatus(a).state;
+    expect(state.kind).toBe('broken-link');
+    expect(resolve((state as { target: string }).target)).toBe(resolve(gone));
+    const skipped = installSkill(a);
+    expect(skipped).toMatchObject({ action: 'skipped' });
+    expect(skipped.reason).toMatch(/broken symlink to .*\(the target is gone\)/);
+    // --force replaces only the dead link with a real copy
+    expect(installSkill(a, { force: true }).action).toBe('installed');
+    expect(agentStatus(a).state.kind).toBe('installed');
   });
 
   it('leaves a folder that belongs to something else alone', () => {

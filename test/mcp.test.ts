@@ -124,7 +124,10 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['write-access', 'on'], 'never'],
   [['write-access', 'ask'], 'never'],
   [['write-access', 'off'], 'never'],
-  [['write-access', '--json'], 'never'],
+  // ... as text or as JSON: the read-only status form
+  [['write-access', '--json'], 'read'],
+  [['write-access', '--json', 'on'], 'never'],
+  [['write-access', '--for', '1h'], 'never'],
   // Administrative and interactive commands, with any arguments
   [['auth'], 'never'],
   [['auth', '--phone', '+1'], 'never'],
@@ -163,19 +166,20 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['account', 'delete-passkey', '--id', 'x'], 'never'],
   [['api', 'account.InitPasskeyRegistration'], 'never'],
   [['account', 'init-passkey-registration'], 'never'],
-  [['api', 'account.GetPasskeys'], 'read'],
-  [['api', 'help.GetConfig'], 'read'],
+  [['api', 'account.GetPasskeys'], 'never'], // a read, but off the MCP allowlist
+  [['api', 'help.GetConfig'], 'never'], // off the MCP allowlist
+  [['api', 'messages.GetHistory'], 'read'],
   [['api', 'contacts.Block'], 'write'],
   [['api'], 'invalid'],
   [['messages', 'get-history'], 'read'],
   [['messages', 'send-message'], 'write'],
-  [['ping'], 'write'],
+  [['ping'], 'never'], // off the MCP allowlist
   [['contacts'], 'read'],
   [['contacts', 'block'], 'write'],
   [['stats', '@chat'], 'read'],
-  [['stats', 'get-broadcast-stats'], 'read'],
+  [['stats', 'get-broadcast-stats'], 'never'], // off the MCP allowlist
   [['help'], 'read'],
-  [['help', 'get-config'], 'read'],
+  [['help', 'get-config'], 'never'], // off the MCP allowlist
   // Not commands: refused, including future administrative commands until they get a group
   [['messages'], 'unknown'],
   [['messages', 'bogus'], 'unknown'],
@@ -217,12 +221,13 @@ const CALLS: [string[], 'read' | 'write' | 'never' | 'unknown' | 'invalid'][] = 
   [['api', 'messages.SendMessage', '--params', '{"peer":"@c","message":"hi"}'], 'write'],
   [['messages', 'send-message', '--peer', '@c', '--message', '--allow-paid-stars=5'], 'write'],
   [['api', 'messages.SendMessage', '-p', '-'], 'write'], // stdin params: the CLI refuses a paid body
-  // Recovery-email management and Passport values never run; an inline query is a read
+  // Recovery-email management and Passport values never run; an inline query is a write
   [['api', 'account.ResendPasswordEmail'], 'never'],
   [['account', 'cancel-password-email'], 'never'],
   [['api', 'account.GetAllSecureValues'], 'never'],
   [['account', 'get-secure-value'], 'never'],
-  [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'read'],
+  [['api', 'messages.GetInlineBotResults', '-p', '{"bot":"@b","peer":"me","query":"x","offset":""}'], 'write'],
+  [['inline', '@bot', 'cats'], 'write'],
   [['api', 'account.GetAuthorizationForm', '-p', '{"botId":1,"scope":"x","publicKey":"k"}'], 'never'],
   [['account', 'get-authorization-form', '--bot-id', '1'], 'never'],
   // A geo group is classified on its method (a write); the CLI child refuses geoPoint/address
@@ -301,7 +306,7 @@ describe('planCall', () => {
   it('refuses excluded, unknown, flag-first and unbounded calls', () => {
     expect(planCall('telegram_write', { args: ['auth'] })).toMatch(/not available over MCP/);
     expect(planCall('telegram_write', { args: ['transfer-owner', 'g', 'u'] })).toMatch(/not available/);
-    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/changed in a terminal/);
+    expect(planCall('telegram_read', { args: ['write-access', 'on'] })).toMatch(/changed by the user, not over MCP.*telegram_setup/);
     expect(planCall('telegram_read', { args: ['write-access'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['--help'] })).toMatch(/command name/);
     expect(planCall('telegram_read', { args: ['nope'] })).toMatch(/Unknown command/);
@@ -364,7 +369,7 @@ describe.concurrent.each([
 
     expect(code).toBe(0);
     expect(lines.map(l => l.id)).toEqual([1, 2, 3, 4, 5, 6]); // in order, nothing for the notification
-    expect(lines[1].result.tools.map((t: any) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write']);
+    expect(lines[1].result.tools.map((t: any) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write', 'telegram_setup']);
     expect(lines[2].result.content[0].text).toMatch(/read <chat>/);
     // Unconfigured profile has no write access: the guard refuses, reported as a tool error
     expect(lines[3].result.isError).toBe(true);
@@ -414,7 +419,7 @@ describe.concurrent.each([
       }
       for (const l of lines) {
         expect(l.result.isError).toBe(true);
-        expect(l.result.content[0].text).toMatch(/not available over MCP|changed in a terminal|Unknown command/);
+        expect(l.result.content[0].text).toMatch(/not available over MCP|changed by the user|Unknown command/);
       }
       expect(readdirSync(home, { recursive: true })).toEqual([]);
     } finally {

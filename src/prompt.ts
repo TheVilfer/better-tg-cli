@@ -1,11 +1,13 @@
 import { createInterface } from 'node:readline';
 import { Writable } from 'node:stream';
 
+// Questions go to stderr: stdout is the command's result (one JSON object with --json)
+
 /** Prompt for a line of input (echoed to the terminal). */
 export function prompt(question: string): Promise<string> {
   const rl = createInterface({
     input: process.stdin,
-    output: process.stdout,
+    output: process.stderr,
   });
 
   return new Promise((resolve) => {
@@ -22,7 +24,7 @@ export function promptHidden(question: string): Promise<string> {
   const mutedOutput = new Writable({
     write(chunk, encoding, callback) {
       if (!muted) {
-        process.stdout.write(chunk, encoding);
+        process.stderr.write(chunk, encoding);
       }
       callback();
     },
@@ -37,7 +39,7 @@ export function promptHidden(question: string): Promise<string> {
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
-      process.stdout.write('\n');
+      process.stderr.write('\n');
       resolve(answer.trim());
     });
     // The question above is written while unmuted; mute now so the

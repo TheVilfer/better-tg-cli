@@ -5,6 +5,7 @@ import { formatChats } from '../formatters/plain.js';
 import { formatChatsMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const groupsCommand = new Command('groups')
   .description('List groups')
@@ -43,8 +44,6 @@ export const groupsCommand = new Command('groups')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch groups');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch groups');
     }
   });

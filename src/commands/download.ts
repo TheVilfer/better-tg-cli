@@ -5,20 +5,17 @@ import { formatMediaLabel } from '../formatters/plain.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { assertLocalWriteAllowed } from '../guard.js';
+import { CliError, EXIT, fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const downloadCommand = new Command('download')
   .description('Download media (photo/document) from a message')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageId>', 'Message ID (see #id in read output)')
+  .argument('<messageId>', 'Message ID (see #id in read output)', positiveInt)
   .option('-o, --output <dir>', 'Output directory', './telegram-media')
   .option('--json', 'Output as JSON')
-  .action(async (chat, messageIdArg, options) => {
-    assertLocalWriteAllowed();
-    const messageId = parseInt(messageIdArg, 10);
-    if (Number.isNaN(messageId)) {
-      console.error(chalk.red(`Invalid message id: ${messageIdArg}`));
-      process.exit(1);
-    }
+  .action(async (chat, messageId: number, options) => {
+    await assertLocalWriteAllowed();
 
     const spinner = ora(`Downloading media from message #${messageId}...`).start();
 
@@ -27,9 +24,10 @@ export const downloadCommand = new Command('download')
       const result = await downloadMessageMedia(client, chat, messageId, options.output);
 
       if (!result) {
-        spinner.fail('Message has no downloadable media');
         await disconnectClient();
-        process.exit(1);
+        fail(new CliError(`Message #${messageId} has no downloadable media`, 'no_media', EXIT.ERROR, {
+          hint: `Check the message: telegram get "${chat}" ${messageId} (media shows as [photo …] or [document …]).`,
+        }), spinner, 'Nothing to download');
       }
 
       spinner.succeed(chalk.green('Media downloaded'));
@@ -48,8 +46,6 @@ export const downloadCommand = new Command('download')
       await disconnectClient();
       process.exit(0);
     } catch (error) {
-      spinner.fail('Failed to download media');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to download media');
     }
   });

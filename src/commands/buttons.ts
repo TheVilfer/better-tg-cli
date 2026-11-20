@@ -4,18 +4,16 @@ import { formatJson } from '../formatters/json.js';
 import { formatButtonLayout } from '../formatters/plain.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const buttonsCommand = new Command('buttons')
   .description('List the buttons attached to a bot message')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageId>', 'Message ID (the #number shown by `tg read`)')
+  .argument('<messageId>', 'Message ID (the #number shown by `telegram read`)', positiveInt)
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
-    const id = parseInt(messageId, 10);
-    if (!Number.isInteger(id)) {
-      console.error('Message ID must be a number');
-      process.exit(1);
-    }
+    const id: number = messageId;
 
     const spinner = ora(`Reading buttons on #${id}...`).start();
 
@@ -31,13 +29,11 @@ export const buttonsCommand = new Command('buttons')
       } else {
         if (result.text) console.log(result.text + '\n');
         console.log(formatButtonLayout(result.layout, ''));
-        console.log(chalk.gray(`\nPress one with: tg click "${chat}" ${result.messageId} <index|text>`));
+        console.log(chalk.gray(`\nPress one with: telegram click "${chat}" ${result.messageId} <index|text>`));
       }
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to read buttons');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to read buttons');
     }
   });

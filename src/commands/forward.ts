@@ -1,31 +1,25 @@
 import { Command } from 'commander';
-import { getClient, forwardMessages, disconnectClient } from '../client.js';
+import { getClient, forwardMessages, disconnectClient, chatRef } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { messageIdList } from '../args.js';
 
 export const forwardCommand = new Command('forward')
   .description('Forward one or more messages to another chat')
   .argument('<fromChat>', 'Source chat name, username (@user), or ID')
-  .argument('<messageIds>', 'Message ID, or comma-separated IDs (e.g. 123 or 123,124,125)')
+  .argument('<messageIds>', 'Message ID, or comma-separated IDs (e.g. 123 or 123,124,125)', messageIdList)
   .argument('<toChat>', 'Destination chat name, username (@user), or ID')
   .option('--silent', 'Forward without a notification sound')
   .option('--drop-author', 'Hide the original sender (no "forwarded from" header)')
-  .option('--json', 'Output as JSON')
+  .option('--json', 'Output as JSON: messageIds are the source IDs (in fromChatId), forwardedIds the copies in chatId')
   .action(async (fromChat, messageIds, toChat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
 
-    const ids = messageIds
-      .split(',')
-      .map((s: string) => parseInt(s.trim(), 10))
-      .filter((n: number) => Number.isInteger(n));
-
-    if (ids.length === 0) {
-      console.error('Provide at least one numeric message ID');
-      process.exit(1);
-    }
+    const ids: number[] = messageIds;
 
     const spinner = ora(`Forwarding ${ids.length} message(s) from "${fromChat}" to "${toChat}"...`).start();
 
@@ -47,7 +41,10 @@ export const forwardCommand = new Command('forward')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({ ...result, messageIds: ids }));
+        const to = await chatRef(client, toChat);
+        const from = await chatRef(client, fromChat);
+        // messageIds: the originals, in fromChatId; forwardedIds: the copies, in chatId (the destination)
+        console.log(formatJson({ ok: true, action: 'forward', ...to, fromChatId: from.chatId, ...result, messageIds: ids }));
       } else {
         console.log(chalk.green(`✓ Forwarded ${result.count} message(s) from "${result.fromTitle}" to "${result.toTitle}"`));
       }
@@ -61,8 +58,6 @@ export const forwardCommand = new Command('forward')
         message: `from ${fromChat} [${ids.join(',')}]`,
         result: { success: false, error: error instanceof Error ? error.message : String(error) },
       });
-      spinner.fail('Failed to forward');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to forward');
     }
   });

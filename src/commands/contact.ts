@@ -5,6 +5,7 @@ import { formatContact } from '../formatters/plain.js';
 import { formatContactMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const contactCommand = new Command('contact')
   .description('Get contact information')
@@ -35,8 +36,6 @@ export const contactCommand = new Command('contact')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch contact info');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch contact info');
     }
   });

@@ -1,9 +1,11 @@
 import { getClient, invokeApi, serializeApiResult, disconnectClient } from './client.js';
-import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, plainParams } from './api-methods.js';
+import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, mcpParamRefusal, plainParams } from './api-methods.js';
+import { mcpApiAllowlistRefusal } from './mcp-api-allowlist.js';
 import { assertWriteEnabled } from './guard.js';
+import { bindStringPeers } from './api-peers.js';
 import { auditLog } from './audit.js';
-import chalk from './colors.js';
 import ora from './spinner.js';
+import { CliError, EXIT, fail } from './errors.js';
 
 /**
  * One execution path for every raw TL call, shared by the generic `api` command and the generated
@@ -24,15 +26,18 @@ export async function runApiMethod(
   // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid call
   // over MCP) apply.
   params = plainParams(params);
-  const refusal = apiRefusalReason(canonical, params) ?? mcpPaidStarsRefusal(canonical, params);
-  if (refusal) {
-    console.error(chalk.red(refusal));
-    process.exit(1);
-  }
+  // Over MCP only allowlisted methods run (src/mcp-api-allowlist.ts); the denylist reason wins
+  // when there is one, since such a method is refused in a terminal too.
+  const refusal = apiRefusalReason(canonical, params) ?? mcpApiAllowlistRefusal(canonical) ?? mcpPaidStarsRefusal(canonical, params)
+    ?? mcpParamRefusal(canonical, params);
+  if (refusal) fail(new CliError(refusal, 'refused', EXIT.ERROR));
+  // A bare "@name" in a peer field becomes {_chat}: approved as the ID it resolves to now, and the
+  // request is built from that same resolved chat (never resolved again by teleproto on invoke)
+  bindStringPeers(canonical, params);
 
-  // A read that may spend Stars (allowPaidStars) needs write access like any write
+  // A read that may spend Stars (allowPaidStars) or add a view (increment) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
-  if (isWrite) assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true });
+  if (isWrite) await assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true, apiParams: params });
 
   const spinner = ora(`Calling ${canonical}...`).start();
   try {
@@ -49,8 +54,6 @@ export async function runApiMethod(
     if (isWrite) {
       auditLog({ timestamp: new Date().toISOString(), command: auditCommand, target: canonical, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
     }
-    spinner.fail(`${canonical} failed`);
-    console.error(error instanceof Error ? error.message : error);
-    process.exit(1);
+    fail(error, spinner, `${canonical} failed`);
   }
 }

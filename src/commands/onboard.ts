@@ -1,10 +1,7 @@
 import { spawn } from 'node:child_process';
 import { Command } from 'commander';
-import { qrLoginDriver, saveLogin } from '../auth.js';
-import { fetchInviteCredentials } from '../broker.js';
-import { getSessionString, isConfigured } from '../config.js';
-import { ONBOARD_SITE, startOnboarding, type OnboardEvent } from '../onboard.js';
-import { applyModeChoice, savedMode } from '../write-mode.js';
+import { type OnboardEvent } from '../onboard.js';
+import { checkStoredSession, openSetupPage } from '../setup.js';
 
 const HUMAN: Record<OnboardEvent['event'], (e: never) => string> = {
   url: (e: { url: string }) => `Open this page to log in (it stays on this computer): ${e.url}`,
@@ -32,7 +29,7 @@ export function openBrowser(url: string): void {
 
 export const onboardCommand = new Command('onboard')
   .description('Guided login for agents: opens a local page where you get a login key (or use your own keys), scan a QR code and enter your 2FA password; the agent never sees any of it')
-  .option('--json', 'Print progress as JSON lines (events: url, waiting_invite, waiting_scan, need_password, logged_in, waiting_mode, mode, done, error)')
+  .option('--json', 'Print progress as JSON lines (events: already_logged_in, session_expired, url, waiting_invite, waiting_scan, need_password, logged_in, waiting_mode, mode, done, error, timeout)')
   .option('--no-open', "Don't open the browser, just print the URL")
   .option('--timeout <minutes>', 'Give up after this many minutes', '15')
   .option('--broker <url>', 'Login service URL (default: built-in, or TG_BROKER_URL)')
@@ -43,24 +40,32 @@ export const onboardCommand = new Command('onboard')
       console.log(opts.json ? JSON.stringify(e) : (HUMAN[e.event] as (x: OnboardEvent) => string)(e));
       // The login is saved: the overall limit no longer applies, the mode step has its own (10 min)
       if (e.event === 'logged_in' && timer) clearTimeout(timer);
-    };;
+    };
 
-    // Never replace a working login, same as `telegram auth`; an unreadable store stops here too
-    let loggedIn: boolean;
+    // Never replace a working login, same as `telegram auth`. A stored session Telegram no longer
+    // accepts is replaced by a new login; an unreadable store or no network stops here
+    let state: Awaited<ReturnType<typeof checkStoredSession>>['state'];
+    let checked: string | undefined;
     try {
-      loggedIn = isConfigured() && !!getSessionString();
+      // The stored session as it was before the check: the page may replace only that one
+      ({ state, snapshot: checked } = await checkStoredSession());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // No page is open yet, so not HUMAN.error ("the page offers a retry")
       if (opts.json) emit({ event: 'error', message });
-      else console.error(message);
+      else console.error(`${message}\nNothing changed: the stored login could not be checked. Run "telegram onboard" again once this is fixed.`);
       process.exit(1);
     }
-    if (loggedIn) {
+    if (state === 'alive') {
       console.log(opts.json
         ? JSON.stringify({ event: 'already_logged_in' })
         : 'Already logged in. Check with "telegram whoami"; "telegram logout" first to switch accounts.');
       return;
+    }
+    if (state === 'expired') {
+      console.log(opts.json
+        ? JSON.stringify({ event: 'session_expired' })
+        : 'The stored login no longer works (logged out elsewhere or revoked). Starting a new login.');
     }
     const minutes = Number(opts.timeout);
     if (!(minutes > 0)) {
@@ -72,17 +77,7 @@ export const onboardCommand = new Command('onboard')
         '(ssh -L <port>:127.0.0.1:<port>) or run "telegram auth --qr" in a terminal here instead.');
     }
 
-    const session = await startOnboarding({
-      driver: qrLoginDriver(!!opts.testDc),
-      redeemInvite: token => fetchInviteCredentials(token, opts.broker),
-      save: (s, creds, invite) => saveLogin(s, creds, invite, !!opts.testDc),
-      emit,
-      site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
-      applyMode: choice => applyModeChoice(choice),
-      currentMode: savedMode,
-      // Writes are possible right away, each one after the user's yes in the chat; the page can change it
-      defaultMode: 'ask',
-    });
+    const session = await openSetupPage({ emit, testDc: opts.testDc, broker: opts.broker, checkedSession: checked });
     if (opts.open) openBrowser(session.url);
 
     timer = setTimeout(() => {

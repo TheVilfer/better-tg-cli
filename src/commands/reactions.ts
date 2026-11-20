@@ -3,23 +3,21 @@ import { getClient, getReactionsList, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const reactionsCommand = new Command('reactions')
   .description('List who reacted to a message and with what')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageId>', 'Message ID')
-  .option('-n, --limit <number>', 'Max reactions to fetch', '50')
+  .argument('<messageId>', 'Message ID', positiveInt)
+  .option('-n, --limit <number>', 'Max reactions to fetch', positiveInt, 50)
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, options) => {
-    const id = parseInt(messageId, 10);
-    if (!Number.isInteger(id)) {
-      console.error('Message ID must be a number');
-      process.exit(1);
-    }
+    const id: number = messageId;
     const spinner = ora(`Fetching reactions on #${id}...`).start();
     try {
       const client = await getClient();
-      const result = await getReactionsList(client, chat, id, parseInt(options.limit, 10));
+      const result = await getReactionsList(client, chat, id, options.limit);
       spinner.stop();
       if (options.json) {
         console.log(formatJson(result));
@@ -33,8 +31,6 @@ export const reactionsCommand = new Command('reactions')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch reactions');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch reactions');
     }
   });

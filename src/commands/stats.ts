@@ -5,6 +5,8 @@ import { formatJson } from '../formatters/json.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 function abbrev(n: number): string {
   if (n < 1000) return String(n);
@@ -76,24 +78,19 @@ function printChatStats(s: ChatStats): void {
 export const statsCommand = new Command('stats')
   .description('Full statistics for a channel/supergroup/group, or a single post (--message) / story (--story)')
   .argument('<chat>', 'Chat name, username (@chat), or ID')
-  .option('--message <id>', 'Statistics for one message instead of the chat')
-  .option('--story <id>', 'Statistics for one story instead of the chat')
+  .option('--message <id>', 'Statistics for one message instead of the chat', positiveInt)
+  .option('--story <id>', 'Statistics for one story instead of the chat', positiveInt)
   .option('--graphs', 'Include parsed graph series (growth, interactions, languages, …)')
-  .option('--limit <number>', 'Max public forwards to list (with --message/--story)', '100')
+  .option('--limit <number>', 'Max public forwards to list (with --message/--story)', positiveInt, 100)
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
     const spinner = ora(`Fetching statistics for "${chat}"...`).start();
     try {
       const client = await getClient();
       const graphs = Boolean(options.graphs);
-      const limit = parseInt(options.limit, 10) || 100;
+      const limit: number = options.limit;
       const json = getOutputFormat(options) === 'json';
-
-      const idOpt = (flag: string): number => {
-        const id = parseInt(options[flag], 10);
-        if (!Number.isInteger(id) || id <= 0) { spinner.stop(); console.error(`--${flag} expects an ID`); process.exit(1); }
-        return id;
-      };
+      const idOpt = (flag: 'message' | 'story'): number => options[flag];
 
       if (options.message !== undefined) {
         const s = await getMessageStats(client, chat, idOpt('message'), { graphs, limit });
@@ -110,8 +107,6 @@ export const statsCommand = new Command('stats')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to fetch statistics');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to fetch statistics');
     }
   });

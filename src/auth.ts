@@ -148,12 +148,3 @@ export function qrLoginDriver(testServers = false): LoginDriver {
 export function renderQr(data: string): string {
   return renderUnicodeCompact(data, { border: 2, invert: !!process.env.TG_QR_INVERT });
 }
-
-export async function checkAuth(client: TelegramClient): Promise<boolean> {
-  try {
-    await client.connect();
-    return await client.isUserAuthorized();
-  } catch {
-    return false;
-  }
-}

@@ -139,7 +139,7 @@ let session: OnboardSession | undefined;
 afterEach(() => session?.close());
 
 /** A server whose store refuses (`refuse`), or says ok but keeps the old value (`lie`). */
-async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolean; modeWaitMs?: number; stored?: SavedMode; needsTerminal?: boolean } = {}) {
+async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolean; modeWaitMs?: number; stored?: SavedMode; needsTerminal?: boolean | 'any' } = {}) {
   let stored: SavedMode = plan.stored ?? { mode: 'read-only' };
   session = await startOnboarding({
     driver,
@@ -154,7 +154,7 @@ async function server(plan: { refuse?: boolean; lie?: boolean; modeOnly?: boolea
     applyMode: async (c): Promise<ModeResult> => {
       if (plan.refuse) return { ok: false, error: 'store_failed' };
       // A secret store and no terminal or dialog: "on" is refused, like applyModeChoice
-      if (plan.needsTerminal && c.mode === 'on') return { ok: false, error: 'needs_terminal' };
+      if (plan.needsTerminal && (c.mode === 'on' || (plan.needsTerminal === 'any' && c.mode !== 'read-only'))) return { ok: false, error: 'needs_terminal' };
       if (!plan.lie) stored = { mode: c.mode };
       return { ok: true };
     },
@@ -249,6 +249,21 @@ describe.each(LANGS)('the page in %s', lang => {
     expect(page.msg()).toEqual({ hidden: false, text: `${E.needs_terminal.replace('{cmd}', 'telegram write-access on --for 1d')} ${L.inEffect.replace('{mode}', L[name])}`, small: '' });
     // No promise of a mode that may not be the one in effect
     expect(E.needs_terminal).not.toMatch(/before each|antes de cada|перед каждой/);
+  });
+
+  // A telegram_setup page: "ask" needs the person too, and the hint names "ask", never "on"
+  it('"ask" needs a terminal (a page opened over MCP): the hint names write-access ask, with the term', async () => {
+    const s = await server({ modeOnly: true, needsTerminal: 'any', stored: { mode: 'read-only' } });
+    const page = openPage(s.url, lang);
+    await page.poll();
+    page.pick('ask');
+    page.byId('for').value = '1h';
+    await page.click('modego');
+    const text = page.msg().text;
+    expect(text).toBe(`${E.needs_terminal.replace('{cmd}', 'telegram write-access ask --for 1h')} ${L.inEffect.replace('{mode}', L.roName)}`);
+    const fresh = openPage(s.url, lang);
+    await fresh.poll();
+    expect(fresh.msg().text).toBe(text);
   });
 
   // The command in the hint asks for the term the person picked: plain "on" would grant it with no end

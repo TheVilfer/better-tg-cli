@@ -25,6 +25,8 @@ export interface MockUser {
   username?: string;
   phone?: string;
   bot?: boolean;
+  /** Bots only: the private chat is shown as forum topics (botForumView). */
+  forumView?: boolean;
   contact?: boolean;
   mutual?: boolean;
   about?: string;
@@ -117,7 +119,8 @@ export interface MockMessage {
   replyTo?: number;
   /** Forum topic or comment thread root this message belongs to. */
   thread?: number;
-  media?: { kind: 'photo' | 'document' | 'video' | 'voice'; fileName?: string; mimeType?: string; size?: number; duration?: number };
+  /** `downloadFails`: downloading this media throws (a file Telegram no longer serves, a dropped connection). */
+  media?: { kind: 'photo' | 'document' | 'video' | 'voice'; fileName?: string; mimeType?: string; size?: number; duration?: number; downloadFails?: boolean };
   buttons?: MockButton[][];
   keyboard?: boolean;
   pinned?: boolean;

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { EXIT_NEEDS_APPROVAL } from '../src/approval.js';
+import { EXIT } from '../src/errors.js';
 import type { SetupResult } from '../src/setup-contract.js';
 import {
   RUN_ALLOWLIST, SETUP_EXIT, SETUP_SCHEMA, TERMINAL_EVENTS,
@@ -273,8 +274,8 @@ describe('current consumers keep their output', () => {
   it.runIf(fakeOp)('a child asks only the fake secret store', () => {
     const log = join(home, 'whoami-op-calls.log');
     const r = cli(['whoami'], baseEnv(log));
-    // 1, the error of a profile without a login; null (a signal) or anything else is not that
-    expect(r.status, r.stderr).toBe(1);
+    // 5, the exit code of a profile without a login; null (a signal) or anything else is not that
+    expect(r.status, r.stderr).toBe(EXIT.NOT_LOGGED_IN);
     const calls = opCalls(log);
     expect(calls).toContain('whoami');
     expect(calls.some(c => c.startsWith('read '))).toBe(true);

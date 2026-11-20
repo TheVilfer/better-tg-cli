@@ -20,6 +20,9 @@ The contract is opt-in per command. Output that exists today stays exactly as it
   which offers a retry and keeps waiting; an `error` with no `url` before it means the command could
   not start (for example the secret store could not be read) and has exited with code 1.
 - `telegram mcp` writes only JSON-RPC messages to stdout.
+- An ordinary command run with `--json` that fails prints one line `{"error":{"code","message",
+  "hint"?,"candidates"?,"retryAfterSeconds"?}}` on stdout (exit 3 keeps its own
+  `{"error":"approval_required",...}` line). That is not a contract result: it has no `schema`.
 
 Tests in `test/setup-contract.test.ts` pin these shapes. A command that adopts the contract later
 does so for new output only, or behind a new flag.
@@ -154,8 +157,11 @@ can change the write mode.
 
 ## Exit codes
 
-For commands that emit this contract (other commands keep their codes; several exit `2` on bad
-usage today):
+For commands that emit this contract. Every other command follows the general table printed under
+`telegram --help` (and in the skill's `reference.md`): `0` ok, `1` runtime error, `2` usage
+(unknown option, invalid value, ambiguous chat name), `3` write approval needed, `4` write access
+disabled, `5` not logged in or session ended. The two tables agree on `0`, `1` and `3`; `2` means
+"a person is needed" only in a contract result, and "fix the command line" everywhere else.
 
 | Code | Meaning | From a result |
 |---|---|---|
