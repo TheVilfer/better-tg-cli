@@ -1149,6 +1149,12 @@ function guessExtension(media: MediaInfo): string {
   return '.bin';
 }
 
+/**
+ * The parse mode a send or edit passes to teleproto. Its client parses Markdown when a call leaves
+ * parseMode undefined (`__init__` would go out as italic "init"), so plain text says `false`.
+ */
+export const parseModeOf = (mode?: 'html' | 'md'): 'html' | 'md' | false => mode ?? false;
+
 export async function sendFileMessage(
   client: TelegramClient,
   chatIdentifier: string,
@@ -1174,7 +1180,7 @@ export async function sendFileMessage(
     caption: options.caption,
     forceDocument: options.asDocument,
     replyTo,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
     silent: options.silent,
   });
 
@@ -1325,7 +1331,7 @@ export async function sendMessage(
   const result = await client.sendMessage(entity, {
     message: text,
     replyTo,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
     schedule: options.schedule,
     silent: options.silent,
   });
@@ -2647,7 +2653,7 @@ export async function editMessageText(
   const result = await client.editMessage(entity, {
     message: msgId,
     text,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
   });
   return { chatTitle: getChatTitle(entity), id: result?.id ?? msgId };
 }

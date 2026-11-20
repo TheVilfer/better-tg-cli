@@ -154,8 +154,11 @@ describe('a code is bound to the action, not to the bytes of argv (4.2)', () => 
     const code2 = cli(['send', '-1004001', 'hi', '--json']).json!.code;
     expect(cli(['send', '-1004002', 'hi', '--json'], { approve: code2 }).json).toMatchObject({ rejected: { reason: 'different_action' } });
     const code3 = cli(['send', '-1004001', '-', '--json'], { stdin: 'hi' }).json!.code;
-    // The body stays exact: a trailing newline is part of what was approved
-    expect(cli(['send', '-1004001', '-', '--json'], { stdin: 'hi\n', approve: code3 }).json).toMatchObject({ rejected: { reason: 'different_action' } });
+    // The body is what gets sent: one trailing line break is not part of it (readTextArg drops it),
+    // a second one is, and that is a different text
+    expect(cli(['send', '-1004001', '-', '--json'], { stdin: 'hi\n\n', approve: code3 }).json).toMatchObject({ rejected: { reason: 'different_action' } });
+    const code4 = cli(['send', '-1004001', '-', '--json'], { stdin: 'hi' }).json!.code;
+    expect(cli(['send', '-1004001', '-', '--json'], { stdin: 'hi\r\n', approve: code4 }).json).toMatchObject({ ok: true, action: 'send' });
     expect(cli(['send', '-1004001', 'hi', '--json'], { approve: 'ZZZZZZ' }).json).toMatchObject({ rejected: { code: 'ZZZZZZ', reason: 'unknown_or_expired' } });
   });
 

@@ -70,6 +70,34 @@ describe('percent-encoded gift slugs (finding 4)', () => {
   });
 });
 
+describe('a gift link is one of the Telegram hosts, matched whole (review 3, finding 3)', () => {
+  it('t.me, telegram.me and telegram.dog, with or without www. and a scheme, hide the slug', () => {
+    for (const host of ['t.me', 'telegram.me', 'telegram.dog', 'www.t.me', 'WWW.Telegram.Me']) {
+      for (const link of [`https://${host}/giftcode/SAMPLE_ONLY`, `http://${host}/giftcode/SAMPLE_ONLY`, `${host}/giftcode/SAMPLE_ONLY`]) {
+        expect(maskGiftCodes(`(${link})`), link).toBe(`(${link.replace('SAMPLE_ONLY', '[gift code hidden]')})`);
+      }
+    }
+  });
+
+  it('a host that only ends in one of them stays intact', () => {
+    for (const text of [
+      'https://support.me/giftcode/ORDER-42',
+      'support.me/giftcode/ORDER-42',
+      'https://evilt.me/giftcode/ORDER-42',
+      'https://shop.t.me/giftcode/ORDER-42',
+      'https://my-telegram.dog/giftcode/ORDER-42',
+      'https://t.dog/giftcode/ORDER-42',
+      'https://notelegram.me/giftcode/ORDER-42',
+    ]) {
+      expect(maskGiftCodes(text), text).toBe(text);
+      expect(holdsMaskedValue(text), text).toBe(false);
+    }
+    // Side by side: the foreign link keeps its path, the Telegram one loses its slug
+    expect(maskGiftCodes('support.me/giftcode/ORDER-42 vs t.me/giftcode/ORDER-42'))
+      .toBe('support.me/giftcode/ORDER-42 vs t.me/giftcode/[gift code hidden]');
+  });
+});
+
 describe('errors reach the model masked (finding 5)', () => {
   it('stderr: the text and structuredContent.stderr', () => {
     const r = cliResult(1, false, '', 'Login code: SAMPLE_ONLY');
@@ -185,7 +213,8 @@ describe('the login-code phrase (finding 6)', () => {
     expect(model).toMatch(/Login code:\\+u\{a\}\[login code hidden\]/);
   });
 
-  it('stays linear on long hostile input', () => {
+  // A time limit on these inputs, one size each: it catches a catastrophic backtrack, not a proof of linearity
+  it('finishes in time on hostile inputs', () => {
     const hostile = [
       'tg://giftcode?'.repeat(40_000),
       'tg://giftcode?a=1&'.repeat(20_000),
@@ -200,6 +229,8 @@ describe('the login-code phrase (finding 6)', () => {
       `t.me/giftcode/A${'.'.repeat(50_000)}Z`,
       `tg://giftcode?slug=A${'.'.repeat(50_000)}Z`,
       `Код${' '.repeat(100_000)}x`,
+      'support.me/giftcode/'.repeat(40_000),
+      `https://${'www.'.repeat(50_000)}t.me/giftcode/A`,
     ];
     for (const s of hostile) {
       const t = Date.now();

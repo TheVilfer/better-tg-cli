@@ -11,7 +11,7 @@ import { apiChatRefs, declaredReadsStdin, describeParsedAction, oneLine, parsedA
 import { prepareAction, type Prepared } from './approval-prepare.js';
 import { lookupPeers } from './peer-lookup.js';
 import { maskForModel } from './mcp-output.js';
-import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
+import { readStdinOnce, sealStdin, stdinBody, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 import { getSessionString } from './config.js';
 import { CliError, errorDetails, errorJson, EXIT, ExitSignal, wantsJson, type ChatCandidate, type Hint } from './errors.js';
@@ -161,7 +161,8 @@ async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope>
   // A curated command covers stdin only where it reads it (`set-bio -` sets the bio to "-")
   const declared = declaredReadsStdin(action);
   const covered = opts.readsStdin === true || (declared ?? readsStdin(argv)) || stdinWasRead() || process.env[STDIN_IN_APPROVAL_ENV] === '1';
-  const stdin = covered ? readStdinOnce() : undefined;
+  // The body as the command sends it (readTextArg): what the person sees and the hash covers
+  const stdin = covered ? stdinBody(readStdinOnce()) : undefined;
   if (opts.apiParams && action.parsed) action.apiPeers = apiChatRefs(opts.apiParams);
   let peers = new Map<string, PeerInfo>();
   try {

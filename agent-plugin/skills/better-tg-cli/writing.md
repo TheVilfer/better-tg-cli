@@ -114,6 +114,7 @@ $ telegram send Tea hi --json
 - Pass `-` as the text and put the text on stdin (`send`, `reply`, `edit`, `send-file -c -`), or
   `stdin` over MCP: `printf '%s' "$text" | telegram send <chat> -`. No quoting bugs, and the user
   approves exactly that text.
+- Without `--html` or `--markdown` the text goes out exactly as typed (`__init__.py` stays as is).
 - `--html` is the reliable formatting (`<b>`, `<i>`, `<a href>`, `<code>`, `<pre>`). `--markdown` is
   GramJS Markdown: bold, italic and code, but `[text](url)` links do not work.
 - `send` takes `--reply-to <id>`, `--topic <id>`, `--silent` and `--schedule 2h` (or an ISO date).

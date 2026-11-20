@@ -34,10 +34,11 @@ const SLUG = '[A-Za-z0-9_%-]+';
 /**
  * A gift link up to its code: the slug after `/giftcode/`, or the query of `tg://giftcode?` (its
  * `slug=` value is hidden by SLUG_PARAM). The query ends at whitespace, a quote, a bracket, a
- * backslash (JSON escapes) or `|`.
+ * backslash (JSON escapes) or `|`. The host is t.me, telegram.me or telegram.dog (with an optional
+ * `www.`) as a whole name: no host character before it, so `support.me` or `shop.t.me` is not one.
  */
 const GIFT_LINK = new RegExp(
-  String.raw`((?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/giftcode\/)(${SLUG})|(tg:(?:\/\/)?giftcode\/?\?)([^\s"'<>()[\]{}\\|]*)`,
+  String.raw`((?<![A-Za-z0-9_.-])(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog))\/giftcode\/)(${SLUG})|(tg:(?:\/\/)?giftcode\/?\?)([^\s"'<>()[\]{}\\|]*)`,
   'gi',
 );
 
