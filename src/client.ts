@@ -127,6 +127,8 @@ export async function disconnectClient(): Promise<void> {
   resolvedChatCache.clear();
   dialogsCache = null;
   allDialogsCache = null;
+  dialogsReadAt = 0;
+  allDialogsReadAt = 0;
 }
 
 // Cache resolved chat entities by identifier (normalized) to avoid re-fetching
@@ -136,6 +138,14 @@ const resolvedChatCache = new Map<string, ResolvedEntity>();
 // One dialogs snapshot per process: resolving many chats (e.g. sync over 100 chats)
 // must not refetch the full dialog list for every chat.
 let dialogsCache: ReturnType<TelegramClient['getDialogs']> | null = null;
+/** When dialogsCache / allDialogsCache were read (started): inbox and chats reuse only a fresh one. */
+let dialogsReadAt = 0;
+let allDialogsReadAt = 0;
+/**
+ * How old a list read in this process may be for inbox and chats to show it instead of reading
+ * again: seconds, so unread counters and last messages stay live (an MCP server lives for hours).
+ */
+const DIALOGS_REUSE_MS = 10_000;
 
 /** One page of dialogs: enough for IDs and most accounts. */
 export const DIALOG_PAGE = 500;
@@ -150,6 +160,7 @@ function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['ge
       if (account && (dialogs.length < DIALOG_PAGE || !readDialogCache(account))) saveDialogList(account, dialogs, dialogs.length < DIALOG_PAGE);
       return dialogs;
     });
+    dialogsReadAt = Date.now();
     dialogsCache.catch(() => { dialogsCache = null; });
   }
   return dialogsCache;
@@ -282,6 +293,7 @@ async function dialogsForTitles(client: TelegramClient): Promise<{ dialogs: Dial
       if (account) saveDialogList(account, dialogs, complete);
       return { dialogs, complete };
     });
+    allDialogsReadAt = Date.now();
     allDialogsCache.catch(() => { allDialogsCache = null; });
   }
   return allDialogsCache;
@@ -335,12 +347,48 @@ export interface ChatInfo {
   full?: MessageFull;
 }
 
+/**
+ * The dialog list for inbox and chats (all folders), shared with chat lookup: a list this process
+ * read seconds ago is shown again instead of a second messages.GetDialogs (a FLOOD_WAIT on a big
+ * account), and a list read here becomes the one chat lookup uses, in memory and on disk (the
+ * whole list, or a full first page when there is no fresh list; never a list cut at a small -n).
+ * Counters and last messages always come from Telegram: the file keeps only what names a chat.
+ */
+async function sharedDialogs(client: TelegramClient, limit: number): Promise<Dialogs[number][]> {
+  // Only the client getClient() built: another one (a test's own) shares nothing
+  if (client !== clientInstance) return client.getDialogs({ limit });
+  const now = Date.now();
+  if (allDialogsCache && now - allDialogsReadAt <= DIALOGS_REUSE_MS) {
+    const all = await allDialogsCache.catch(() => undefined);
+    if (all && (all.complete || all.dialogs.length >= limit)) return all.dialogs.slice(0, limit);
+  }
+  if (dialogsCache && now - dialogsReadAt <= DIALOGS_REUSE_MS) {
+    const first = await dialogsCache.catch(() => undefined);
+    // A first page shorter than DIALOG_PAGE is the whole list
+    if (first && (first.length < DIALOG_PAGE || first.length >= limit)) return first.slice(0, limit);
+  }
+  const dialogs = await client.getDialogs({ limit });
+  const complete = dialogs.length < limit;
+  if (complete || limit >= DIALOG_PAGE) {
+    dialogsCache = Promise.resolve(dialogs);
+    dialogsReadAt = now;
+    // As far as a title lookup would read: it need not read this list again
+    if (dialogs.length >= DIALOG_PAGE && (complete || limit >= DIALOG_MAX)) {
+      allDialogsCache = Promise.resolve({ dialogs, complete });
+      allDialogsReadAt = now;
+    }
+    const account = dialogCacheAccount(client);
+    if (account && (complete || !readDialogCache(account))) saveDialogList(account, dialogs, complete);
+  }
+  return dialogs;
+}
+
 export async function getDialogs(
   client: TelegramClient,
   limit = 100,
   options: { archived?: boolean; full?: boolean } = {}
 ): Promise<ChatInfo[]> {
-  const dialogs = await client.getDialogs({ limit, archived: options.archived });
+  const dialogs = options.archived === undefined ? await sharedDialogs(client, limit) : await client.getDialogs({ limit, archived: options.archived });
   const now = Math.floor(Date.now() / 1000);
   const chats: ChatInfo[] = [];
 
@@ -1829,6 +1877,14 @@ function dialogKind(d: Dialogs[number]): string {
   return d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
 }
 
+/**
+ * The command that lists chats matching a name (`--preview 0`: titles, no message text), with
+ * `--json` when the caller's command had it, so an agent gets JSON back from it too.
+ */
+export function chatsQueryCommand(name: string): string[] {
+  return ['chats', '-q', name, '--preview', '0', ...(getInvocation()?.includes('--json') ? ['--json'] : [])];
+}
+
 /** A chat as a candidate names it: from a dialog read now, or from the list on disk. */
 type NamedChat = { id: string; title: string; type: string };
 
@@ -1935,7 +1991,7 @@ function chatNotFound(identifier: string, chats: NamedChat[], from?: FromDisk): 
     .sort((a, b) => a.score - b.score);
   const candidates = chatCandidates(scored.map(x => x.d), identifier);
   // The command as an argv too: the text came from the caller. --preview 0: titles, no message text
-  const command = ['chats', '-q', identifier, '--preview', '0'];
+  const command = chatsQueryCommand(identifier);
   const hint = `${diskNote(from).trim()}${from ? ' ' : ''}List matching chats: ${shellCommand(command)}`;
   return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
     candidates, hint, command, ...(from ? { listedAt: from.listedAt } : {}),

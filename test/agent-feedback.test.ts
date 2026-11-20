@@ -32,7 +32,7 @@ function worldFile(extra: (w: MockWorld) => void): string {
 
 describe('1 hint is always a string; a command to run next is an argv in "command"', () => {
   it.each([
-    [['read', 'NoSuchChatAtAll', '--json'], 'chat_not_found', ['chats', '-q', 'NoSuchChatAtAll', '--preview', '0']],
+    [['read', 'NoSuchChatAtAll', '--json'], 'chat_not_found', ['chats', '-q', 'NoSuchChatAtAll', '--preview', '0', '--json']],
     [['read', 'Tea', '--json'], 'ambiguous_chat', undefined],
     [['folder', 'NoSuchFolder', '--json'], 'folder_not_found', ['folders']],
     [['download', 'Team', '3', '--json'], 'no_media', ['get', 'Team', '3']],

@@ -170,7 +170,8 @@ describe('chat names', () => {
     expect(r.err).toMatch(/List matching chats: telegram chats -q Tem --preview 0/);
     const json = jsonError(cli(['read', 'Tem', '--json']).out);
     expect(json).toMatchObject({
-      code: 'chat_not_found', hint: 'List matching chats: telegram chats -q Tem --preview 0', command: ['chats', '-q', 'Tem', '--preview', '0'],
+      // --json in, --json out: the command answers in the format the caller asked for
+      code: 'chat_not_found', hint: 'List matching chats: telegram chats -q Tem --preview 0 --json', command: ['chats', '-q', 'Tem', '--preview', '0', '--json'],
     });
     expect(json.candidates[0]).toMatchObject({ id: '-1004001', title: 'Team' });
   }, 30_000);

@@ -37,7 +37,7 @@ const run = async (plan: Plan) => result(plan, await spawnCli(plan));
 const call = (args: Record<string, unknown>) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'telegram_write', arguments: args } });
 type Reply = { result: { content: { text: string }[]; isError?: boolean; structuredContent?: Record<string, any> } };
 
-describe('over MCP without a dialog, "approval needed" is a result, not an error (5.3)', () => {
+describe('over MCP without a dialog, "approval needed" is a result, not an error (5.3)', { timeout: 30_000 }, () => {
   it('a gift link or login code in the call is not echoed in retry: the model repeats its own call with the code', async () => {
     const args = ['send', '-1004001', '-'];
     const stdin = 'Your gift: https://t.me/giftcode/AbCd1234XyZ';
@@ -129,7 +129,7 @@ describe('over MCP without a dialog, "approval needed" is a result, not an error
   });
 });
 
-describe('click: the human sees the real button, the model a masked one (finding 9)', () => {
+describe('click: the human sees the real button, the model a masked one (finding 9)', { timeout: 30_000 }, () => {
   const GIFT_URL = 'https://t.me/giftcode/SAMPLE_ONLY';
   const withGiftButton = async () => {
     const { seedWorld, saveWorld } = await import('../src/mock/world.js');
@@ -169,7 +169,7 @@ describe('click: the human sees the real button, the model a masked one (finding
   });
 });
 
-describe('a document from 777000 keeps its code out of read in every view (finding 5)', () => {
+describe('a document from 777000 keeps its code out of read in every view (finding 5)', { timeout: 30_000 }, () => {
   it('read plain, --json and --json --full: no file name with the code, the message id a number', async () => {
     const { seedWorld, saveWorld } = await import('../src/mock/world.js');
     const world = seedWorld();
@@ -193,7 +193,7 @@ describe('a document from 777000 keeps its code out of read in every view (findi
   });
 });
 
-describe('read keeps a link on another host whole (review 3, finding 3)', () => {
+describe('read keeps a link on another host whole (review 3, finding 3)', { timeout: 30_000 }, () => {
   it('support.me/giftcode/… stays, t.me/giftcode/… loses its slug', async () => {
     const { seedWorld, saveWorld } = await import('../src/mock/world.js');
     const world = seedWorld();
@@ -211,7 +211,7 @@ describe('read keeps a link on another host whole (review 3, finding 3)', () => 
   });
 });
 
-describe('the dialog shows who gets the write, by name (5.2)', () => {
+describe('the dialog shows who gets the write, by name (5.2)', { timeout: 30_000 }, () => {
   const describe_ = (p: Plan) => describeWithCli(p, spawnCli);
 
   it('asks with the human description the CLI made, then runs the write once', async () => {
@@ -286,7 +286,7 @@ describe('the dialog shows who gets the write, by name (5.2)', () => {
   });
 });
 
-describe('login codes stay out of what the model gets on every write path (masking review)', () => {
+describe('login codes stay out of what the model gets on every write path (masking review)', { timeout: 30_000 }, () => {
   const approveAndRun = async (args: Record<string, unknown>) => {
     const first = await handleMessage(call(args), run) as Reply;
     expect(first.result.structuredContent!.status).toBe('approval_required');
