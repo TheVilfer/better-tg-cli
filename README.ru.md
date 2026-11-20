@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#установка">Установка</a> · <a href="skills/better-tg-cli/reference.md">Справка</a> · <a href="SECURITY.md">Безопасность</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.es.md">Español</a>
+    <a href="#установка">Установка</a> · <a href="skills/better-tg-cli/SKILL.md">Справка</a> · <a href="SECURITY.md">Безопасность</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.es.md">Español</a>
   </p>
 </div>
 
@@ -63,7 +63,7 @@ $ telegram inbox -n 3
 - **Каждое сообщение одобряете вы.** После входа агент перед каждой отправкой, правкой или
   удалением спрашивает вас в чате и показывает точный текст; отправляет только после вашего «да».
   Писать без вопросов (`write-access on`) можно только после вашего подтверждения в терминале или
-  в диалоге macOS. Каждая запись попадает в `~/.config/tg/audit.jsonl`. Секреты хранятся в
+  в диалоге macOS. Команды с аудитом пытаются записать результат в `~/.config/tg/audit.jsonl` (папка активного профиля); запись, остановленная ради подтверждения или при выключенной записи, завершается раньше журнала, и аудит есть не у каждой записи. Секреты хранятся в
   Keychain macOS, в Secret Service на Linux или в 1Password.
 - **Маленький и самодостаточный.** npm-пакет — один файл на 0,3 МБ без runtime-зависимостей.
   Homebrew ставит отдельный бинарник, которому не нужен Node.
@@ -246,8 +246,10 @@ telegram click @SomeBot 4410 "Настройки"      # нажать инлай
 ```
 
 Команды чтения принимают `--json`, а некоторые и `--markdown`. Все команды выводит
-`telegram help-all`. В [reference.md](skills/better-tg-cli/reference.md) описано то, чего не видно по списку флагов:
-форматы вывода, треды, кнопки ботов, админские команды, решение проблем.
+`telegram help-all`. Справочные файлы навыка описывают то, чего не видно по списку флагов:
+[чтение](skills/better-tg-cli/reading.md) (форматы вывода, треды, поиск), [запись](skills/better-tg-cli/writing.md)
+(подтверждения, кнопки ботов, админские команды), [файлы и экспорт](skills/better-tg-cli/files-live.md),
+[API](skills/better-tg-cli/api.md), [установка и решение проблем](skills/better-tg-cli/setup.md).
 
 ## MCP-сервер
 

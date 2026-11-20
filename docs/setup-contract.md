@@ -158,7 +158,7 @@ can change the write mode.
 ## Exit codes
 
 For commands that emit this contract. Every other command follows the general table printed under
-`telegram --help` (and in the skill's `reference.md`): `0` ok, `1` runtime error, `2` usage
+`telegram --help` (and in the skill's `setup.md`): `0` ok, `1` runtime error, `2` usage
 (unknown option, invalid value, ambiguous chat name), `3` write approval needed, `4` write access
 disabled, `5` not logged in or session ended. The two tables agree on `0`, `1` and `3`; `2` means
 "a person is needed" only in a contract result, and "fix the command line" everywhere else.

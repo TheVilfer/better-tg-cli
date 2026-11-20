@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#instalación">Instalación</a> · <a href="skills/better-tg-cli/reference.md">Referencia</a> · <a href="SECURITY.md">Seguridad</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.ru.md">Русский</a>
+    <a href="#instalación">Instalación</a> · <a href="skills/better-tg-cli/SKILL.md">Referencia</a> · <a href="SECURITY.md">Seguridad</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.ru.md">Русский</a>
   </p>
 </div>
 
@@ -65,7 +65,7 @@ Hecho para agentes:
 - **Tú apruebas cada mensaje.** Tras iniciar sesión, el agente te pregunta en el chat antes de
   cada envío, edición o borrado y te muestra el texto exacto; solo envía tras tu sí. Escribir sin
   preguntar (`write-access on`) requiere tu propia confirmación en un terminal o en un diálogo de
-  macOS. Cada escritura se registra en `~/.config/tg/audit.jsonl`. Los secretos se guardan en el Keychain de macOS, en el Secret Service
+  macOS. Los comandos con registro de auditoría intentan anotar el resultado en `~/.config/tg/audit.jsonl` (la carpeta del perfil activo); una escritura detenida para aprobación o con la escritura desactivada termina antes, y no toda escritura tiene uno. Los secretos se guardan en el Keychain de macOS, en el Secret Service
   de Linux o en 1Password.
 - **Pequeño y autónomo.** El paquete de npm es un único archivo de 0,3 MB sin dependencias en tiempo
   de ejecución. Homebrew instala un binario independiente que no necesita Node.
@@ -256,9 +256,11 @@ telegram click @SomeBot 4410 "Settings"       # pulsa un botón inline
 ```
 
 Los comandos de lectura aceptan `--json`, y algunos también `--markdown`. Consulta todos los comandos
-con `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) cubre el comportamiento que
-la lista de flags no puede explicar: formatos de salida, hilos, botones de bots, comandos de
-administración y resolución de problemas.
+con `telegram help-all`. Los archivos de referencia del skill cubren el comportamiento que la lista de
+flags no puede explicar: [lectura](skills/better-tg-cli/reading.md) (formatos de salida, hilos, búsqueda),
+[escritura](skills/better-tg-cli/writing.md) (aprobaciones, botones de bots, administración),
+[archivos y exportación](skills/better-tg-cli/files-live.md), [API](skills/better-tg-cli/api.md) y
+[instalación y resolución de problemas](skills/better-tg-cli/setup.md).
 
 ## Servidor MCP
 

@@ -332,13 +332,12 @@ describe('12 inbox -n 0 still gives the totals only', () => {
 describe('12 the skill says what the CLI does', () => {
   const read = (f: string) => readFileSync(join(__dirname, '..', 'skills', 'better-tg-cli', f), 'utf8');
   it('a chat that is not found is exit 1, not "anything else is refused (exit 2)"', () => {
-    const skill = read('SKILL.md');
-    expect(skill).not.toMatch(/anything else is refused \(exit 2\)/);
-    expect(skill).toMatch(/fits none is "not found" \(exit 1\)/);
+    for (const f of ['SKILL.md', 'reading.md']) expect(read(f), f).not.toMatch(/anything else is refused \(exit 2\)/);
+    expect(read('reading.md').replace(/\s+/g, ' ')).toMatch(/a name that fits none is `chat_not_found` \(exit 1\)/);
   });
 
   it('mark-read promises no message ID; forward names its source and destination IDs', () => {
-    const ref = read('reference.md');
+    const ref = read('writing.md');
     const markRead = ref.split('\n').filter(l => l.startsWith('| ') && l.includes('`mark-read`'));
     expect(markRead).toHaveLength(1);
     expect(markRead[0]).not.toMatch(/messageId/);
@@ -346,27 +345,28 @@ describe('12 the skill says what the CLI does', () => {
   });
 
   it('raw API writes work in mode "ask"; GetBotCallbackAnswer and GetInlineBotResults are named as writes', () => {
-    for (const f of ['SKILL.md', 'reference.md']) {
-      const text = read(f).replace(/\s+/g, ' ');
+    for (const f of ['SKILL.md', 'api.md']) {
       // Never "a raw write needs write-access on": in mode ask the user approves each call
-      expect(text, f).not.toMatch(/write \(needs `telegram write-access on`|a write that needs `telegram write-access on`/);
-      expect(text, f).toMatch(/mode `ask`/);
-      expect(text, f).toContain('GetBotCallbackAnswer');
-      expect(text, f).toContain('GetInlineBotResults');
+      expect(read(f).replace(/\s+/g, ' '), f).not.toMatch(/write \(needs `telegram write-access on`|a write that needs `telegram write-access on`/);
     }
+    const text = read('api.md').replace(/\s+/g, ' ');
+    expect(text).toMatch(/in mode `ask` the user approves that one call/);
+    expect(text).toMatch(/`write-access on` is never needed/);
+    expect(text).toContain('GetBotCallbackAnswer');
+    expect(text).toContain('GetInlineBotResults');
     const api = cli(['api', '--help']).out.replace(/\s+/g, ' ');
     expect(api).not.toContain('write and needs `telegram write-access on`');
     expect(api).toContain('messages.GetBotCallbackAnswer, ephemeral.GetCallbackAnswer, messages.GetInlineBotResults');
     expect(cli(['messages', 'send-message', '--help']).out).toMatch(/Access in a terminal: write — needs write access \(mode "ask": the user approves each call\)/);
   }, 30_000);
 
-  it('every Get*-named write of src/api-methods.ts is named in the skill, the reference, api --help and the coverage doc', () => {
+  it('every Get*-named write of src/api-methods.ts is named in the skill (api.md), api --help and the coverage doc', () => {
     const getWrites = TL_METHODS.map(m => m[2]).filter(n => /^get/i.test(n.split('.').pop()!) && !isApiReadMethod(n));
     expect(getWrites).toContain('ephemeral.GetCallbackAnswer');
     const api = cli(['api', '--help']).out.replace(/\s+/g, ' ');
     const coverage = readFileSync(join(__dirname, '..', 'docs', 'api-coverage.md'), 'utf8');
     for (const name of getWrites) {
-      for (const f of ['SKILL.md', 'reference.md']) expect(read(f), `${f}: ${name}`).toContain(name);
+      expect(read('api.md'), `api.md: ${name}`).toContain(name);
       expect(api, `api --help: ${name}`).toContain(name);
       expect(coverage, `api-coverage.md: ${name}`).toContain(name);
     }

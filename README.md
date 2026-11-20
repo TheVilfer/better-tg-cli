@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#install">Install</a> · <a href="skills/better-tg-cli/reference.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
+    <a href="#install">Install</a> · <a href="skills/better-tg-cli/SKILL.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
   </p>
 </div>
 
@@ -63,8 +63,9 @@ Made for agents:
   for Saved Messages.
 - **You approve every message.** After login the agent asks you in the chat before each send,
   edit or delete, and shows the exact text; it sends only after your yes. Writing without asking
-  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Every write is
-  logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
+  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Commands with an
+  audit log try to record the result in `~/.config/tg/audit.jsonl` (the active profile's folder); a
+  write stopped for approval or with writes off ends before it, and not every write has one. Secrets live in the macOS Keychain, the
   Linux Secret Service or 1Password.
 - **Small and self-contained.** The npm package is one 0.3 MB file with zero runtime
   dependencies. Homebrew installs a standalone binary with no Node.
@@ -266,8 +267,10 @@ telegram help get-config                      # telegram ping, telegram req-pq, 
 Read commands take `--json`, and some also take `--markdown`. `read`/`get`/`search`/`inbox`/`watch`
 take `--full` (alias `--stats`) to include every per-message statistic (views, forwards, full
 reaction breakdown, comments, flags, rich media metadata) — default output is unchanged without it.
-See all commands with `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
-explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
+See all commands with `telegram help-all`. The agent skill's reference files cover the behaviour that the flag list can't
+explain: [reading](skills/better-tg-cli/reading.md) (output shapes, threads, search), [writing](skills/better-tg-cli/writing.md)
+(approvals, bot buttons, admin commands), [files and export](skills/better-tg-cli/files-live.md), [raw API](skills/better-tg-cli/api.md)
+and [setup and troubleshooting](skills/better-tg-cli/setup.md). The generic
 `telegram api <namespace.Method>` reaches 100% of the Telegram client API in a terminal (over MCP only
 an allowlist of about a hundred methods runs, see [docs/api-coverage.md](docs/api-coverage.md)), and every one of the 823
 TL methods also has its own typed top-level command `telegram <namespace> <method>` (root methods

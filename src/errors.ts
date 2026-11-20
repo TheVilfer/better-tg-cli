@@ -19,7 +19,7 @@ export const EXIT = {
   NOT_LOGGED_IN: 5,
 } as const;
 
-/** The table printed under `telegram --help`, also in skills/better-tg-cli/reference.md and docs/setup-contract.md. */
+/** The table printed under `telegram --help`, also in skills/better-tg-cli/setup.md and docs/setup-contract.md. */
 export const EXIT_CODES_HELP = [
   'Exit codes:',
   '  0  ok',

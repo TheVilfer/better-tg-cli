@@ -10,8 +10,8 @@ Issues and pull requests are welcome.
   offline and need no Telegram session. Add one for any behaviour you change.
 - **Style:** match the surrounding code. Commits use `Add …`, `Fix …` or `Update …`.
 - **Agent-facing output is an API.** Plain output off a TTY and `--json` shapes are parsed by
-  agents, so a format change needs a note in `skills/better-tg-cli/reference.md`, and in its `SKILL.md` when it affects
-  common use.
+  agents, so a format change needs a note in the skill's reference file for it (`skills/better-tg-cli/reading.md`,
+  `writing.md`, `files-live.md`, `api.md` or `setup.md`), and in its `SKILL.md` when it affects common use.
 - **Writes stay behind the guard.** New commands that change anything on the account must call
   the write-access check and write to the audit log, like the existing write commands.
 - **Releases** are done by the maintainer with `scripts/release.sh`. Don't bump the version in PRs.
