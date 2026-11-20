@@ -30,7 +30,7 @@
 # Developer install from a git checkout: scripts/dev-install.sh
 
 # The pinned release. Set by scripts/gen-version.mjs from package.json; do not edit.
-VERSION='0.39.6'
+VERSION='0.40.0'
 REPO='TheVilfer/better-tg-cli'
 
 TAG="v$VERSION"
