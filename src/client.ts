@@ -2403,9 +2403,9 @@ function findRawButton(
   if (selector.index != null) {
     pos = selector.index - 1;
   } else if (selector.dataBase64 != null) {
-    // The payload as shown, or (when MCP hid it) as the message carries it
+    // Only the payload as shown: over MCP a hidden payload (a login code) must not be guessable
+    // through "found" vs "not found". The raw bytes serve only the fingerprint.
     pos = flatInfo.findIndex((b) => b.type === 'callback' && b.data === selector.dataBase64);
-    if (pos < 0) pos = flatRawInfo.findIndex((b) => b.type === 'callback' && b.data === selector.dataBase64);
   } else if (selector.text != null) {
     const needle = selector.text.trim().toLowerCase();
     pos = flatInfo.findIndex((b) => b.text.trim().toLowerCase() === needle);

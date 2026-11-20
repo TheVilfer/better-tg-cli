@@ -281,6 +281,32 @@ describe('end to end on a mock account with a login code from 777000', () => {
   });
 });
 
+describe('click --data over MCP finds only what the model was shown', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-click-data-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const state = join(dir, 'state.json');
+  const world = seedWorld();
+  world.users.push({ id: 777000, firstName: 'Telegram', username: undefined } as never);
+  world.chats.push({ id: 777000, kind: 'user', unread: 1, messages: [
+    { id: 1, ago: 60, text: LOGIN_TEXT, buttons: [[{ text: 'Confirm', data: '52813', answer: 'ok' }]] },
+  ] } as never);
+  writeFileSync(state, JSON.stringify(world));
+  const run = (args: string[]) => spawnSync(process.execPath, [...cliArgs(), ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, TG_MOCK: state, TG_MOCK_ASK: '1', TG_PROFILE: `mcp-click-data-${process.pid}`, TG_NO_UPDATE_CHECK: '1', TG_MCP: '1', TG_READ_ONLY: '' },
+  });
+  const b64 = (s: string) => Buffer.from(s).toString('base64');
+
+  it('a guess of a hidden callback gets the same answer as any value that does not match', () => {
+    const right = run(['click', '777000', '1', '--data', b64('52813'), '--json']);
+    const wrong = run(['click', '777000', '1', '--data', b64('11111'), '--json']);
+    expect(right.status).toBe(wrong.status);
+    const same = (r: { stdout: string; stderr: string }, guess: string) => (r.stdout + r.stderr).replaceAll(b64(guess), '<guess>');
+    expect(same(right, '52813')).toBe(same(wrong, '11111'));
+    expect(right.stdout + right.stderr).not.toMatch(/approval|TG_APPROVE/i);
+  });
+});
+
 // Round 3: the threat model is credentials and redeemable value. Login codes come from 777000 and
 // 489000 and are hidden wherever a service message's content reaches output; gift links are masked
 // on every MCP output by shape.
