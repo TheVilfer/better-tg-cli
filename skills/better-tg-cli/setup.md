@@ -23,8 +23,8 @@ scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket && scoop in
 
 Never install `@skillhq/telegram`: it is an old build, and bot replies come back as `(no text)`.
 `telegram update` upgrades an install (`update --check` only reports). `telegram skill
-install|status|uninstall [-a <agent>]` copies this skill into coding agents; run it only when the
-user asks.
+install|uninstall [-a <agent>]` copies this skill into coding agents or removes it, and `telegram
+skill status [--json]` shows where it is; run them only when the user asks.
 
 ## How each client gets it
 
@@ -46,8 +46,10 @@ Use whatever tools the client exposes: MCP tools when they are there, the CLI ot
   ~15 minutes). It opens a page on 127.0.0.1 where the user gets a login key (or enters their own
   API keys), scans a QR code, types the 2FA password and picks the write mode. Relay the `url`
   event if no browser opened. Events: `url`, `waiting_invite`, `waiting_scan`, `need_password`,
-  `logged_in`, `waiting_mode`, `mode`, then `done` (exit 0); `timeout` (exit 1). `error` means that
-  attempt failed and the page offers a retry, so keep waiting. A stored session that Telegram no
+  `logged_in`, `waiting_mode`, `mode`, then `done` (exit 0); `timeout` (exit 1). An `error` before
+  `url` (the stored login could not be checked: locked store, no network) ends the process with
+  exit 1: tell the user the message. An `error` after `url`, while the process still runs, means
+  that attempt failed and the page offers a retry, so keep waiting. A stored session that Telegram no
   longer accepts gives `session_expired` and a new login on the same page. `already_logged_in`
   exits 0 without a `done`: check with `telegram whoami`.
 - **MCP:** call `telegram_setup` and give the user the link. Nothing reports when they finish: wait
@@ -65,17 +67,21 @@ password, login key or api_hash in the chat. `telegram check` connects and check
 - `TG_PROFILE=<name>` gives a separate account: its own folder (`~/.config/tg-<name>`, on Windows
   `%APPDATA%\tg-<name>`) and its own secrets. Log in and set the mode on the profile and machine
   the agent actually uses.
-- The session and the write mode live in the OS secret store (macOS Keychain, Linux Secret
-  Service, Windows DPAPI, or 1Password). If it is unavailable, the error names one step for this OS
-  (unlock the keychain, …), then `telegram check`.
+- The session and the write mode normally live in the OS secret store (macOS Keychain, Linux
+  Secret Service, Windows DPAPI, or 1Password). If the store is unavailable or a save fails, the
+  session can end up in `config.json5`; `telegram check --json` → `sessionStore` says where it is
+  (no need to open the config, which holds secrets). A locked store gives an error with one step
+  for this OS (unlock the keychain, …), then `telegram check`.
 - A computer without a secret store (cloud agent computers, headless Linux) keeps the mode in a
   0600 file in the profile, marked "unprotected". Never install a keyring or `libsecret-tools`
-  there. `write-access ask` works as is; `on` opens a local page for the user to choose.
+  there. The mode is still the user's to set; `on` opens a local page for them to choose.
 
 ## MCP server
 
 `telegram mcp` (stdio) or `telegram mcp --http` (`POST /mcp` on 127.0.0.1:8787, `Authorization:
-Bearer` from `telegram mcp --token`) serves four tools:
+Bearer <token>`) serves four tools. `telegram mcp --token` prints a live bearer token: the user runs
+it in their own terminal and pastes it into the MCP client; never run it or handle the token
+yourself.
 
 | Tool | Use |
 |---|---|
@@ -111,6 +117,9 @@ With `--json` stdout holds exactly one JSON value, the result or
 `chat_not_found`, `ambiguous_chat`, `chat_not_exact`, `ambiguous_or_unverified`, `not_a_forum`,
 `invalid_argument`, `usage`, `write_disabled`, `not_configured`, `session_expired`, `network`,
 `flood_wait`, `telegram_rpc` and `refused`. Exit 3 has its own line, `{"error":"approval_required",…}`.
+Exceptions: `onboard --json` and `watch --json` print JSON Lines (one event or message per line),
+and `avatar --json` for a chat with no profile photo prints a plain text line. `telegram api`
+takes no `--json` (exit 2, `usage`); see [api.md](api.md#errors).
 A bad number or value exits 2 before anything is sent or approved.
 
 ## Troubleshooting

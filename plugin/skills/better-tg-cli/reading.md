@@ -160,7 +160,10 @@ Read without `--topic`, each line carries `[topic N]`. `--topic` on a chat that 
 ## Search
 
 - Without `--chat` it searches every chat; `-n` defaults to 50, and `hasMore` in JSON says there
-  are more. "All photos" is also capped by `-n`, so raise it or page with `--until`.
+  are more. Search is capped by `-n` and can't be paged completely: `--until` is precise to the
+  second, so matches that share a time can be skipped. For every photo of one chat, page
+  `read <chat> --before <nextBefore> --json` until `hasMore` is gone and keep messages whose
+  `media.kind` is `photo`.
 - `--type` takes `photo`, `video`, `media`, `document`, `url`, `voice`, `audio`, `gif`, `round`,
   `location`, `contact`, `pinned` or `mentions`. `search "" --chat X --type photo` lists the photos
   of one chat; `--type mentions` without `--chat` finds where the user was @mentioned.
@@ -197,7 +200,7 @@ Off a terminal, output is compact: one line per item, ID first, empty fields dro
 | Command | `--json` shape |
 |---|---|
 | `chats`, `contacts`, `members` | array |
-| `read`, `get` | `{chatTitle, chatId, messages[], threadChatId?, missing?, hasMore?, nextBefore?}`; in a forum each message has `topicId` |
+| `read`, `get` | `{chatTitle, chatId, messages[], threadChatId?, missing?, hasMore?, nextBefore?}`; `read` of a forum's whole history (no `--topic`/`--thread`) adds `topicId` to each message |
 | `search` | array of `{chatTitle?, chatId?, messages[], hasMore?}`; every message has `id` and `chatId`, global hits also `chatTitle` |
 | `inbox` | `{totalUnread, chatsWithUnread, chats[]}` |
 | `topics` | `{chatTitle, topics[]}` |

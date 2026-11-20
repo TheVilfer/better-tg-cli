@@ -19,7 +19,10 @@ the JSON bodies were also checked to serialize with teleproto.
 2. `telegram <ns> --help` lists a namespace's methods, each marked `[read]`, `[write]` or `[refused]`.
 3. `telegram schema <ns> <method>` (or `telegram <ns> <method> --help`) gives the description,
    access, return type and every parameter. It is local: no account, no network. Over MCP both go
-   through `telegram_read`, even for a write or refused method; pass only the command path.
+   through `telegram_read`, even for a write or refused method: `telegram_read
+   {"args":["schema","messages","send-reaction"]}` or `telegram_read
+   {"args":["messages","send-reaction","--help"]}`. Without `--help` the second one is the method
+   itself, which the server classifies as a write.
 
 ```
 $ telegram schema messages send-reaction
@@ -45,9 +48,10 @@ name.
 - Some methods are named like reads but are writes: `messages.GetBotCallbackAnswer` and
   `ephemeral.GetCallbackAnswer` press a bot button, `messages.GetInlineBotResults` sends the query
   and the user's ID to the bot.
-- Parameters can change the class. `messages.GetMessagesViews` is a read, but with
-  `--increment true` it adds a view, so it is a write; a call with `allowPaidStars` is a write
-  (and refused over MCP). Over MCP paid or risky parameters are refused; in results phone numbers
+- Parameters can change the class. `messages.GetMessagesViews` is a read only with
+  `--increment false`; `--increment true` adds a view, so in the shell it needs write access like
+  any write, and over MCP it is refused. A call with `allowPaidStars` is a write (and refused over
+  MCP). Over MCP paid or risky parameters are refused; in results phone numbers
   and locations show as `"[redacted]"`, login codes as `[login code hidden]` and gift links as
   `[gift code hidden]`.
 
@@ -99,7 +103,9 @@ For a plain reaction or reply the regular `react me 1 👍` and `reply me 1 -` a
 
 ## Errors
 
-Raw calls return Telegram's RPC errors, with `--json` as `{"error":{"code":"telegram_rpc",…}}`:
+Raw calls return Telegram's RPC errors; a generated command (`telegram messages get-history …`)
+with `--json` gives them as `{"error":{"code":"telegram_rpc",…}}`. `telegram api` has no `--json`
+(it already prints JSON; the flag is a usage error, exit 2). Common errors:
 `PEER_ID_INVALID` (chat or user not resolved), `CHAT_ADMIN_REQUIRED` (missing admin right),
 `CHANNEL_PRIVATE` (not a member), `MESSAGE_ID_INVALID` (no such message). `FLOOD_WAIT`: tell the user
 the wait and stop. A method's `--help` lists its own common errors.

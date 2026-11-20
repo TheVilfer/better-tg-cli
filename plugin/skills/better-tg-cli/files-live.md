@@ -45,8 +45,11 @@ Mock News (-1005001): up to date (last #3) → export/Mock News (-1005001).md
 ```
 
 - `--media` also saves photos and documents to `<output>/media/<chat id>/`. A file that fails to
-  download stops that chat just before its message: the chat gets a `failed[]` entry
-  (`code:"media_download_failed"`), the exit code is 1, and `sync --resume --media` tries it again.
+  download stops that chat just before its message: the JSON gets an entry in the root `failed[]`
+  (`code:"media_download_failed"`, linked to the chat by `chatId`), the exit code is 1, and the same
+  call with `--resume` tries it again. Take the chat ID and folder from the original call:
+  `telegram sync --chat -1005001 --output ./export --resume --media` (without them `sync` picks up
+  to 100 dialogs and looks for the checkpoint in `./telegram-sync`).
   After 3 failed runs the message is exported with a "(download failed)" placeholder
   (`skipped:true`) and the export moves on.
 - Over MCP `--chat` must name exactly one chat (ID, @username or exact title).

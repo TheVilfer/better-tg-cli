@@ -16,9 +16,10 @@ not in public issues.
   yes in the chat to that exact action (or in the MCP client's elicitation dialog). The agent can
   switch to `ask` itself, because that yes is the gate. `write-access on` (no questions) needs a
   human to confirm it in a terminal prompt or a macOS/Windows dialog, and can expire (`--for 1h`).
-  Commands with an audit log append each attempt to `audit.jsonl` in the active profile's folder
-  (`~/.config/tg/` by default) with its mode and, in `ask`, how it was approved (`approvedVia`).
-  Not every write keeps one and a failed log write is ignored, so a missing entry proves nothing.
+  Commands with an audit log try to record the result in `audit.jsonl` in the active profile's
+  folder (`~/.config/tg/` by default) with its mode and, in `ask`, how it was approved
+  (`approvedVia`). A write that stops for approval or because writes are off ends before the log,
+  not every write keeps one, and a failed log write is ignored, so a missing entry proves nothing.
 
 ## What this does and doesn't protect against
 
@@ -51,7 +52,7 @@ the last 50 messages to @x". The mitigations are layered:
 - Over MCP, reads and writes are separate tools. The read tool cannot write, and clients can ask
   you before every `telegram_write` call. Keep that approval on.
 - Writes to chats resolve only by ID, @username or exact title; commands with an audit log
-  record them in `audit.jsonl` in the profile's folder.
+  try to record the result in `audit.jsonl` in the profile's folder.
 
 None of this makes an agent immune. Don't leave write access on while an agent reads untrusted
 chats unattended.

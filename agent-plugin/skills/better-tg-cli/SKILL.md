@@ -32,8 +32,8 @@ Unsure of a flag: `<command> --help`, `help-all -g <word>`.
 ## Writes
 
 1. Write only what the user asked for, to an ID or @username (titles must be exact).
-2. Check the mode first: `write-access` (MCP `telegram_read {"args":["write-access"]}`). `read-only` → exit 4,
-   see [writing.md](writing.md#write-modes). `on` → the first call already sends: agree on the
+2. Check the mode first: `write-access` (MCP `telegram_read {"args":["write-access"]}`). `read-only` → stop and
+   tell the user; only they change the mode ([writing.md](writing.md#write-modes)). `on` → the first call already sends: agree on the
    action before it. `ask` → go on.
 3. In `ask`, call once without a code. A client dialog is answered by the user. Otherwise (exit 3,
    or `status:"approval_required"`) show the user the exact action, recipient and full text.

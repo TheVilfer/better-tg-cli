@@ -21,13 +21,14 @@ mode; its JSON has `writeMode`.
 
 | Mode | A write… | Next step for you |
 |---|---|---|
-| `read-only` | stops with exit 4 (`write_disabled`) | Shell: `telegram write-access ask` (no confirmation needed: each write then waits for the user's yes). MCP: call `telegram_setup` and give the user the link, or ask them to run `telegram write-access ask` in a terminal |
+| `read-only` | stops with exit 4 (`write_disabled`) | stop and tell the user writes are off. Only the user changes the mode: on the `telegram_setup` page or with `telegram write-access ask` in their own terminal. Never run `write-access` to change it yourself |
 | `ask` | stops with exit 3 and an approval code | show the action, wait for a yes, repeat with the code |
 | `on` | runs at once | agree on the exact action with the user before the first call |
 
-Never switch to `on` unless the user asks for it; it needs their own confirmation in a terminal or
-a system dialog. `write-access ask --for 2h` and `on --for 30m` fall back to read-only afterwards.
-`telegram_setup` on a `--read-only` server offers no mode. Without a secret store (cloud agent
+The status query itself exits 0 in every mode; exit 4 comes from a write. `on` needs the user's own
+confirmation in a terminal or a system dialog. `write-access ask --for 2h` and `on --for 30m` fall
+back to read-only afterwards. A `--read-only` MCP server is a hard stop: `telegram_setup` there
+offers no mode, and writes stay off. Without a secret store (cloud agent
 computers, headless Linux) the mode lives in a 0600 file in the profile, labelled "unprotected";
 never install a keyring there.
 
@@ -75,14 +76,20 @@ telegram_write {"args":["send","-1004001","-"],"stdin":"See you at 7"}
 → structuredContent: {"status":"approval_required","code":"H5SCNT","action":{"description":"  Send a message\n  To: Team (supergroup, @mock_team, id -1004001)\n  Text (12 characters):\n    | See you at 7\n  Command: telegram send -1004001 -",…},"expiresInMinutes":10,"retry":{"tool":"telegram_write","arguments":{"args":["send","-1004001","-"],"stdin":"See you at 7","approval":"H5SCNT"}}}
 ```
 
-  If the call held a login code or a gift link, `retry` says `sameArgumentsAsThisCall` instead of
-  echoing them: repeat your own call with `approval` added.
+  If the call held a login code or a gift link, `retry` is `{tool, sameArgumentsAsThisCall: true,
+  arguments: {approval}, note}`: the secret is not echoed back. Such an action is for the user to
+  do (in the Telegram app or their own terminal): tell them, and don't follow the `note` that says
+  to call again. Never ask for, reconstruct or re-send the code or link. The check also fires on
+  ordinary text such as `promo code: SUMMER` that the user asked you to send; then, after their
+  yes, repeat your own call with the same args and stdin plus `"approval":"<code>"`.
 - A code works once, for 10 minutes, for this action: command, recipient (by ID), options, the exact
   stdin text and files. A code that doesn't hold comes back with a new one and `rejected.reason`
   (`unknown_or_expired`, `different_action`, `another_account`, `not_genuine`): show the new action
   and ask again.
-- A write that can't run as shown (recipient, message, file or button not found) gets no code:
-  `Not sent, nothing to approve: …` with the real error.
+- A recipient that can't be resolved, a file that can't be read, and for `delete` and `click` a
+  missing message or button get no code: `Not sent, nothing to approve: …` with the real error.
+  `edit` and `reply` don't check the message first: they may ask for approval for a message ID that
+  turns out not to exist.
 
 ## Don't get the account banned
 
@@ -133,7 +140,8 @@ $ telegram click @demo_bot 2 Catalog
 |---|---|
 | callback | sends the callback, shows the answer and the updated message |
 | reply-keyboard text | sends the label as a message |
-| url, url_auth, webview, game | prints the URL, never opens it |
+| url, url_auth, webview | prints the URL, never opens it |
+| game | asks the bot for the game (`messages.GetBotCallbackAnswer` with `game:true`); the answer may hold its URL. Use `buttons` to look without pressing |
 | switch-inline | prints the query, does not send it |
 | copy | prints the text |
 | request phone, geo, poll or peer; buy | refused on purpose |
@@ -178,7 +186,7 @@ Confirm to the user where it went: the `chatTitle` and ID from the result, not t
 
 ## Audit log
 
-Only commands that keep an audit write one line per attempt to `audit.jsonl` in the active
-profile's folder (`~/.config/tg/` for the default profile on macOS and Linux; another
-`TG_PROFILE` or OS has its own). Not every write keeps one, and a failed log write is ignored, so a
-missing entry proves nothing.
+Commands with audit try to record the result in `audit.jsonl` in the active profile's folder
+(`~/.config/tg/` for the default profile on macOS and Linux; another `TG_PROFILE` or OS has its
+own). A write that stops for approval or because writes are off ends before the log, not every
+write keeps one, and a failed log write is ignored, so a missing entry proves nothing.
