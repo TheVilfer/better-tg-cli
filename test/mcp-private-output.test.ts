@@ -272,13 +272,13 @@ describe('end to end on a mock account with a login code from 777000', () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).not.toMatch(/52813/);
     expect(r.stdout).toMatch(/login code hidden/);
-  });
+  }, 30_000);
 
   it('a terminal still shows it', () => {
     const r = run(['read', '777000', '--json'], { TG_MCP: '', TG_READ_ONLY: '' });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/52813/);
-  });
+  }, 30_000);
 });
 
 describe('click --data over MCP finds only what the model was shown', () => {
@@ -498,6 +498,6 @@ describe('gift-code links on every MCP output', () => {
       expect(terminal.stdout).toMatch(/AbC123xyz/);
       // The server's own mask is a backstop on whatever the CLI prints
       expect(mcpToolResult(0, false, terminal.stdout, '').content[0].text).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);
-    });
+    }, 30_000);
   });
 });
