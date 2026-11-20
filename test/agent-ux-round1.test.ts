@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { cliArgs } from './cli.js';
 import { seedWorld, type MockWorld } from '../src/mock/world.js';
@@ -45,8 +46,15 @@ describe('2/3 --json always yields one complete JSON object', () => {
   }, 30_000);
 
   it('a long error is written in full before the process exits, even to a slow reader', async () => {
-    const name = 'x'.repeat(180_000);
-    const child = spawn(process.execPath, [...cliArgs(), 'read', name, '--json'], { env: env(), stdio: ['ignore', 'pipe', 'ignore'] });
+    // The long text comes from the account, not argv: one argument may not exceed 128 KB on Linux,
+    // and a whole command line 32 KB on Windows. Two chats share "Huge", so the error lists both.
+    const long = 'y'.repeat(120_000);
+    const state = await worldFile(w => {
+      for (const [id, tag] of [[9101, 'A'], [9102, 'B']] as const) {
+        w.chats.push({ id, kind: 'supergroup', title: `Huge ${tag} ${long}`, messages: [{ id: 1, ago: 60, from: 1002, text: 'x' }] } as never);
+      }
+    });
+    const child = spawn(process.execPath, [...cliArgs(), 'read', 'Huge', '--json'], { env: env({}, state), stdio: ['ignore', 'pipe', 'ignore'] });
     // Read nothing for a while: the pipe fills up and the CLI must wait for it
     child.stdout.pause();
     await new Promise(r => setTimeout(r, 1500));
@@ -54,8 +62,10 @@ describe('2/3 --json always yields one complete JSON object', () => {
     child.stdout.setEncoding('utf8').on('data', d => { out += d; });
     child.stdout.resume();
     const code = await new Promise(r => child.on('close', r));
-    expect(code).toBe(1);
-    expect(oneJson(out).error.message).toContain(name);
+    expect(code).toBe(2);
+    const error = oneJson(out).error;
+    expect(error.code).toBe('ambiguous_chat');
+    expect(error.candidates.map((c: { title: string }) => c.title).sort()).toEqual([`Huge A ${long}`, `Huge B ${long}`]);
   }, 30_000);
 
   it('sync with a chat that does not exist is an error with JSON, not a silent 0', () => {
@@ -280,7 +290,7 @@ describe('10 usage errors exit 2, and are found before the write guard', () => {
     const profile = mkdtempSync(join(home, 'ask-'));
     const real = (args: string[]) => {
       const e = env({ HOME: profile, USERPROFILE: profile, APPDATA: join(profile, 'AppData'), TG_MOCK: '', TG_PROFILE: 'ask-test', TG_NO_LIBSECRET: '1' });
-      const r = spawnSync(process.execPath, ['--import', join(__dirname, 'helpers', 'as-linux.mjs'), ...cliArgs(), ...args], { encoding: 'utf8', env: e, stdio: ['ignore', 'pipe', 'pipe'] });
+      const r = spawnSync(process.execPath, ['--import', pathToFileURL(join(__dirname, 'helpers', 'as-linux.mjs')).href, ...cliArgs(), ...args], { encoding: 'utf8', env: e, stdio: ['ignore', 'pipe', 'pipe'] });
       return { code: r.status, out: r.stdout, err: r.stderr };
     };
     expect(real(['write-access', 'ask']).code).toBe(0);
