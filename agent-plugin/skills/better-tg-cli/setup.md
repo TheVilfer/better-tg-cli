@@ -113,7 +113,7 @@ yourself.
 | 5 | not logged in, or the session ended | [log in](#log-in) |
 
 With `--json` stdout holds exactly one JSON value, the result or
-`{"error":{"code","message","hint"?,"command"?,"candidates"?,"retryAfterSeconds"?}}`. Stable codes include
+`{"error":{"code","message","hint"?,"command"?,"candidates"?,"retryAfterSeconds"?,"listedAt"?}}`. Stable codes include
 `chat_not_found`, `ambiguous_chat`, `chat_not_exact`, `ambiguous_or_unverified`, `not_a_forum`,
 `invalid_argument`, `usage`, `write_disabled`, `not_configured`, `session_expired`, `network`,
 `flood_wait`, `telegram_rpc` and `refused`. Exit 3 has its own line, `{"error":"approval_required",…}`.
@@ -133,4 +133,8 @@ A bad number or value exits 2 before anything is sent or approved.
 - **`session_expired` (exit 5)** at connect or on any call: Telegram ended the session; log in again.
 - **`CHANNELS_TOO_MUCH` on `join`:** the account is in too many channels; the user leaves some.
 - **`Could not find the input entity`:** the ID is not among the user's dialogs; use `@username`.
+- **A chat the user just joined or renamed is `chat_not_found`** (the error has `listedAt`): reads
+  match names against the dialog list saved up to 10 minutes ago. `TG_NO_CACHE=1` reads it again.
+  `TG_LOG_LEVEL=debug` prints one stderr line per lookup: `dialog cache: hit` (answered from that
+  list), `refresh` (read from Telegram, with the reason) or `miss` (a @username or a list already read).
 - **Bot replies show `(no text)`:** an old build (`@skillhq/telegram`) is installed; see Install.

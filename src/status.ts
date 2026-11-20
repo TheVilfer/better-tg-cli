@@ -48,6 +48,20 @@ export function writesLine(mode: WriteMode): string {
   return 'Writes: OFF — read-only, every write is refused';
 }
 
+/**
+ * The one line `check` prints about writes (bold, right after the session line), from the same
+ * status `--json` reports: the mode in words, how long it lasts, and how to turn writes on.
+ */
+export function writesTextLine(w: Pick<WriteStatus, 'writeMode' | 'writeUntil' | 'writeModeExpired'>): string {
+  const until = w.writeUntil ? new Date(w.writeUntil).toLocaleString() : undefined;
+  const extra = [
+    until && !w.writeModeExpired ? `until ${until}` : '',
+    until && w.writeModeExpired ? `the last mode expired ${until}` : '',
+    w.writeMode === 'read-only' ? 'to write: telegram write-access ask' : '',
+  ].filter(Boolean);
+  return `${writesLine(w.writeMode)}${extra.length ? ` (${extra.join('; ')})` : ''}`;
+}
+
 export function writeStatus(): WriteStatus {
   const state = parseWriteState(getWriteValue());
   const isProtected = isWriteModeProtected();

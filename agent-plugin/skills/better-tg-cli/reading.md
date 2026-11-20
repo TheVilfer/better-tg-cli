@@ -27,16 +27,23 @@ are real output of the mock account (`TG_MOCK`), in UTC.
   proven unique (`ambiguous_or_unverified`, exit 2): use the ID or @username.
 
 A name that fits several chats is refused with candidates, and a name that fits none is
-`chat_not_found` (exit 1) with the closest titles, a `hint` and a `command` to run:
+`chat_not_found` (exit 1) with the closest titles, a `hint` and a `command` to run. Each candidate
+has a `command`: your command again with that chat's ID. Pick the right one (ask the user if
+unsure), then run it as is:
 
 ```
 $ telegram read Tea --json
-{"error":{"code":"ambiguous_chat","message":"\"Tea\" is part of 2 chat titles; use an ID or the exact title","hint":"Run the command again with one of these IDs.","candidates":[{"id":"-1004001","title":"Team","type":"supergroup"},{"id":"-1004002","title":"Team Design","type":"supergroup"}]}}
+{"error":{"code":"ambiguous_chat","message":"\"Tea\" is part of 2 chat titles; use an ID or the exact title","hint":"Run the command again with one of these IDs (each candidate has its command).","candidates":[{"id":"-1004001","title":"Team","type":"supergroup","command":["read","-1004001","--json"]},{"id":"-1004002","title":"Team Design","type":"supergroup","command":["read","-1004002","--json"]}]}}
 [exit 2]
 $ telegram read Tem --json
-{"error":{"code":"chat_not_found","message":"Chat not found: Tem","hint":"List matching chats: telegram chats -q Tem --preview 0","command":["chats","-q","Tem","--preview","0"],"candidates":[{"id":"-1004001","title":"Team","type":"supergroup"},{"id":"-1004002","title":"Team Design","type":"supergroup"}]}}
+{"error":{"code":"chat_not_found","message":"Chat not found: Tem","hint":"List matching chats: telegram chats -q Tem --preview 0","command":["chats","-q","Tem","--preview","0"],"candidates":[{"id":"-1004001","title":"Team","type":"supergroup","command":["read","-1004001","--json"]},{"id":"-1004002","title":"Team Design","type":"supergroup","command":["read","-1004002","--json"]}]}}
 [exit 1]
 ```
+
+- Reads look names up in a dialog list saved for up to 10 minutes, so these answers come without
+  re-reading the list (a minute of rate limits on a big account). Such an error has `"listedAt"`
+  (when the list was read) and says so in the hint. A chat created or renamed since is not in it:
+  run the command with `TG_NO_CACHE=1` to read the list again. Writes always read a fresh list.
 
 `hint` is always one line of text for a person. `command`, when present, is the argv of the
 `telegram` command to run next, built from your own text: run it as is, never through a shell.
@@ -86,7 +93,8 @@ $ telegram inbox -n 0 --json
   passes them, `-n` only cuts the list, and `-n 0` gives the totals alone. Archived chats are
   skipped unless you pass `--include-archived`; `--unmuted` drops muted ones. So "all unread" means
   "all unread in the first 500 dialogs, after these filters": say which filters you used.
-- Order: private chats, then groups and channels, muted chats last; most unread first within each.
+- Order: people, then bots, then groups and channels, muted chats last; most unread first within
+  each. Bot chats have `"bot": true`; `--no-bots` hides them.
   Every chat in JSON has `"muted": true|false`, and a muted one says `muted` in text. For triage
   use `--unmuted`: a muted supergroup with hundreds unread is rarely what the user wants first.
 - `inbox` and `chats` shorten the last message with `--preview <chars>` (`0` = none); they have no

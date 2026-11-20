@@ -55,14 +55,24 @@ function validChat(c: unknown): c is CachedChat {
     && (x.accessHash === undefined || (typeof x.accessHash === 'string' && /^-?\d+$/.test(x.accessHash)));
 }
 
+/** TG_NO_CACHE=1: never answer from the list on disk (a fresh list is still saved for the next run). */
+export function dialogCacheDisabled(): boolean {
+  return /^(1|true|yes|on)$/i.test(process.env.TG_NO_CACHE ?? '');
+}
+
+/** With TG_LOG_LEVEL=debug, one stderr line per chat lookup: hit, miss or refresh (and why). */
+export function logDialogCache(line: string): void {
+  if (process.env.TG_LOG_LEVEL?.toLowerCase() === 'debug') process.stderr.write(`dialog cache: ${line}\n`);
+}
+
 /** The list saved for this account, if it is fresh. A missing, old or broken file is a miss, never an error. */
-export function readDialogCache(account: string, now = Date.now()): { complete: boolean; chats: CachedChat[] } | undefined {
+export function readDialogCache(account: string, now = Date.now()): { complete: boolean; savedAt: number; chats: CachedChat[] } | undefined {
   try {
     const file = JSON.parse(readFileSync(dialogCachePath(), 'utf8')) as DialogCacheFile;
     if (file?.v !== 1 || file.account !== account || typeof file.savedAt !== 'number') return undefined;
     if (now - file.savedAt > DIALOG_CACHE_TTL_MS || file.savedAt > now + 60_000) return undefined;
     if (!Array.isArray(file.chats) || !file.chats.every(validChat)) return undefined;
-    return { complete: file.complete === true, chats: file.chats };
+    return { complete: file.complete === true, savedAt: file.savedAt, chats: file.chats };
   } catch {
     return undefined;
   }

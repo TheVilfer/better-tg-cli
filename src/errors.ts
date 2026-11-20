@@ -28,7 +28,7 @@ export const EXIT_CODES_HELP = [
   '  3  write approval needed (write mode "ask"; see the printed action)',
   '  4  write access is disabled (telegram write-access)',
   '  5  not logged in, or the session ended (telegram onboard)',
-  'With --json an error is one line on stdout: {"error":{"code","message","hint"?,"command"?,"candidates"?}}',
+  'With --json an error is one line on stdout: {"error":{"code","message","hint"?,"command"?,"candidates"?,"listedAt"?}}',
   '(exit 3 prints its own {"error":"approval_required",...} line).',
 ].join('\n');
 
@@ -37,6 +37,8 @@ export interface ChatCandidate {
   id: string;
   title: string;
   type: string;
+  /** The caller's own command again with this chat's ID in place of the name (argv without "telegram") */
+  command?: string[];
 }
 
 /** The next step for a person or an agent, always one human-readable string. */
@@ -61,6 +63,8 @@ export interface ErrorDetails {
   command?: string[];
   candidates?: ChatCandidate[];
   retryAfterSeconds?: number;
+  /** When the candidates came from the dialog list on disk: the time that list was read (ISO) */
+  listedAt?: string;
 }
 
 /**
@@ -75,12 +79,13 @@ export class CliError extends Error {
   readonly command?: string[];
   readonly candidates?: ChatCandidate[];
   readonly retryAfterSeconds?: number;
+  readonly listedAt?: string;
 
   constructor(
     summary: string,
     code: string,
     exitCode: number = EXIT.ERROR,
-    extra: { hint?: Hint; command?: string[]; candidates?: ChatCandidate[]; retryAfterSeconds?: number; text?: string } = {},
+    extra: { hint?: Hint; command?: string[]; candidates?: ChatCandidate[]; retryAfterSeconds?: number; listedAt?: string; text?: string } = {},
   ) {
     super(extra.text ?? humanText(summary, extra.candidates, extra.hint));
     this.name = 'CliError';
@@ -91,6 +96,7 @@ export class CliError extends Error {
     this.command = extra.command;
     this.candidates = extra.candidates;
     this.retryAfterSeconds = extra.retryAfterSeconds;
+    this.listedAt = extra.listedAt;
   }
 }
 
@@ -147,6 +153,7 @@ export function errorDetails(error: unknown): ErrorDetails & { exitCode: number 
       ...(error.command ? { command: error.command } : {}),
       ...(error.candidates?.length ? { candidates: error.candidates } : {}),
       ...(error.retryAfterSeconds !== undefined ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+      ...(error.listedAt ? { listedAt: error.listedAt } : {}),
     };
   }
   const rpc = error as { errorMessage?: unknown; seconds?: unknown; message?: unknown } | null;
@@ -174,7 +181,7 @@ export function wantsJson(argv: string[] = process.argv.slice(2)): boolean {
 
 /** The one JSON line an error prints with --json. */
 export function errorJson(details: ErrorDetails): string {
-  const { code, message, hint, command, candidates, retryAfterSeconds } = details;
+  const { code, message, hint, command, candidates, retryAfterSeconds, listedAt } = details;
   return JSON.stringify({
     error: {
       code, message,
@@ -182,6 +189,7 @@ export function errorJson(details: ErrorDetails): string {
       ...(command ? { command } : {}),
       ...(candidates?.length ? { candidates } : {}),
       ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      ...(listedAt ? { listedAt } : {}),
     },
   });
 }

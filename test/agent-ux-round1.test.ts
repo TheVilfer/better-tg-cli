@@ -142,9 +142,9 @@ describe('8 links, candidates and hints', () => {
     expect(oneJson(invite.out).error.code).toBe('invalid_argument');
   }, 60_000);
 
-  it('candidates carry id, title and type only; the hint is prose, the command an argv with --preview 0', () => {
+  it('candidates carry id, title, type and the re-run command only (no @username); the hint is prose, the command an argv with --preview 0', () => {
     const ambiguous = oneJson(cli(['read', 'Tea', '--json']).out).error;
-    for (const c of ambiguous.candidates) expect(Object.keys(c).sort()).toEqual(['id', 'title', 'type']);
+    for (const c of ambiguous.candidates) expect(Object.keys(c).sort()).toEqual(['command', 'id', 'title', 'type']);
     expect(cli(['read', 'Tea']).err).not.toMatch(/@mock_team/);
     const name = `it's "odd" $(x)`;
     const notFound = oneJson(cli(['read', name, '--json']).out).error;

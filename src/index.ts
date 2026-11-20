@@ -7,6 +7,7 @@ import { VERSION } from './version.js';
 import { Command, CommanderError } from 'commander';
 import { CliError, EXIT, EXIT_CODES_HELP, errorJson, fail, installDrainingExit, wantsJson } from './errors.js';
 import { isMock, profile } from './paths.js';
+import { setInvocation } from './resolve-mode.js';
 import { commandPaths, startMcpServer } from './mcp.js';
 import { trackActiveCommand } from './approval-action.js';
 import { mcpToken, startMcpHttpServer } from './mcp-http.js';
@@ -338,6 +339,8 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   // namespace/method or root method on the command line), so startup and help stay flat otherwise.
   registerGeneratedCommands(program, process.argv);
   reportUsageErrors(program);
+  // What a chat candidate's `command` re-runs (src/client.ts): this call with the chat's ID
+  setInvocation(process.argv.slice(2));
   // Always node-style argv: commander would read it Electron-style inside Claude Desktop's
   // built-in Node (an Electron utility process) and take the script path for a command
   if (isMainThread) {

@@ -63,13 +63,22 @@ describe('2 chat lookup by name uses a short-lived dialog list on disk', () => {
     expect((await run('me')).fetches).toBe(0);
   });
 
-  it('a name the list does not have reads it again once, then finds the new chat', async () => {
+  it('a read of a name the fresh list does not have is chat_not_found from disk; TG_NO_CACHE=1 reads the list once', async () => {
     const state = world();
     await run('Team');
     const w = loadWorld(state);
     w.chats.push({ id: 4300, kind: 'supergroup', title: 'Brand New', messages: [{ id: 1, ago: 5, from: 1001, text: 'hi' }] });
     saveWorld(w, state);
-    expect(await run('Brand New')).toEqual({ id: '4300', fetches: 1 });
+    // Within the TTL a miss costs no list read (on a big account that is a minute of FLOOD_WAITs)
+    const before = fetches.mock.calls.length;
+    await expect(run('Brand New')).rejects.toMatchObject({ code: 'chat_not_found', listedAt: expect.any(String) });
+    expect(fetches.mock.calls.length).toBe(before);
+    process.env.TG_NO_CACHE = '1';
+    try {
+      expect(await run('Brand New')).toEqual({ id: '4300', fetches: 1 });
+    } finally {
+      delete process.env.TG_NO_CACHE;
+    }
     expect(await run('Brand New')).toEqual({ id: '4300', fetches: 0 });
   });
 

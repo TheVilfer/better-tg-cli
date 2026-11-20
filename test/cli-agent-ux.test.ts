@@ -147,8 +147,8 @@ describe('chat names', () => {
     const json = jsonError(cli(['read', 'Tea', '--json']).out);
     expect(json).toMatchObject({ code: 'ambiguous_chat' });
     expect(json.candidates).toEqual([
-      { id: '-1004001', title: 'Team', type: 'supergroup' },
-      { id: '-1004002', title: 'Team Design', type: 'supergroup' },
+      { id: '-1004001', title: 'Team', type: 'supergroup', command: ['read', '-1004001', '--json'] },
+      { id: '-1004002', title: 'Team Design', type: 'supergroup', command: ['read', '-1004002', '--json'] },
     ]);
     // One exact title or one partial match still reads
     expect(cli(['read', 'Team', '-n', '1']).code).toBe(0);
@@ -289,7 +289,7 @@ describe('output shapes', () => {
   }, 30_000);
 
   it('2.1 check shows the write mode and has --json', () => {
-    expect(cli(['check']).out).toMatch(/^Write mode: on \(mock/m);
+    expect(cli(['check']).out).toMatch(/^Writes: ON — .*\(mock/m);
     const json = JSON.parse(cli(['check', '--json']).out);
     expect(json).toMatchObject({ configured: true, authenticated: true, mock: true, writeMode: 'on', account: { username: 'mock_owner' } });
   }, 30_000);

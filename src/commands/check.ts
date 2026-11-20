@@ -4,9 +4,7 @@ import { getClient, getMe, disconnectClient } from '../client.js';
 import { isConfigured, loadConfig, secretFileConflicts, secretSource, type TgConfig } from '../config.js';
 import { configDir, isMock, isMockAsk, profile } from '../paths.js';
 import { mockStatePath } from '../mock/world.js';
-import { getSecretBackendLabel, writesLine, writesOf, writeStatus, type WriteStatus } from '../status.js';
-import { describeWriteState, parseWriteState } from '../write-state.js';
-import { getWriteValue } from '../write-store.js';
+import { getSecretBackendLabel, writesLine, writesOf, writeStatus, writesTextLine } from '../status.js';
 import { transportSetting } from '../transport.js';
 import { errorDetails, EXIT, fail } from '../errors.js';
 import { VERSION } from '../version.js';
@@ -19,12 +17,6 @@ function sessionStorageLabel(config: TgConfig): string {
     return 'config.json5 (plaintext file, used as is; it is not moved into the secret store)';
   }
   return getSecretBackendLabel();
-}
-
-/** The text line for the write mode, from the same status `--json` reports. */
-function writeModeLine(w: WriteStatus): string {
-  const line = `Write mode: ${describeWriteState(parseWriteState(getWriteValue()))}`;
-  return w.writeMode === 'read-only' ? `${line} (to write: telegram write-access ask)` : line;
 }
 
 /**
@@ -50,11 +42,10 @@ export const checkCommand = new Command('check')
         }));
       } else {
         console.log(chalk.green('Mock mode: no Telegram session is used'));
-        console.log(chalk.bold(writesLine(mode)));
+        console.log(chalk.bold(`${writesLine(mode)} ${mode === 'ask'
+          ? '(mock: TG_MOCK_ASK rehearses approvals; writes only change the state file)'
+          : '(mock: writes only change the state file, no approval)'}`));
         console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
-        console.log(mode === 'ask'
-          ? 'Write mode: ask (mock: TG_MOCK_ASK rehearses approvals; writes only change the state file)'
-          : 'Write mode: on (mock: writes only change the state file, no approval)');
         console.log(`State file: ${mockStatePath()} (delete it to start over)`);
       }
       await disconnectClient();
@@ -113,10 +104,9 @@ export const checkCommand = new Command('check')
         }));
       } else {
         spinner.succeed(chalk.green('Session valid'));
-        console.log(chalk.bold(writesLine(write.writeMode)));
+        console.log(chalk.bold(writesTextLine(write)));
         console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
         console.log(`Session stored in: ${sessionStorageLabel(config)}`);
-        console.log(writeModeLine(write));
         if (profile()) console.log(`Profile: ${profile()} (${configDir()})`);
         if (config.testServers) console.log('Servers: TEST (not production)');
       }

@@ -2,7 +2,7 @@ import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
 import { clientParams } from './client-options.js';
 import { connectClient, transportSetting } from './transport.js';
-import { isStrictChatResolution } from './resolve-mode.js';
+import { getInvocation, isStrictChatResolution } from './resolve-mode.js';
 import { CliError, EXIT, formatCandidates, SESSION_ERRORS, sessionEndedBy, shellCommand, usageError } from './errors.js';
 import type { ChatCandidate } from './errors.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
@@ -18,7 +18,7 @@ import { LOGIN_CODE_HIDDEN, maskForModel } from './mcp-output.js';
 import { loginHint } from './login-hint.js';
 import { fileSnapshot, uploadable } from './file-snapshot.js';
 import { apiMarker, INVITE_LINK } from './approval-action.js';
-import { accountKey, readDialogCache, writeDialogCache, type CachedChat } from './dialog-cache.js';
+import { accountKey, DIALOG_CACHE_TTL_MS, dialogCacheDisabled, logDialogCache, readDialogCache, writeDialogCache, type CachedChat } from './dialog-cache.js';
 
 /** First words of the error getClient() throws for a session Telegram no longer accepts (onboard looks for it). */
 export const SESSION_EXPIRED = 'Session expired or was revoked.';
@@ -188,35 +188,77 @@ function inputPeerOf(c: CachedChat): Api.TypeInputPeer {
   return new Api.InputPeerChannel({ channelId: bigInt(c.id.replace(/^-100/, '')), accessHash: hash });
 }
 
+/** What the list on disk says about a name: the chat, an answer for the caller, or nothing. */
+type DiskLookup =
+  | { entity: ResolvedEntity; listedAt: string }
+  | { error: CliError; listedAt: string }
+  | { miss: string };
+
 /**
  * The cheap way to a chat: the dialog list on disk names it, and one small call (users.GetUsers,
- * messages.GetChats or channels.GetChannels) fetches it, instead of reading the whole list. Only a
- * proven hit counts: an ID, a @username, or a title exactly one chat had in the whole list, which
- * the chat still has now. Writes never take a title from disk (another chat may have taken it
- * since). Anything else, and any failure, is undefined: the caller reads the list as before.
+ * messages.GetChats or channels.GetChannels) fetches it, instead of reading the whole list. A hit
+ * is an ID, a @username, or a title exactly one chat had in the whole list (or, failing that, the
+ * one title containing it), which the chat still has now.
+ *
+ * A read that the whole, fresh list answers otherwise gets that answer from disk too: a title that
+ * several chats share or contain is ambiguous_chat, a name no chat has is chat_not_found, with the
+ * candidates and `listedAt`. Reading the list again on a big account is a minute of FLOOD_WAITs.
+ * Writes never take a title from disk (another chat may have taken it since) and never get an answer
+ * from it. Anything else, and any failure, is a miss: the caller reads the list as before.
  */
-async function fromDialogCache(client: TelegramClient, identifier: string, username: string | undefined, isNumericId: boolean): Promise<ResolvedEntity | undefined> {
+async function fromDialogCache(client: TelegramClient, asGiven: string, identifier: string, username: string | undefined, isNumericId: boolean): Promise<DiskLookup> {
   const account = dialogCacheAccount(client);
-  const saved = account ? readDialogCache(account) : undefined;
-  if (!saved) return undefined;
-  let hit: CachedChat | undefined;
+  if (!account) return { miss: 'not the CLI client' };
+  if (dialogCacheDisabled()) return { miss: 'TG_NO_CACHE=1' };
+  const saved = readDialogCache(account);
+  if (!saved) return { miss: 'no fresh list on disk' };
+  const listedAt = new Date(saved.savedAt).toISOString();
+  const strict = isStrictChatResolution();
   const needle = (username ? username.replace(/^@/, '') : identifier).trim().toLowerCase();
+  let hit: CachedChat | undefined;
+  let exact: CachedChat[] = [];
+  let partial: CachedChat[] = [];
   if (username) {
     hit = saved.chats.find(c => c.username?.toLowerCase() === needle);
   } else if (isNumericId) {
     hit = saved.chats.find(c => c.id === identifier);
-  } else if (saved.complete && !isStrictChatResolution()) {
-    const exact = saved.chats.filter(c => c.title.trim().toLowerCase() === needle);
+  } else if (saved.complete && !strict) {
+    exact = saved.chats.filter(c => c.title.trim().toLowerCase() === needle);
+    partial = exact.length ? [] : saved.chats.filter(c => c.title.toLowerCase().includes(needle));
     if (exact.length === 1) hit = exact[0];
+    else if (!exact.length && partial.length === 1) hit = partial[0];
   }
-  if (!hit) return undefined;
+  if (hit) {
+    const entity = await fetchCached(client, hit, needle, username, isNumericId, !exact.length && !username && !isNumericId);
+    // Renamed or gone since the list was saved: it is stale, so it answers nothing more
+    return entity ? { entity, listedAt } : { miss: 'the chat changed since the list was saved' };
+  }
+  if (username) return { miss: 'the @username is not in the list' };
+  // A chat newer than the list (a DM, a channel just joined) is named by the ID inbox or chats just
+  // printed, and a bare ID cannot be fetched without the access hash the first dialog page carries
+  if (isNumericId) return { miss: 'the ID is not in the list' };
+  if (strict) return { miss: 'writes read a fresh list' };
+  if (!saved.complete) return { miss: 'the list on disk is not the whole list' };
+  // A list this process already read is fresher than the file
+  if (dialogsCache || allDialogsCache) return { miss: 'the list was read in this process' };
+  const from = { listedAt };
+  if (exact.length > 1) return { error: ambiguousChat(asGiven, exact, 'exact', from), listedAt };
+  if (partial.length > 1) return { error: ambiguousChat(asGiven, partial, 'partial', from), listedAt };
+  return { error: chatNotFound(asGiven, saved.chats, from), listedAt };
+}
+
+/** Fetch the chat the list on disk named, and check it is still that chat. */
+async function fetchCached(client: TelegramClient, hit: CachedChat, needle: string, username: string | undefined, isNumericId: boolean, partial: boolean): Promise<ResolvedEntity | undefined> {
   try {
     const entity = await client.getEntity(inputPeerOf(hit));
     if (!(entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel)) return undefined;
     if (utils.getPeerId(entity).toString() !== hit.id) return undefined;
     // Renamed, or the @username moved on: not the chat that was named
     if (username && (entity instanceof Api.Chat || entity.username?.toLowerCase() !== needle)) return undefined;
-    if (!username && !isNumericId && dialogTitle(entity).trim().toLowerCase() !== needle) return undefined;
+    if (!username && !isNumericId) {
+      const title = dialogTitle(entity).trim().toLowerCase();
+      if (partial ? !title.includes(needle) : title !== needle) return undefined;
+    }
     return entity;
   } catch {
     return undefined;
@@ -1686,6 +1728,8 @@ export async function resolveChat(client: TelegramClient, identifier: string): P
 const SELF_ALIASES = new Set(['me', 'self', 'saved', 'saved messages', 'избранное']);
 
 async function resolveChatUncached(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
+  // The name as the caller wrote it: what a candidate's command replaces
+  const asGiven = identifier;
   // Saved Messages: resolve to our own user before any title matching, otherwise
   // "me" substring-matches arbitrary chat titles ("Game", "Meetup", ...).
   if (SELF_ALIASES.has(identifier.trim().toLowerCase())) {
@@ -1703,9 +1747,18 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
   // Check if it's a username (starts with @)
   const username = link?.username ? `@${link.username}` : identifier.startsWith('@') ? identifier : undefined;
   const isNumericId = /^-?\d+$/.test(identifier);
-  // An ID, a @username or an exact title from the dialog list on disk: no list read at all
-  const cached = await fromDialogCache(client, identifier, username, isNumericId);
-  if (cached) return cached;
+  // The dialog list on disk: a chat, or (for a read) the answer to a miss, with no list read at all
+  const disk = await fromDialogCache(client, asGiven, identifier, username, isNumericId);
+  if ('entity' in disk) {
+    logDialogCache(`hit "${asGiven}" -> ${utils.getPeerId(disk.entity).toString()} (list from ${disk.listedAt})`);
+    return disk.entity;
+  }
+  if ('error' in disk) {
+    logDialogCache(`hit "${asGiven}" -> ${disk.error.code} (list from ${disk.listedAt})`);
+    throw disk.error;
+  }
+  const reads = !username && !dialogsCache;
+  logDialogCache(`${reads ? 'refresh' : 'miss'} "${asGiven}": ${disk.miss}${reads ? '; reading the dialog list from Telegram' : ''}`);
   if (username) {
     const entity = await client.getEntity(username);
     if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
@@ -1725,37 +1778,27 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     const needle = identifier.trim().toLowerCase();
     const exact = dialogs.filter(d => d.title?.trim().toLowerCase() === needle);
     // Never a silent pick between several chats: the caller would act on (or report) the wrong one
-    if (exact.length > 1) {
-      throw new CliError(`"${identifier}" matches ${exact.length} chats; use an ID`, 'ambiguous_chat', EXIT.USAGE, {
-        candidates: chatCandidates(exact), hint: 'Run the command again with one of these IDs.',
-        text: `"${identifier}" matches ${exact.length} chats; use an ID:\n${describeCandidates(exact)}`,
-      });
-    }
+    if (exact.length > 1) throw ambiguousChat(asGiven, exact.map(named), 'exact');
     dialog = exact[0];
     if (!dialog) {
       const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
       if (isStrictChatResolution() && partial.length) {
         // Writes: exactly one exact title, or refuse with the candidates
         throw new CliError(`No chat is titled exactly "${identifier}"; writes need an ID, @username or the exact title`, 'chat_not_exact', EXIT.USAGE, {
-          candidates: chatCandidates(partial), hint: 'Run the command again with one of these IDs.',
-          text: `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial)}`,
+          candidates: chatCandidates(partial.map(named)), hint: 'Run the command again with one of these IDs.',
+          text: `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial.map(named))}`,
         });
       }
       // Reads: one partial match is fine, several are a question for the caller
-      if (partial.length > 1) {
-        throw new CliError(`"${identifier}" is part of ${partial.length} chat titles; use an ID or the exact title`, 'ambiguous_chat', EXIT.USAGE, {
-          candidates: chatCandidates(partial), hint: 'Run the command again with one of these IDs.',
-          text: `"${identifier}" is part of ${partial.length} chat titles; use an ID or the exact title:\n${describeCandidates(partial)}`,
-        });
-      }
+      if (partial.length > 1) throw ambiguousChat(asGiven, partial.map(named), 'partial');
       dialog = partial[0];
     }
     // One match in a cut list proves nothing: another chat beyond the cut may have the same title
     if (dialog && !complete) {
       const matched = exact.length ? exact : [dialog];
       throw new CliError(`"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title; use an ID or @username`, 'ambiguous_or_unverified', EXIT.USAGE, {
-        candidates: chatCandidates(matched), hint: 'Run the command again with this ID, or with the chat\'s @username.',
-        text: `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title. Use an ID or @username:\n${describeCandidates(matched)}`,
+        candidates: chatCandidates(matched.map(named)), hint: 'Run the command again with this ID, or with the chat\'s @username.',
+        text: `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title. Use an ID or @username:\n${describeCandidates(matched.map(named))}`,
       });
     }
   }
@@ -1775,7 +1818,7 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   } catch {
-    throw chatNotFound(identifier, dialogs);
+    throw chatNotFound(asGiven, dialogs.map(named));
   }
 }
 
@@ -1786,9 +1829,59 @@ function dialogKind(d: Dialogs[number]): string {
   return d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
 }
 
-/** Candidates show only what tells chats apart: ID, title, type (never a @username). */
-function chatCandidates(dialogs: Dialogs, max = 5): ChatCandidate[] {
-  return dialogs.slice(0, max).map(d => ({ id: String(d.id), title: d.title ?? '', type: dialogKind(d) }));
+/** A chat as a candidate names it: from a dialog read now, or from the list on disk. */
+type NamedChat = { id: string; title: string; type: string };
+
+function named(d: Dialogs[number]): NamedChat {
+  return { id: String(d.id), title: d.title ?? '', type: dialogKind(d) };
+}
+
+/**
+ * The caller's command again with `id` in place of the chat name: only when the name stands in it
+ * exactly once (as an argument or `--option=name`), so the swap cannot hit another argument.
+ */
+function rerunWith(asGiven: string, id: string): string[] | undefined {
+  const invocation = getInvocation();
+  if (!invocation || !asGiven) return undefined;
+  const at = invocation.flatMap((a, i) => a === asGiven || (a.startsWith('--') && a.endsWith(`=${asGiven}`) && a.indexOf('=') === a.length - asGiven.length - 1) ? [i] : []);
+  if (at.length !== 1) return undefined;
+  const command = [...invocation];
+  const arg = command[at[0]];
+  command[at[0]] = arg === asGiven ? id : `${arg.slice(0, arg.indexOf('='))}=${id}`;
+  return command;
+}
+
+/**
+ * Candidates show only what tells chats apart: ID, title, type (never a @username), and, for a
+ * read, the caller's command re-run with that ID.
+ */
+function chatCandidates(chats: NamedChat[], asGiven?: string, max = 5): ChatCandidate[] {
+  return chats.slice(0, max).map(c => {
+    // Never for a write: a ready "send <guessed chat> …" invites sending to a chat nobody chose
+    const command = asGiven === undefined || isStrictChatResolution() ? undefined : rerunWith(asGiven, c.id);
+    return { id: c.id, title: c.title, type: c.type, ...(command ? { command } : {}) };
+  });
+}
+
+/** Where the candidates came from, when it was the list on disk: said in the hint and as `listedAt`. */
+type FromDisk = { listedAt: string };
+
+function diskNote(from?: FromDisk): string {
+  if (!from) return '';
+  return ` This list is from ${from.listedAt} (up to ${DIALOG_CACHE_TTL_MS / 60_000} minutes old); for a chat that is new or renamed since, run the command with TG_NO_CACHE=1 to read the list from Telegram again.`;
+}
+
+/** Several chats have (or contain) this title: never a silent pick, the caller chooses by ID. */
+function ambiguousChat(asGiven: string, chats: NamedChat[], match: 'exact' | 'partial', from?: FromDisk): CliError {
+  const summary = match === 'exact'
+    ? `"${asGiven}" matches ${chats.length} chats; use an ID`
+    : `"${asGiven}" is part of ${chats.length} chat titles; use an ID or the exact title`;
+  const candidates = chatCandidates(chats, asGiven);
+  const hint = `Run the command again with one of these IDs${candidates.some(c => c.command) ? ' (each candidate has its command)' : ''}.${diskNote(from)}`;
+  return new CliError(summary, 'ambiguous_chat', EXIT.USAGE, {
+    candidates, hint, ...(from ? { listedAt: from.listedAt } : {}),
+    text: `${summary}:\n${describeCandidates(chats)}${from ? `\n${diskNote(from).trim()}` : ''}`,
+  });
 }
 
 /**
@@ -1809,8 +1902,8 @@ export function parseChatLink(text: string): { username?: string; id?: string; i
   return user ? { username: user[1] } : undefined;
 }
 
-function describeCandidates(dialogs: Dialogs): string {
-  return formatCandidates(chatCandidates(dialogs), dialogs.length);
+function describeCandidates(chats: NamedChat[]): string {
+  return formatCandidates(chatCandidates(chats), chats.length);
 }
 
 /** Edit distance, for "did you mean" (titles are short, so the quadratic table is fine). */
@@ -1829,23 +1922,23 @@ function editDistance(a: string, b: string): number {
 }
 
 /** "Chat not found" with the closest titles (by the whole title or one of its words) and the next command. */
-function chatNotFound(identifier: string, dialogs: Dialogs): CliError {
+function chatNotFound(identifier: string, chats: NamedChat[], from?: FromDisk): CliError {
   const needle = identifier.trim().replace(/^@/, '').toLowerCase();
   const limit = Math.max(1, Math.floor(needle.length / 3));
-  const scored = dialogs
+  const scored = chats
     .map(d => {
-      const title = (d.title ?? '').toLowerCase();
+      const title = d.title.toLowerCase();
       const words = [title, ...title.split(/\s+/)].filter(Boolean);
       return { d, score: Math.min(...words.map(w => editDistance(needle, w))) };
     })
     .filter(x => needle && x.score <= limit)
     .sort((a, b) => a.score - b.score);
-  const candidates = chatCandidates(scored.map(x => x.d));
+  const candidates = chatCandidates(scored.map(x => x.d), identifier);
   // The command as an argv too: the text came from the caller. --preview 0: titles, no message text
   const command = ['chats', '-q', identifier, '--preview', '0'];
-  const hint = `List matching chats: ${shellCommand(command)}`;
+  const hint = `${diskNote(from).trim()}${from ? ' ' : ''}List matching chats: ${shellCommand(command)}`;
   return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
-    candidates, hint, command,
+    candidates, hint, command, ...(from ? { listedAt: from.listedAt } : {}),
     text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', hint].filter(Boolean).join('\n'),
   });
 }
