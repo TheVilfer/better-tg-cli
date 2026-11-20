@@ -14,7 +14,7 @@ import { isMock } from './paths.js';
 import { join } from 'path';
 import { isTTY } from './spinner.js';
 import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
-import { LOGIN_CODE_PHRASE, maskGiftCodes } from './mcp-output.js';
+import { LOGIN_CODE_HIDDEN, LOGIN_CODE_PHRASE, maskGiftCodes } from './mcp-output.js';
 import { loginHint } from './login-hint.js';
 import { fileSnapshot, uploadable } from './file-snapshot.js';
 import { apiMarker, INVITE_LINK } from './approval-action.js';
@@ -549,7 +549,7 @@ function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFro
   return isLoginServicePeer(msg.peerId) || isLoginServicePeer(msg.fromId) || isLoginServicePeer(fwd?.fromId);
 }
 
-export const LOGIN_CODE_HIDDEN = '[login code hidden]';
+export { LOGIN_CODE_HIDDEN };
 
 /** Keys whose strings are IDs, hashes, dates or type tags rather than message content. */
 const NOT_CONTENT_KEY = /^(className|_|type|kind|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;

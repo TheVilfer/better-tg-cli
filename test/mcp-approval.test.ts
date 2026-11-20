@@ -57,6 +57,12 @@ describe('over MCP without a dialog, "approval needed" is a result, not an error
     const login = await handleMessage(call({ args: ['send', '-1004001', 'Login code: 52813'] }), run) as Reply;
     expect(login.result.structuredContent!.retry).toMatchObject({ sameArgumentsAsThisCall: true });
     expect(JSON.stringify(login.result.structuredContent!.retry)).not.toContain('52813');
+    // Nor in the action or the text: the human sees the full action in the dialog or terminal
+    expect(JSON.stringify(login.result)).not.toContain('52813');
+    expect(JSON.stringify(login.result.structuredContent!.action)).toContain('[login code hidden]');
+    // Still approvable: the same call with the code sends the code as written
+    const sent = await handleMessage(call({ args: ['send', '-1004001', 'Login code: 52813'], approval: login.result.structuredContent!.code }), run) as Reply;
+    expect(sent.result.isError).toBeUndefined();
   });
 
   it('has the code, the action and the exact retry call as structured content, and only MCP instructions as text', async () => {

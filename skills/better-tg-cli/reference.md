@@ -385,6 +385,7 @@ method's `--help` lists its own "Common errors" when the docs provide them.
     `retry.arguments` is the exact call to make after the user's yes. When the call held a gift link
     or a login code, they are not echoed: `retry` is `{tool, sameArgumentsAsThisCall:true,
     arguments:{approval}, note}`, so repeat your own call with the same args and stdin plus `approval`.
+    `action`, `rejected` and the text show them masked too; the user sees the action in full.
   - `telegram_setup {}`: for "Not configured", an expired session or "Write access is disabled". The
     server opens the onboarding page on this computer (or, when logged in but read-only, only its mode
     choice) and returns the link for the user: `structuredContent` `{status:"open_page", step:"login"|"mode", url, sessionExpired?, readOnly?}`

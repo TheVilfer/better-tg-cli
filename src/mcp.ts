@@ -14,7 +14,7 @@ import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock, isMockAsk } from './paths.js';
 import { getSessionString } from './config.js';
-import { holdsMaskedValue, maskGiftCodes } from './mcp-output.js';
+import { holdsMaskedValue, maskGiftCodes, maskLoginCodePhrases, maskSensitiveDeep } from './mcp-output.js';
 import { checkStoredSession, openSetupPage } from './setup.js';
 import { savedMode } from './write-mode.js';
 import { openBrowser } from './commands/onboard.js';
@@ -392,9 +392,6 @@ const cap = (raw: string) => {
   return s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
 };
 
-/** The same backstop for a structured value (an approval's action): gift links masked in every string. */
-const maskedValue = (v: unknown): unknown => (v === undefined ? v : JSON.parse(maskGiftCodes(JSON.stringify(v))));
-
 /** The environment of the CLI that runs one call. Exported for tests. */
 export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   // TG_MCP: local file writes (download, sync, avatar) follow the write mode, see assertLocalWriteAllowed
@@ -472,15 +469,17 @@ export function result(plan: Pick<Plan, 'argv' | 'stdin'>, r: RunOutput): ToolRe
       const retry = sensitive
         ? { tool: 'telegram_write', sameArgumentsAsThisCall: true, arguments: { approval: pending.code }, note }
         : { tool: 'telegram_write', arguments: { args: plan.argv, ...(plan.stdin ? { stdin: plan.stdin } : {}), approval: pending.code } };
-      const said = cap(err.trim());
+      // The human sees the action in full in the dialog or terminal; the model gets it with gift
+      // links and recognized login codes masked
+      const said = cap(maskLoginCodePhrases(err.trim()));
       return {
         content: [{ type: 'text', text: sensitive ? `${said}\n${note}` : said }],
         structuredContent: {
           status: 'approval_required',
           code: pending.code,
-          action: maskedValue(pending.action),
+          action: maskSensitiveDeep(pending.action),
           expiresInMinutes: pending.expiresInMinutes,
-          ...(pending.rejected ? { rejected: maskedValue(pending.rejected) } : {}),
+          ...(pending.rejected ? { rejected: maskSensitiveDeep(pending.rejected) } : {}),
           retry,
         },
       };
