@@ -63,8 +63,9 @@ Made for agents:
   for Saved Messages.
 - **You approve every message.** After login the agent asks you in the chat before each send,
   edit or delete, and shows the exact text; it sends only after your yes. Writing without asking
-  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Every write is
-  logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
+  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Commands with an
+  audit log record each attempt in `~/.config/tg/audit.jsonl` (the active profile's folder); not
+  every write has one. Secrets live in the macOS Keychain, the
   Linux Secret Service or 1Password.
 - **Small and self-contained.** The npm package is one 0.3 MB file with zero runtime
   dependencies. Homebrew installs a standalone binary with no Node.

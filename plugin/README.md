@@ -28,7 +28,8 @@ the macOS Keychain, the Linux Secret Service, Windows DPAPI or 1Password.
 - After `telegram onboard` the account is in mode `ask`: before every send, edit or delete, Claude
   shows you the exact action and runs it only after your yes. Writing without asking
   (`telegram write-access on`) has to be confirmed by a person, in a terminal prompt or an OS
-  dialog, and can expire (`--for 1h`). Every write is logged locally.
+  dialog, and can expire (`--for 1h`). Commands with an audit log record each attempt in
+  `audit.jsonl` in the profile's folder; not every write has one, so a missing entry proves nothing.
 - Login, logout and account transfer need a person at a terminal; the MCP server (if you add it)
   never exposes them.
 

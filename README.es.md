@@ -65,7 +65,7 @@ Hecho para agentes:
 - **Tú apruebas cada mensaje.** Tras iniciar sesión, el agente te pregunta en el chat antes de
   cada envío, edición o borrado y te muestra el texto exacto; solo envía tras tu sí. Escribir sin
   preguntar (`write-access on`) requiere tu propia confirmación en un terminal o en un diálogo de
-  macOS. Cada escritura se registra en `~/.config/tg/audit.jsonl`. Los secretos se guardan en el Keychain de macOS, en el Secret Service
+  macOS. Los comandos con registro de auditoría anotan cada intento en `~/.config/tg/audit.jsonl` (la carpeta del perfil activo); no toda escritura tiene uno. Los secretos se guardan en el Keychain de macOS, en el Secret Service
   de Linux o en 1Password.
 - **Pequeño y autónomo.** El paquete de npm es un único archivo de 0,3 MB sin dependencias en tiempo
   de ejecución. Homebrew instala un binario independiente que no necesita Node.
