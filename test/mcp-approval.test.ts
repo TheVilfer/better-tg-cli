@@ -118,7 +118,15 @@ describe('the dialog shows who gets the write, by name (5.2)', () => {
     expect(r.result.isError).toBe(true);
     expect(r.result.content[0].text).toMatch(/^Nothing was sent: [^]*Not sent, nothing to approve: No chat is titled exactly "Tea"/);
     // The describe run's exit code comes back too (2: no chat has this exact title), as for any run
-    expect(r.result.structuredContent).toEqual({ exitCode: 2 });
+    expect(r.result.structuredContent).toMatchObject({ exitCode: 2 });
+  });
+
+  it('with --json the failed describe run answers like the CLI: the JSON error is the text, stderr apart', async () => {
+    const r = await handleMessage(call({ args: ['send', 'Tea', 'hi', '--json'] }), run, { elicit: async () => true, describe: describe_ }) as Reply;
+    expect(r.result.isError).toBe(true);
+    const parsed = JSON.parse(r.result.content[0].text);
+    expect(parsed.error).toMatchObject({ code: 'chat_not_exact', candidates: [{ id: '-1004001' }, { id: '-1004002' }] });
+    expect(r.result.structuredContent).toMatchObject({ exitCode: 2, stderr: expect.stringContaining('MOCK MODE') });
   });
 
   it('childEnv sets the describe flag only for the describe run, never from the environment', () => {
