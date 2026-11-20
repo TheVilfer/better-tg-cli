@@ -620,8 +620,13 @@ async function resolveSender(client: TelegramClient, msg: Api.Message): Promise<
   return { sender: msg.out ? 'You' : 'Unknown' };
 }
 
-/** Build a display-friendly button layout from a message's reply markup. */
+/** Build a display-friendly button layout from a message's reply markup (over MCP, masked). */
 export function extractButtons(msg: Api.Message): ButtonLayout | undefined {
+  return maskedForMcp(msg, rawButtonLayout(msg));
+}
+
+/** The button layout exactly as the message carries it, never masked: what a press would send. */
+function rawButtonLayout(msg: Api.Message): ButtonLayout | undefined {
   const markup = msg.replyMarkup;
   if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
     return undefined;
@@ -640,7 +645,7 @@ export function extractButtons(msg: Api.Message): ButtonLayout | undefined {
     rows.push(parsedRow);
   });
 
-  return maskedForMcp(msg, { isInline, rows });
+  return { isInline, rows };
 }
 
 function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
@@ -2386,17 +2391,21 @@ export interface ClickOutcome {
 function findRawButton(
   markup: Api.ReplyInlineMarkup | Api.ReplyKeyboardMarkup,
   layout: ButtonLayout,
+  rawLayout: ButtonLayout,
   selector: ClickSelector
-): { raw: RawButton; info: ButtonInfo } | null {
+): { raw: RawButton; info: ButtonInfo; rawInfo: ButtonInfo } | null {
   const flatRaw: RawButton[] = [];
   for (const row of markup.rows) for (const b of row.buttons) flatRaw.push(b);
   const flatInfo = layout.rows.flat();
+  const flatRawInfo = rawLayout.rows.flat();
 
   let pos = -1;
   if (selector.index != null) {
     pos = selector.index - 1;
   } else if (selector.dataBase64 != null) {
+    // The payload as shown, or (when MCP hid it) as the message carries it
     pos = flatInfo.findIndex((b) => b.type === 'callback' && b.data === selector.dataBase64);
+    if (pos < 0) pos = flatRawInfo.findIndex((b) => b.type === 'callback' && b.data === selector.dataBase64);
   } else if (selector.text != null) {
     const needle = selector.text.trim().toLowerCase();
     pos = flatInfo.findIndex((b) => b.text.trim().toLowerCase() === needle);
@@ -2404,7 +2413,7 @@ function findRawButton(
   }
 
   if (pos < 0 || pos >= flatRaw.length) return null;
-  return { raw: flatRaw[pos], info: flatInfo[pos] };
+  return { raw: flatRaw[pos], info: flatInfo[pos], rawInfo: flatRawInfo[pos] };
 }
 
 function buttonSignature(layout?: ButtonLayout): string {
@@ -2431,7 +2440,7 @@ export async function findButton(
   chatIdentifier: string,
   msgId: number,
   selector: ClickSelector,
-): Promise<{ entity: ResolvedEntity; msg: Api.Message; layout: ButtonLayout; raw: RawButton; info: ButtonInfo }> {
+): Promise<FoundButton> {
   const entity = await resolveChat(client, chatIdentifier);
   const msg = await fetchRawMessage(client, entity, msgId);
   if (!msg) throw new Error(`Message #${msgId} not found`);
@@ -2440,8 +2449,9 @@ export async function findButton(
   if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
     throw new Error(`Message #${msgId} has no buttons`);
   }
-  const layout = extractButtons(msg)!;
-  const match = findRawButton(markup, layout, selector);
+  const rawLayout = rawButtonLayout(msg)!;
+  const layout = maskedForMcp(msg, rawLayout);
+  const match = findRawButton(markup, layout, rawLayout, selector);
   if (!match) {
     const label = selector.index != null ? `#${selector.index}` : selector.dataBase64 != null ? `data ${selector.dataBase64}` : `"${selector.text}"`;
     const available = layout.rows.flat().map(b => `[${b.index}] ${b.text || '(no label)'}`).join(', ');
@@ -2449,7 +2459,20 @@ export async function findButton(
       hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
     });
   }
-  return { entity, msg, layout, ...match };
+  const { rawInfo, ...shown } = match;
+  // The approval binds to the button as the message carries it: over MCP two versions of a button can
+  // look the same once masked (a hidden payload, a masked gift link) while they send different bytes
+  return { entity, msg, layout, ...shown, fingerprint: buttonFingerprint(rawInfo) };
+}
+
+/** A button a click would press: `info` is what is shown, `fingerprint` binds the unmasked button. */
+export interface FoundButton {
+  entity: ResolvedEntity;
+  msg: Api.Message;
+  layout: ButtonLayout;
+  raw: RawButton;
+  info: ButtonInfo;
+  fingerprint: string;
 }
 
 /**
@@ -2474,14 +2497,14 @@ export async function clickButton(
 async function pressButton(
   client: TelegramClient,
   msgId: number,
-  found: { entity: ResolvedEntity; msg: Api.Message; layout: ButtonLayout; raw: RawButton; info: ButtonInfo },
+  found: FoundButton,
   options: { password?: string; waitMs?: number }
 ): Promise<ClickOutcome> {
   const { waitMs = 1500 } = options;
-  const { entity, msg, layout, raw, info } = found;
+  const { entity, msg, layout, raw, info, fingerprint } = found;
   // The bot may have changed the keyboard since the person approved this click: never press
   // another button (or send other bytes) than the one they saw
-  if (approvedButton !== undefined && buttonFingerprint(info) !== approvedButton) {
+  if (approvedButton !== undefined && fingerprint !== approvedButton) {
     throw new Error(`The buttons of message #${msgId} changed after the approval; nothing was pressed. Run the command again to approve the button as it is now.`);
   }
   const beforeText = messageText(msg);

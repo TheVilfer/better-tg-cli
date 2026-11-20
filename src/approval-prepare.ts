@@ -1,5 +1,5 @@
 import {
-  assertMessagesInChat, buttonFingerprint, deletesForEveryone, expectButton, findButton, getClient, parseIdList, resolveChat,
+  assertMessagesInChat, deletesForEveryone, expectButton, findButton, getClient, parseIdList, resolveChat,
   type ButtonInfo, type ClickSelector,
 } from './client.js';
 import { fileSnapshot, sealFileSnapshots, snapshotDigest } from './file-snapshot.js';
@@ -87,8 +87,7 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     const id = parseInt(arg(action, 'messageId') ?? '', 10);
     if (selector && Number.isInteger(id)) {
       const client = await getClient();
-      const { info } = await findButton(client, arg(action, 'chat')!, id, selector);
-      const fingerprint = buttonFingerprint(info);
+      const { info, fingerprint } = await findButton(client, arg(action, 'chat')!, id, selector);
       prepared.bound.push(['button', fingerprint]);
       prepared.lines.push(`  Pressing: ${describeButton(info)}`);
       prepared.onApproved = () => expectButton(fingerprint);

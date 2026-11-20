@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TelegramClient } from 'teleproto';
-import { buttonFingerprint, clickButton, disconnectClient, expectButton, getClient, resolveChat, sendFileMessage, setProfilePhoto } from '../src/client.js';
+import { buttonFingerprint, clickButton, disconnectClient, expectButton, findButton, getClient, resolveChat, sendFileMessage, setProfilePhoto } from '../src/client.js';
 import { lookupPeers } from '../src/peer-lookup.js';
 import { fileSnapshot, forgetFileSnapshots, sealFileSnapshots } from '../src/file-snapshot.js';
 import { seedWorld } from '../src/mock/world.js';
@@ -111,6 +111,26 @@ describe('click presses only the button the person approved', () => {
     // Unchanged, it is pressed
     expectButton(buttonFingerprint({ index: 1, row: 0, col: 0, text: 'Catalog', type: 'callback', data: Buffer.from('catalog').toString('base64') }));
     expect(await clickButton(await getClient(), '2001', 2, { index: 1 }, { waitMs: 0 })).toMatchObject({ action: 'callback' });
+  });
+  it('over MCP binds the unmasked button: two gift links that mask alike are still different buttons', async () => {
+    const world = seedWorld();
+    const menu = world.chats.find(c => c.id === 2001)!.messages[1];
+    menu.buttons![0][1] = { text: 'Claim https://t.me/giftcode/AAAA1111', data: 'status', answer: 'ok' };
+    writeFileSync(state, JSON.stringify(world));
+    process.env.TG_MCP = '1';
+    try {
+      const approved = await findButton(await getClient(), '2001', 2, { index: 2 });
+      expect(approved.info.text).not.toContain('AAAA1111'); // still shown masked
+      menu.buttons![0][1] = { text: 'Claim https://t.me/giftcode/BBBB2222', data: 'status', answer: 'ok' };
+      writeFileSync(state, JSON.stringify(world));
+      await disconnectClient();
+      const now = await findButton(await getClient(), '2001', 2, { index: 2 });
+      expect(now.info).toEqual(approved.info); // the masked views are the same…
+      expectButton(approved.fingerprint); // …the binding is not
+      await expect(clickButton(await getClient(), '2001', 2, { index: 2 }, { waitMs: 0 })).rejects.toThrow(/changed after the approval; nothing was pressed/);
+    } finally {
+      delete process.env.TG_MCP;
+    }
   });
 });
 
