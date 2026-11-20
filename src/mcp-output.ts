@@ -90,7 +90,9 @@ const LABEL_LEAD = `(?<=(?:^|[^\\p{L}\\p{N}_ \\t\\u00a0-])${SPACE}*|(?<![\\p{L}\
  * URL scheme there ("code: tg://…") is not a code. The $1 group is the lead-in.
  */
 export const LOGIN_CODE_PHRASE = new RegExp(
-  `(${LABEL_LEAD}(?:code|код${RU_LABEL_WORDS})${SPACE}*[${SEPARATORS}]${GAP})` +
+  // The lookahead first: it fails at once where no "code"/"код" starts, so the lookbehind (which
+  // walks back over spaces) runs only there, not at every position of a long run of spaces
+  `((?=code|код)${LABEL_LEAD}(?:code|код${RU_LABEL_WORDS})${SPACE}*[${SEPARATORS}]${GAP})` +
   `(?![A-Za-z0-9_]*:\\/\\/)[A-Za-z0-9_]+(?:[${DASHES}][A-Za-z0-9_]+|[ \\t\\u00a0]+[0-9][A-Za-z0-9_]*)*`,
   'giu',
 );
