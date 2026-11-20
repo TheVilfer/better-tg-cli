@@ -403,6 +403,63 @@ describe('sync --media: a file that never downloads holds the chat back only so 
   }, 60_000);
 });
 
+describe('sync --media: the checkpoint follows message IDs, never past one that was not exported', () => {
+  const setMedia = (state: string, id: number, fails: boolean) => {
+    const w = JSON.parse(readFileSync(state, 'utf8'));
+    const media = w.chats.find((c: { id: number }) => c.id === 1001).messages.find((m: { id: number }) => m.id === id).media;
+    if (fails) media.downloadFails = true; else delete media.downloadFails;
+    writeFileSync(state, JSON.stringify(w));
+  };
+
+  it('two messages in the same second: a failure on the earlier one stops before both', async () => {
+    const state = await worldFile(w => {
+      const msgs = w.chats.find(c => c.id === 1001)!.messages;
+      const m3 = msgs.find(m => m.id === 3)!;
+      m3.media!.downloadFails = true;
+      msgs.find(m => m.id === 4)!.ago = m3.ago;
+    });
+    const out = join(home, `sync-media-${n++}`);
+    const first = cli(['sync', '--chat', '1001', '--all', '--media', '--json', '--output', out], {}, state);
+    expect(first.code).toBe(1);
+    const r = oneJson(first.out);
+    expect(r.chats[0]).toMatchObject({ added: 2, lastId: 2 });
+    expect(JSON.parse(readFileSync(join(out, '.sync-meta.json'), 'utf8'))['1001'].lastMessageId).toBe(2);
+    const file = r.chats[0].file as string;
+    expect(readFileSync(file, 'utf8')).not.toMatch(/\*#[34]\*/);
+
+    setMedia(state, 3, false);
+    const again = cli(['sync', '--chat', '1001', '--all', '--media', '--resume', '--json', '--output', out], {}, state);
+    expect(again.code).toBe(0);
+    const text = readFileSync(file, 'utf8');
+    expect(text.match(/\*#3\*/g)).toHaveLength(1);
+    expect(text.match(/\*#4\*/g)).toHaveLength(1);
+    expect(text.indexOf('*#3*')).toBeLessThan(text.indexOf('*#4*'));
+  }, 30_000);
+
+  it('a failure on the very first message pins --resume to it, outside the --days window', async () => {
+    const state = await worldFile(w => { w.chats.find(c => c.id === 1001)!.messages.find(m => m.id === 3)!.media!.downloadFails = true; });
+    const out = join(home, `sync-media-${n++}`);
+    // Message #3 is a day old: the first in a 2-day window
+    const first = cli(['sync', '--chat', '1001', '--days', '2', '--media', '--json', '--output', out], {}, state);
+    expect(first.code).toBe(1);
+    expect(oneJson(first.out).failed[0]).toMatchObject({ messageId: 3 });
+    expect(JSON.parse(readFileSync(join(out, '.sync-meta.json'), 'utf8'))['1001']).toMatchObject({ lastMessageId: 2, retryPin: true });
+
+    // By the retry, #3 has left the --days window; the pin still brings it back
+    setMedia(state, 3, false);
+    const again = cli(['sync', '--chat', '1001', '--days', '1', '--media', '--resume', '--json', '--output', out], {}, state);
+    expect(again.code).toBe(0);
+    const r = oneJson(again.out);
+    expect(r.chats[0]).toMatchObject({ added: expect.any(Number), lastId: expect.any(Number) });
+    const text = readFileSync(r.chats[0].file, 'utf8');
+    expect(text.match(/\*#3\*/g)).toHaveLength(1);
+    expect(text).toContain('*#5*');
+    // Nothing was exported before: the file does not claim an earlier export
+    expect(text).not.toContain('Continues after message');
+    expect(JSON.parse(readFileSync(join(out, '.sync-meta.json'), 'utf8'))['1001'].retryPin).toBeUndefined();
+  }, 30_000);
+});
+
 describe('the write guard keeps how long to wait', () => {
   it('a rate limit while looking up the recipient: flood_wait, exit 1, retryAfterSeconds in the JSON error', () => {
     const r = cli(['send', '@alice_example', 'hi', '--json'], { TG_MOCK_ASK: '1', TG_MOCK_FAIL: 'FLOOD_WAIT_30' });

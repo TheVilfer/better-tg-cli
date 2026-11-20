@@ -30,6 +30,12 @@ interface SyncMeta {
     lastSyncDate: string;
     /** --media: failed downloads per message ID, so a file that never downloads stops the chat only so often */
     mediaAttempts?: Record<string, number>;
+    /**
+     * --media: nothing of this chat was exported yet, and the first message failed. lastMessageId is
+     * then the ID just before it, so --resume retries from that message instead of the --days window
+     * (which it may have left by then); the file gets no "continues after" line.
+     */
+    retryPin?: boolean;
   };
 }
 
@@ -198,7 +204,7 @@ export function buildSyncFetchOptions(o: {
   maxDate?: Date;
   minId?: number;
 }): GetMessagesOptions {
-  if (o.minId) {
+  if (o.minId !== undefined) {
     return { limit: Number.MAX_SAFE_INTEGER, minId: o.minId, minDate: o.since ? o.minDate : undefined, maxDate: o.maxDate };
   }
   return { limit: o.all ? Number.MAX_SAFE_INTEGER : 1000, minDate: o.minDate, maxDate: o.maxDate };
@@ -288,20 +294,25 @@ export const syncCommand = new Command('sync')
           // header names this chat.
           const existing = options.resume && existsSync(filePath) ? readFileSync(filePath, 'utf-8') : undefined;
           const append = existing !== undefined && existing.split('\n', 8).includes(chatIdLine(chat.id));
-          const minId = options.resume ? meta[chat.id]?.lastMessageId : undefined;
+          const checkpoint = options.resume ? meta[chat.id] : undefined;
+          const pinned = !!checkpoint?.retryPin;
+          // A retry pin bounds the fetch even at 0 (the failed message was #1)
+          const minId = checkpoint && (checkpoint.lastMessageId > 0 || pinned) ? checkpoint.lastMessageId : undefined;
 
           const fetchOptions = buildSyncFetchOptions({ all: !!options.all, since: !!options.since, minDate, maxDate, minId });
 
           const { messages } = await getMessages(client, chat.id, fetchOptions);
 
           if (messages.length === 0) {
-            const lastId = meta[chat.id]?.lastMessageId;
+            const lastId = meta[chat.id]?.retryPin ? undefined : meta[chat.id]?.lastMessageId;
             report.push({ chatId: chat.id, title: chat.title, file: filePath, added: 0, ...(lastId ? { lastId } : {}) });
             continue;
           }
 
-          // Sort messages chronologically
-          messages.sort((a, b) => a.date.getTime() - b.date.getTime());
+          // By ID, never by date: two messages in the same second must not swap, or a failure on the
+          // earlier one would leave the checkpoint past it. IDs in a chat only grow, so this is also
+          // chronological.
+          messages.sort((a, b) => a.id - b.id);
 
           // With --media, the chat stops before the first message whose media could not be
           // downloaded: the file and the checkpoint end before it, so --resume tries it again
@@ -332,7 +343,7 @@ export const syncCommand = new Command('sync')
 
           if (kept.length > 0) {
             let content: string;
-            if (append && minId) {
+            if (append && minId !== undefined && !pinned) {
               // Append new messages to the existing file
               content = readFileSync(filePath, 'utf-8').trimEnd() + '\n\n' + body.join('\n');
             } else {
@@ -342,7 +353,7 @@ export const syncCommand = new Command('sync')
               }
               header.push(`\nSynced: ${new Date().toISOString()}`);
               // Resumed into a new file: the earlier messages are in a previous export
-              if (minId) header.push(`Continues after message #${minId} (earlier messages are in a previous export)`);
+              if (minId !== undefined && !pinned) header.push(`Continues after message #${minId} (earlier messages are in a previous export)`);
               header.push(`Messages: ${kept.length}`);
               header.push('\n---\n');
               content = [...header, ...body].join('\n');
@@ -361,9 +372,21 @@ export const syncCommand = new Command('sync')
             newMessages += kept.length;
             report.push({ chatId: chat.id, title: chat.title, file: filePath, added: kept.length, lastId: meta[chat.id].lastMessageId });
           } else if (failures.length) {
-            // Nothing kept: only the attempt count changes, the checkpoint stays where it was
-            const { mediaAttempts: _old, ...rest } = meta[chat.id] ?? { title: chat.title, lastMessageId: minId ?? 0, lastSyncDate: new Date().toISOString() };
-            meta[chat.id] = { ...rest, ...mediaAttempts };
+            // Nothing kept: only the attempt count changes, the checkpoint stays where it was. With no
+            // checkpoint yet, one is pinned just before the failed message, so --resume starts there.
+            const prev = meta[chat.id];
+            if (prev && prev.lastMessageId > 0 && !prev.retryPin) {
+              const { mediaAttempts: _old, ...rest } = prev;
+              meta[chat.id] = { ...rest, ...mediaAttempts };
+            } else {
+              meta[chat.id] = {
+                title: chat.title,
+                lastMessageId: Math.min(prev?.retryPin ? prev.lastMessageId : Infinity, failures[0].id - 1),
+                lastSyncDate: new Date().toISOString(),
+                ...mediaAttempts,
+                retryPin: true,
+              };
+            }
           }
 
           for (const f of failures) {
