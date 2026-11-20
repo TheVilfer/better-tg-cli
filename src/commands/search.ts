@@ -6,7 +6,7 @@ import { formatMessagesMarkdown } from '../formatters/markdown.js';
 import { getOutputFormat } from '../formatters/index.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { fail, usageError } from '../errors.js';
 import { choiceOption, positiveInt, timeArg } from '../args.js';
 
 export const searchCommand = new Command('search')
@@ -25,6 +25,8 @@ export const searchCommand = new Command('search')
   .option('--json', 'Output as JSON')
   .option('--markdown', 'Output as Markdown')
   .action(async (query, options) => {
+    // A wrong command line is exit 2 before any connection (a profile not logged in would say 5)
+    if (options.from && !options.chat) fail(usageError('--from needs --chat (Telegram global search cannot filter by sender)'));
     const scope = options.chat ? `"${options.chat}"` : 'all chats';
     const spinner = ora(`Searching for "${query}" in ${scope}...`).start();
 

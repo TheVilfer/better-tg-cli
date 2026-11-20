@@ -395,3 +395,12 @@ describe('the write guard keeps how long to wait', () => {
     expect(oneJson(r.out).error).toMatchObject({ code: 'flood_wait', retryAfterSeconds: 30 });
   }, 30_000);
 });
+
+describe('10 usage errors come before any connection', () => {
+  it('search --from without --chat: exit 2 on a profile that is not logged in (not 5)', () => {
+    const empty = mkdtempSync(join(home, 'empty-'));
+    const r = cli(['search', 'hi', '--from', '@alice_example', '--json'], { HOME: empty, USERPROFILE: empty, APPDATA: join(empty, 'AppData'), TG_MOCK: '', TG_PROFILE: 'empty', TG_NO_LIBSECRET: '1' });
+    expect(r.code, r.out + r.err).toBe(2);
+    expect(oneJson(r.out).error).toMatchObject({ code: 'invalid_argument', message: expect.stringContaining('--from needs --chat') });
+  }, 30_000);
+});
