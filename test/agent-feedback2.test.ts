@@ -170,6 +170,14 @@ describe('3 every candidate carries the command that re-runs the call with its I
       expect(cli(c.command, state).code, c.command.join(' ')).toBe(0);
     }
   }, 60_000);
+
+  it('a write gets candidates but never a ready command to send to one of them', () => {
+    const state = worldFile();
+    const error = JSON.parse(cli(['send', 'Teem', 'hi', '--json'], state).out).error;
+    expect(error.code).toBe('chat_not_found');
+    expect(error.candidates.length).toBeGreaterThan(0);
+    for (const c of error.candidates) expect(c).not.toHaveProperty('command');
+  }, 30_000);
 });
 
 describe('4 inbox: people, then bots, then groups and channels, then muted', () => {

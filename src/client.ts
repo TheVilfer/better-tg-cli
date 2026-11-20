@@ -1852,12 +1852,13 @@ function rerunWith(asGiven: string, id: string): string[] | undefined {
 }
 
 /**
- * Candidates show only what tells chats apart: ID, title, type (never a @username), and the
- * caller's command re-run with that ID.
+ * Candidates show only what tells chats apart: ID, title, type (never a @username), and, for a
+ * read, the caller's command re-run with that ID.
  */
 function chatCandidates(chats: NamedChat[], asGiven?: string, max = 5): ChatCandidate[] {
   return chats.slice(0, max).map(c => {
-    const command = asGiven === undefined ? undefined : rerunWith(asGiven, c.id);
+    // Never for a write: a ready "send <guessed chat> …" invites sending to a chat nobody chose
+    const command = asGiven === undefined || isStrictChatResolution() ? undefined : rerunWith(asGiven, c.id);
     return { id: c.id, title: c.title, type: c.type, ...(command ? { command } : {}) };
   });
 }
