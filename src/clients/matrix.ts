@@ -16,7 +16,8 @@ export function strongest(cell: { evidence: Evidence[] }): EvidenceLevel | undef
   return best;
 }
 
-const esc = (s: string) => s.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
+/** A Markdown table cell: one line, the backslash escaped before the pipe it would otherwise undo. */
+export const esc = (s: string) => s.replace(/\r?\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 
 function shortCase(k: Case): string {
   if (k.value === 'unknown') return '?';
