@@ -15,7 +15,7 @@ import { getWriteValue } from './write-store.js';
 import { isMock, isMockAsk } from './paths.js';
 import { getSessionString } from './config.js';
 import { maskGiftCodes } from './mcp-output.js';
-import { openSetupPage, sessionState } from './setup.js';
+import { checkSession, openSetupPage } from './setup.js';
 import { savedMode } from './write-mode.js';
 import { openBrowser } from './commands/onboard.js';
 import type { OnboardSession } from './onboard.js';
@@ -710,9 +710,11 @@ function setupResult(url: string, step: 'login' | 'mode', extra: { sessionExpire
 export async function runSetup(options: { readOnly?: boolean } = {}): Promise<ToolResult> {
   if (isMock()) return text('Mock mode (TG_MOCK): the fake account needs no login and no setup page. Unset TG_MOCK to use a real account.');
   if (setupJob) return setupResult(setupJob.url, setupJob.step, { reused: true, ...(setupJob.readOnly ? { readOnly: true } : {}) });
-  let state: Awaited<ReturnType<typeof sessionState>>;
+  let state: Awaited<ReturnType<typeof checkSession>>['state'];
+  let checked: string | undefined;
   try {
-    state = await sessionState();
+    // The stored session as it was before the check: the page may replace only that one
+    ({ state, snapshot: checked } = await checkSession());
   } catch (e) {
     return text(`Could not check the stored login (${e instanceof Error ? e.message : String(e)}). Nothing changed; try again once this is fixed.`, true);
   }
@@ -725,7 +727,7 @@ export async function runSetup(options: { readOnly?: boolean } = {}): Promise<To
   // The model holds this link, so every write mode picked there is confirmed by the person; a
   // read-only server logs in only, without setting or offering a write mode
   const readOnly = !!options.readOnly;
-  const session = await openSetupPage({ modeOnly: step === 'mode', emit: () => {}, fromModel: true, readOnly });
+  const session = await openSetupPage({ modeOnly: step === 'mode', emit: () => {}, fromModel: true, readOnly, checkedSession: checked });
   const job = { url: session.url, step, readOnly, session } as const;
   setupJob = job;
   const end = () => {

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { Command } from 'commander';
 import { type OnboardEvent } from '../onboard.js';
-import { openSetupPage, sessionState } from '../setup.js';
+import { checkSession, openSetupPage } from '../setup.js';
 
 const HUMAN: Record<OnboardEvent['event'], (e: never) => string> = {
   url: (e: { url: string }) => `Open this page to log in (it stays on this computer): ${e.url}`,
@@ -44,9 +44,11 @@ export const onboardCommand = new Command('onboard')
 
     // Never replace a working login, same as `telegram auth`. A stored session Telegram no longer
     // accepts is replaced by a new login; an unreadable store or no network stops here
-    let state: Awaited<ReturnType<typeof sessionState>>;
+    let state: Awaited<ReturnType<typeof checkSession>>['state'];
+    let checked: string | undefined;
     try {
-      state = await sessionState();
+      // The stored session as it was before the check: the page may replace only that one
+      ({ state, snapshot: checked } = await checkSession());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // No page is open yet, so not HUMAN.error ("the page offers a retry")
@@ -75,7 +77,7 @@ export const onboardCommand = new Command('onboard')
         '(ssh -L <port>:127.0.0.1:<port>) or run "telegram auth --qr" in a terminal here instead.');
     }
 
-    const session = await openSetupPage({ emit, testDc: opts.testDc, broker: opts.broker });
+    const session = await openSetupPage({ emit, testDc: opts.testDc, broker: opts.broker, checkedSession: checked });
     if (opts.open) openBrowser(session.url);
 
     timer = setTimeout(() => {

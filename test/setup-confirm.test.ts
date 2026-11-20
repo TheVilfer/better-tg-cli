@@ -26,6 +26,8 @@ const machine = vi.hoisted(() => ({
   asked: [] as string[],
   /** What Telegram answers updates.GetState with: nothing (alive), or this error */
   stateError: undefined as unknown,
+  /** Runs while Telegram is being asked (another process saving a login meanwhile) */
+  duringCheck: undefined as undefined | (() => void),
   /** The options the last setup page was started with */
   page: undefined as undefined | Record<string, any>,
 }));
@@ -47,7 +49,7 @@ vi.mock('../src/transport.js', async orig => ({
   ...(await orig<typeof import('../src/transport.js')>()),
   connectClient: async () => ({
     connected: true,
-    invoke: async () => { if (machine.stateError) throw machine.stateError; return {}; },
+    invoke: async () => { machine.duringCheck?.(); if (machine.stateError) throw machine.stateError; return {}; },
     // teleproto: any failure of GetState is "not authorized"
     async isUserAuthorized() { try { await this.invoke(); return true; } catch { return false; } },
     destroy: async () => {},
@@ -77,7 +79,7 @@ beforeEach(() => {
   process.env.PATH = mkdtempSync(join(home.root, 'bin-'));
   process.env.SSH_CONNECTION = 'test'; // never open a browser
   for (const k of ['TG_MOCK', 'TG_MCP', 'DBUS_SESSION_BUS_ADDRESS']) delete process.env[k];
-  Object.assign(machine, { os: 'linux', tty: false, answer: true, asked: [], stateError: undefined, page: undefined });
+  Object.assign(machine, { os: 'linux', tty: false, answer: true, asked: [], stateError: undefined, duringCheck: undefined, page: undefined });
   process.stdin.isTTY = false as never;
   process.stdout.isTTY = false as never;
 });
@@ -159,6 +161,15 @@ describe('a session is "expired" only when Telegram says so (7)', () => {
   it('a login finished on an old page does not replace a session saved meanwhile by another process', async () => {
     await openSetupPage({ emit: () => {}, fromModel: true });
     setSessionString('session-B'); // another process logged in
+    expect(() => machine.page!.save('session-C', { apiId: 1, apiHash: '0'.repeat(32) }, false)).toThrow(/Another login was saved in this profile/);
+    expect(loadConfig(() => {}).sessionString).toBe('session-B');
+  });
+
+  it('telegram_setup: a login saved by another process while the revoked one was being checked is not replaced', async () => {
+    machine.stateError = Object.assign(new Error('RPCError 401: SESSION_REVOKED'), { errorMessage: 'SESSION_REVOKED' });
+    machine.duringCheck = () => { machine.duringCheck = undefined; setSessionString('session-B'); };
+    const r = await runSetup();
+    expect(r.structuredContent).toMatchObject({ status: 'open_page', step: 'login', sessionExpired: true });
     expect(() => machine.page!.save('session-C', { apiId: 1, apiHash: '0'.repeat(32) }, false)).toThrow(/Another login was saved in this profile/);
     expect(loadConfig(() => {}).sessionString).toBe('session-B');
   });
