@@ -94,7 +94,7 @@ describe('2.1 status an agent can read', () => {
     store.values.set('writeEnabled', 'ask');
     expect(await run(writeAccessCommand, ['--json'])).toBeNull();
     expect(JSON.parse(out)).toEqual({
-      writeMode: 'ask', writeModeProtected: true, writeModeStorable: true, secretStore: 'macOS Keychain', profile: null,
+      writeMode: 'ask', writes: 'with-approval', writeModeProtected: true, writeModeStorable: true, secretStore: 'macOS Keychain', profile: null,
     });
   });
 

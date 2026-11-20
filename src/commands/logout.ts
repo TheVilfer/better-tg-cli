@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { clearSessionString } from '../config.js';
 import { clearApprovals } from '../approval.js';
+import { clearDialogCache } from '../dialog-cache.js';
 import { auditLog } from '../audit.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
@@ -15,6 +16,7 @@ export const logoutCommand = new Command('logout')
       clearSessionString();
       // Pending approvals were given for this account; none may carry over to the next login
       clearApprovals();
+      clearDialogCache();
 
       auditLog({
         timestamp: new Date().toISOString(),

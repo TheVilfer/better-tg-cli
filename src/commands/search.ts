@@ -33,7 +33,7 @@ export const searchCommand = new Command('search')
     try {
       const client = await getClient();
 
-      const results = await searchMessages(client, query, {
+      const result = await searchMessages(client, query, {
         chat: options.chat,
         limit: options.limit,
         from: options.from,
@@ -45,7 +45,7 @@ export const searchCommand = new Command('search')
 
       const maxText = options.maxText ? options.maxText : undefined;
       if (maxText) {
-        for (const r of results) r.messages = r.messages.map(m => ({ ...m, text: truncate(m.text, maxText) }));
+        result.messages = result.messages.map(m => ({ ...m, text: truncate(m.text, maxText) }));
       }
 
       spinner.stop();
@@ -53,21 +53,16 @@ export const searchCommand = new Command('search')
       const format = getOutputFormat(options);
 
       if (format === 'json') {
-        console.log(formatJson(results));
+        console.log(formatJson(result));
+      } else if (result.messages.length === 0) {
+        console.log(chalk.yellow('No results found.'));
       } else {
-        for (const result of results) {
-          if (result.messages.length === 0) {
-            console.log(chalk.yellow('No results found.'));
-            continue;
-          }
-
-          if (format === 'markdown') {
-            console.log(formatMessagesMarkdown(result.messages, result.chatTitle));
-          } else {
-            console.log(formatMessages(result.messages, result.chatTitle ?? `Results for "${query}"`));
-          }
-          if (result.hasMore) console.log(`… more exist: raise -n (now ${options.limit}) or narrow with --since/--until`);
+        if (format === 'markdown') {
+          console.log(formatMessagesMarkdown(result.messages, result.chatTitle));
+        } else {
+          console.log(formatMessages(result.messages, result.chatTitle ?? `Results for "${query}"`));
         }
+        if (result.hasMore) console.log(`… more exist: raise -n (now ${options.limit}) or narrow with --since/--until`);
       }
 
       await disconnectClient();

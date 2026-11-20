@@ -134,9 +134,6 @@ export function formatInboxMarkdown(chats: ChatInfo[]): string {
   const lines: string[] = ['# Inbox\n'];
   lines.push(`**${unreadChats.length} chats with unread messages**\n`);
 
-  // Sort by unread count descending
-  unreadChats.sort((a, b) => b.unreadCount - a.unreadCount);
-
   lines.push('| Chat | Type | Unread | Last Message |');
   lines.push('|------|------|--------|--------------|');
 
@@ -144,7 +141,7 @@ export function formatInboxMarkdown(chats: ChatInfo[]): string {
     const preview = chat.lastMessage
       ? chat.lastMessage.substring(0, 30).replace(/\n/g, ' ') + (chat.lastMessage.length > 30 ? '...' : '')
       : '-';
-    lines.push(`| ${chat.title} | ${chat.type} | ${chat.unreadCount} | ${preview} |`);
+    lines.push(`| ${chat.title}${chat.muted ? ' (muted)' : ''} | ${chat.type} | ${chat.unreadCount} | ${preview} |`);
   }
 
   return lines.join('\n');

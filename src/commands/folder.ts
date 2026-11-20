@@ -18,7 +18,7 @@ export const folderCommand = new Command('folder')
       spinner.stop();
 
       if (!folder) {
-        throw new CliError(`Folder not found: ${name}`, 'folder_not_found', EXIT.ERROR, { hint: 'List the folders: telegram folders' });
+        throw new CliError(`Folder not found: ${name}`, 'folder_not_found', EXIT.ERROR, { hint: 'List the folders: telegram folders', command: ['folders'] });
       }
 
       if (options.json) {

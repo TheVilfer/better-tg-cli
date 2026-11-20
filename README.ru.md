@@ -34,8 +34,8 @@ MCP-сервер (`telegram mcp`), и скилл для агентов.
 $ telegram inbox -n 3
 48 unread in 7 chats (showing 3)
 1234567890 user unread=2 Алиса @alice | в 7 в силе?
--1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | кто уже пробовал 1.90?
 -1009876543 channel unread=5 Changelog | вышла v2.4
+-1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | кто уже пробовал 1.90?
 ```
 
 > [!WARNING]

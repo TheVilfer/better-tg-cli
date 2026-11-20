@@ -18,6 +18,7 @@ import { LOGIN_CODE_HIDDEN, maskForModel } from './mcp-output.js';
 import { loginHint } from './login-hint.js';
 import { fileSnapshot, uploadable } from './file-snapshot.js';
 import { apiMarker, INVITE_LINK } from './approval-action.js';
+import { accountKey, readDialogCache, writeDialogCache, type CachedChat } from './dialog-cache.js';
 
 /** First words of the error getClient() throws for a session Telegram no longer accepts (onboard looks for it). */
 export const SESSION_EXPIRED = 'Session expired or was revoked.';
@@ -143,10 +144,83 @@ export const DIALOG_MAX = 5000;
 
 function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['getDialogs']> {
   if (!dialogsCache) {
-    dialogsCache = client.getDialogs({ limit: DIALOG_PAGE });
+    dialogsCache = client.getDialogs({ limit: DIALOG_PAGE }).then(dialogs => {
+      // A cut first page never replaces a whole list that is still fresh
+      const account = dialogCacheAccount(client);
+      if (account && (dialogs.length < DIALOG_PAGE || !readDialogCache(account))) saveDialogList(account, dialogs, dialogs.length < DIALOG_PAGE);
+      return dialogs;
+    });
     dialogsCache.catch(() => { dialogsCache = null; });
   }
   return dialogsCache;
+}
+
+/**
+ * The account the dialog list on disk (src/dialog-cache.ts) belongs to: only for the client
+ * getClient() built, named by a hash of its session. Any other client (a test's own) never
+ * reads or writes the file.
+ */
+function dialogCacheAccount(client: TelegramClient): string | undefined {
+  return client === clientInstance && clientSession !== undefined ? accountKey(clientSession) : undefined;
+}
+
+function saveDialogList(account: string, dialogs: Dialogs, complete: boolean): void {
+  const chats: CachedChat[] = [];
+  for (const d of dialogs) {
+    const e = d.entity;
+    if (d.id === undefined || !(e instanceof Api.User || e instanceof Api.Chat || e instanceof Api.Channel)) continue;
+    const hash = e instanceof Api.Chat ? undefined : e.accessHash?.toString();
+    const username = e instanceof Api.Chat ? undefined : e.username ?? undefined;
+    chats.push({ id: d.id.toString(), title: d.title ?? '', ...(username ? { username } : {}), type: dialogKind(d) as CachedChat['type'], ...(hash ? { accessHash: hash } : {}) });
+  }
+  writeDialogCache(account, complete, chats);
+}
+
+/** The title a dialog has for an entity (what the cached title was taken from). */
+function dialogTitle(entity: ResolvedEntity): string {
+  return entity instanceof Api.User ? [entity.firstName, entity.lastName].filter(Boolean).join(' ') : entity.title;
+}
+
+function inputPeerOf(c: CachedChat): Api.TypeInputPeer {
+  const hash = bigInt(c.accessHash ?? '0');
+  if (c.type === 'user' || c.type === 'bot') return new Api.InputPeerUser({ userId: bigInt(c.id), accessHash: hash });
+  if (c.type === 'group') return new Api.InputPeerChat({ chatId: bigInt(c.id.replace(/^-/, '')) });
+  return new Api.InputPeerChannel({ channelId: bigInt(c.id.replace(/^-100/, '')), accessHash: hash });
+}
+
+/**
+ * The cheap way to a chat: the dialog list on disk names it, and one small call (users.GetUsers,
+ * messages.GetChats or channels.GetChannels) fetches it, instead of reading the whole list. Only a
+ * proven hit counts: an ID, a @username, or a title exactly one chat had in the whole list, which
+ * the chat still has now. Writes never take a title from disk (another chat may have taken it
+ * since). Anything else, and any failure, is undefined: the caller reads the list as before.
+ */
+async function fromDialogCache(client: TelegramClient, identifier: string, username: string | undefined, isNumericId: boolean): Promise<ResolvedEntity | undefined> {
+  const account = dialogCacheAccount(client);
+  const saved = account ? readDialogCache(account) : undefined;
+  if (!saved) return undefined;
+  let hit: CachedChat | undefined;
+  const needle = (username ? username.replace(/^@/, '') : identifier).trim().toLowerCase();
+  if (username) {
+    hit = saved.chats.find(c => c.username?.toLowerCase() === needle);
+  } else if (isNumericId) {
+    hit = saved.chats.find(c => c.id === identifier);
+  } else if (saved.complete && !isStrictChatResolution()) {
+    const exact = saved.chats.filter(c => c.title.trim().toLowerCase() === needle);
+    if (exact.length === 1) hit = exact[0];
+  }
+  if (!hit) return undefined;
+  try {
+    const entity = await client.getEntity(inputPeerOf(hit));
+    if (!(entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel)) return undefined;
+    if (utils.getPeerId(entity).toString() !== hit.id) return undefined;
+    // Renamed, or the @username moved on: not the chat that was named
+    if (username && (entity instanceof Api.Chat || entity.username?.toLowerCase() !== needle)) return undefined;
+    if (!username && !isNumericId && dialogTitle(entity).trim().toLowerCase() !== needle) return undefined;
+    return entity;
+  } catch {
+    return undefined;
+  }
 }
 
 let allDialogsCache: Promise<{ dialogs: Dialogs; complete: boolean }> | null = null;
@@ -160,7 +234,12 @@ async function dialogsForTitles(client: TelegramClient): Promise<{ dialogs: Dial
   const first = await getDialogsCached(client);
   if (first.length < DIALOG_PAGE) return { dialogs: first, complete: true };
   if (!allDialogsCache) {
-    allDialogsCache = client.getDialogs({ limit: DIALOG_MAX }).then(dialogs => ({ dialogs, complete: dialogs.length < DIALOG_MAX }));
+    allDialogsCache = client.getDialogs({ limit: DIALOG_MAX }).then(dialogs => {
+      const complete = dialogs.length < DIALOG_MAX;
+      const account = dialogCacheAccount(client);
+      if (account) saveDialogList(account, dialogs, complete);
+      return { dialogs, complete };
+    });
     allDialogsCache.catch(() => { allDialogsCache = null; });
   }
   return allDialogsCache;
@@ -234,6 +313,7 @@ export async function getDialogs(
       const entity = dialog.entity as Api.User;
       username = entity.username ?? undefined;
       bot = entity.bot || undefined;
+      if (entity.self) title = SAVED_MESSAGES;
     } else if (dialog.entity instanceof Api.Channel) {
       // Check Channel first: GramJS reports megagroups as isGroup too
       type = dialog.entity.megagroup ? 'supergroup' : 'channel';
@@ -597,6 +677,33 @@ export function maskLoginCodes(text: string): string {
  * private chat an incoming message has no `fromId` (the peer is the sender),
  * which the old `fromId`-only lookup reported as "Unknown".
  */
+/** The account's own user ID, asked once per client (undefined if Telegram would not say). */
+const selfIds = new WeakMap<object, Promise<string | undefined>>();
+function selfId(client: TelegramClient): Promise<string | undefined> {
+  let id = selfIds.get(client);
+  if (!id) {
+    id = Promise.resolve().then(() => client.getMe()).then(me => (me instanceof Api.User ? me.id.toString() : undefined), () => undefined);
+    selfIds.set(client, id);
+  }
+  return id;
+}
+
+/**
+ * Whether the account itself wrote a message. `out` alone misses some: a message saved into Saved
+ * Messages, or one sent from another device into a group, can come with out=false. The sender is
+ * fromId, or the chat itself in a private chat; it is ours when that is the account's own user.
+ */
+async function isFromSelf(client: TelegramClient, msg: Api.Message): Promise<boolean> {
+  if (msg.out) return true;
+  const peer = msg.fromId ?? msg.peerId;
+  if (!(peer instanceof Api.PeerUser)) return false;
+  const me = await selfId(client);
+  return me !== undefined && peer.userId.toString() === me;
+}
+
+/** The title of a private chat, a group or a channel; the chat with yourself is "Saved Messages". */
+export const SAVED_MESSAGES = 'Saved Messages';
+
 async function resolveSender(client: TelegramClient, msg: Api.Message): Promise<{ sender: string; senderId?: string }> {
   let entity: unknown = msg.sender ?? undefined;
   if (!entity) {
@@ -730,7 +837,7 @@ export async function toMessageInfo(client: TelegramClient, msg: Api.Message, op
     senderId,
     text: messageText(msg),
     replyToMsgId: msg.replyTo?.replyToMsgId,
-    isOutgoing: msg.out ?? false,
+    isOutgoing: await isFromSelf(client, msg),
     media: shownMediaInfo(msg),
     buttons: extractButtons(msg),
     replies: msg.replies?.replies || undefined,
@@ -1221,6 +1328,7 @@ export interface SearchOptions {
 function peerTitle(peer: Api.TypePeer, chats: Api.TypeChat[], users: Api.TypeUser[]): string | undefined {
   if (peer instanceof Api.PeerUser) {
     const u = users.find((x): x is Api.User => x instanceof Api.User && x.id.equals(peer.userId));
+    if (u?.self) return SAVED_MESSAGES;
     return u ? [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || undefined : undefined;
   }
   const id = peer instanceof Api.PeerChat ? peer.chatId : peer instanceof Api.PeerChannel ? peer.channelId : undefined;
@@ -1228,11 +1336,23 @@ function peerTitle(peer: Api.TypePeer, chats: Api.TypeChat[], users: Api.TypeUse
   return c && 'title' in c ? c.title : undefined;
 }
 
+/**
+ * One search, one object, as `read` gives: the chat's ID and title with --chat; without it every
+ * message carries its own chatId and chatTitle.
+ */
+export interface SearchResult {
+  query: string;
+  chatTitle?: string;
+  chatId?: string;
+  messages: MessageInfo[];
+  hasMore?: boolean;
+}
+
 export async function searchMessages(
   client: TelegramClient,
   query: string,
   options: SearchOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle?: string; chatId?: string; hasMore?: boolean }[]> {
+): Promise<SearchResult> {
   const { chat, limit = 50, minDate, maxDate, from, type, full } = options;
   if (type && !SEARCH_FILTERS[type]) {
     throw usageError(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
@@ -1273,7 +1393,7 @@ export async function searchMessages(
         if (msg instanceof Api.Message) messages.push({ ...(await toMessageInfo(client, msg, { full })), chatId });
       }
     }
-    return [{ messages, chatTitle: getChatTitle(entity), chatId, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) }];
+    return { query, chatTitle: getChatTitle(entity), chatId, messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) };
   }
 
   // Global search: results span chats, so tag each message with its chat
@@ -1300,7 +1420,7 @@ export async function searchMessages(
       messages.push(info);
     }
   }
-  return [{ messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) }];
+  return { query, messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) };
 }
 
 /**
@@ -1582,6 +1702,10 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
 
   // Check if it's a username (starts with @)
   const username = link?.username ? `@${link.username}` : identifier.startsWith('@') ? identifier : undefined;
+  const isNumericId = /^-?\d+$/.test(identifier);
+  // An ID, a @username or an exact title from the dialog list on disk: no list read at all
+  const cached = await fromDialogCache(client, identifier, username, isNumericId);
+  if (cached) return cached;
   if (username) {
     const entity = await client.getEntity(username);
     if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
@@ -1590,7 +1714,6 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     throw new Error(`Invalid entity type for: ${identifier}`);
   }
 
-  const isNumericId = /^-?\d+$/.test(identifier);
   // IDs are matched in the first page (then asked of Telegram); titles need the whole list
   const { dialogs, complete } = isNumericId ? { dialogs: await getDialogsCached(client), complete: true } : await dialogsForTitles(client);
 
@@ -1718,11 +1841,12 @@ function chatNotFound(identifier: string, dialogs: Dialogs): CliError {
     .filter(x => needle && x.score <= limit)
     .sort((a, b) => a.score - b.score);
   const candidates = chatCandidates(scored.map(x => x.d));
-  // An argv, not a shell line: the text came from the caller. --preview 0: titles, no message text
-  const hint = ['chats', '-q', identifier, '--preview', '0'];
+  // The command as an argv too: the text came from the caller. --preview 0: titles, no message text
+  const command = ['chats', '-q', identifier, '--preview', '0'];
+  const hint = `List matching chats: ${shellCommand(command)}`;
   return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
-    candidates, hint,
-    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', `List matching chats: ${shellCommand(hint)}`].filter(Boolean).join('\n'),
+    candidates, hint, command,
+    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', hint].filter(Boolean).join('\n'),
   });
 }
 
@@ -1744,6 +1868,7 @@ function notAForum(entity: ResolvedEntity): CliError {
 
 function getChatTitle(entity: ResolvedEntity): string {
   if (entity instanceof Api.User) {
+    if (entity.self) return SAVED_MESSAGES;
     return entity.firstName || entity.username || 'Unknown';
   }
   if (entity instanceof Api.Chat || entity instanceof Api.Channel) {
@@ -2123,6 +2248,7 @@ export async function removeChatFromFolder(
 
 function getChatTitleFromEntity(entity: Api.User | Api.Chat | Api.Channel | Api.ChatForbidden | Api.ChannelForbidden): string {
   if (entity instanceof Api.User) {
+    if (entity.self) return SAVED_MESSAGES;
     return entity.firstName || entity.username || 'Unknown User';
   }
   if (entity instanceof Api.Chat || entity instanceof Api.Channel) {
@@ -2722,7 +2848,7 @@ export async function getPinnedMessages(
         date: new Date(msg.date * 1000),
         sender: (await resolveSender(client, msg)).sender,
         text: messageText(msg),
-        isOutgoing: msg.out ?? false,
+        isOutgoing: await isFromSelf(client, msg),
         media: shownMediaInfo(msg),
         buttons: extractButtons(msg),
       });

@@ -331,12 +331,11 @@ export function formatInbox(chats: ChatInfo[], previewMax = 50, totals?: { chats
   const lines: string[] = [];
   lines.push(chalk.bold(`\n${unreadChats.length} chats with unread messages:\n`));
 
-  // Sort by unread count descending
-  unreadChats.sort((a, b) => b.unreadCount - a.unreadCount);
-
+  // The order the inbox command chose (unmuted first)
   for (const chat of unreadChats) {
     const typeIcon = getTypeIcon(chat.type);
-    lines.push(`${typeIcon} ${chalk.bold(chat.title)}: ${chalk.red(chat.unreadCount)} unread`);
+    const muted = chat.muted ? chalk.gray(' (muted)') : '';
+    lines.push(`${typeIcon} ${chalk.bold(chat.title)}: ${chalk.red(chat.unreadCount)} unread${muted}`);
 
     if (chat.lastMessage && previewMax > 0) {
       const preview = chat.lastMessage.substring(0, 50).replace(/\n/g, ' ');

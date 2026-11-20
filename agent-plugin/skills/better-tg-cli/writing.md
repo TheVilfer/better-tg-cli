@@ -17,7 +17,9 @@ account (`TG_MOCK`, approvals rehearsed with `TG_MOCK_ASK=1`), in UTC.
 ## Write modes
 
 `telegram write-access` (over MCP `telegram_read {"args":["write-access","--json"]}`) shows the
-mode; its JSON has `writeMode`.
+mode; its JSON has `writeMode` and `writes` (`without-confirmation`, `with-approval` or `off`).
+`telegram check` puts the same on its own line, e.g. `Writes: ON — messages are sent without
+confirmation`.
 
 | Mode | A write… | Next step for you |
 |---|---|---|

@@ -5,7 +5,7 @@ import { formatMediaLabel } from '../formatters/plain.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { assertLocalWriteAllowed } from '../guard.js';
-import { CliError, EXIT, fail } from '../errors.js';
+import { CliError, EXIT, fail, shellCommand } from '../errors.js';
 import { positiveInt } from '../args.js';
 
 export const downloadCommand = new Command('download')
@@ -25,8 +25,9 @@ export const downloadCommand = new Command('download')
 
       if (!result) {
         await disconnectClient();
+        const command = ['get', chat, String(messageId)];
         fail(new CliError(`Message #${messageId} has no downloadable media`, 'no_media', EXIT.ERROR, {
-          hint: `Check the message: telegram get "${chat}" ${messageId} (media shows as [photo …] or [document …]).`,
+          hint: `Check the message: ${shellCommand(command)} (media shows as [photo …] or [document …]).`, command,
         }), spinner, 'Nothing to download');
       }
 

@@ -35,7 +35,7 @@ export const EXIT_DESCRIBED = 4;
 function stop(error: CliError, argv: string[] = process.argv.slice(2), prose?: string): never {
   if (wantsJson(argv)) console.log(errorJson(errorDetails(error)));
   console.error(chalk.red(prose ?? error.summary));
-  if (error.hint && prose === undefined) console.error(chalk.gray(typeof error.hint === 'string' ? error.hint : error.hint.join(' ')));
+  if (error.hint && prose === undefined) console.error(chalk.gray(error.hint));
   process.exit(error.exitCode);
 }
 
@@ -137,7 +137,7 @@ interface Scope {
  * no code. It keeps the code and exit code of the error behind it (an ambiguous name stays a usage
  * error, exit 2), or `nothing_to_approve`, exit 1.
  */
-type Why = { code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint; retryAfterSeconds?: number };
+type Why = { code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint; command?: string[]; retryAfterSeconds?: number };
 const nothingToApprove = (argv: string[], text: string, why: Why = {}): never => {
   const known = why.code && why.code !== 'error';
   // JSON: the error's own message, candidates and hint as fields; the prose: the whole text as one
@@ -146,6 +146,7 @@ const nothingToApprove = (argv: string[], text: string, why: Why = {}): never =>
     known ? why.code! : 'nothing_to_approve', known ? why.exitCode ?? EXIT.ERROR : EXIT.ERROR,
     {
       ...(why.candidates ? { candidates: why.candidates } : {}), ...(why.hint ? { hint: why.hint } : {}),
+      ...(why.command ? { command: why.command } : {}),
       // A rate limit says how long to wait, as any other failed command does
       ...(why.retryAfterSeconds !== undefined ? { retryAfterSeconds: why.retryAfterSeconds } : {}),
     });
@@ -171,9 +172,9 @@ async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope>
     // A process.exit() already on its way (installDrainingExit) keeps its code
     if (e instanceof ExitSignal) throw e;
     // Not logged in (5), no network (1) …: the write could not run either
-    const { code, exitCode, message, hint, retryAfterSeconds } = errorDetails(e);
+    const { code, exitCode, message, hint, command, retryAfterSeconds } = errorDetails(e);
     stop(new CliError(`Not sent: could not look up the recipient (${oneLine(message)}).`, code, exitCode, {
-      ...(hint ? { hint } : {}), ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      ...(hint ? { hint } : {}), ...(command ? { command } : {}), ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     }), argv);
   }
   // Every recipient is approved as the ID it resolves to; one that does not resolve (the write

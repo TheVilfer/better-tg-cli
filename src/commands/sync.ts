@@ -18,7 +18,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'path';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { assertLocalWriteAllowed } from '../guard.js';
-import { CliError, EXIT, errorDetails, fail, usageError } from '../errors.js';
+import { CliError, EXIT, errorDetails, fail, shellCommand, usageError } from '../errors.js';
 import { positiveInt, timeArg } from '../args.js';
 import { formatJson } from '../formatters/json.js';
 
@@ -148,7 +148,8 @@ export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolea
 }
 
 function notFound(message: string, name: string): CliError {
-  return new CliError(message, 'chat_not_found', EXIT.ERROR, { hint: ['chats', '-q', name.replace(/^@/, ''), '--preview', '0'] });
+  const command = ['chats', '-q', name.replace(/^@/, ''), '--preview', '0'];
+  return new CliError(message, 'chat_not_found', EXIT.ERROR, { hint: `List matching chats: ${shellCommand(command)}`, command });
 }
 
 /** Stops the whole sync: a write would leave the export folder through a symbolic link. */

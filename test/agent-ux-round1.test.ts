@@ -142,13 +142,16 @@ describe('8 links, candidates and hints', () => {
     expect(oneJson(invite.out).error.code).toBe('invalid_argument');
   }, 60_000);
 
-  it('candidates carry id, title and type only; the hint is an argv with --preview 0', () => {
+  it('candidates carry id, title and type only; the hint is prose, the command an argv with --preview 0', () => {
     const ambiguous = oneJson(cli(['read', 'Tea', '--json']).out).error;
     for (const c of ambiguous.candidates) expect(Object.keys(c).sort()).toEqual(['id', 'title', 'type']);
     expect(cli(['read', 'Tea']).err).not.toMatch(/@mock_team/);
     const name = `it's "odd" $(x)`;
     const notFound = oneJson(cli(['read', name, '--json']).out).error;
-    expect(notFound.hint).toEqual(['chats', '-q', name, '--preview', '0']);
+    expect(notFound.command).toEqual(['chats', '-q', name, '--preview', '0']);
+    expect(typeof notFound.hint).toBe('string');
+    expect(notFound.hint).toContain(`telegram chats -q 'it'\\''s "odd" $(x)' --preview 0`);
+    expect(typeof ambiguous.hint).toBe('string');
     expect(cli(['read', name]).err).toContain(`telegram chats -q 'it'\\''s "odd" $(x)' --preview 0`);
   }, 30_000);
 });
@@ -197,7 +200,7 @@ describe('7 --topic: bot forums count, and an empty unread page is checked like 
   it('an empty --unread page still names its chat', () => {
     const r = cli(['read', 'me', '--unread', '--json']);
     expect(r.code).toBe(0);
-    expect(oneJson(r.out)).toEqual({ chatTitle: 'Mock', chatId: '1000', messages: [] });
+    expect(oneJson(r.out)).toEqual({ chatTitle: 'Saved Messages', chatId: '1000', messages: [] });
   }, 30_000);
 });
 
@@ -217,12 +220,12 @@ describe('11 hasMore only when a next page was seen', () => {
 
   it('search: exactly limit results is the end; one less says more exist', () => {
     // An empty query matches every message: fewer than the default 50
-    const all = JSON.parse(cli(['search', '', '--json']).out)[0].messages.length;
+    const all = JSON.parse(cli(['search', '', '--json']).out).messages.length;
     expect(all).toBeGreaterThan(1);
-    expect(JSON.parse(cli(['search', '', '-n', String(all), '--json']).out)[0].hasMore).toBeUndefined();
-    expect(JSON.parse(cli(['search', '', '-n', String(all - 1), '--json']).out)[0].hasMore).toBe(true);
-    const inChat = JSON.parse(cli(['search', '', '--chat', 'Team', '--json']).out)[0].messages.length;
-    expect(JSON.parse(cli(['search', '', '--chat', 'Team', '-n', String(inChat), '--json']).out)[0].hasMore).toBeUndefined();
+    expect(JSON.parse(cli(['search', '', '-n', String(all), '--json']).out).hasMore).toBeUndefined();
+    expect(JSON.parse(cli(['search', '', '-n', String(all - 1), '--json']).out).hasMore).toBe(true);
+    const inChat = JSON.parse(cli(['search', '', '--chat', 'Team', '--json']).out).messages.length;
+    expect(JSON.parse(cli(['search', '', '--chat', 'Team', '-n', String(inChat), '--json']).out).hasMore).toBeUndefined();
   }, 30_000);
 });
 
