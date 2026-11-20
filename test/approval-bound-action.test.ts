@@ -173,6 +173,29 @@ describe('every recipient, in every role, is approved as the ID it resolves to',
     expect(ok(['api', 'messages.MarkDialogUnread', '-p', params], { approve: code(again) }).code).toBe(0);
     expect((ok.chat(1001) as any).markedUnread).toBe(true);
   });
+
+  it('api: a peer inside a constructor with an empty "_" (inferred from the schema, as teleproto does) is bound too', () => {
+    const cli = account();
+    const code = (r: { err: string }) => /TG_APPROVE=([A-Z2-9]{6})/.exec(r.err)![1];
+    const params = JSON.stringify({ folderPeers: [{ _: '', peer: '@alice_example', folderId: 1 }] });
+    const asked = cli(['api', 'folders.EditPeerFolders', '-p', params]);
+    expect(asked.code).toBe(3);
+    expect(asked.err).toMatch(/Chat in params\.folderPeers.*peer: Alice Example \(user, @alice_example, id 1001\)/);
+    // A constructor with no "_" at all is inferred the same way
+    const noTag = cli(['api', 'folders.EditPeerFolders', '-p', JSON.stringify({ folderPeers: [{ peer: '@alice_example', folderId: 1 }] })]);
+    expect(noTag.err).toMatch(/Chat in params\.folderPeers.*peer: Alice Example/);
+    // The username moves to Bob: the approved call must not archive Bob's chat
+    edit(cli, swapUsername(1001, 1002));
+    const r = cli(['api', 'folders.EditPeerFolders', '-p', params], { approve: code(asked) });
+    expect(r.code).toBe(3);
+    expect(r.err).toContain('not accepted: the approval was for a different command or text');
+    expect((cli.chat(1002) as any).archived).toBeUndefined();
+    // Unchanged, the approved call archives the chat that was shown
+    const ok = account();
+    const again = ok(['api', 'folders.EditPeerFolders', '-p', params]);
+    expect(ok(['api', 'folders.EditPeerFolders', '-p', params], { approve: code(again) }).code).toBe(0);
+    expect((ok.chat(1001) as any).archived).toBe(true);
+  });
 });
 
 describe('delete touches only messages of the chat the person saw', () => {

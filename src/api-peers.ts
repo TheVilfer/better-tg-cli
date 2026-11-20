@@ -25,9 +25,12 @@ for (const d of apiDefinitions as unknown as Def[]) {
   byResult.set(d.result, [...(byResult.get(d.result) ?? []), d]);
 }
 
-/** The constructor teleproto builds a plain params object into (by its `_` tag, or the only one of its type). */
+/**
+ * The constructor teleproto builds a plain params object into: by its `_` tag, or, when the tag is
+ * missing or empty (teleproto tests it for truth, not for presence), the only constructor of its type.
+ */
 function constructorOf(obj: Record<string, unknown>, type: string | null): Def | undefined {
-  if (typeof obj._ === 'string') return byTag.get(obj._);
+  if (obj._) return typeof obj._ === 'string' ? byTag.get(obj._) : undefined;
   const candidates = type ? byResult.get(type) : undefined;
   return candidates?.length === 1 ? candidates[0] : undefined;
 }
