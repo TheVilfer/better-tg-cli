@@ -52,6 +52,9 @@ folder and contacts.
   their signing key stay in the mock profile as files; no secret store is touched. Over MCP
   (`TG_MOCK=1 TG_MOCK_ASK=1 telegram mcp`) the same flow runs through `telegram_write`, with or
   without the client's dialog. `test/approval-ux.test.ts` and `test/mcp-approval.test.ts` use it.
+- **Rehearsing failures: `TG_MOCK_FAIL=network|FLOOD_WAIT_<n>|<RPC_ERROR>`** makes the mock's
+  `getMe` and `getEntity` throw as teleproto would (no connection, a rate limit, any RPC error).
+  A media of a mock message with `downloadFails: true` fails to download.
 - **Not covered:** `watch`, polls, stories, inline bots, admin actions (kick, promote, create,
   join, leave) and profile edits. They fail with `mock: … is not implemented`; add a handler to
   `MockClient.invoke()`, or test them against a dev profile.

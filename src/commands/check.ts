@@ -118,13 +118,30 @@ export const checkCommand = new Command('check')
       await disconnectClient();
     } catch (error) {
       const details = errorDetails(error);
+      // Only an ended session (exit 5) is a reason to log in again; no network or a rate limit
+      // says nothing about the session
+      const ended = details.exitCode === EXIT.NOT_LOGGED_IN;
       if (json) {
         spinner.stop();
-        console.log(JSON.stringify({ configured: true, authenticated: false, ...base, error: { code: details.code, message: details.message } }));
+        console.log(JSON.stringify({
+          configured: true, authenticated: false, ...base,
+          error: {
+            code: details.code, message: details.message,
+            ...(details.hint ? { hint: details.hint } : {}),
+            ...(details.retryAfterSeconds !== undefined ? { retryAfterSeconds: details.retryAfterSeconds } : {}),
+          },
+        }));
+        process.exit(details.exitCode);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (!ended) {
+        spinner.fail(chalk.red(details.code === 'flood_wait' ? 'Could not check the session: Telegram rate limit' : 'Could not check the session'));
+        console.error(details.message);
+        if (details.hint) console.error(typeof details.hint === 'string' ? details.hint : details.hint.join(' '));
+        console.error('The stored login was not judged; this is no reason to log in again.');
         process.exit(details.exitCode);
       }
       spinner.fail(chalk.red('Session invalid or expired'));
-      const message = error instanceof Error ? error.message : String(error);
       console.error(message);
       if (!message.includes(loginHint())) console.log(`\n${loginHint()}`);
       process.exit(details.exitCode);

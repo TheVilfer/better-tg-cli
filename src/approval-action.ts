@@ -84,7 +84,7 @@ import type { ChatCandidate, Hint } from './errors.js';
 
 export type PeerInfo =
   | { ok: true; id: string; title: string; type: string; username?: string; self?: boolean }
-  | { ok: false; error: string; code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint };
+  | { ok: false; error: string; code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint; retryAfterSeconds?: number };
 
 interface Descriptor {
   verb: string;

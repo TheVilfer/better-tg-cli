@@ -136,14 +136,18 @@ interface Scope {
  * no code. It keeps the code and exit code of the error behind it (an ambiguous name stays a usage
  * error, exit 2), or `nothing_to_approve`, exit 1.
  */
-type Why = { code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint };
+type Why = { code?: string; exitCode?: number; message?: string; candidates?: ChatCandidate[]; hint?: Hint; retryAfterSeconds?: number };
 const nothingToApprove = (argv: string[], text: string, why: Why = {}): never => {
   const known = why.code && why.code !== 'error';
   // JSON: the error's own message, candidates and hint as fields; the prose: the whole text as one
   // line, since it may quote what was typed and must never act on the terminal
   const error = new CliError(`Not sent, nothing to approve: ${oneLine(why.message ?? text)}`,
     known ? why.code! : 'nothing_to_approve', known ? why.exitCode ?? EXIT.ERROR : EXIT.ERROR,
-    { ...(why.candidates ? { candidates: why.candidates } : {}), ...(why.hint ? { hint: why.hint } : {}) });
+    {
+      ...(why.candidates ? { candidates: why.candidates } : {}), ...(why.hint ? { hint: why.hint } : {}),
+      // A rate limit says how long to wait, as any other failed command does
+      ...(why.retryAfterSeconds !== undefined ? { retryAfterSeconds: why.retryAfterSeconds } : {}),
+    });
   return stop(error, argv, `Not sent, nothing to approve: ${oneLine(text)}`);
 };
 
@@ -165,8 +169,10 @@ async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope>
     // A process.exit() already on its way (installDrainingExit) keeps its code
     if (e instanceof ExitSignal) throw e;
     // Not logged in (5), no network (1) …: the write could not run either
-    const { code, exitCode, message, hint } = errorDetails(e);
-    stop(new CliError(`Not sent: could not look up the recipient (${oneLine(message)}).`, code, exitCode, hint ? { hint } : {}), argv);
+    const { code, exitCode, message, hint, retryAfterSeconds } = errorDetails(e);
+    stop(new CliError(`Not sent: could not look up the recipient (${oneLine(message)}).`, code, exitCode, {
+      ...(hint ? { hint } : {}), ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    }), argv);
   }
   // Every recipient is approved as the ID it resolves to; one that does not resolve (the write
   // would fail, or find someone else) gets no code

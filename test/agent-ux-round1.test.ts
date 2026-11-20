@@ -360,3 +360,11 @@ describe('sync --media: a failed download is a failure that --resume retries', (
     expect(existsSync(join(out, 'media', '1001'))).toBe(true);
   }, 30_000);
 });
+
+describe('the write guard keeps how long to wait', () => {
+  it('a rate limit while looking up the recipient: flood_wait, exit 1, retryAfterSeconds in the JSON error', () => {
+    const r = cli(['send', '@alice_example', 'hi', '--json'], { TG_MOCK_ASK: '1', TG_MOCK_FAIL: 'FLOOD_WAIT_30' });
+    expect(r.code).toBe(1);
+    expect(oneJson(r.out).error).toMatchObject({ code: 'flood_wait', retryAfterSeconds: 30 });
+  }, 30_000);
+});

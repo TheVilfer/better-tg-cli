@@ -147,10 +147,12 @@ export class MockClient {
   }
 
   async getMe(): Promise<Api.User> {
+    mockFailure();
     return this.user(this.findUser(this.world.me)!);
   }
 
   async getEntity(like: unknown): Promise<Entity> {
+    mockFailure();
     const { chat, user } = this.locate(like);
     if (chat) return this.entityOf(chat);
     if (user) return this.user(user);
@@ -1116,4 +1118,16 @@ export function createMockClient(path = mockStatePath()): TelegramClient {
     process.stderr.write('MOCK MODE (TG_MOCK): fake account, nothing reaches Telegram\n');
   }
   return new MockClient(loadWorld(path), world => saveWorld(world, path)) as unknown as TelegramClient;
+}
+
+/**
+ * TG_MOCK_FAIL rehearses a Telegram that cannot answer: `network` (no connection) or an RPC error
+ * such as `FLOOD_WAIT_30`, thrown by getMe and getEntity the way teleproto throws them.
+ */
+function mockFailure(): void {
+  const fail = process.env.TG_MOCK_FAIL;
+  if (!fail) return;
+  if (fail === 'network') throw Object.assign(new Error('connect ETIMEDOUT 149.154.167.50:443'), { code: 'ETIMEDOUT' });
+  const flood = /^FLOOD_WAIT_(\d+)$/.exec(fail);
+  throw Object.assign(new Error(`RPCError 420: ${fail}`), flood ? { errorMessage: 'FLOOD_WAIT', seconds: Number(flood[1]) } : { errorMessage: fail });
 }
