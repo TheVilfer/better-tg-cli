@@ -63,6 +63,16 @@ describe('over MCP without a dialog, "approval needed" is a result, not an error
     // Still approvable: the same call with the code sends the code as written
     const sent = await handleMessage(call({ args: ['send', '-1004001', 'Login code: 52813'], approval: login.result.structuredContent!.code }), run) as Reply;
     expect(sent.result.isError).toBeUndefined();
+    expect(sent.result.content[0].text).toMatch(/Message ID: \d+/);
+  });
+
+  it('masks only a code the call carries, never the guard\'s own wording (a plain call, a wrong approval)', async () => {
+    const plain = await handleMessage(call({ args: ['send', '-1004001', 'hi'] }), run) as Reply;
+    expect(plain.result.structuredContent!.status).toBe('approval_required');
+    const wrong = await handleMessage(call({ args: ['send', '-1004001', 'hi'], approval: 'ZZZZZZ' }), run) as Reply;
+    const other = await handleMessage(call({ args: ['send', '-1004001', 'bye'], approval: plain.result.structuredContent!.code }), run) as Reply;
+    for (const r of [plain, wrong, other]) expect(JSON.stringify(r.result)).not.toContain('hidden]');
+    expect(other.result.structuredContent!.rejected).toBeDefined();
   });
 
   it('has the code, the action and the exact retry call as structured content, and only MCP instructions as text', async () => {
