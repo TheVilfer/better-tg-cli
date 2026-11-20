@@ -268,7 +268,9 @@ async function requireApproval(argv: string[], opts: GuardOptions): Promise<void
   const mcp = !!process.env.TG_MCP;
   // Over MCP this description goes to the model only (the user's dialog comes from the describe run):
   // every value masked before it is escaped, as the MCP server could not do on the finished text
-  const description = describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines, mcp ? t => maskForModel(t, 'echo') : undefined);
+  const description = mcp
+    ? describeParsedAction(scope.action, scope.peers, shown, scope.prepared.modelLines ?? scope.prepared.lines, t => maskForModel(t, 'echo'))
+    : describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines);
   const retry = mcp
     ? undefined // the MCP server knows the exact tool call and adds it
     : { argv: ['telegram', ...argv], env: { TG_APPROVE: code } };

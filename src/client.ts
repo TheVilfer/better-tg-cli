@@ -552,7 +552,7 @@ function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFro
 export { LOGIN_CODE_HIDDEN };
 
 /** Keys whose strings are IDs, hashes, dates or type tags rather than message content. */
-const NOT_CONTENT_KEY = /^(className|_|type|kind|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
+const NOT_CONTENT_KEY = /^(className|_|type|kind|mimeType|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
 
 /**
  * Plain data with every gift-code link masked and, for a login-service message (`login`), every
@@ -647,6 +647,11 @@ function rawButtonLayout(msg: Api.Message): ButtonLayout | undefined {
   return { isInline, rows };
 }
 
+/** The media of a message as it is shown (over MCP, its file name masked as the message text is). */
+function shownMediaInfo(msg: Api.Message): MediaInfo | undefined {
+  return maskedForMcp(msg, extractMediaInfo(msg));
+}
+
 function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
   const media = msg.media;
   if (!media) return undefined;
@@ -726,7 +731,7 @@ export async function toMessageInfo(client: TelegramClient, msg: Api.Message, op
     text: messageText(msg),
     replyToMsgId: msg.replyTo?.replyToMsgId,
     isOutgoing: msg.out ?? false,
-    media: extractMediaInfo(msg),
+    media: shownMediaInfo(msg),
     buttons: extractButtons(msg),
     replies: msg.replies?.replies || undefined,
   };
@@ -2458,19 +2463,22 @@ export async function findButton(
       hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
     });
   }
-  const { rawInfo, ...shown } = match;
   // The approval binds to the button as the message carries it: over MCP two versions of a button can
   // look the same once masked (a hidden payload, a masked gift link) while they send different bytes
-  return { entity, msg, layout, ...shown, fingerprint: buttonFingerprint(rawInfo) };
+  return { entity, msg, layout, ...match, fingerprint: buttonFingerprint(match.rawInfo) };
 }
 
-/** A button a click would press: `info` is what is shown, `fingerprint` binds the unmasked button. */
+/**
+ * A button a click would press: `info` is what the model is shown (masked over MCP), `rawInfo` the
+ * button as the message carries it (for the person approving), `fingerprint` binds `rawInfo`.
+ */
 export interface FoundButton {
   entity: ResolvedEntity;
   msg: Api.Message;
   layout: ButtonLayout;
   raw: RawButton;
   info: ButtonInfo;
+  rawInfo: ButtonInfo;
   fingerprint: string;
 }
 
@@ -2709,7 +2717,7 @@ export async function getPinnedMessages(
         sender: (await resolveSender(client, msg)).sender,
         text: messageText(msg),
         isOutgoing: msg.out ?? false,
-        media: extractMediaInfo(msg),
+        media: shownMediaInfo(msg),
         buttons: extractButtons(msg),
       });
     }
@@ -3550,10 +3558,19 @@ function plainJsonValue(val: unknown): unknown {
  * quote and a link preview.
  */
 function maskLoginServiceJson(val: Record<string, unknown>): Record<string, unknown> {
-  const plain = JSON.parse(JSON.stringify(val, function (this: Record<string, unknown>, k: string, v: unknown) {
-    return this[k] instanceof Uint8Array ? LOGIN_CODE_HIDDEN : plainJsonValue(v);
+  // An array's strings are read under the key that holds the array (recentReactors: […])
+  const arrayKey = new WeakMap<object, string>();
+  return JSON.parse(JSON.stringify(val, function (this: Record<string, unknown>, k: string, v: unknown) {
+    const orig = this[k];
+    if (orig instanceof Uint8Array) return LOGIN_CODE_HIDDEN;
+    // A big integer (an ID, a size; its toJSON already made it a string) is a number, not content
+    if (typeof orig === 'bigint' || bigInt.isInstance(orig)) return plainJsonValue(orig);
+    const plain = plainJsonValue(v);
+    if (plain !== v) return plain;
+    if (typeof v === 'string') return maskContent(v, true, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
+    if (Array.isArray(v)) arrayKey.set(v, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
+    return v;
   })) as Record<string, unknown>;
-  return maskContent(plain, true);
 }
 
 /** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
@@ -3579,9 +3596,9 @@ export function serializeApiResult(result: unknown): string {
       || (type === 'updateshortmessage' && LOGIN_SERVICE_USER_IDS.has(String(obj.userId)))) {
       return maskLoginServiceJson(obj);
     }
-    // A quote of a login-service message, in a message of another chat
-    if (type === 'messagereplyheader' && typeof obj.quoteText === 'string' && isLoginServicePeer(obj.replyToPeerId)) {
-      return { ...obj, quoteText: maskLoginCodes(obj.quoteText) };
+    // A quote of a login-service message, in a message of another chat: its text and entities
+    if (type === 'messagereplyheader' && isLoginServicePeer(obj.replyToPeerId)) {
+      return maskLoginServiceJson(obj);
     }
     return val;
   };

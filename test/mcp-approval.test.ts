@@ -129,6 +129,66 @@ describe('over MCP without a dialog, "approval needed" is a result, not an error
   });
 });
 
+describe('click: the human sees the real button, the model a masked one (finding 9)', () => {
+  const GIFT_URL = 'https://t.me/giftcode/SAMPLE_ONLY';
+  const withGiftButton = async () => {
+    const { seedWorld, saveWorld } = await import('../src/mock/world.js');
+    const world = seedWorld();
+    const team = world.chats.find(c => c.id === 4001)!;
+    const id = Math.max(...team.messages.map(m => m.id)) + 1;
+    team.messages.push({ id, ago: 60, from: 1001, text: 'Your gift', buttons: [[{ text: 'Open gift', url: GIFT_URL }]] });
+    saveWorld(world, process.env.TG_MOCK!);
+    setKnownCommands(['send', 'read', 'click']);
+    return ['click', '-1004001', String(id), '1'];
+  };
+
+  it('the describe run (the dialog) shows the real link, the approval copy for the model hides it', async () => {
+    const argv = await withGiftButton();
+    const d = await describeWithCli({ argv, readOnly: false, stdin: '' }, spawnCli);
+    expect(d).toMatchObject({ description: expect.stringContaining(`Pressing: #1 "Open gift": a link button (url), nothing is sent; it shows "${GIFT_URL}"`) });
+    const r = await handleMessage(call({ args: argv }), run) as Reply;
+    expect(r.result.structuredContent!.status).toBe('approval_required');
+    expect(JSON.stringify(r.result)).not.toContain('SAMPLE_ONLY');
+    expect(r.result.structuredContent!.action.description).toContain('it shows "https://t.me/giftcode/[gift code hidden]"');
+  });
+
+  it('the elicitation text has the real link; what the model gets back has not', async () => {
+    const argv = await withGiftButton();
+    const asked: string[] = [];
+    const r = await handleMessage(call({ args: argv }), run, {
+      elicit: async m => (asked.push(m), true),
+      describe: p => describeWithCli(p, spawnCli),
+    }) as Reply;
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain(`it shows "${GIFT_URL}"`);
+    expect(JSON.stringify(r.result)).not.toContain('SAMPLE_ONLY');
+  });
+});
+
+describe('a document from 777000 keeps its code out of read in every view (finding 5)', () => {
+  it('read plain, --json and --json --full: no file name with the code, the message id a number', async () => {
+    const { seedWorld, saveWorld } = await import('../src/mock/world.js');
+    const world = seedWorld();
+    world.users.push({ id: 777000, firstName: 'Telegram' });
+    world.chats.push({ id: 777000, kind: 'user', messages: [
+      { id: 5, ago: 60, from: 777000, text: 'Your file', media: { kind: 'document', fileName: 'Login code: 52813.txt', mimeType: 'text/plain', size: 52813 } },
+    ] });
+    saveWorld(world, process.env.TG_MOCK!);
+    for (const extra of [[], ['--json'], ['--json', '--full']]) {
+      const r = await spawnCli({ argv: ['read', '777000', '-n', '5', ...extra], readOnly: true });
+      expect(r.code, extra.join(' ') + r.err).toBe(0);
+      expect(r.out, extra.join(' ')).not.toContain('52813.txt');
+      expect(r.out, extra.join(' ')).toContain('[login code hidden]');
+      if (extra.length) {
+        const parsed = JSON.parse(r.out);
+        const msg = (parsed.messages ?? parsed).find((m: { id: number }) => m.id === 5);
+        expect(msg.id).toBe(5);
+        expect(msg.media).toMatchObject({ kind: 'document', size: 52813 });
+      }
+    }
+  });
+});
+
 describe('the dialog shows who gets the write, by name (5.2)', () => {
   const describe_ = (p: Plan) => describeWithCli(p, spawnCli);
 
@@ -213,6 +273,45 @@ describe('login codes stay out of what the model gets on every write path (maski
       // The approval covers the raw value: the same call with the code sends it as written
       const sent = await handleMessage(call({ ...c, approval: s.code }), run) as Reply;
       expect(sent.result.isError).toBeUndefined();
+    }
+  });
+
+  it('the body sent after approval is the raw text byte for byte, and a changed digit needs a new code (finding 10)', async () => {
+    const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+    setKnownCommands(['send', 'read', 'send-file']);
+    const file = join(env.root, 'note.txt');
+    writeFileSync(file, 'hello');
+    const lastSent = () => {
+      if (!existsSync(process.env.TG_MOCK!)) return undefined;
+      const world = JSON.parse(readFileSync(process.env.TG_MOCK!, 'utf8')) as { chats: { id: number; messages: { id: number; out?: boolean; text: string }[] }[] };
+      const team = world.chats.find(c => c.id === 4001)!;
+      return team.messages.filter(m => m.out).sort((a, b) => b.id - a.id)[0]?.text;
+    };
+    const cases = [
+      { c: { args: ['send', '-1004001', 'Login code:\n52813'] }, body: 'Login code:\n52813' },
+      { c: { args: ['send', '-1004001', '-'], stdin: 'Login code:\r\n52813' }, body: 'Login code:\r\n52813' },
+      { c: { args: ['send', '-1004001', '-'], stdin: 'Login code:\t52813' }, body: 'Login code:\t52813' },
+      { c: { args: ['send-file', '-1004001', file, '-c', 'Login code:\n52813'] }, body: 'Login code:\n52813' },
+    ];
+    for (const { c, body } of cases) {
+      const label = JSON.stringify(c);
+      const before = lastSent();
+      const changed = JSON.parse(label.replace('52813', '52814')) as typeof c;
+      // One digit changed under the code for the original: refused as another action (the code burns), nothing sent
+      const code0 = ((await handleMessage(call(c), run)) as Reply).result.structuredContent!.code as string;
+      const swapped = await handleMessage(call({ ...changed, approval: code0 }), run) as Reply;
+      expect(swapped.result.structuredContent, label).toMatchObject({ status: 'approval_required', rejected: { reason: 'different_action' } });
+      expect(lastSent()).toBe(before);
+      // A fresh code: the call as approved sends exactly the raw body
+      const code = ((await handleMessage(call(c), run)) as Reply).result.structuredContent!.code as string;
+      const sent = await handleMessage(call({ ...c, approval: code }), run) as Reply;
+      expect(sent.result.isError, label).toBeUndefined();
+      expect(sent.result.content[0].text, label).toMatch(/Message ID: \d+/);
+      expect(lastSent()).toBe(body);
+      // The same code again for the changed body: refused, nothing more sent
+      const again = await handleMessage(call({ ...changed, approval: code }), run) as Reply;
+      expect(again.result.structuredContent, label).toMatchObject({ status: 'approval_required', rejected: { code } });
+      expect(lastSent()).toBe(body);
     }
   });
 

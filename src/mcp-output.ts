@@ -10,7 +10,7 @@
  *   Gift links, then a login code spelled out after a "code:" label.
  * - `service`: a message of the login-code service accounts (777000, 489000; src/client.ts knows the
  *   sender). Additionally every run of letters and digits that holds a digit and is four characters
- *   or longer, and digit groups joined by a space or a dash.
+ *   or longer, and digit groups joined by runs of spaces, tabs or dashes.
  *
  * Gift links always go first: the login-code mask would take the "tg" of
  * "Gift code: tg://giftcode?slug=…" and leave a slug the gift mask no longer recognizes.
@@ -25,29 +25,30 @@ export const LOGIN_CODE_HIDDEN = '[login code hidden]';
 export type MaskLevel = 'chat' | 'echo' | 'service';
 
 /**
- * A gift link up to its code: the path segment after `/giftcode/`, or the query of `tg://giftcode?`.
- * Each part is one greedy class with no overlap, so a scan never goes back over the rest of the
- * string, however many link starts it holds. A value ends at whitespace, a quote, a bracket, a
- * backslash (JSON escapes) or `|`; percent-encoding (`%53`) is part of it.
+ * A gift slug as a client writes it: slug characters (`[A-Za-z0-9_-]`, percent-encoding `%53` too).
+ * It ends at the first other character, so punctuation and whatever follows it
+ * ("…/SAMPLE_ONLY,thanks") stay. One class, one pass, nothing given back.
  */
-const GIFT_LINK = /((?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/giftcode\/)([^\s/?#&"'<>()[\]{}\\|]+)|(tg:(?:\/\/)?giftcode\/?\?)([^\s"'<>()[\]{}\\|]*)/gi;
+const SLUG = '[A-Za-z0-9_%-]+';
 
-/** A `slug` parameter in a query (`&amp;` of HTML too) up to its end. */
-const SLUG_PARAM = /(^|[?&;])(slug=)([^&#;]+)/gi;
+/**
+ * A gift link up to its code: the slug after `/giftcode/`, or the query of `tg://giftcode?` (its
+ * `slug=` value is hidden by SLUG_PARAM). The query ends at whitespace, a quote, a bracket, a
+ * backslash (JSON escapes) or `|`.
+ */
+const GIFT_LINK = new RegExp(
+  String.raw`((?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/giftcode\/)(${SLUG})|(tg:(?:\/\/)?giftcode\/?\?)([^\s"'<>()[\]{}\\|]*)`,
+  'gi',
+);
 
-/** Trailing sentence punctuation after a link is not part of the code and stays. */
-const TRAILING = /[.,;:!?]+$/;
-
-function hideValue(value: string): string {
-  const tail = TRAILING.exec(value)?.[0] ?? '';
-  return value.length > tail.length ? GIFT_CODE_HIDDEN + tail : value;
-}
+/** A `slug` parameter in a query (`&amp;` of HTML too): its value as SLUG reads it. */
+const SLUG_PARAM = new RegExp(String.raw`(^|[?&;])(slug=)(${SLUG})`, 'gi');
 
 /** Text with the code of every gift link replaced (the whole slug, percent-encoding included). */
 export function maskGiftCodes(text: string): string {
-  return text.replace(GIFT_LINK, (_all, path?: string, slug?: string, tg?: string, query?: string) => {
-    if (path !== undefined) return path + hideValue(slug!);
-    return tg! + query!.replace(SLUG_PARAM, (_m, lead: string, key: string, v: string) => lead + key + hideValue(v));
+  return text.replace(GIFT_LINK, (_all, path?: string, _slug?: string, tg?: string, query?: string) => {
+    if (path !== undefined) return path + GIFT_CODE_HIDDEN;
+    return tg! + query!.replace(SLUG_PARAM, (_m, lead: string, key: string) => lead + key + GIFT_CODE_HIDDEN);
   });
 }
 
@@ -62,16 +63,33 @@ const SEPARATORS = ':\uFF1A\uFE55\uA789\u2236';
 const GAP = String.raw`(?:[\s|]|\\+(?:[nrtv]|u\{[0-9A-Fa-f]{1,6}\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}))*`;
 
 /**
+ * Russian puts the rest of the label after "код" (`Код для входа в Telegram:`, `Код подтверждения:`).
+ */
+const RU_LABEL_WORDS = '(?:[ \\t\\u00a0]+(?:для|входа|вход|в|telegram|подтверждения|авторизации)){0,4}';
+
+/**
+ * The words that may stand right before "code"/"код" in a login-code label ("Your login code:",
+ * "Telegram verification code:", "Ваш код:"). Any other word there makes it no label: "Promo code:",
+ * "exit code:" stay. No word at all ("Code:", "| Code:") is a label too.
+ */
+const LABEL_WORDS = '(?:login|log-in|sign-in|verification|confirmation|auth|authentication|authorization|security|access|telegram|your|ваш|твой|проверочный)';
+const SPACE = '[ \\t\\u00a0]';
+const LABEL_LEAD = `(?<=(?:^|[^\\p{L}\\p{N}_ \\t\\u00a0-])${SPACE}*|(?<![\\p{L}\\p{N}_-])${LABEL_WORDS}${SPACE}+)`;
+
+/**
  * A login code spelled out after a "code:" label (`Login code: 52813`, `Код для входа в Telegram: 52813`).
- * The label is a word of its own (not the "code" of "Decode", nor of a "[login code hidden]" this
- * mask left, so masking twice changes nothing), up to 40 characters before the colon
- * (`:`, the fullwidth `：`, the small `﹕`, `꞉`, `∶`). The code may sit on the next line, behind the
- * "| " an approval description puts before every line of a text, and is masked whole when split into
- * groups by dashes (ASCII or typographic) or into digit groups by spaces. A URL scheme there
- * ("code: tg://…") is not a code. The $1 group is the lead-in.
+ * The label is the word "code" right before the colon, spaces allowed (`:`, the fullwidth `：`, the
+ * small `﹕`, `꞉`, `∶`); "код" may have the Russian label words between. Nothing else may stand
+ * between ("See code review, message ID: 42" is no label), and the word before "code", if any, is
+ * one of LABEL_WORDS (not the "code" of "Decode", nor "Promo code:"). A placeholder this
+ * mask left ("[login code hidden]") has no colon after "code", so masking twice changes nothing,
+ * while a real label in brackets ("[Login code: 52813]") is masked. The code may sit on the next
+ * line, behind the "| " an approval description puts before every line of a text, and is masked
+ * whole when split into groups by dashes (ASCII or typographic) or into digit groups by spaces. A
+ * URL scheme there ("code: tg://…") is not a code. The $1 group is the lead-in.
  */
 export const LOGIN_CODE_PHRASE = new RegExp(
-  `((?<![\\p{L}\\p{N}_])(?<!\\[(?:gift|login) )(?:code|код)(?![\\p{L}\\p{N}_])[^\\n${SEPARATORS}]{0,40}[${SEPARATORS}]${GAP})` +
+  `(${LABEL_LEAD}(?:code|код${RU_LABEL_WORDS})${SPACE}*[${SEPARATORS}]${GAP})` +
   `(?![A-Za-z0-9_]*:\\/\\/)[A-Za-z0-9_]+(?:[${DASHES}][A-Za-z0-9_]+|[ \\t\\u00a0]+[0-9][A-Za-z0-9_]*)*`,
   'giu',
 );
@@ -81,9 +99,12 @@ export function maskLoginCodePhrases(text: string): string {
   return text.replace(LOGIN_CODE_PHRASE, `$1${LOGIN_CODE_HIDDEN}`);
 }
 
-/** In a service message: a token with a digit, 4+ characters (dashes inside count), or joined digit groups. */
+/**
+ * In a service message: a token with a digit, 4+ characters (dashes inside count), or digit groups
+ * joined by runs of spaces, tabs or dashes ("52  813", "52\t813").
+ */
 const SERVICE_CODE = new RegExp(
-  `(?<![A-Za-z0-9_${DASHES}])(?:(?=[A-Za-z0-9_${DASHES}]*\\d)[A-Za-z0-9_${DASHES}]{4,}|\\d+(?:[ \\u00a0${DASHES}]\\d+)+)(?![A-Za-z0-9_${DASHES}])`,
+  `(?<![A-Za-z0-9_${DASHES}])(?:(?=[A-Za-z0-9_${DASHES}]*\\d)[A-Za-z0-9_${DASHES}]{4,}|\\d+(?:[ \\t\\u00a0${DASHES}]+\\d+)+)(?![A-Za-z0-9_${DASHES}])`,
   'g',
 );
 

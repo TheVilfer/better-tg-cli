@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Api } from 'teleproto';
 import bigInt from 'big-integer';
-import { maskLoginCodes, messageText, serializeApiResult } from '../src/client.js';
+import { buildMessageFull, maskLoginCodes, messageText, serializeApiResult, toMessageInfo } from '../src/client.js';
 import { describeParsedAction, parsedAction } from '../src/approval-action.js';
 import { cliResult, handleMessage, result, setKnownCommands } from '../src/mcp.js';
 import { holdsMaskedValue, maskForModel, maskGiftCodes, maskOutput } from '../src/mcp-output.js';
@@ -197,6 +197,9 @@ describe('the login-code phrase (finding 6)', () => {
       '"a\\'.repeat(50_000),
       `code:${'\\'.repeat(100_000)}`,
       'code:\\\\'.repeat(30_000),
+      `t.me/giftcode/A${'.'.repeat(50_000)}Z`,
+      `tg://giftcode?slug=A${'.'.repeat(50_000)}Z`,
+      `Код${' '.repeat(100_000)}x`,
     ];
     for (const s of hostile) {
       const t = Date.now();
@@ -204,5 +207,114 @@ describe('the login-code phrase (finding 6)', () => {
       maskOutput(s, 'echo');
       expect(Date.now() - t, s.slice(0, 20)).toBeLessThan(2000);
     }
+  });
+});
+
+describe('round 2: narrower code label, exact placeholders, slug end, separator runs', () => {
+  it('C: the label is "code"/"код" right before the colon (Russian label words may follow код)', () => {
+    for (const text of [
+      'See code review, message ID: 42', 'The code we wrote, see ID: 42', 'код ревью, сообщение: 42',
+      'Promo code: SUMMER', 'exit code: 1', 'promo-code: X1', 'Decode: 42',
+    ]) {
+      expect(maskForModel(text, 'echo'), text).toBe(text);
+      expect(holdsMaskedValue(text)).toBe(false);
+    }
+    for (const [text, lead] of [
+      ['Login code: 52813', 'Login code: '],
+      ['Your login code: 52813', 'Your login code: '],
+      ['Telegram verification code:52813', 'Telegram verification code:'],
+      ['Code: 52813', 'Code: '],
+      ['Код для входа в Telegram: 52813', 'Код для входа в Telegram: '],
+      ['Код подтверждения: 52813', 'Код подтверждения: '],
+      ['Код входа : 52813', 'Код входа : '],
+      ['Ваш код: 52813', 'Ваш код: '],
+      ['Approval Login code: 52813', 'Approval Login code: '],
+      ['    | Code: 52813', '    | Code: '],
+    ]) {
+      expect(maskForModel(text, 'echo'), text).toBe(`${lead}[login code hidden]`);
+    }
+  });
+
+  it('D: only the exact placeholders are skipped; a real label in brackets is masked', () => {
+    expect(maskForModel('[Login code: 52813]', 'echo')).toBe('[Login code: [login code hidden]]');
+    expect(maskForModel('[Code: 52813]', 'echo')).toBe('[Code: [login code hidden]]');
+    expect(holdsMaskedValue('[Login code: 52813]')).toBe(true);
+    for (const kept of ['[login code hidden]', '[gift code hidden]', 'Login code: [login code hidden]']) {
+      expect(maskForModel(kept, 'echo')).toBe(kept);
+      expect(maskForModel(kept, 'service')).toBe(kept);
+    }
+    const err = cliResult(1, false, '', 'No chat "[Login code: 52813]"');
+    expect(JSON.stringify(err)).not.toContain('52813');
+  });
+
+  it('E: the slug ends where slug characters end; the rest of the sentence stays', () => {
+    expect(maskGiftCodes('t.me/giftcode/SAMPLE_ONLY,спасибо')).toBe('t.me/giftcode/[gift code hidden],спасибо');
+    expect(maskGiftCodes('tg://giftcode?slug=SAMPLE_ONLY,спасибо')).toBe('tg://giftcode?slug=[gift code hidden],спасибо');
+    expect(maskGiftCodes('t.me/giftcode/SAMPLE_ONLY,thanks')).toBe('t.me/giftcode/[gift code hidden],thanks');
+    expect(maskGiftCodes('t.me/giftcode/SAMPLE_ONLY.Thanks')).toBe('t.me/giftcode/[gift code hidden].Thanks');
+    expect(maskGiftCodes('tg://giftcode?slug=SAMPLE_ONLY.Thanks&x=1')).toBe('tg://giftcode?slug=[gift code hidden].Thanks&x=1');
+    expect(maskGiftCodes('t.me/giftcode/SAMPLE_ONLY!!! ok')).toBe('t.me/giftcode/[gift code hidden]!!! ok');
+    expect(maskGiftCodes('t.me/giftcode/SAMP%4CE_ONLY.')).toBe('t.me/giftcode/[gift code hidden].');
+    const long = `t.me/giftcode/A${'.'.repeat(50_000)}Z`;
+    const t = Date.now();
+    expect(maskGiftCodes(long)).toBe(`t.me/giftcode/[gift code hidden]${'.'.repeat(50_000)}Z`);
+    expect(maskGiftCodes(`t.me/giftcode/A${'.'.repeat(50_000)}`)).toBe(`t.me/giftcode/[gift code hidden]${'.'.repeat(50_000)}`);
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  it('G: a service code split by runs of spaces or tabs is masked whole', () => {
+    for (const text of ['52  813', '52\t813', '52 \t 813', '5 2 8 1 3']) {
+      const out = maskForModel(`Code ${text} here`, 'service');
+      expect(out, text).not.toMatch(/\d/);
+    }
+  });
+});
+
+describe('F: every displayed string of a login-service message is masked (finding 5)', () => {
+  const noClient = { getEntity: async () => { throw new Error('offline'); } } as never;
+  const doc = (sender: number, fileName: string) => new Api.Message({
+    id: 7, date: 0, message: '', peerId: new Api.PeerUser({ userId: bigInt(sender) }),
+    media: new Api.MessageMediaDocument({
+      document: new Api.Document({
+        id: bigInt(99), accessHash: bigInt(1), fileReference: Buffer.alloc(0), date: 0, mimeType: 'audio/x-m4a',
+        size: bigInt(52813), dcId: 2, attributes: [new Api.DocumentAttributeFilename({ fileName })],
+      }),
+    }),
+  });
+
+  it('media file name in the message info (plain, --json) and --full, IDs and numbers kept', async () => {
+    process.env.TG_MCP = '1';
+    for (const sender of [777000, 489000]) {
+      const info = await toMessageInfo(noClient, doc(sender, 'Login code: 52813.txt'), { full: true });
+      const json = JSON.stringify(info);
+      expect(json, String(sender)).not.toContain('52813.txt');
+      expect(info.media).toMatchObject({ kind: 'document', mimeType: 'audio/x-m4a', size: 52813, fileName: expect.stringContaining('[login code hidden]') });
+      expect(info.id).toBe(7);
+      expect(JSON.stringify(info.full)).not.toContain('52813.txt');
+      const raw = serializeApiResult({ messages: [doc(sender, 'Login code: 52813.txt')] });
+      expect(raw).not.toContain('52813.txt');
+      expect(JSON.parse(raw).messages[0].media.document.size).toBe('52813');
+    }
+    // Another sender: the file name is chat content
+    const other = await toMessageInfo(noClient, doc(42, 'Login code: 52813.txt'));
+    expect(other.media!.fileName).toBe('Login code: 52813.txt');
+  });
+
+  it('a quote of a service message: its text and its entity URLs, in --full and raw JSON', () => {
+    process.env.TG_MCP = '1';
+    const quoting = new Api.Message({
+      id: 3, date: 0, message: 'see', peerId: new Api.PeerUser({ userId: bigInt(42) }),
+      replyTo: new Api.MessageReplyHeader({
+        replyToMsgId: 1, quoteText: 'Войти 52813', replyToPeerId: new Api.PeerUser({ userId: bigInt(777000) }),
+        quoteEntities: [new Api.MessageEntityTextUrl({ offset: 0, length: 5, url: 'https://example.invalid/?code=52813' })],
+      }),
+    });
+    const raw = serializeApiResult(quoting);
+    expect(raw).not.toContain('52813');
+    const parsed = JSON.parse(raw);
+    expect(parsed.replyTo.replyToMsgId).toBe(1);
+    expect(parsed.replyTo.quoteEntities[0]).toMatchObject({ offset: 0, length: 5 });
+    expect(parsed.replyTo.quoteText).toBe('Войти [login code hidden]');
+    expect(buildMessageFull(quoting).replyTo).toMatchObject({ replyToMsgId: 1, quoteText: 'Войти [login code hidden]' });
   });
 });
