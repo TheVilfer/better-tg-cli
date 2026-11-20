@@ -20,9 +20,10 @@ export function maskGiftCodes(text: string): string {
 
 /**
  * A login code spelled out after "code:" (`Login code: 52813`, `Код для входа в Telegram: 52813`), the
- * form src/client.ts hides in a message of a login service. The $1 group is the lead-in.
+ * form src/client.ts hides in a message of a login service. The $1 group is the lead-in. The code may
+ * sit on the next line, behind the "| " an approval description puts before every line of the text.
  */
-export const LOGIN_CODE_PHRASE = /((?:code|код)[^\n:：]{0,40}[:：]\s*)[A-Za-z0-9_-]+/giu;
+export const LOGIN_CODE_PHRASE = /((?:code|код)[^\n:：]{0,40}[:：][\s|]*)[A-Za-z0-9_-]+/giu;
 
 /**
  * Whether a value the model sent holds something MCP output never repeats: a gift link's slug, or a
@@ -38,7 +39,9 @@ export function maskLoginCodePhrases(text: string): string {
  * strings, so a JSON number or key is never rewritten.
  */
 export function maskSensitiveDeep<T>(value: T): T {
-  if (typeof value === 'string') return maskGiftCodes(maskLoginCodePhrases(value)) as T;
+  // Gift links first: the login-code mask would take the "tg" of "Gift code: tg://giftcode?slug=…" and
+  // leave a slug the gift mask no longer recognizes
+  if (typeof value === 'string') return maskLoginCodePhrases(maskGiftCodes(value)) as T;
   if (Array.isArray(value)) return value.map(maskSensitiveDeep) as T;
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskSensitiveDeep(v)])) as T;

@@ -66,6 +66,15 @@ describe('over MCP without a dialog, "approval needed" is a result, not an error
     expect(sent.result.content[0].text).toMatch(/Message ID: \d+/);
   });
 
+  it('a code on its own line, or a gift link after "code:", stays hidden in the action and the text', async () => {
+    const split = await handleMessage(call({ args: ['send', '-1004001', '-'], stdin: 'Login code:\n52813' }), run) as Reply;
+    expect(split.result.structuredContent!.status).toBe('approval_required');
+    expect(JSON.stringify(split.result)).not.toContain('52813');
+    const gift = await handleMessage(call({ args: ['send', '-1004001', 'Gift code: tg://giftcode?slug=SAMPLE_ONLY'] }), run) as Reply;
+    expect(gift.result.structuredContent!.status).toBe('approval_required');
+    expect(JSON.stringify(gift.result)).not.toContain('SAMPLE_ONLY');
+  });
+
   it('masks only a code the call carries, never the guard\'s own wording (a plain call, a wrong approval)', async () => {
     const plain = await handleMessage(call({ args: ['send', '-1004001', 'hi'] }), run) as Reply;
     expect(plain.result.structuredContent!.status).toBe('approval_required');

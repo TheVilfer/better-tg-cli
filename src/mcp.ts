@@ -14,7 +14,7 @@ import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock, isMockAsk } from './paths.js';
 import { getSessionString } from './config.js';
-import { holdsMaskedValue, maskGiftCodes, maskLoginCodePhrases, maskSensitiveDeep } from './mcp-output.js';
+import { holdsMaskedValue, maskGiftCodes, maskSensitiveDeep } from './mcp-output.js';
 import { checkStoredSession, openSetupPage } from './setup.js';
 import { savedMode } from './write-mode.js';
 import { openBrowser } from './commands/onboard.js';
@@ -471,7 +471,7 @@ export function result(plan: Pick<Plan, 'argv' | 'stdin'>, r: RunOutput): ToolRe
         : { tool: 'telegram_write', arguments: { args: plan.argv, ...(plan.stdin ? { stdin: plan.stdin } : {}), approval: pending.code } };
       // The human sees the action in full in the dialog or terminal; the model gets it with gift
       // links and recognized login codes masked
-      const said = cap(maskLoginCodePhrases(err.trim()));
+      const said = cap(maskSensitiveDeep(err.trim()));
       return {
         content: [{ type: 'text', text: sensitive ? `${said}\n${note}` : said }],
         structuredContent: {
