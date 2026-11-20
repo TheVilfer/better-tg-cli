@@ -49,8 +49,7 @@
   },
   "files": [
     "dist/telegram.mjs",
-    "skills/better-tg-cli/SKILL.md",
-    "skills/better-tg-cli/reference.md",
+    "skills/better-tg-cli/*.md",
     "LICENSE",
     "README.md"
   ],

@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#instalación">Instalación</a> · <a href="skills/better-tg-cli/reference.md">Referencia</a> · <a href="SECURITY.md">Seguridad</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.ru.md">Русский</a>
+    <a href="#instalación">Instalación</a> · <a href="skills/better-tg-cli/SKILL.md">Referencia</a> · <a href="SECURITY.md">Seguridad</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.ru.md">Русский</a>
   </p>
 </div>
 
@@ -256,9 +256,11 @@ telegram click @SomeBot 4410 "Settings"       # pulsa un botón inline
 ```
 
 Los comandos de lectura aceptan `--json`, y algunos también `--markdown`. Consulta todos los comandos
-con `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) cubre el comportamiento que
-la lista de flags no puede explicar: formatos de salida, hilos, botones de bots, comandos de
-administración y resolución de problemas.
+con `telegram help-all`. Los archivos de referencia del skill cubren el comportamiento que la lista de
+flags no puede explicar: [lectura](skills/better-tg-cli/reading.md) (formatos de salida, hilos, búsqueda),
+[escritura](skills/better-tg-cli/writing.md) (aprobaciones, botones de bots, administración),
+[archivos y exportación](skills/better-tg-cli/files-live.md), [API](skills/better-tg-cli/api.md) y
+[instalación y resolución de problemas](skills/better-tg-cli/setup.md).
 
 ## Servidor MCP
 

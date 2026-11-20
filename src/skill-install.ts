@@ -64,6 +64,12 @@ function isOurFolder(path: string): boolean {
   }
 }
 
+/**
+ * Files earlier versions of the skill shipped and this one no longer does: a copy that still has
+ * one is outdated, and an update removes it, so no agent keeps reading stale instructions.
+ */
+export const RETIRED_SKILL_FILES = ['reference.md'];
+
 export function skillState(path: string): SkillState {
   const st = lstat(path);
   if (!st) return { kind: 'missing' };
@@ -75,7 +81,8 @@ export function skillState(path: string): SkillState {
   const same = Object.entries(SKILL_FILES).every(([file, content]) => {
     try { return readFileSync(join(path, file), 'utf8') === content; } catch { return false; }
   });
-  return { kind: same ? 'installed' : 'outdated' };
+  const retired = RETIRED_SKILL_FILES.some(file => !(file in SKILL_FILES) && existsSync(join(path, file)));
+  return { kind: same && !retired ? 'installed' : 'outdated' };
 }
 
 export function agentStatus(agent: Agent): AgentStatus {
@@ -109,6 +116,8 @@ export function installSkill(agent: Agent, options: { force?: boolean } = {}): I
   if (state.kind === 'foreign') return { agent, path, action: 'skipped', reason: 'something else lives there; not touching it' };
   mkdirSync(path, { recursive: true });
   for (const [file, content] of Object.entries(SKILL_FILES)) writeFileSync(join(path, file), content);
+  // Only in our own real folder (a link was replaced above): drop what this version no longer ships
+  for (const file of RETIRED_SKILL_FILES) if (!(file in SKILL_FILES)) rmSync(join(path, file), { force: true });
   return { agent, path, action: state.kind === 'outdated' ? 'updated' : 'installed' };
 }
 

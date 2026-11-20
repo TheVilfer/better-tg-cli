@@ -65,9 +65,17 @@ describe('install / uninstall', () => {
     expect(agentStatus(a).state.kind).toBe('installed');
     expect(installSkill(a).action).toBe('unchanged');
 
-    writeFileSync(join(path, 'reference.md'), 'old');
+    writeFileSync(join(path, 'writing.md'), 'old');
     expect(agentStatus(a).state.kind).toBe('outdated');
     expect(installSkill(a).action).toBe('updated');
+    expect(agentStatus(a).state.kind).toBe('installed');
+
+    // A copy from before the split still has reference.md: outdated, and the update removes it
+    writeFileSync(join(path, 'reference.md'), 'old single reference');
+    expect(agentStatus(a).state.kind).toBe('outdated');
+    expect(installSkill(a).action).toBe('updated');
+    expect(existsSync(join(path, 'reference.md'))).toBe(false);
+    expect(readdirSync(path).sort()).toEqual(Object.keys(SKILL_FILES).sort());
     expect(agentStatus(a).state.kind).toBe('installed');
 
     expect(uninstallSkill(a).action).toBe('removed');
@@ -153,6 +161,8 @@ describe('agent-plugin/ (Hermes Agent plugin catalog)', () => {
     expect(server.command).toBe('npx');
     expect(server.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
     for (const [file, content] of Object.entries(SKILL_FILES)) expect(read(`skills/better-tg-cli/${file}`)).toBe(content);
+    // Exactly these files: one the skill dropped must not linger in the copy
+    expect(readdirSync(new URL('agent-plugin/skills/better-tg-cli/', root)).sort()).toEqual(Object.keys(SKILL_FILES).sort());
     expect(read('LICENSE')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
   });
 
@@ -187,6 +197,7 @@ describe('plugin/ (Anthropic plugin directory)', () => {
     for (const [file, content] of Object.entries(SKILL_FILES)) {
       expect(readFileSync(new URL(`plugin/skills/better-tg-cli/${file}`, root), 'utf8')).toBe(content);
     }
+    expect(readdirSync(new URL('plugin/skills/better-tg-cli/', root)).sort()).toEqual(Object.keys(SKILL_FILES).sort());
     expect(readFileSync(new URL('plugin/LICENSE', root), 'utf8')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
   });
 
