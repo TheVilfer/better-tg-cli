@@ -9,6 +9,7 @@ import {
   downloadMessageMedia,
   disconnectClient,
   parseTimeOffset,
+  chatsQueryCommand,
 } from '../client.js';
 import type { ChatInfo, GetMessagesOptions, MessageInfo } from '../client.js';
 import type { TelegramClient } from 'teleproto';
@@ -148,7 +149,7 @@ export function selectSyncChats(all: ChatInfo[], name: string, exactOnly: boolea
 }
 
 function notFound(message: string, name: string): CliError {
-  const command = ['chats', '-q', name.replace(/^@/, ''), '--preview', '0'];
+  const command = chatsQueryCommand(name.replace(/^@/, ''));
   return new CliError(message, 'chat_not_found', EXIT.ERROR, { hint: `List matching chats: ${shellCommand(command)}`, command });
 }
 

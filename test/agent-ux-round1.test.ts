@@ -148,7 +148,7 @@ describe('8 links, candidates and hints', () => {
     expect(cli(['read', 'Tea']).err).not.toMatch(/@mock_team/);
     const name = `it's "odd" $(x)`;
     const notFound = oneJson(cli(['read', name, '--json']).out).error;
-    expect(notFound.command).toEqual(['chats', '-q', name, '--preview', '0']);
+    expect(notFound.command).toEqual(['chats', '-q', name, '--preview', '0', '--json']);
     expect(typeof notFound.hint).toBe('string');
     expect(notFound.hint).toContain(`telegram chats -q 'it'\\''s "odd" $(x)' --preview 0`);
     expect(typeof ambiguous.hint).toBe('string');

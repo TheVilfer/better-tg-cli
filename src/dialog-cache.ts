@@ -60,9 +60,14 @@ export function dialogCacheDisabled(): boolean {
   return /^(1|true|yes|on)$/i.test(process.env.TG_NO_CACHE ?? '');
 }
 
-/** With TG_LOG_LEVEL=debug, one stderr line per chat lookup: hit, miss or refresh (and why). */
+/**
+ * One stderr line per chat lookup: hit, miss or refresh (and why). With TG_LOG_LEVEL=debug, or with
+ * TG_DEBUG_CACHE=1 alone (this line and nothing else, not teleproto's debug log).
+ */
 export function logDialogCache(line: string): void {
-  if (process.env.TG_LOG_LEVEL?.toLowerCase() === 'debug') process.stderr.write(`dialog cache: ${line}\n`);
+  if (process.env.TG_LOG_LEVEL?.toLowerCase() === 'debug' || /^(1|true|yes|on)$/i.test(process.env.TG_DEBUG_CACHE ?? '')) {
+    process.stderr.write(`dialog cache: ${line}\n`);
+  }
 }
 
 /** The list saved for this account, if it is fresh. A missing, old or broken file is a miss, never an error. */

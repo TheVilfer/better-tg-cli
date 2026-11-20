@@ -134,7 +134,8 @@ A bad number or value exits 2 before anything is sent or approved.
 - **`CHANNELS_TOO_MUCH` on `join`:** the account is in too many channels; the user leaves some.
 - **`Could not find the input entity`:** the ID is not among the user's dialogs; use `@username`.
 - **A chat the user just joined or renamed is `chat_not_found`** (the error has `listedAt`): reads
-  match names against the dialog list saved up to 10 minutes ago. `TG_NO_CACHE=1` reads it again.
-  `TG_LOG_LEVEL=debug` prints one stderr line per lookup: `dialog cache: hit` (answered from that
+  match names against the dialog list saved up to 10 minutes ago (by the last read, `inbox` or
+  `chats`). `TG_NO_CACHE=1` reads it again. `TG_DEBUG_CACHE=1` prints one stderr line per lookup
+  (`TG_LOG_LEVEL=debug` too, among teleproto's debug log): `dialog cache: hit` (answered from that
   list), `refresh` (read from Telegram, with the reason) or `miss` (a @username or a list already read).
 - **Bot replies show `(no text)`:** an old build (`@skillhq/telegram`) is installed; see Install.
