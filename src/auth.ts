@@ -5,6 +5,8 @@ import { clientParams } from './client-options.js';
 import { connectClient } from './transport.js';
 import { loadConfig, saveConfig, setCredentials, setInviteCredentials, setSessionString } from './config.js';
 import { prompt, promptHidden } from './prompt.js';
+import { clearApprovals } from './approval.js';
+import { clearDialogCache } from './dialog-cache.js';
 
 async function askOwnCredentials(): Promise<{ apiId: number; apiHash: string }> {
   console.log('To get your API credentials:');
@@ -86,6 +88,9 @@ export function saveLogin(session: string, creds: { apiId: number; apiHash: stri
   // Only touch the flag when it is or was set, so ordinary configs stay unchanged
   if (testServers || loadConfig(() => {}).testServers) saveConfig({ testServers });
   setSessionString(session);
+  // A new login (maybe another account): approvals and the dialog list of the old one do not carry over
+  clearApprovals();
+  clearDialogCache();
 }
 
 export interface LoginUser { id: string; name: string; username?: string }
@@ -144,13 +149,4 @@ export function qrLoginDriver(testServers = false): LoginDriver {
 /** Terminal QR for a dark background (verified by decoding); TG_QR_INVERT=1 for light terminals. */
 export function renderQr(data: string): string {
   return renderUnicodeCompact(data, { border: 2, invert: !!process.env.TG_QR_INVERT });
-}
-
-export async function checkAuth(client: TelegramClient): Promise<boolean> {
-  try {
-    await client.connect();
-    return await client.isUserAuthorized();
-  } catch {
-    return false;
-  }
 }

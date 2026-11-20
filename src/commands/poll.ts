@@ -5,6 +5,8 @@ import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail, usageError } from '../errors.js';
+import { eachOf, positiveInt } from '../args.js';
 
 export const pollCommand = new Command('poll')
   .description('Send a poll to a chat')
@@ -13,20 +15,17 @@ export const pollCommand = new Command('poll')
   .argument('<options...>', 'Answer options (2 or more)')
   .option('--multiple', 'Allow selecting multiple answers')
   .option('--quiz', 'Quiz mode (requires --correct)')
-  .option('--correct <n>', 'Index (1-based) of the correct answer for quiz mode')
+  .option('--correct <n>', 'Index (1-based) of the correct answer for quiz mode', positiveInt)
   .option('--public', 'Non-anonymous poll (voters are visible)')
   .option('--json', 'Output as JSON')
   .action(async (chat, question, answers, options) => {
-    assertWriteEnabled();
-    if (answers.length < 2) {
-      console.error('A poll needs at least 2 options');
-      process.exit(1);
-    }
-    const correct = options.correct != null ? parseInt(options.correct, 10) - 1 : undefined;
+    // Checked before the write guard: a bad poll must not cost an approval
+    if (answers.length < 2) fail(usageError('A poll needs at least 2 options'));
+    const correct = options.correct != null ? options.correct - 1 : undefined;
     if (options.quiz && (correct == null || correct < 0 || correct >= answers.length)) {
-      console.error('Quiz mode needs a valid --correct <1-based index>');
-      process.exit(1);
+      fail(usageError(`Quiz mode needs --correct <n>, the 1-based number of the right answer (1 to ${answers.length})`));
     }
+    await assertWriteEnabled();
     const spinner = ora(`Sending poll to "${chat}"...`).start();
     try {
       const client = await getClient();
@@ -43,30 +42,20 @@ export const pollCommand = new Command('poll')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'poll', target: chat, message: question, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to send poll');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to send poll');
     }
   });
 
 export const voteCommand = new Command('vote')
   .description('Vote in a poll')
   .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageId>', 'Poll message ID')
-  .argument('<options...>', 'Option number(s) to vote for, 1-based (e.g. 2, or 1 3 for multiple)')
+  .argument('<messageId>', 'Poll message ID', positiveInt)
+  .argument('<options...>', 'Option number(s) to vote for, 1-based (e.g. 2, or 1 3 for multiple)', eachOf(positiveInt))
   .option('--json', 'Output as JSON')
   .action(async (chat, messageId, optionNums, options) => {
-    assertWriteEnabled();
-    const id = parseInt(messageId, 10);
-    if (!Number.isInteger(id)) {
-      console.error('Message ID must be a number');
-      process.exit(1);
-    }
-    const indexes = optionNums.map((s: string) => parseInt(s, 10) - 1).filter((n: number) => n >= 0);
-    if (indexes.length === 0) {
-      console.error('Provide at least one 1-based option number');
-      process.exit(1);
-    }
+    await assertWriteEnabled();
+    const id: number = messageId;
+    const indexes = (optionNums as number[]).map(n => n - 1);
     const spinner = ora(`Voting in poll #${id}...`).start();
     try {
       const client = await getClient();
@@ -78,8 +67,6 @@ export const voteCommand = new Command('vote')
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'vote', target: chat, message: `#${id}`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to vote');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to vote');
     }
   });

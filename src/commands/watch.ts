@@ -5,19 +5,21 @@ import { getClient, resolveChat, disconnectClient, messageText, buildMessageFull
 import { formatStatsSuffix } from '../formatters/plain.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
+import { positiveInt } from '../args.js';
 
 export const watchCommand = new Command('watch')
   .description('Stream new incoming messages in real time (until timeout / limit / Ctrl-C)')
   .argument('[chat]', 'Restrict to one chat (name, @user, or ID). Omit to watch everything.')
-  .option('-t, --timeout <seconds>', 'Stop after N seconds')
-  .option('-n, --limit <number>', 'Stop after N messages')
+  .option('-t, --timeout <seconds>', 'Stop after N seconds', positiveInt)
+  .option('-n, --limit <number>', 'Stop after N messages', positiveInt)
   .option('--full', 'Include full per-message stats (views, forwards, reactions, flags, media detail)')
   .option('--stats', 'Alias for --full')
   .option('--json', 'Emit each message as a JSON line')
   .action(async (chat, options) => {
     const full = Boolean(options.full || options.stats);
-    const timeoutSec = options.timeout ? parseInt(options.timeout, 10) : undefined;
-    const limit = options.limit ? parseInt(options.limit, 10) : undefined;
+    const timeoutSec = options.timeout ? options.timeout : undefined;
+    const limit = options.limit ? options.limit : undefined;
 
     const spinner = ora('Connecting...').start();
     try {
@@ -75,8 +77,6 @@ export const watchCommand = new Command('watch')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Watch failed');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Watch failed');
     }
   });

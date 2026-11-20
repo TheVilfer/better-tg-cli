@@ -1,8 +1,11 @@
 import { Command } from 'commander';
 import { clearSessionString } from '../config.js';
+import { clearApprovals } from '../approval.js';
+import { clearDialogCache } from '../dialog-cache.js';
 import { auditLog } from '../audit.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { fail } from '../errors.js';
 
 export const logoutCommand = new Command('logout')
   .description('Clear saved session (log out)')
@@ -11,6 +14,9 @@ export const logoutCommand = new Command('logout')
 
     try {
       clearSessionString();
+      // Pending approvals were given for this account; none may carry over to the next login
+      clearApprovals();
+      clearDialogCache();
 
       auditLog({
         timestamp: new Date().toISOString(),
@@ -19,7 +25,7 @@ export const logoutCommand = new Command('logout')
         result: { success: true },
       });
 
-      spinner.succeed(chalk.green('Logged out. Run "tg auth" to re-authenticate.'));
+      spinner.succeed(chalk.green('Logged out. To log in again, run "telegram onboard" (a person at their own terminal can use "telegram auth --qr").'));
     } catch (error) {
       auditLog({
         timestamp: new Date().toISOString(),
@@ -28,8 +34,6 @@ export const logoutCommand = new Command('logout')
         result: { success: false, error: error instanceof Error ? error.message : String(error) },
       });
 
-      spinner.fail(chalk.red('Failed to log out'));
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, chalk.red('Failed to log out'));
     }
   });

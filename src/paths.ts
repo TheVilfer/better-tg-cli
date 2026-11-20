@@ -25,6 +25,15 @@ export function isMock(): boolean {
   return !!process.env.TG_MOCK;
 }
 
+/**
+ * TG_MOCK_ASK=1 (with TG_MOCK only, for development and tests): the mock account behaves as if write
+ * mode were "ask", so the approval flow (code, yes, retry) can be rehearsed without a secret store.
+ * Its approvals and signing key stay in the mock profile; nothing touches the Keychain.
+ */
+export function isMockAsk(): boolean {
+  return isMock() && process.env.TG_MOCK_ASK === '1';
+}
+
 const suffix = (): string => (profile() ? `-${profile()}` : '');
 
 /** ~/.config/tg on macOS and Linux (existing installs depend on it), %APPDATA%\\tg on Windows. */

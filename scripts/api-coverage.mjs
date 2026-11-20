@@ -41,6 +41,28 @@ const TELETHON_TSV = join(root, 'scripts/data/telethon-1.45.0-client-methods.tsv
 /** Not a named TelegramClient member, but counted: Telethon's raw client(request) call. */
 const RAW_CALL = '__call__ (raw request)';
 const DEFAULT_MIN = 90;
+const ALLOWLIST = join(root, 'src/mcp-api-allowlist.ts');
+
+// ---- 0. the MCP allowlist (src/mcp-api-allowlist.ts, read as text: CI also runs Node 20) -------
+
+/** The groups of src/mcp-api-allowlist.ts: { access, title, reason, methods }. */
+function allowlistGroups() {
+  const text = readFileSync(ALLOWLIST, 'utf8');
+  const body = text.slice(text.indexOf('MCP_API_ALLOWLIST'));
+  const groups = [];
+  const re = /\{\s*access: '(read|write)',\s*title: '([^']*)',\s*reason: '([^']*)',\s*methods: \[([^\]]*)\]/g;
+  for (const m of body.matchAll(re)) {
+    groups.push({ access: m[1], title: m[2], reason: m[3], methods: [...m[4].matchAll(/'([^']+)'/g)].map((x) => x[1]) });
+  }
+  if (!groups.length) throw new Error('src/mcp-api-allowlist.ts: no groups found (keep the documented shape)');
+  return groups;
+}
+
+/** Allowlisted names that are not TL schema methods (a typo or a method removed by a new layer). */
+function allowlistUnknown() {
+  const methods = schemaMethods();
+  return allowlistGroups().flatMap((g) => g.methods).filter((m) => !methods.has(m));
+}
 
 // ---- 1. the schema: every TL method, by namespace ---------------------------------------------
 
@@ -421,7 +443,9 @@ function build() {
   lines.push('- **`help.*` / `upload.*` / top-level invoke wrappers** — transport and client plumbing.');
   lines.push('- **`stickers.*` (sticker-set authoring)** — niche authoring flow.');
   lines.push('- **Payments / Stars / gifts spending** — any *paying* method is refused even with write');
-  lines.push('  access; read-only balances/transactions are allowed through `api`.');
+  lines.push('  access; read-only balances/transactions are allowed through `api`. Over MCP any call');
+  lines.push('  with `allowPaidStars` (a paid search, or a message, media, album or forward to a chat that');
+  lines.push('  charges for it) is refused in every write mode; without it the call runs as usual.');
   lines.push('- **Account deletion, session termination (`auth.ResetAuthorizations`, `account.DeleteAccount`),');
   lines.push('  2FA password changes, and anything sharing the phone number or geolocation** — refused');
   lines.push('  outright, matching the rule `click` already follows.');
@@ -438,8 +462,10 @@ function build() {
   lines.push('');
   lines.push('**Named like a read but reclassified as a write (they change state):**');
   lines.push('');
-  lines.push('- `messages.GetMessagesViews` — increments the view counter when `increment` is set.');
   lines.push('- `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.');
+  lines.push('- `messages.GetInlineBotResults` — sends the query and your user ID to an external bot (the');
+  lines.push('  `inline` command is a write for the same reason).');
+  lines.push('- `messages.GetMessagesViews` with `increment` — adds a view (a read without it).');
   lines.push('');
   lines.push('**Refused outright, even with write access** (issue #47: account/session takeover, phone or');
   lines.push('location sharing, paying):');
@@ -450,7 +476,11 @@ function build() {
   lines.push('  `account.ResetWebAuthorization(s)`, `account.SetAuthorizationTTL`,');
   lines.push('  `account.ChangeAuthorizationSettings`.');
   lines.push('- **2FA / password:** `account.UpdatePasswordSettings`, `account.ResetPassword`,');
-  lines.push('  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`.');
+  lines.push('  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`,');
+  lines.push('  and the recovery email: `account.ConfirmPasswordEmail`, `ResendPasswordEmail`,');
+  lines.push('  `CancelPasswordEmail`.');
+  lines.push('- **Passkeys:** `account.InitPasskeyRegistration`, `account.RegisterPasskey`,');
+  lines.push('  `account.DeletePasskey` (listing them with `account.GetPasskeys` stays a read in a terminal).');
   lines.push('- **Phone / email changes & verification:** `account.ChangePhone`, `SendChangePhoneCode`,');
   lines.push('  `ConfirmPhone`, `SendConfirmPhoneCode`, `SendVerifyPhoneCode`, `VerifyPhone`,');
   lines.push('  `SendVerifyEmailCode`, `VerifyEmail`.');
@@ -458,21 +488,100 @@ function build() {
   lines.push('  `account.SetPrivacy`, `account.UpdateBusinessLocation`, `channels.EditLocation`;');
   lines.push('  and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,');
   lines.push('  and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an');
-  lines.push('  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`.');
+  lines.push('  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`,');
+  lines.push('  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it is a plain write),');
+  lines.push('  and `channels.CreateChannel` with `geoPoint` or `address` (a geo group; a plain channel is created).');
   lines.push('- **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,');
-  lines.push('  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`.');
+  lines.push('  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`, and the');
+  lines.push('  Passport reads `account.GetAllSecureValues` / `GetSecureValue` / `GetAuthorizationForm` (`plainData` holds the phone');
+  lines.push('  number and email in the clear).');
   lines.push('- **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,');
-  lines.push('  `messages.CheckUrlAuthMatchCode`.');
+  lines.push('  `messages.CheckUrlAuthMatchCode`, and the read-named `messages.GetEmojiURL` (a login link to');
+  lines.push('  the translation platform).');
   lines.push('- **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA');
   lines.push('  password — use `telegram transfer-owner`).');
-  lines.push('- **Money:** every non-read `payments.*`, plus the read-named token minters');
+  lines.push('- **Money:** every non-read `payments.*`, `messages.SendPaidReaction` (its `count` is the Stars');
+  lines.push('  it spends), plus the read-named token minters');
   lines.push('  `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,');
   lines.push('  `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.');
   lines.push('');
-  lines.push('**Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,');
+  lines.push('**Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text');
+  lines.push('search) and `messages.GetMessagesViews` with `increment` (it adds a view) need write access in a');
+  lines.push('terminal, like any write; without them they stay reads.');
+  lines.push('**Paying Stars over MCP:** a non-null `allowPaidStars` is refused over MCP for every method');
+  lines.push('(`channels.SearchPosts`, `messages.SendMessage`, `SendMedia`, `SendMultiMedia`,');
+  lines.push('`ForwardMessages`, …) in every write mode, `on` included, before anything reaches Telegram.');
+  lines.push('`help.GetConfig` prints `autologinToken` as `[redacted]`.');
+  lines.push('');
+  lines.push('**Still allowed as reads in a terminal** (listing only, no state change): `account.GetAuthorizations`,');
   lines.push('`account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,');
   lines.push('`payments.CheckGiftCode`, `stories.GetStoryViewsList`, and the rest of the `Get*` surface.');
+  lines.push('Over MCP only the allowlist below runs.');
   lines.push('');
+
+  const groups = allowlistGroups();
+  const allowed = groups.flatMap((g) => g.methods);
+  lines.push('## 5. Raw API over MCP: the allowlist');
+  lines.push('');
+  lines.push('**Threat model for MCP output.** Over MCP the model never receives credentials or redeemable');
+  lines.push('value: login codes, 2FA, session and auth tokens, gift and Premium codes and their links. Ordinary');
+  lines.push('chat content (the phone on a contact card, a shared location, reply media) is what the user asks');
+  lines.push('the agent to read, so curated commands (`read`, `get`, `contacts`, …) keep showing it. Writes are');
+  lines.push('governed by the write mode and its approval flow; the content refusals listed in section 4 and');
+  lines.push('below (location and contact media, `forward` of a contact card or a location) predate this model');
+  lines.push('and stay, but no new ones are added on content grounds. Concretely, every');
+  lines.push('MCP output, raw or curated: hides login codes in all content of a message from the service');
+  lines.push('accounts 777000 (Telegram) and 489000 (Verification Codes): text, `richMessage`, entity URLs,');
+  lines.push('button texts, URLs, copy texts and callback data, the quote and the link preview, the media file');
+  lines.push('name, title and caption, plus a quote of such a message elsewhere (its text and entity URLs).');
+  lines.push('It also masks the slug of every gift link (`t.me/giftcode/<slug>`,');
+  lines.push('`telegram.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`) as `[gift code hidden]`, in the CLI');
+  lines.push('under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself (the whole slug, with');
+  lines.push('percent-encoding). What the server says about a call (an approval\'s action, the result of a');
+  lines.push('write, every error) also hides a code after a `code:` / `код:` label: the word right before the');
+  lines.push('colon (Russian label words such as `для входа в Telegram` or `подтверждения` allowed after `код`),');
+  lines.push('with nothing or a label word such as `login`, `verification`, `Telegram`, `your` before it, so');
+  lines.push('`Promo code:` or `exit code:` stay;');
+  lines.push('content a read shows is not touched by that rule. All of it is one function, `maskForModel()` in');
+  lines.push('`src/mcp-output.ts`; JSON keeps its keys, numbers and IDs. A raw');
+  lines.push('result additionally redacts the fields listed below: the raw API is a power tool.');
+  lines.push('');
+  lines.push('**Where masking stops.** Masking is best-effort against the forms honest authors produce:');
+  lines.push('Telegram\'s own login messages (777000, 489000) and gift links as clients make them');
+  lines.push('(`t.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`). On the echo path (text the model itself');
+  lines.push('wrote in argv, stdin or a caption) the model already holds the value, so there the priority is');
+  lines.push('not to over-mask. Known limits, not covered: HTML or Markdown markup splitting a code');
+  lines.push('(`Login code: <b>52813</b>`), an explicit port in a `t.me` URL (`t.me:443/giftcode/…`), callback');
+  lines.push('data that carries a gift link Base64-encoded, a code split across `richMessage` nodes, and');
+  lines.push('percent-encoded host or parameter names (`t.me/%67iftcode/…`, `sl%75g=`).');
+  lines.push('');
+  lines.push(`Over MCP (the \`telegram_read\` and \`telegram_write\` tools) a raw call, \`api <method>\` or a`);
+  lines.push(`generated \`<namespace> <method>\` command, runs only if its method is one of these **${allowed.length}**`);
+  lines.push(`of the ${schemaMethods().size} TL methods. Any other method is refused before anything runs: "not available over`);
+  lines.push('MCP; run it in a terminal". The rules in section 4 still apply on top (geo or contact media,');
+  lines.push('a phone-privacy exception, `allowPaidStars`), and a read runs through the read tool, a write');
+  lines.push('through the write tool and its write mode. In a terminal nothing changes.');
+  lines.push('');
+  lines.push('Over MCP these params of allowed methods are refused as well, at any depth, in every write');
+  lines.push('mode: a `suggestedPost` with a `price`, an `InputMediaStakeDice`, `allowPaidFloodskip`, any');
+  lines.push('location (a geo point, geo or venue media, an `InputPageBlockMap` in a `richMessage`), a');
+  lines.push('`referer` in `contacts.ResolveUsername`, `subscriptionPricing` in `messages.ExportChatInvite`,');
+  lines.push('`myStoriesFrom` in `contacts.Block`/`Unblock`, `password` in `messages.GetBotCallbackAnswer`');
+  lines.push('and `increment` in `messages.GetMessagesViews`. A raw result over MCP shows phone numbers,');
+  lines.push('vCards, birthdays, contact notes and every location field as `"[redacted]"`.');
+  lines.push('`--help` and `schema` (`mcpAccess`) show the MCP access of each method next to its terminal access.');
+  lines.push('');
+  lines.push('Not on the list on purpose: payments and Stars, account / auth / Passport / passkeys, privacy');
+  lines.push('and security settings, sessions, takeout, phone calls, sticker-set management, business and');
+  lines.push('premium purchases, geo / location, bot administration, folders, chat import and export.');
+  lines.push('The list lives in `src/mcp-api-allowlist.ts`; this section is generated from it.');
+  lines.push('');
+  for (const g of groups) {
+    lines.push(`**${g.access === 'read' ? 'Read' : 'Write'}: ${g.title}.** ${g.reason}`);
+    lines.push('');
+    lines.push(g.methods.map((m) => `\`${m}\``).join(', '));
+    lines.push('');
+  }
 
   return lines.join('\n') + '\n';
 }
@@ -495,10 +604,17 @@ if (!Number.isFinite(min) || min < 0 || min > 100) {
   process.exit(2);
 }
 
-if (argv.includes('--json')) {
+if (argv.includes('--allowlist-json')) {
+  console.log(JSON.stringify(allowlistGroups()));
+} else if (argv.includes('--json')) {
   console.log(JSON.stringify({ min, ...metrics(tsvPath) }, null, 2));
 } else if (check || opt('--min') !== undefined) {
   let ok = gate(min, tsvPath);
+  const unknownAllowed = allowlistUnknown();
+  if (unknownAllowed.length) {
+    console.error(`FAIL src/mcp-api-allowlist.ts names methods that are not in the TL schema: ${unknownAllowed.join(', ')}`);
+    ok = false;
+  }
   if (check) {
     const report = build();
     const current = existsSync(REPORT) ? readFileSync(REPORT, 'utf8') : '';

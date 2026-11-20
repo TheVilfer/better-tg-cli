@@ -1,13 +1,19 @@
-import { Command } from 'commander';
-import { getClient, sendMessage, disconnectClient } from '../client.js';
+import { Command, InvalidArgumentError } from 'commander';
+import { getClient, sendMessage, disconnectClient, chatRef } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { readTextArg } from '../text.js';
+import { fail } from '../errors.js';
+import { INT32_MAX, positiveInt } from '../args.js';
 
-function parseScheduleToEpoch(value: string): number {
+export function parseScheduleToEpoch(value: string): number {
+  return inIntRange(computeSchedule(value), value);
+}
+
+function computeSchedule(value: string): number {
   const rel = value.match(/^(\d+)([mhd])$/);
   if (rel) {
     const n = parseInt(rel[1], 10);
@@ -16,22 +22,34 @@ function parseScheduleToEpoch(value: string): number {
   }
   const abs = Date.parse(value);
   if (!Number.isNaN(abs)) return Math.floor(abs / 1000);
-  throw new Error(`Invalid --schedule value: ${value}. Use "30m"/"2h"/"1d" or an ISO date.`);
+  throw new InvalidArgumentError('Use "30m", "2h", "1d" or an ISO date like 2026-12-01T09:00.');
+}
+
+/** A schedule date is an `int` (Unix seconds): past that it would be some other date. */
+function inIntRange(epoch: number, value: string): number {
+  if (!Number.isSafeInteger(epoch) || epoch > INT32_MAX) throw new InvalidArgumentError(`--schedule ${value} is too far ahead.`);
+  return epoch;
+}
+
+/** --schedule is checked while parsing (exit 2, before the write guard) and resolved when sending. */
+function scheduleArg(value: string): string {
+  parseScheduleToEpoch(value);
+  return value;
 }
 
 export const sendCommand = new Command('send')
   .description('Send a message')
   .argument('<target>', 'Chat name, @username, numeric ID, or "me"')
   .argument('<message>', 'Message text, or "-" to read it from stdin')
-  .option('--markdown', 'Parse the message as Markdown (bold, links, etc.)')
+  .option('--markdown', 'Parse the message as GramJS Markdown: **bold**, __italic__, `code`; [text](url) links do not work, use --html')
   .option('--html', 'Parse the message as HTML')
-  .option('--schedule <when>', 'Schedule for later: "30m", "2h", "1d", or an ISO date')
+  .option('--schedule <when>', 'Schedule for later: "30m", "2h", "1d", or an ISO date', scheduleArg)
   .option('--silent', 'Send without a notification sound')
-  .option('--reply-to <id>', 'Reply to this message ID')
-  .option('--topic <id>', 'Post into this forum topic (ID from `telegram topics`)')
+  .option('--reply-to <id>', 'Reply to this message ID', positiveInt)
+  .option('--topic <id>', 'Post into this forum topic (ID from `telegram topics`)', positiveInt)
   .option('--json', 'Output as JSON')
   .action(async (target, messageArg, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const message = readTextArg(messageArg);
     const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
     const schedule = options.schedule ? parseScheduleToEpoch(options.schedule) : undefined;
@@ -39,28 +57,33 @@ export const sendCommand = new Command('send')
 
     try {
       const client = await getClient();
-      const result = await sendMessage(client, target, message, options.replyTo ? parseInt(options.replyTo, 10) : undefined, {
-        parseMode, schedule, silent: options.silent, topic: options.topic ? parseInt(options.topic, 10) : undefined,
+      const result = await sendMessage(client, target, message, options.replyTo, {
+        parseMode, schedule, silent: options.silent, topic: options.topic,
       });
+      const ref = await chatRef(client, target);
       auditLog({ timestamp: new Date().toISOString(), command: 'send', target, message, result: { success: true, messageId: result.id } });
 
       spinner.succeed(chalk.green('Message sent'));
 
       if (options.json) {
         console.log(formatJson({
+          ok: true,
+          action: 'send',
+          ...ref,
+          messageId: result.id,
           id: result.id,
           date: result.date ? new Date(result.date * 1000).toISOString() : null,
           text: result.message,
+          ...(options.replyTo ? { replyToMsgId: options.replyTo } : {}),
+          ...(options.topic ? { topic: options.topic } : {}),
         }));
       } else {
-        console.log(chalk.gray(`Message ID: ${result.id}`));
+        console.log(chalk.gray(`Message ID: ${result.id} in ${ref.chatTitle} (${ref.chatId})`));
       }
 
       await disconnectClient();
     } catch (error) {
       auditLog({ timestamp: new Date().toISOString(), command: 'send', target, message, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      spinner.fail('Failed to send message');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to send message');
     }
   });

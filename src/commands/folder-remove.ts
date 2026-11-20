@@ -3,6 +3,7 @@ import { getClient, removeChatFromFolder, disconnectClient } from '../client.js'
 import { assertWriteEnabled } from '../guard.js';
 import ora from '../spinner.js';
 import { formatJson } from '../formatters/json.js';
+import { fail } from '../errors.js';
 
 export const folderRemoveCommand = new Command('folder-remove')
   .description('Remove a chat from a folder')
@@ -10,7 +11,7 @@ export const folderRemoveCommand = new Command('folder-remove')
   .argument('<chat>', 'Chat name, username, or ID')
   .option('--json', 'Output as JSON')
   .action(async (folder, chat, options) => {
-    assertWriteEnabled();
+    await assertWriteEnabled();
     const spinner = ora(`Removing "${chat}" from folder "${folder}"...`).start();
 
     try {
@@ -36,8 +37,6 @@ export const folderRemoveCommand = new Command('folder-remove')
 
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to remove chat from folder');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to remove chat from folder');
     }
   });

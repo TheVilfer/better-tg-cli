@@ -42,13 +42,27 @@ export function isFileFallbackAllowed(os: NodeJS.Platform = platform(), probe = 
   return !probe.secretTool || !probe.bus;
 }
 
+/**
+ * The one next step when the secret store does not answer, for this OS, then how to check it.
+ * Never "install a keyring": on a machine without a desktop session that cannot work (CLOUD_HINT).
+ */
+export function secretStoreHint(os: NodeJS.Platform = platform()): string {
+  const step = os === 'darwin'
+    ? 'On macOS the login keychain is probably locked (common over SSH): the user unlocks it with `security unlock-keychain` in a terminal, or runs the command in their desktop session.'
+    : os === 'win32'
+      ? 'On Windows the store is DPAPI through Windows PowerShell: check that `powershell.exe -NoProfile -Command 1` runs for this user (not blocked by policy).'
+      : 'On Linux the keyring (GNOME Keyring or KWallet) is locked or not running: the user unlocks it by logging in to the desktop session; check that TG_NO_LIBSECRET is not set.';
+  return `Next step: ${step} Then run \`telegram check\` to confirm the store answers.`;
+}
+
 /** For agents on cloud computers: what to do instead of installing a keyring. */
 export const CLOUD_HINT =
   'No secret store here, which is normal on cloud agent computers (Grok Bot and similar). Do not try to install one: ' +
   'without a desktop session it can\'t work. `telegram write-access ask` works here as is; only `write-access on` prints a page link for the user.';
 
-export function getWriteValue(): string | null {
-  if (isWriteModeProtected()) return secretGet('writeEnabled');
+/** `fresh`: bypass this process's cache of the secret store (see secretGet) */
+export function getWriteValue(fresh = false): string | null {
+  if (isWriteModeProtected()) return secretGet('writeEnabled', fresh);
   if (!isFileFallbackAllowed()) return null;
   try {
     return readFileSync(configFile(FILE), 'utf8').trim() || null;

@@ -32,7 +32,9 @@ hermes plugins enable better-tg-cli
   terminal prompt or an OS dialog, never through MCP. Login, logout and account transfer are not
   exposed over MCP at all.
 - `TG_READ_ONLY=1` in your profile's environment turns every write off.
-- Every write is logged locally in the CLI's config folder.
+- Commands with an audit log try to record the result in `audit.jsonl` in the active profile's
+  folder. A write stopped for approval or with writes off ends before it, and not every write has
+  one, so a missing entry proves nothing.
 
 ## Disclosure
 

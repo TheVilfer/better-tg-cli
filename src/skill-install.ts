@@ -45,6 +45,8 @@ export type SkillState =
   | { kind: 'outdated' }
   | { kind: 'missing' }
   | { kind: 'linked'; target: string }
+  /** A symlink whose target is gone: the agent has no skill, whatever the link says */
+  | { kind: 'broken-link'; target: string }
   | { kind: 'foreign' };
 
 export interface AgentStatus { agent: Agent; detected: boolean; path: string; state: SkillState }
@@ -62,15 +64,26 @@ function isOurFolder(path: string): boolean {
   }
 }
 
+/**
+ * Files earlier versions of the skill shipped and this one no longer does: a copy that still has
+ * one is outdated, and an update removes it, so no agent keeps reading stale instructions.
+ */
+export const RETIRED_SKILL_FILES = ['reference.md'];
+
 export function skillState(path: string): SkillState {
   const st = lstat(path);
   if (!st) return { kind: 'missing' };
-  if (st.isSymbolicLink()) return { kind: 'linked', target: readlinkSync(path) };
+  if (st.isSymbolicLink()) {
+    // existsSync follows the link: false means it points at nothing
+    return { kind: existsSync(path) ? 'linked' : 'broken-link', target: readlinkSync(path) };
+  }
   if (!st.isDirectory() || !isOurFolder(path)) return { kind: 'foreign' };
   const same = Object.entries(SKILL_FILES).every(([file, content]) => {
     try { return readFileSync(join(path, file), 'utf8') === content; } catch { return false; }
   });
-  return { kind: same ? 'installed' : 'outdated' };
+  // lstat, not existsSync: a broken link left under a retired name still makes the copy outdated
+  const retired = RETIRED_SKILL_FILES.some(file => !(file in SKILL_FILES) && lstat(join(path, file)) !== undefined);
+  return { kind: same && !retired ? 'installed' : 'outdated' };
 }
 
 export function agentStatus(agent: Agent): AgentStatus {
@@ -94,13 +107,27 @@ export function installSkill(agent: Agent, options: { force?: boolean } = {}): I
   const path = join(agent.skillsDir, SKILL_NAME);
   const state = skillState(path);
   if (state.kind === 'installed') return { agent, path, action: 'unchanged' };
-  if (state.kind === 'linked') {
-    if (!options.force) return { agent, path, action: 'skipped', reason: `symlink to ${state.target}; --force replaces the link with a copy` };
+  if (state.kind === 'linked' || state.kind === 'broken-link') {
+    if (!options.force) {
+      const what = state.kind === 'broken-link' ? `broken symlink to ${state.target} (the target is gone)` : `symlink to ${state.target}`;
+      return { agent, path, action: 'skipped', reason: `${what}; --force replaces the link with a copy` };
+    }
     unlinkSync(path); // the link only, never what it points at
   }
   if (state.kind === 'foreign') return { agent, path, action: 'skipped', reason: 'something else lives there; not touching it' };
+  // writeFileSync follows a symlink inside our folder too, so every target is checked before the
+  // first write: one that is a link (or not a regular file) stops the whole update
+  const blocked = Object.keys(SKILL_FILES).filter(file => {
+    const st = lstat(join(path, file));
+    return st !== undefined && !st.isFile();
+  });
+  if (blocked.length) {
+    return { agent, path, action: 'skipped', reason: `${blocked.join(', ')} ${blocked.length === 1 ? 'is a symlink or not a regular file' : 'are symlinks or not regular files'}; not writing through it, remove ${blocked.length === 1 ? 'it' : 'them'} and run the update again` };
+  }
   mkdirSync(path, { recursive: true });
   for (const [file, content] of Object.entries(SKILL_FILES)) writeFileSync(join(path, file), content);
+  // Only in our own real folder (a link was replaced above): drop what this version no longer ships
+  for (const file of RETIRED_SKILL_FILES) if (!(file in SKILL_FILES)) rmSync(join(path, file), { force: true });
   return { agent, path, action: state.kind === 'outdated' ? 'updated' : 'installed' };
 }
 
@@ -110,7 +137,7 @@ export function uninstallSkill(agent: Agent, options: { force?: boolean } = {}):
   const path = join(agent.skillsDir, SKILL_NAME);
   const state = skillState(path);
   if (state.kind === 'missing') return { agent, path, action: 'absent' };
-  if (state.kind === 'linked') {
+  if (state.kind === 'linked' || state.kind === 'broken-link') {
     if (!options.force) return { agent, path, action: 'skipped', reason: `symlink to ${state.target}; --force removes the link` };
     unlinkSync(path);
     return { agent, path, action: 'removed' };

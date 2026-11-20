@@ -28,6 +28,10 @@ export interface OnboardState {
   qrSvg?: string;
   hint?: string;
   error?: string;
+  /** With a mode error: the term of the refused choice ('1h', '1d', '1w'), absent for no end */
+  errorFor?: string;
+  /** The mode of that refused choice, so the page names the command for it */
+  errorPick?: WriteMode;
   user?: LoginUser;
   /** The write mode in effect: the default after the login, then the one picked on the page */
   mode?: WriteMode;
@@ -48,7 +52,10 @@ export type OnboardEvent =
 
 /** A write mode picked on the page: how long it lasts, if it should end by itself. */
 export interface ModeChoice { mode: WriteMode; forSeconds?: number }
+/** `until`: the end that was written (whole seconds); none for no end */
 export type ModeResult = { ok: true; until?: Date } | { ok: false; error: 'not_confirmed' | 'needs_terminal' | 'store_failed' };
+/** A write mode as read back from the store, with the moment it ends if it ends by itself. */
+export interface SavedMode { mode: WriteMode; until?: Date }
 
 /** Choices the page offers for "until": nothing (no end), an hour, a day, a week. */
 const MODE_SPANS: Record<string, number | undefined> = { '': undefined, '1h': 3600, '1d': 86_400, '1w': 604_800 };
@@ -74,6 +81,13 @@ export interface OnboardOptions {
   modeOnly?: boolean;
   /** What the profile is set to right after the login, before (or without) a choice on the page */
   defaultMode?: WriteMode;
+  /**
+   * Reads the write mode back from the store, so only a mode actually saved with the asked-for end
+   * counts: otherwise the step stays open with `store_failed`.
+   */
+  currentMode?(): SavedMode;
+  /** How long the mode step waits for a choice (tests); 10 minutes by default */
+  modeWaitMs?: number;
 }
 
 export interface OnboardSession {
@@ -113,23 +127,66 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
   let resolveDone!: (result: { user?: LoginUser; mode?: WriteMode }) => void;
   const done = new Promise<{ user?: LoginUser; mode?: WriteMode }>(r => (resolveDone = r));
   let modeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When the mode step gives up; `modeLeft` is the time still left while a choice is being applied */
+  let modeDeadline = 0;
+  let modeLeft = 0;
   let applying = false;
+  let finished = false;
 
-  const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined }, patch);
+  const set = (patch: Partial<OnboardState>) => Object.assign(state, { error: undefined, errorFor: undefined, errorPick: undefined }, patch);
 
-  function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : options.defaultMode): void {
+  /** The mode in the store now (read once), or `expected` when there is no way to read it back */
+  const readBack = (expected: WriteMode | undefined): SavedMode | undefined =>
+    options.currentMode ? options.currentMode() : expected && { mode: expected };
+
+  /**
+   * The store holds exactly the choice: the same mode and, for "ask" and "on", the same end. A timed
+   * choice must match the end applyMode reports as written (`written`) to the second, so an older
+   * value with the same mode name does not pass; without `written` it cannot be checked and fails.
+   */
+  function holds(saved: SavedMode | undefined, choice: ModeChoice, written: Date | undefined): boolean {
+    if (!options.currentMode) return true; // nothing to check against
+    if (!saved || saved.mode !== choice.mode) return false;
+    if (choice.mode === 'read-only') return true;
+    if (!choice.forSeconds) return !saved.until;
+    if (!saved.until) return false;
+    const end = Math.floor(saved.until.getTime() / 1000);
+    return !!written && end === Math.floor(written.getTime() / 1000);
+  }
+
+  function finish(mode: WriteMode | undefined = options.modeOnly ? undefined : readBack(options.defaultMode)?.mode): void {
+    // Exactly one done, whatever comes first: a saved choice or the time running out
+    if (finished) return;
+    finished = true;
     if (modeTimer) clearTimeout(modeTimer);
+    modeTimer = undefined;
     set({ step: 'done', mode, qrSvg: undefined });
     options.emit({ event: 'done', ...(state.user ? { user: state.user } : {}), ...(mode ? { mode } : {}) });
     resolveDone({ user: state.user, mode });
   }
 
   /** After the login: the page asks what the agent may do; skipping or waiting too long keeps read-only. */
-  function askMode(): void {
-    set({ step: 'mode', qrSvg: undefined });
+  function askMode(error?: string): void {
+    set({ step: 'mode', qrSvg: undefined, error });
     options.emit({ event: 'waiting_mode' });
-    modeTimer = setTimeout(() => finish(), MODE_WAIT_MS);
+    waitMode(options.modeWaitMs ?? MODE_WAIT_MS);
+  }
+
+  function waitMode(ms: number): void {
+    if (modeTimer) clearTimeout(modeTimer);
+    modeDeadline = Date.now() + ms;
+    modeTimer = setTimeout(() => finish(), ms);
     modeTimer.unref?.();
+  }
+
+  /**
+   * The clock stops while a choice is applied (a dialog may stay open for long): running out then
+   * would send done with the old mode, and the approval a second done. A refusal resumes it.
+   */
+  function pauseMode(): void {
+    if (modeTimer) clearTimeout(modeTimer);
+    modeTimer = undefined;
+    modeLeft = Math.max(0, modeDeadline - Date.now());
   }
 
   async function runLogin(): Promise<void> {
@@ -156,10 +213,19 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       });
       options.save(result.session, creds, creds.invite);
       set({ user: result.user, mode: options.defaultMode });
-      if (options.applyMode && options.defaultMode) await options.applyMode({ mode: options.defaultMode });
+      let modeError: string | undefined;
+      if (options.applyMode && options.defaultMode) {
+        // The session is saved either way; a refused mode must not show up as in effect
+        const choice: ModeChoice = { mode: options.defaultMode };
+        const applied = await options.applyMode(choice).catch((): ModeResult => ({ ok: false, error: 'store_failed' }));
+        const saved = readBack(applied.ok ? options.defaultMode : undefined);
+        if (!applied.ok) modeError = applied.error;
+        else if (!holds(saved, choice, applied.until)) modeError = 'store_failed';
+        state.mode = saved?.mode;
+      }
       if (options.applyMode) {
         options.emit({ event: 'logged_in', user: result.user });
-        askMode();
+        askMode(modeError);
       } else finish();
     } catch (e) {
       if (abort.signal.aborted) return;
@@ -182,7 +248,7 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
     const route = path.slice(base.length);
 
     if (req.method === 'GET' && (route === '' || route === 'cb')) {
-      const { html, csp } = onboardPage({ site: options.site ?? ONBOARD_SITE, returnTo: `${origin}${base}cb` });
+      const { html, csp } = onboardPage({ site: options.site ?? ONBOARD_SITE, returnTo: `${origin}${base}cb`, modeOnly: !!options.modeOnly });
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
@@ -241,18 +307,27 @@ export async function startOnboarding(options: OnboardOptions): Promise<OnboardS
       const span = typeof body.for === 'string' ? body.for : '';
       if ((mode !== 'read-only' && mode !== 'ask' && mode !== 'on') || !(span in MODE_SPANS)) return json(res, 400, { error: 'bad_mode' });
       applying = true;
+      pauseMode();
       try {
+        const choice: ModeChoice = { mode, forSeconds: MODE_SPANS[span] };
         // May show a dialog (macOS, Windows) or a terminal prompt and wait for the person
-        const result = await options.applyMode({ mode, forSeconds: MODE_SPANS[span] });
-        if (!result.ok) {
-          state.error = result.error;
-          return json(res, 409, { error: result.error });
+        const result = await options.applyMode(choice);
+        const saved = readBack(result.ok ? mode : state.mode);
+        // A store that said yes but kept the old value (or end) fails too
+        const error = !result.ok ? result.error : !holds(saved, choice, result.until) ? 'store_failed' : undefined;
+        if (error) {
+          state.error = error;
+          state.errorFor = span || undefined;
+          state.errorPick = mode;
+          state.mode = saved?.mode;
+          return json(res, 409, { error, pick: mode, ...(span ? { for: span } : {}) });
         }
-        options.emit({ event: 'mode', mode, ...(result.until ? { until: result.until.toISOString() } : {}) });
+        options.emit({ event: 'mode', mode, ...(result.ok && result.until ? { until: result.until.toISOString() } : {}) });
         finish(mode);
         return json(res, 202, { ok: true });
       } finally {
         applying = false;
+        if (!finished && !abort.signal.aborted) waitMode(modeLeft);
       }
     }
     if (route === 'retry') {

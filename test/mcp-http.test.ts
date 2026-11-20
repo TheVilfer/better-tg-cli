@@ -64,7 +64,7 @@ describe('telegram mcp --http', () => {
     expect((await init.json()).result.serverInfo.name).toBe('better-tg-cli');
     expect((await post(full.url, { jsonrpc: '2.0', method: 'notifications/initialized' })).status).toBe(202);
     const list = await (await post(full.url, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json();
-    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write']);
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write', 'telegram_setup']);
     const read = await (await post(full.url, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'telegram_read', arguments: { args: ['whoami'] } } })).json();
     expect(read.result.content[0].text).toBe('ran whoami');
   });
@@ -107,9 +107,26 @@ describe('telegram mcp --http', () => {
     }
   });
 
+  it('never runs a never or unknown call on either tool', async () => {
+    const before = calls.length;
+    const refused = [
+      ['write-access', 'on'], ['write-access', 'ask'], ['write-access', 'off'], ['mcp', '--rotate-token'], ['auth'],
+      ['logout'], ['update'], ['skill', 'install'], ['onboard'], ['help-all'], ['__update-check'], ['connect'],
+      ['secrets', 'use', 'x'], ['doctor', '--fix'], ['nope', '--help'],
+    ];
+    let id = 100;
+    for (const args of refused) {
+      for (const name of ['telegram_read', 'telegram_write']) {
+        const r = await (await post(full.url, { jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: { args } } })).json();
+        expect(r.result.isError, `${name} ${args.join(' ')}`).toBe(true);
+      }
+    }
+    expect(calls.length).toBe(before);
+  });
+
   it('--read-only hides telegram_write and refuses it', async () => {
     const list = await (await post(readOnly.url, { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json();
-    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(['telegram_help', 'telegram_read']);
+    expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_setup']);
     const before = calls.length;
     const write = await (await post(readOnly.url, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'telegram_write', arguments: { args: ['send', 'me', 'x'] } } })).json();
     expect(write.result.isError).toBe(true);

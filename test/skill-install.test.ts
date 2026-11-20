@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -7,7 +7,7 @@ import { SKILL_FILES } from '../src/skill-files.js';
 import {
   agentStatus, installSkill, knownAgents, selectAgents, SKILL_NAME, uninstallSkill,
 } from '../src/skill-install.js';
-import { EXCLUDED_COMMANDS, isWriteCommand, setKnownCommands } from '../src/mcp.js';
+import { NEVER_COMMANDS, classifyCall, isWriteCommand, setKnownCommands } from '../src/mcp.js';
 
 // Every test works in a throwaway HOME; the real agent folders are never touched
 const fakeHome = () => mkdtempSync(join(tmpdir(), 'tg-skill-'));
@@ -65,9 +65,17 @@ describe('install / uninstall', () => {
     expect(agentStatus(a).state.kind).toBe('installed');
     expect(installSkill(a).action).toBe('unchanged');
 
-    writeFileSync(join(path, 'reference.md'), 'old');
+    writeFileSync(join(path, 'writing.md'), 'old');
     expect(agentStatus(a).state.kind).toBe('outdated');
     expect(installSkill(a).action).toBe('updated');
+    expect(agentStatus(a).state.kind).toBe('installed');
+
+    // A copy from before the split still has reference.md: outdated, and the update removes it
+    writeFileSync(join(path, 'reference.md'), 'old single reference');
+    expect(agentStatus(a).state.kind).toBe('outdated');
+    expect(installSkill(a).action).toBe('updated');
+    expect(existsSync(join(path, 'reference.md'))).toBe(false);
+    expect(readdirSync(path).sort()).toEqual(Object.keys(SKILL_FILES).sort());
     expect(agentStatus(a).state.kind).toBe('installed');
 
     expect(uninstallSkill(a).action).toBe('removed');
@@ -100,6 +108,62 @@ describe('install / uninstall', () => {
     expect(readdirSync(checkout)).toEqual(['SKILL.md']);
   });
 
+  it('calls a link into a folder that no longer exists broken-link, not linked', () => {
+    const home = fakeHome();
+    const a = agent(home, 'codex');
+    const gone = join(home, 'moved-away', 'better-tg-cli');
+    mkdirSync(gone, { recursive: true });
+    mkdirSync(a.skillsDir, { recursive: true });
+    const path = join(a.skillsDir, SKILL_NAME);
+    symlinkSync(gone, path, process.platform === 'win32' ? 'junction' : 'dir');
+    rmSync(join(home, 'moved-away'), { recursive: true });
+
+    const state = agentStatus(a).state;
+    expect(state.kind).toBe('broken-link');
+    expect(resolve((state as { target: string }).target)).toBe(resolve(gone));
+    const skipped = installSkill(a);
+    expect(skipped).toMatchObject({ action: 'skipped' });
+    expect(skipped.reason).toMatch(/broken symlink to .*\(the target is gone\)/);
+    // --force replaces only the dead link with a real copy
+    expect(installSkill(a, { force: true }).action).toBe('installed');
+    expect(agentStatus(a).state.kind).toBe('installed');
+  });
+
+  // File symlinks need a privilege on Windows; the check itself is platform-neutral
+  it.skipIf(process.platform === 'win32')('never writes through a symlinked file inside a real skill folder', () => {
+    const home = fakeHome();
+    const a = agent(home, 'claude-code');
+    expect(installSkill(a).action).toBe('installed');
+    const path = join(a.skillsDir, SKILL_NAME);
+    const outside = join(home, 'outside.md');
+    writeFileSync(outside, 'not the skill');
+    rmSync(join(path, 'writing.md'));
+    symlinkSync(outside, join(path, 'writing.md'));
+    writeFileSync(join(path, 'SKILL.md'), '---\nname: better-tg-cli\n---\nold\n');
+    expect(agentStatus(a).state.kind).toBe('outdated');
+
+    const skipped = installSkill(a);
+    expect(skipped.action).toBe('skipped');
+    expect(skipped.reason).toMatch(/writing\.md is a symlink/);
+    // Nothing was written, not even the files before the link
+    expect(readFileSync(outside, 'utf8')).toBe('not the skill');
+    expect(readFileSync(join(path, 'SKILL.md'), 'utf8')).toBe('---\nname: better-tg-cli\n---\nold\n');
+    expect(lstatSync(join(path, 'writing.md')).isSymbolicLink()).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('a broken link under a retired name is outdated, and the update removes only the link', () => {
+    const home = fakeHome();
+    const a = agent(home, 'claude-code');
+    expect(installSkill(a).action).toBe('installed');
+    const path = join(a.skillsDir, SKILL_NAME);
+    symlinkSync(join(home, 'gone.md'), join(path, 'reference.md'));
+    expect(existsSync(join(path, 'reference.md'))).toBe(false);
+    expect(agentStatus(a).state.kind).toBe('outdated');
+    expect(installSkill(a).action).toBe('updated');
+    expect(readdirSync(path).sort()).toEqual(Object.keys(SKILL_FILES).sort());
+    expect(agentStatus(a).state.kind).toBe('installed');
+  });
+
   it('leaves a folder that belongs to something else alone', () => {
     const home = fakeHome();
     const a = agent(home, 'cursor');
@@ -115,7 +179,8 @@ describe('install / uninstall', () => {
 describe('MCP', () => {
   it('never exposes `skill`, which writes into other agents\' config', () => {
     setKnownCommands(['skill', 'send']);
-    expect(EXCLUDED_COMMANDS.has('skill')).toBe(true);
+    expect(NEVER_COMMANDS.has('skill')).toBe(true);
+    expect(classifyCall(['skill', 'install'])).toMatchObject({ group: 'never' });
     expect(isWriteCommand('skill')).toBe(false);
   });
 });
@@ -131,6 +196,8 @@ describe('agent-plugin/ (Hermes Agent plugin catalog)', () => {
     expect(server.command).toBe('npx');
     expect(server.args).toEqual(['-y', `better-tg-cli@${version}`, 'mcp']);
     for (const [file, content] of Object.entries(SKILL_FILES)) expect(read(`skills/better-tg-cli/${file}`)).toBe(content);
+    // Exactly these files: one the skill dropped must not linger in the copy
+    expect(readdirSync(new URL('agent-plugin/skills/better-tg-cli/', root)).sort()).toEqual(Object.keys(SKILL_FILES).sort());
     expect(read('LICENSE')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
   });
 
@@ -165,6 +232,7 @@ describe('plugin/ (Anthropic plugin directory)', () => {
     for (const [file, content] of Object.entries(SKILL_FILES)) {
       expect(readFileSync(new URL(`plugin/skills/better-tg-cli/${file}`, root), 'utf8')).toBe(content);
     }
+    expect(readdirSync(new URL('plugin/skills/better-tg-cli/', root)).sort()).toEqual(Object.keys(SKILL_FILES).sort());
     expect(readFileSync(new URL('plugin/LICENSE', root), 'utf8')).toBe(readFileSync(new URL('LICENSE', root), 'utf8'));
   });
 

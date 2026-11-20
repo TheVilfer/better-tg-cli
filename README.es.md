@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#instalación">Instalación</a> · <a href="skills/better-tg-cli/reference.md">Referencia</a> · <a href="SECURITY.md">Seguridad</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.ru.md">Русский</a>
+    <a href="#instalación">Instalación</a> · <a href="skills/better-tg-cli/SKILL.md">Referencia</a> · <a href="SECURITY.md">Seguridad</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.ru.md">Русский</a>
   </p>
 </div>
 
@@ -34,8 +34,8 @@ servidor MCP (`telegram mcp`) y como skill para agentes.
 $ telegram inbox -n 3
 48 unread in 7 chats (showing 3)
 1234567890 user unread=2 Alice @alice | see you at 7?
--1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | anyone tried 1.90?
 -1009876543 channel unread=5 Changelog | v2.4 is out
+-1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | anyone tried 1.90?
 $ telegram read @alice -n 1 --json
 {"chatTitle":"Alice","messages":[{"id":812,"date":"2026-09-27T10:02:11.000Z","sender":"Alice","senderId":"1234567890","text":"see you at 7?"}]}
 ```
@@ -65,7 +65,7 @@ Hecho para agentes:
 - **Tú apruebas cada mensaje.** Tras iniciar sesión, el agente te pregunta en el chat antes de
   cada envío, edición o borrado y te muestra el texto exacto; solo envía tras tu sí. Escribir sin
   preguntar (`write-access on`) requiere tu propia confirmación en un terminal o en un diálogo de
-  macOS. Cada escritura se registra en `~/.config/tg/audit.jsonl`. Los secretos se guardan en el Keychain de macOS, en el Secret Service
+  macOS. Los comandos con registro de auditoría intentan anotar el resultado en `~/.config/tg/audit.jsonl` (la carpeta del perfil activo); una escritura detenida para aprobación o con la escritura desactivada termina antes, y no toda escritura tiene uno. Los secretos se guardan en el Keychain de macOS, en el Secret Service
   de Linux o en 1Password.
 - **Pequeño y autónomo.** El paquete de npm es un único archivo de 0,3 MB sin dependencias en tiempo
   de ejecución. Homebrew instala un binario independiente que no necesita Node.
@@ -94,6 +94,10 @@ brew install thevilfer/tap/better-tg-cli   # binario independiente, macOS y Linu
 npm install -g better-tg-cli               # Node >= 20, cualquier sistema operativo
 ```
 
+Sin Homebrew, Node ni sudo (macOS, Linux): `curl -q --proto '=https' --tlsv1.2 -fsSL https://github.com/TheVilfer/better-tg-cli/releases/latest/download/install.sh | sh` deja el binario de la
+versión en `~/.local/bin` tras comprobar su SHA-256 e imprime el resultado en JSON para agentes
+([detalles, uso desde scripts y agentes, y cómo pasar desde el script antiguo](docs/install.md)).
+
 En Windows (experimental), con [Scoop](https://scoop.sh) o npm:
 
 ```powershell
@@ -104,7 +108,9 @@ scoop install better-tg-cli
 El `telegram.exe` de Windows no tiene firma de código, así que SmartScreen puede mostrar una
 advertencia al descargarlo desde la release.
 
-`telegram update` actualiza una instalación existente, sea cual sea el método que usaste. En un
+`telegram update` actualiza una instalación de Homebrew, Scoop, npm o un checkout de git. Un binario
+del script de instalación se actualiza ejecutando el script otra vez; `telegram update` imprime ese
+comando. No reemplaces ese binario a mano: el script guarda su SHA-256 y luego rechaza la ruta. En un
 terminal, el CLI busca nuevas versiones una vez al día. Los agentes y los pipes nunca ven ese aviso,
 y `TG_NO_UPDATE_CHECK=1` lo desactiva.
 
@@ -219,7 +225,9 @@ invitación: `--invite` y `TG_INVITE` siguen funcionando.
 La sesión se guarda en el Keychain de macOS (servicio `tg-cli`) o en 1Password con
 `--op-vault <vault>`. `telegram logout` la elimina. En Linux va al Secret Service (GNOME Keyring,
 KWallet, KeePassXC) a través de `secret-tool`, que necesita el paquete `libsecret-tools`. Una sesión
-ya guardada en el archivo de configuración se traslada allí automáticamente. Sin ningún almacén de
+ya guardada en el archivo de configuración se usa desde allí tal cual, y `telegram check` lo indica;
+el traslado al almacén de secretos llegará más adelante
+([#116](https://github.com/TheVilfer/better-tg-cli/issues/116)). Sin ningún almacén de
 secretos, la sesión se guarda en `~/.config/tg/config.json5` (modo 0600). En Linux sin un Secret
 Service que funcione (sin `secret-tool` o sin bus de sesión, como en los ordenadores de agentes en la
 nube) el modo de escritura también se guarda en un archivo normal del perfil, que protege de errores
@@ -248,9 +256,11 @@ telegram click @SomeBot 4410 "Settings"       # pulsa un botón inline
 ```
 
 Los comandos de lectura aceptan `--json`, y algunos también `--markdown`. Consulta todos los comandos
-con `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) cubre el comportamiento que
-la lista de flags no puede explicar: formatos de salida, hilos, botones de bots, comandos de
-administración y resolución de problemas.
+con `telegram help-all`. Los archivos de referencia del skill cubren el comportamiento que la lista de
+flags no puede explicar: [lectura](skills/better-tg-cli/reading.md) (formatos de salida, hilos, búsqueda),
+[escritura](skills/better-tg-cli/writing.md) (aprobaciones, botones de bots, administración),
+[archivos y exportación](skills/better-tg-cli/files-live.md), [API](skills/better-tg-cli/api.md) y
+[instalación y resolución de problemas](skills/better-tg-cli/setup.md).
 
 ## Servidor MCP
 
@@ -459,7 +469,9 @@ Tras `telegram onboard` ya está en modo `ask`: el agente te pregunta en el chat
 Algunos ordenadores de agentes en la nube solo dejan salir HTTPS, y eso corta el transporte TCP de Telegram. La CLI cambia entonces sola a MTProto sobre WebSocket (`wss://*.web.telegram.org`, el transporte de web.telegram.org) y lo recuerda para el perfil. `TG_TRANSPORT=tcp|wss|auto` elige el transporte a mano.
 
 **¿Cómo actualizo?**
-Ejecuta `telegram update`. Usa el mismo canal desde el que instalaste: Homebrew, npm o un binario de release.
+Ejecuta `telegram update`. Usa el mismo canal desde el que instalaste: Homebrew, Scoop o npm. Si
+instalaste con el script de instalación, vuelve a ejecutarlo (`telegram update` imprime el comando) y
+no reemplaces el binario a mano.
 Si instalaste la skill de agente con `telegram skill install`, vuelve a ejecutarlo para actualizarla.
 
 ## Desarrollo

@@ -112,10 +112,12 @@ describe('MCP routing of the top-level generated form', () => {
     expect(planCall('telegram_write', { args: ['messages', 'get-history'] })).toMatch(/use telegram_read/);
     expect(planCall('telegram_write', { args: ['messages', 'send-message', '--peer', '@x'] })).toMatchObject({ readOnly: false });
     expect(planCall('telegram_read', { args: ['messages', 'send-message'] })).toMatch(/use telegram_write/);
-    // root method (Ping is not read-prefixed → a write)
-    expect(planCall('telegram_write', { args: ['ping'] })).toMatchObject({ readOnly: false });
+    // root method: Ping is off the MCP allowlist, so it is refused on both tools
+    expect(planCall('telegram_write', { args: ['ping'] })).toMatch(/not available over MCP/);
     // reclassified side-effecting read
-    expect(planCall('telegram_read', { args: ['messages', 'get-messages-views', '--peer', '@x', '--id', '1'] })).toMatch(/use telegram_write/);
+    expect(planCall('telegram_read', { args: ['messages', 'get-bot-callback-answer', '--peer', '@x', '--msg-id', '1'] })).toMatch(/use telegram_write/);
+    expect(planCall('telegram_read', { args: ['messages', 'get-messages-views', '--peer', '@x', '--id', '1'] })).toMatchObject({ readOnly: true }); // increment is refused by the CLI
+    expect(planCall('telegram_read', { args: ['messages', 'get-inline-bot-results', '--bot', '@b'] })).toMatch(/use telegram_write/);
     // refusals
     expect(planCall('telegram_read', { args: ['account', 'delete-account'] })).toMatch(/irreversible/);
     expect(planCall('telegram_read', { args: ['auth', 'send-code'] })).toMatch(/login|session/i);
@@ -123,11 +125,11 @@ describe('MCP routing of the top-level generated form', () => {
 
   it('keeps curated classification for clash commands when the operand is not a method', () => {
     expect(planCall('telegram_read', { args: ['stats', '@chat'] })).toMatchObject({ readOnly: true }); // curated read
-    expect(planCall('telegram_read', { args: ['stats', 'get-broadcast-stats', '--channel', '@c'] })).toMatchObject({ readOnly: true }); // generated read
+    expect(planCall('telegram_read', { args: ['stats', 'get-broadcast-stats', '--channel', '@c'] })).toMatch(/not available over MCP/); // generated, off the allowlist
     expect(planCall('telegram_read', { args: ['contacts'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['stories', '@u'] })).toMatchObject({ readOnly: true });
     expect(planCall('telegram_read', { args: ['help'] })).toMatchObject({ readOnly: true });
-    expect(planCall('telegram_read', { args: ['help', 'get-config'] })).toMatchObject({ readOnly: true });
+    expect(planCall('telegram_read', { args: ['help', 'get-config'] })).toMatch(/not available over MCP/); // generated, off the allowlist
     // auth login (no method) stays a terminal-only command
     expect(planCall('telegram_read', { args: ['auth'] })).toMatch(/not available over MCP/);
   });
@@ -246,7 +248,7 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
 
   it('help: `help <method>` runs it, `help <command>` shows help', async () => {
     expect(await fails('help', 'get-config')).toMatch(/help\.GetConfig/); // ran the method (mock: unimplemented)
-    expect(await run('help', 'stats')).toMatch(/Usage: tg stats/);
+    expect(await run('help', 'stats')).toMatch(/Usage: telegram stats/);
     expect(await run('help', 'messages')).toMatch(/get-history/); // namespace help lists methods
   }, 30_000);
 
@@ -291,7 +293,8 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
     expect(method).toMatch(/--peer <value>\s+InputPeer, required — Target peer/); // type + param desc
     expect(method).toMatch(/--offset-id <value>\s+int, default 0/);
     expect(method).toMatch(/--hash <value>\s+long, default 0/);
-    expect(method).toMatch(/Access: read/);
+    expect(method).toMatch(/Access in a terminal: read/);
+    expect(method).toMatch(/Access over MCP: read — through telegram_read/);
     expect(method).toMatch(/Returns: messages\.Messages/);
     expect(method).toMatch(/Example:\s+telegram messages get-history --peer @username --limit 20/);
     expect(method).toMatch(/core\.telegram\.org\/method\/messages\.getHistory/);
@@ -300,7 +303,8 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
 
   it('a refused method --help states the refusal + reason (and never runs anything)', async () => {
     const help = await run('account', 'delete-account', '--help');
-    expect(help).toMatch(/Access: refused — Refused:.*irreversible/i);
+    expect(help).toMatch(/Access in a terminal: refused — Refused:.*irreversible/i);
+    expect(help).toMatch(/Access over MCP: refused/);
     expect(help).toMatch(/Delete the user's account/); // official description still shown
   }, 30_000);
 
@@ -335,7 +339,7 @@ describe.concurrent('CLI, mock mode (top-level form, clashes, help)', () => {
 
   it('a clash command --help shows curated usage plus a generated-methods pointer', async () => {
     const help = await run('stats', '--help');
-    expect(help).toMatch(/Usage: tg stats \[options\] <chat>/); // curated usage intact
+    expect(help).toMatch(/Usage: telegram stats \[options\] <chat>/); // curated usage intact
     expect(help).toMatch(/Generated API methods \(telegram stats <method>/);
     expect(help).toMatch(/get-broadcast-stats/);
   }, 30_000);

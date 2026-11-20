@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#установка">Установка</a> · <a href="skills/better-tg-cli/reference.md">Справка</a> · <a href="SECURITY.md">Безопасность</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.es.md">Español</a>
+    <a href="#установка">Установка</a> · <a href="skills/better-tg-cli/SKILL.md">Справка</a> · <a href="SECURITY.md">Безопасность</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.md">English</a> · <a href="README.es.md">Español</a>
   </p>
 </div>
 
@@ -34,8 +34,8 @@ MCP-сервер (`telegram mcp`), и скилл для агентов.
 $ telegram inbox -n 3
 48 unread in 7 chats (showing 3)
 1234567890 user unread=2 Алиса @alice | в 7 в силе?
--1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | кто уже пробовал 1.90?
 -1009876543 channel unread=5 Changelog | вышла v2.4
+-1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | кто уже пробовал 1.90?
 ```
 
 > [!WARNING]
@@ -63,7 +63,7 @@ $ telegram inbox -n 3
 - **Каждое сообщение одобряете вы.** После входа агент перед каждой отправкой, правкой или
   удалением спрашивает вас в чате и показывает точный текст; отправляет только после вашего «да».
   Писать без вопросов (`write-access on`) можно только после вашего подтверждения в терминале или
-  в диалоге macOS. Каждая запись попадает в `~/.config/tg/audit.jsonl`. Секреты хранятся в
+  в диалоге macOS. Команды с аудитом пытаются записать результат в `~/.config/tg/audit.jsonl` (папка активного профиля); запись, остановленная ради подтверждения или при выключенной записи, завершается раньше журнала, и аудит есть не у каждой записи. Секреты хранятся в
   Keychain macOS, в Secret Service на Linux или в 1Password.
 - **Маленький и самодостаточный.** npm-пакет — один файл на 0,3 МБ без runtime-зависимостей.
   Homebrew ставит отдельный бинарник, которому не нужен Node.
@@ -92,6 +92,10 @@ brew install thevilfer/tap/better-tg-cli   # отдельный бинарник
 npm install -g better-tg-cli               # Node >= 20, любая ОС
 ```
 
+Без Homebrew, Node и sudo (macOS, Linux): `curl -q --proto '=https' --tlsv1.2 -fsSL https://github.com/TheVilfer/better-tg-cli/releases/latest/download/install.sh | sh` кладёт бинарник релиза
+в `~/.local/bin`, сверив SHA-256, и печатает итог в JSON для агентов
+([подробности, запуск из скриптов и агентов, переход со старого скрипта](docs/install.md)).
+
 На Windows (экспериментально) через [Scoop](https://scoop.sh) или npm:
 
 ```powershell
@@ -101,7 +105,9 @@ scoop install better-tg-cli
 
 `telegram.exe` для Windows не подписан, поэтому SmartScreen может предупредить при скачивании из релиза.
 
-`telegram update` обновляет CLI тем же способом, каким он был установлен. В терминале CLI раз в
+`telegram update` обновляет установку из Homebrew, Scoop, npm или git-чекаута. Бинарник из
+установочного скрипта обновляется повторным запуском скрипта; `telegram update` печатает для него эту
+команду. Не заменяйте такой бинарник вручную: скрипт записал его SHA-256 и потом откажется трогать путь. В терминале CLI раз в
 сутки проверяет, не вышла ли новая версия. Агенты и пайпы этого уведомления не видят, а
 `TG_NO_UPDATE_CHECK=1` отключает его совсем.
 
@@ -210,7 +216,9 @@ npx skills add TheVilfer/better-tg-cli -g -a claude-code -a codex -y
 Сессия хранится в Keychain macOS (сервис `tg-cli`) или в 1Password с флагом `--op-vault <vault>`.
 `telegram logout` её удаляет. На Linux сессия хранится в Secret Service (GNOME Keyring, KWallet,
 KeePassXC) через `secret-tool`, для этого нужен пакет `libsecret-tools`. Сессия, которая уже лежит
-в конфиге, переедет туда сама. Если хранилища секретов нет, сессия лежит в
+в конфиге, используется оттуда как есть, и `telegram check` об этом пишет; перенос в хранилище
+секретов появится позже ([#116](https://github.com/TheVilfer/better-tg-cli/issues/116)). Если
+хранилища секретов нет, сессия лежит в
 `~/.config/tg/config.json5` (права 0600). На Linux без работающего Secret Service (нет `secret-tool`
 или сессионной шины, как на облачных компьютерах агентов) режим записи тогда тоже хранится в
 обычном файле профиля: это защита от ошибок, но не от агента, который может править файлы. На Linux
@@ -238,8 +246,10 @@ telegram click @SomeBot 4410 "Настройки"      # нажать инлай
 ```
 
 Команды чтения принимают `--json`, а некоторые и `--markdown`. Все команды выводит
-`telegram help-all`. В [reference.md](skills/better-tg-cli/reference.md) описано то, чего не видно по списку флагов:
-форматы вывода, треды, кнопки ботов, админские команды, решение проблем.
+`telegram help-all`. Справочные файлы навыка описывают то, чего не видно по списку флагов:
+[чтение](skills/better-tg-cli/reading.md) (форматы вывода, треды, поиск), [запись](skills/better-tg-cli/writing.md)
+(подтверждения, кнопки ботов, админские команды), [файлы и экспорт](skills/better-tg-cli/files-live.md),
+[API](skills/better-tg-cli/api.md), [установка и решение проблем](skills/better-tg-cli/setup.md).
 
 ## MCP-сервер
 
@@ -445,7 +455,9 @@ journalctl --user -u better-tg-cli-mcp.service -f
 Некоторые облачные компьютеры агентов выпускают наружу только HTTPS, и TCP-транспорт Telegram обрывается. Тогда CLI сам переключается на MTProto поверх WebSocket (`wss://*.web.telegram.org`, тот же транспорт, что у web.telegram.org) и запоминает это для профиля. Выбрать транспорт вручную можно через `TG_TRANSPORT=tcp|wss|auto`.
 
 **Как обновиться?**
-`telegram update`. Команда обновляет тем же способом, каким CLI был установлен: Homebrew, npm или бинарник из релиза.
+`telegram update`. Команда обновляет тем же способом, каким CLI был установлен: Homebrew, Scoop или npm.
+Если CLI ставился установочным скриптом, запустите скрипт ещё раз (`telegram update` напечатает
+команду) и не заменяйте бинарник вручную.
 Если скилл для агентов ставили через `telegram skill install`, запустите её ещё раз, чтобы обновить скилл.
 
 ## Разработка

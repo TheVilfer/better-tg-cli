@@ -15,7 +15,7 @@
   [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
-    <a href="#install">Install</a> · <a href="skills/better-tg-cli/reference.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
+    <a href="#install">Install</a> · <a href="skills/better-tg-cli/SKILL.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
   </p>
 </div>
 
@@ -34,8 +34,8 @@ server (`telegram mcp`) and an agent skill.
 $ telegram inbox -n 3
 48 unread in 7 chats (showing 3)
 1234567890 user unread=2 Alice @alice | see you at 7?
--1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | anyone tried 1.90?
 -1009876543 channel unread=5 Changelog | v2.4 is out
+-1001234567 supergroup muted unread=41 Rust Seattle @rust_sea | anyone tried 1.90?
 $ telegram read @alice -n 1 --json
 {"chatTitle":"Alice","messages":[{"id":812,"date":"2026-09-27T10:02:11.000Z","sender":"Alice","senderId":"1234567890","text":"see you at 7?"}]}
 ```
@@ -63,8 +63,9 @@ Made for agents:
   for Saved Messages.
 - **You approve every message.** After login the agent asks you in the chat before each send,
   edit or delete, and shows the exact text; it sends only after your yes. Writing without asking
-  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Every write is
-  logged to `~/.config/tg/audit.jsonl`. Secrets live in the macOS Keychain, the
+  (`write-access on`) needs your own confirmation in a terminal or a macOS dialog. Commands with an
+  audit log try to record the result in `~/.config/tg/audit.jsonl` (the active profile's folder); a
+  write stopped for approval or with writes off ends before it, and not every write has one. Secrets live in the macOS Keychain, the
   Linux Secret Service or 1Password.
 - **Small and self-contained.** The npm package is one 0.3 MB file with zero runtime
   dependencies. Homebrew installs a standalone binary with no Node.
@@ -93,6 +94,10 @@ brew install thevilfer/tap/better-tg-cli   # standalone binary, macOS and Linux
 npm install -g better-tg-cli               # Node >= 20, any OS
 ```
 
+No Homebrew, Node or sudo (macOS, Linux): `curl -q --proto '=https' --tlsv1.2 -fsSL https://github.com/TheVilfer/better-tg-cli/releases/latest/download/install.sh | sh` puts the release binary
+in `~/.local/bin` after checking its SHA-256 and prints the result as JSON for agents
+([details, use from scripts and agents, moving from the old script](docs/install.md)).
+
 On Windows (experimental), with [Scoop](https://scoop.sh) or npm:
 
 ```powershell
@@ -102,7 +107,9 @@ scoop install better-tg-cli
 
 The Windows `telegram.exe` is not code-signed, so SmartScreen may warn about the release download.
 
-`telegram update` upgrades an existing install, whichever of these you used. On a terminal the CLI
+`telegram update` upgrades an install from Homebrew, Scoop, npm or a git checkout. A binary from the
+install script is updated by running the script again; `telegram update` prints that command for it.
+Do not replace that binary by hand: the script records its SHA-256 and then refuses the path. On a terminal the CLI
 checks for new versions once a day. Agents and pipes never see that notice, and
 `TG_NO_UPDATE_CHECK=1` turns it off.
 
@@ -211,7 +218,9 @@ can be revoked. Before 0.37 the key was called an invite: `--invite` and `TG_INV
 The session is stored in the macOS Keychain (service `tg-cli`), or in 1Password with
 `--op-vault <vault>`. `telegram logout` removes it. On Linux it goes to the Secret Service (GNOME
 Keyring, KWallet, KeePassXC) through `secret-tool`, which needs the `libsecret-tools` package. A
-session already saved in the config file moves there automatically. Without any secret store, the
+session already saved in the config file is used from there as is, and `telegram check` says so;
+moving it into the secret store comes later
+([#116](https://github.com/TheVilfer/better-tg-cli/issues/116)). Without any secret store, the
 session is kept in `~/.config/tg/config.json5` (mode 0600). On Linux without a working Secret
 Service (no `secret-tool` or no session bus, as on cloud agent computers) the write mode is then kept
 in a plain file in the profile too, which guards against mistakes, not against an agent that can
@@ -258,9 +267,12 @@ telegram help get-config                      # telegram ping, telegram req-pq, 
 Read commands take `--json`, and some also take `--markdown`. `read`/`get`/`search`/`inbox`/`watch`
 take `--full` (alias `--stats`) to include every per-message statistic (views, forwards, full
 reaction breakdown, comments, flags, rich media metadata) — default output is unchanged without it.
-See all commands with `telegram help-all`. [reference.md](skills/better-tg-cli/reference.md) covers the behaviour that the flag list can't
-explain: output shapes, threads, bot buttons, admin commands and troubleshooting. The generic
-`telegram api <namespace.Method>` reaches 100% of the Telegram client API, and every one of the 823
+See all commands with `telegram help-all`. The agent skill's reference files cover the behaviour that the flag list can't
+explain: [reading](skills/better-tg-cli/reading.md) (output shapes, threads, search), [writing](skills/better-tg-cli/writing.md)
+(approvals, bot buttons, admin commands), [files and export](skills/better-tg-cli/files-live.md), [raw API](skills/better-tg-cli/api.md)
+and [setup and troubleshooting](skills/better-tg-cli/setup.md). The generic
+`telegram api <namespace.Method>` reaches 100% of the Telegram client API in a terminal (over MCP only
+an allowlist of about a hundred methods runs, see [docs/api-coverage.md](docs/api-coverage.md)), and every one of the 823
 TL methods also has its own typed top-level command `telegram <namespace> <method>` (root methods
 like `telegram ping` too), generated from the schema with the same refusals and read/write guard as
 `api`. Where a namespace name collides with a curated command (`stats`, `stories`, `contacts`,
@@ -476,7 +488,9 @@ After `telegram onboard` it is already in mode `ask`: the agent asks you in the 
 Some hosted agent computers let only HTTPS out, which drops Telegram's TCP transport. The CLI then switches to MTProto over WebSocket (`wss://*.web.telegram.org`, the transport of web.telegram.org) by itself and remembers it for the profile. `TG_TRANSPORT=tcp|wss|auto` picks the transport by hand.
 
 **How do I update?**
-Run `telegram update`. It uses the same channel you installed from: Homebrew, npm or a release binary.
+Run `telegram update`. It uses the same channel you installed from: Homebrew, Scoop or npm. If you
+installed with the install script, run that script again (`telegram update` prints the command), and
+do not replace the binary by hand.
 If you installed the agent skill with `telegram skill install`, run that again to refresh it.
 
 ## Development

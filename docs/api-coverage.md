@@ -16,7 +16,7 @@ Tracks issue #47. Three measures:
 - TL schema methods (teleproto `tl/generated/api.d.ts`, `extends Request<…>`): **823**
 - Reachable today: **823 (100%)** — via the generic `api` command plus every dedicated command
 - Dedicated per-method commands (`telegram <namespace> <method>`): **823 (100%)**
-- Curated/friendly commands: **99 (12%)** — 65 called directly in src/, 34 through teleproto client helpers
+- Curated/friendly commands: **99 (12%)** — 66 called directly in src/, 34 through teleproto client helpers
 
 CI gate (`npm run coverage:api`, also enforced by `npm test`): reachability and Telethon
 accounting (section 2) must each stay at or above **90%** (`--min <n>` / `API_COVERAGE_MIN`),
@@ -152,7 +152,9 @@ hard refusal applies.
 - **`help.*` / `upload.*` / top-level invoke wrappers** — transport and client plumbing.
 - **`stickers.*` (sticker-set authoring)** — niche authoring flow.
 - **Payments / Stars / gifts spending** — any *paying* method is refused even with write
-  access; read-only balances/transactions are allowed through `api`.
+  access; read-only balances/transactions are allowed through `api`. Over MCP any call
+  with `allowPaidStars` (a paid search, or a message, media, album or forward to a chat that
+  charges for it) is refused in every write mode; without it the call runs as usual.
 - **Account deletion, session termination (`auth.ResetAuthorizations`, `account.DeleteAccount`),
   2FA password changes, and anything sharing the phone number or geolocation** — refused
   outright, matching the rule `click` already follows.
@@ -168,8 +170,10 @@ audited against the whole schema:
 
 **Named like a read but reclassified as a write (they change state):**
 
-- `messages.GetMessagesViews` — increments the view counter when `increment` is set.
 - `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.
+- `messages.GetInlineBotResults` — sends the query and your user ID to an external bot (the
+  `inline` command is a write for the same reason).
+- `messages.GetMessagesViews` with `increment` — adds a view (a read without it).
 
 **Refused outright, even with write access** (issue #47: account/session takeover, phone or
 location sharing, paying):
@@ -180,7 +184,11 @@ location sharing, paying):
   `account.ResetWebAuthorization(s)`, `account.SetAuthorizationTTL`,
   `account.ChangeAuthorizationSettings`.
 - **2FA / password:** `account.UpdatePasswordSettings`, `account.ResetPassword`,
-  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`.
+  `account.DeclinePasswordReset`, `account.GetPasswordSettings`, `account.GetTmpPassword`,
+  and the recovery email: `account.ConfirmPasswordEmail`, `ResendPasswordEmail`,
+  `CancelPasswordEmail`.
+- **Passkeys:** `account.InitPasskeyRegistration`, `account.RegisterPasskey`,
+  `account.DeletePasskey` (listing them with `account.GetPasskeys` stays a read in a terminal).
 - **Phone / email changes & verification:** `account.ChangePhone`, `SendChangePhoneCode`,
   `ConfirmPhone`, `SendConfirmPhoneCode`, `SendVerifyPhoneCode`, `VerifyPhone`,
   `SendVerifyEmailCode`, `VerifyEmail`.
@@ -188,18 +196,144 @@ location sharing, paying):
   `account.SetPrivacy`, `account.UpdateBusinessLocation`, `channels.EditLocation`;
   and, by inspecting `--params`, `contacts.AddContact` with `addPhonePrivacyException`,
   and `messages.SendMedia` / `SendMultiMedia` / `EditMessage` carrying an
-  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`.
+  `InputMediaContact` / `InputMediaGeoPoint` / `InputMediaGeoLive` / `InputMediaVenue`,
+  `messages.GetInlineBotResults` with `geoPoint` (an inline query without it is a plain write),
+  and `channels.CreateChannel` with `geoPoint` or `address` (a geo group; a plain channel is created).
 - **Data export / Passport:** `account.InitTakeoutSession`, `account.FinishTakeoutSession`,
-  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`.
+  `account.AcceptAuthorization`, `account.SaveSecureValue`, `account.DeleteSecureValue`, and the
+  Passport reads `account.GetAllSecureValues` / `GetSecureValue` / `GetAuthorizationForm` (`plainData` holds the phone
+  number and email in the clear).
 - **External-site login:** `messages.AcceptUrlAuth`, `messages.RequestUrlAuth`,
-  `messages.CheckUrlAuthMatchCode`.
+  `messages.CheckUrlAuthMatchCode`, and the read-named `messages.GetEmojiURL` (a login link to
+  the translation platform).
 - **Ownership transfer:** `messages.EditChatCreator` / `channels.EditCreator` (needs the 2FA
   password — use `telegram transfer-owner`).
-- **Money:** every non-read `payments.*`, plus the read-named token minters
+- **Money:** every non-read `payments.*`, `messages.SendPaidReaction` (its `count` is the Stars
+  it spends), plus the read-named token minters
   `payments.GetStarsRevenueWithdrawalUrl`, `GetStarGiftWithdrawalUrl`,
   `GetStarsRevenueAdsAccountUrl`, `ResolveStarGiftOffer`, and `phone.GetGroupCallStreamRtmpUrl`.
 
-**Still allowed as reads** (listing only, no state change): `account.GetAuthorizations`,
+**Reads that run as writes:** `channels.SearchPosts` with `allowPaidStars` (a paid full-text
+search) and `messages.GetMessagesViews` with `increment` (it adds a view) need write access in a
+terminal, like any write; without them they stay reads.
+**Paying Stars over MCP:** a non-null `allowPaidStars` is refused over MCP for every method
+(`channels.SearchPosts`, `messages.SendMessage`, `SendMedia`, `SendMultiMedia`,
+`ForwardMessages`, …) in every write mode, `on` included, before anything reaches Telegram.
+`help.GetConfig` prints `autologinToken` as `[redacted]`.
+
+**Still allowed as reads in a terminal** (listing only, no state change): `account.GetAuthorizations`,
 `account.GetWebAuthorizations`, `messages.GetExportedChatInvites`, `payments.GetStarsStatus`,
 `payments.CheckGiftCode`, `stories.GetStoryViewsList`, and the rest of the `Get*` surface.
+Over MCP only the allowlist below runs.
+
+## 5. Raw API over MCP: the allowlist
+
+**Threat model for MCP output.** Over MCP the model never receives credentials or redeemable
+value: login codes, 2FA, session and auth tokens, gift and Premium codes and their links. Ordinary
+chat content (the phone on a contact card, a shared location, reply media) is what the user asks
+the agent to read, so curated commands (`read`, `get`, `contacts`, …) keep showing it. Writes are
+governed by the write mode and its approval flow; the content refusals listed in section 4 and
+below (location and contact media, `forward` of a contact card or a location) predate this model
+and stay, but no new ones are added on content grounds. Concretely, every
+MCP output, raw or curated: hides login codes in all content of a message from the service
+accounts 777000 (Telegram) and 489000 (Verification Codes): text, `richMessage`, entity URLs,
+button texts, URLs, copy texts and callback data, the quote and the link preview, the media file
+name, title and caption, plus a quote of such a message elsewhere (its text and entity URLs).
+It also masks the slug of every gift link (`t.me/giftcode/<slug>`,
+`telegram.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`) as `[gift code hidden]`, in the CLI
+under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself (the whole slug, with
+percent-encoding). What the server says about a call (an approval's action, the result of a
+write, every error) also hides a code after a `code:` / `код:` label: the word right before the
+colon (Russian label words such as `для входа в Telegram` or `подтверждения` allowed after `код`),
+with nothing or a label word such as `login`, `verification`, `Telegram`, `your` before it, so
+`Promo code:` or `exit code:` stay;
+content a read shows is not touched by that rule. All of it is one function, `maskForModel()` in
+`src/mcp-output.ts`; JSON keeps its keys, numbers and IDs. A raw
+result additionally redacts the fields listed below: the raw API is a power tool.
+
+**Where masking stops.** Masking is best-effort against the forms honest authors produce:
+Telegram's own login messages (777000, 489000) and gift links as clients make them
+(`t.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`). On the echo path (text the model itself
+wrote in argv, stdin or a caption) the model already holds the value, so there the priority is
+not to over-mask. Known limits, not covered: HTML or Markdown markup splitting a code
+(`Login code: <b>52813</b>`), an explicit port in a `t.me` URL (`t.me:443/giftcode/…`), callback
+data that carries a gift link Base64-encoded, a code split across `richMessage` nodes, and
+percent-encoded host or parameter names (`t.me/%67iftcode/…`, `sl%75g=`).
+
+Over MCP (the `telegram_read` and `telegram_write` tools) a raw call, `api <method>` or a
+generated `<namespace> <method>` command, runs only if its method is one of these **91**
+of the 823 TL methods. Any other method is refused before anything runs: "not available over
+MCP; run it in a terminal". The rules in section 4 still apply on top (geo or contact media,
+a phone-privacy exception, `allowPaidStars`), and a read runs through the read tool, a write
+through the write tool and its write mode. In a terminal nothing changes.
+
+Over MCP these params of allowed methods are refused as well, at any depth, in every write
+mode: a `suggestedPost` with a `price`, an `InputMediaStakeDice`, `allowPaidFloodskip`, any
+location (a geo point, geo or venue media, an `InputPageBlockMap` in a `richMessage`), a
+`referer` in `contacts.ResolveUsername`, `subscriptionPricing` in `messages.ExportChatInvite`,
+`myStoriesFrom` in `contacts.Block`/`Unblock`, `password` in `messages.GetBotCallbackAnswer`
+and `increment` in `messages.GetMessagesViews`. A raw result over MCP shows phone numbers,
+vCards, birthdays, contact notes and every location field as `"[redacted]"`.
+`--help` and `schema` (`mcpAccess`) show the MCP access of each method next to its terminal access.
+
+Not on the list on purpose: payments and Stars, account / auth / Passport / passkeys, privacy
+and security settings, sessions, takeout, phone calls, sticker-set management, business and
+premium purchases, geo / location, bot administration, folders, chat import and export.
+The list lives in `src/mcp-api-allowlist.ts`; this section is generated from it.
+
+**Read: Messages, history and threads.** Reading chats is the main job: history, exact messages, comments and replies, scheduled and saved messages, drafts, poll results, view counters (increment=false only) and custom emoji.
+
+`messages.GetHistory`, `messages.GetMessages`, `channels.GetMessages`, `messages.GetReplies`, `messages.GetDiscussionMessage`, `messages.GetScheduledHistory`, `messages.GetScheduledMessages`, `messages.GetSavedHistory`, `messages.GetUnreadMentions`, `messages.GetRichMessage`, `messages.GetFactCheck`, `messages.GetMessageEditData`, `messages.GetAllDrafts`, `messages.GetPollResults`, `messages.GetPollVotes`, `messages.GetMessagesViews`, `messages.GetCustomEmojiDocuments`
+
+**Read: Forum topics.** Listing the topics of a forum group, as `topics` does.
+
+`messages.GetForumTopics`, `messages.GetForumTopicsByID`
+
+**Read: Dialogs.** The chat list with unread counts and pins, as `chats` and `inbox` show it.
+
+`messages.GetDialogs`, `messages.GetPeerDialogs`, `messages.GetPinnedDialogs`, `messages.GetDialogUnreadMarks`, `messages.GetSavedDialogs`, `messages.GetSavedDialogsByID`, `messages.GetPinnedSavedDialogs`
+
+**Read: Chats, channels and members.** Chats and their members, as `info` and `members` list them. Full chat info, the admin log and invite links are read with the curated commands.
+
+`messages.GetChats`, `messages.GetCommonChats`, `messages.GetOnlines`, `messages.CheckChatInvite`, `channels.GetChannels`, `channels.GetParticipants`, `channels.GetParticipant`, `channels.GetSendAs`
+
+**Read: Users and contacts.** Resolving people and reading the contact list, as `contacts` and `profile-photos` do (resolving with a referer is refused). Full profiles are read with `contact`.
+
+`users.GetUsers`, `contacts.GetContacts`, `contacts.GetContactIDs`, `contacts.ResolveUsername`, `contacts.Search`, `photos.GetUserPhotos`
+
+**Read: Search.** Search in a chat, across chats and in public posts (a paid post search is refused; a new post search may use up the free daily quota).
+
+`messages.Search`, `messages.SearchGlobal`, `messages.GetSearchCounters`, `messages.GetSearchResultsCalendar`, `messages.GetSearchResultsPositions`, `channels.SearchPosts`, `channels.CheckSearchPostsFlood`
+
+**Read: Reactions.** Who reacted with what, as `reactions` shows it.
+
+`messages.GetMessagesReactions`, `messages.GetMessageReactionsList`, `messages.GetUnreadReactions`, `messages.GetAvailableReactions`
+
+**Write: Send, edit and delete messages.** What `send`, `reply`, `edit`, `delete` and `typing` do (media only as a photo, document, poll or dice; map blocks, paid messages, priced suggested posts and stakes are refused). A raw forward is not allowed: Telegram copies the source media, so `forward` checks it first.
+
+`messages.SendMessage`, `messages.SendMedia`, `messages.SendMultiMedia`, `messages.EditMessage`, `messages.DeleteMessages`, `channels.DeleteMessages`, `messages.SetTyping`
+
+**Write: Reactions and read marks.** What `react`, `mark-read` and `mark-unread` do (a paid reaction is a different method and stays refused).
+
+`messages.SendReaction`, `messages.ReadHistory`, `channels.ReadHistory`, `messages.ReadMentions`, `messages.ReadReactions`, `messages.ReadDiscussion`, `messages.ReadMessageContents`, `channels.ReadMessageContents`, `messages.MarkDialogUnread`
+
+**Write: Pins.** What `pin`, `unpin`, `pin-chat` and `unpin-chat` do.
+
+`messages.UpdatePinnedMessage`, `messages.UnpinAllMessages`, `messages.ToggleDialogPin`
+
+**Write: Polls.** Voting, as `vote` does; a poll itself is sent with messages.SendMedia.
+
+`messages.SendVote`
+
+**Write: Bots.** Pressing a callback button, as `click` does (a 2FA-protected button is refused), and asking an inline bot, as `inline` does: the bot gets the query and your user ID (a query with geoPoint is refused).
+
+`messages.GetBotCallbackAnswer`, `messages.GetInlineBotResults`
+
+**Write: Chats, channels, topics and members.** What `create-group`, `create-channel`, `join`, `leave`, `delete-dialog`, `invite-link`, `kick`, `promote`, `edit-permissions` and `topic` do (a geo group and a paid subscription link are refused).
+
+`messages.CreateChat`, `channels.CreateChannel`, `channels.JoinChannel`, `messages.ImportChatInvite`, `channels.LeaveChannel`, `messages.DeleteChatUser`, `messages.DeleteHistory`, `messages.ExportChatInvite`, `channels.EditBanned`, `channels.EditAdmin`, `messages.EditChatAdmin`, `messages.EditChatDefaultBannedRights`, `messages.CreateForumTopic`, `messages.EditForumTopic`, `messages.UpdatePinnedForumTopic`
+
+**Write: Contacts and blocking.** What `del-contact`, `block` and `unblock` do (myStoriesFrom is refused). Adding a contact widens who sees your phone number, so it goes through `add-contact`.
+
+`contacts.DeleteContacts`, `contacts.Block`, `contacts.Unblock`
 

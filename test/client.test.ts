@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Api } from 'teleproto';
 import bigInt from 'big-integer';
 import { setStrictChatResolution } from '../src/resolve-mode.js';
+import { errorDetails, EXIT } from '../src/errors.js';
 import { disconnectClient, getMessages, parseTimeOffset, resolveChat, searchMessages } from '../src/client.js';
 
 type Fake = Record<string, ReturnType<typeof vi.fn>>;
@@ -194,5 +195,33 @@ describe('admin requests serialize on TL layer 229', () => {
       password: new Api.InputCheckPasswordEmpty(),
     });
     expect(req.getBytes().length).toBeGreaterThan(0);
+  });
+});
+
+describe('session errors: by the reason, at connect and later', () => {
+  const rpc = (errorMessage: string, extra: object = {}) => Object.assign(new Error(errorMessage), { errorMessage, ...extra });
+
+  it.each(['AUTH_KEY_UNREGISTERED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'USER_DEACTIVATED'])('%s at connect is session_expired, exit 5', async name => {
+    const { checkSession } = await import('../src/client.js');
+    const err = await checkSession({ invoke: async () => { throw rpc(name); } } as never).catch(e => e);
+    expect(errorDetails(err)).toMatchObject({ code: 'session_expired', exitCode: EXIT.NOT_LOGGED_IN });
+  });
+
+  it('a network failure or FLOOD_WAIT at connect is not a logout: exit 1 with its own code', async () => {
+    const { checkSession } = await import('../src/client.js');
+    const net = await checkSession({ invoke: async () => { throw Object.assign(new Error('connect ECONNREFUSED 149.154.167.50:443'), { code: 'ECONNREFUSED' }); } } as never).catch(e => e);
+    expect(errorDetails(net)).toMatchObject({ code: 'network', exitCode: EXIT.ERROR });
+    const timeout = await checkSession({ invoke: async () => { throw new Error('Not connected'); } } as never).catch(e => e);
+    expect(errorDetails(timeout)).toMatchObject({ code: 'network', exitCode: EXIT.ERROR });
+    const flood = await checkSession({ invoke: async () => { throw rpc('FLOOD_WAIT', { seconds: 42 }); } } as never).catch(e => e);
+    expect(errorDetails(flood)).toMatchObject({ code: 'flood_wait', exitCode: EXIT.ERROR, retryAfterSeconds: 42 });
+    // A working session passes
+    await expect(checkSession({ invoke: async () => ({}) } as never)).resolves.toBeUndefined();
+  });
+
+  it('SESSION_REVOKED from a later call is session_expired, exit 5, not telegram_rpc', () => {
+    expect(errorDetails(rpc('SESSION_REVOKED'))).toMatchObject({ code: 'session_expired', exitCode: EXIT.NOT_LOGGED_IN });
+    expect(errorDetails(rpc('AUTH_KEY_UNREGISTERED'))).toMatchObject({ code: 'session_expired', exitCode: EXIT.NOT_LOGGED_IN });
+    expect(errorDetails(rpc('CHAT_WRITE_FORBIDDEN'))).toMatchObject({ code: 'telegram_rpc', exitCode: EXIT.ERROR });
   });
 });

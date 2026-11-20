@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { platform } from 'node:os';
 import { secretPrefix } from './paths.js';
 
@@ -28,6 +28,24 @@ export function isKeychainAvailable(): boolean {
   }
 
   return keychainAvailableCache;
+}
+
+/**
+ * A store read that tells a missing item from a failed read. loadConfig uses it for the session and
+ * api_hash: a wrong "missing" would make it fall back to a file copy that may be another account.
+ */
+export type StrictRead = { ok: true; value: string | null } | { ok: false; reason: string };
+
+/** `security` exits 44 (errSecItemNotFound) for a missing item; anything else is a failed read. */
+export function keychainGetStrict(key: string): StrictRead {
+  if (!isKeychainAvailable()) return { ok: false, reason: 'the macOS Keychain is not available' };
+  const r = spawnSync(SECURITY_PATH, ['find-generic-password', '-s', secretPrefix(), '-a', key, '-w'], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000,
+  });
+  if (r.status === 0 && !r.error) return { ok: true, value: r.stdout.trimEnd() || null };
+  if (r.status === 44) return { ok: true, value: null };
+  const why = (r.error?.message || r.stderr || '').trim().split('\n')[0];
+  return { ok: false, reason: `macOS Keychain read failed (exit ${r.status ?? 'none'}${why ? `: ${why}` : ''})` };
 }
 
 export function keychainGet(key: string): string | null {

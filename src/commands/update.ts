@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { formatJson } from '../formatters/json.js';
 import { VERSION } from '../version.js';
+import { CliError, EXIT, fail } from '../errors.js';
 import {
   compareVersions, detectInstall, fetchLatestVersion, runUpdate, updateCommandFor, writeCache,
 } from '../update.js';
@@ -16,8 +17,7 @@ export const updateCommand = new Command('update')
       latest = await fetchLatestVersion();
       writeCache({ checkedAt: Date.now(), latest });
     } catch (error) {
-      console.error(`Could not check for updates: ${error instanceof Error ? error.message : error}`);
-      process.exit(1);
+      fail(new CliError(`Could not check for updates: ${error instanceof Error ? error.message : error}`, 'update_check_failed', EXIT.ERROR));
     }
     const newer = compareVersions(latest, VERSION) > 0;
     const command = updateCommandFor(method);
@@ -38,6 +38,11 @@ export const updateCommand = new Command('update')
     }
     if (method.kind === 'binary') {
       console.error(`This is a standalone binary: ${command}`);
+      process.exit(1);
+    }
+    if (method.kind === 'script') {
+      // Never advise replacing it by hand: install.json would no longer match it.
+      console.error(`Installed by install.sh; update it by running the script again: ${command}`);
       process.exit(1);
     }
     console.error(`Updating via ${method.kind}: ${command}`);

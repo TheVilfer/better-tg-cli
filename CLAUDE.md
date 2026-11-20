@@ -6,8 +6,8 @@ Changes land through a branch and a pull request (green CI) into `next`, never b
 `main` is always the last stable release: only release PRs are merged into it.
 The version lives only in `package.json`. `scripts/gen-version.mjs` (run by build, test and
 `release.sh`) copies it into `src/version.ts`, the plugin manifests, `plugin/*` (including the
-pinned `npx better-tg-cli@X.Y.Z`), `server.json` and `gemini-extension.json`; CI fails if any of
-them drifts. Never edit a version by hand anywhere else. Releases
+pinned `npx better-tg-cli@X.Y.Z`), `server.json`, `gemini-extension.json` and the `VERSION=` pin of
+`install.sh`; CI fails if any of them drifts. Never edit a version by hand anywhere else. Releases
 use `scripts/release.sh` (see Releasing below): a release PR from `next` into `main` bumps the
 version, computed from the PR titles, then the tag `vX.Y.Z` is pushed from main after the merge.
 `scripts/release.sh pre` publishes a release candidate (`vX.Y.Z-rc.N`) of `next` without a bump.
@@ -60,8 +60,8 @@ See `DEVELOPMENT.md`. The short version:
 ## Releasing
 
 Two long-lived branches: pull requests are squash-merged into `next`, and `main` is always the
-last stable release (README, `install.sh` and the plugin marketplaces read `main`, so they never
-describe something unreleased). Never push to either directly. Merging a PR publishes nothing;
+last stable release (README and the plugin marketplaces read `main`, so they never describe
+something unreleased). Never push to either directly. Merging a PR publishes nothing;
 these commands do, all run on `next`:
 
 - `scripts/release.sh pre` pre-releases what is on `next`: it tags HEAD `vX.Y.Z-rc.N` (the coming
@@ -77,14 +77,23 @@ these commands do, all run on `next`:
 - `scripts/release.sh tag` then tags main `vX.Y.Z`, pushes the tag and opens a `main` → `next`
   PR that brings the release commit back (merge commit again).
 
+`install.sh` is the user installer (release binary into `~/.local/bin`, see `docs/install.md`),
+pinned to the package version; on Linux it falls back to the `.tar.gz` that `build-binary.sh` adds
+next to `.tar.xz`. Users fetch it from `releases/latest/download/install.sh` (never link
+`main/install.sh`): the release workflow adds it to the asset list of `gh release create` for
+stable releases only (gh uploads every asset to a draft, then publishes), so "latest" never lacks
+it. The old checkout-and-`npm -g` installer is `scripts/dev-install.sh`.
+
 A fix that cannot wait for `next` goes as a PR into `main` like a release, followed by the same
 `main` → `next` merge.
 
 A stable tag runs `.github/workflows/release.yml`:
 1. verify (tag == package.json, tests) and the Claude Desktop extension `better-tg-cli.mcpb`
    (`scripts/mcpb.mjs`)
-2. Bun binaries for darwin-arm64/x64 (built and ad-hoc signed on macOS) and linux-x64/arm64
-3. GitHub Release with the binaries, the `.mcpb` and SHA256SUMS
+2. Bun binaries for darwin-arm64/x64 (built and ad-hoc signed on macOS) and linux-x64/arm64; the
+   native darwin-arm64 and linux-x64 jobs run `scripts/smoke-install.sh` (install.sh on those
+   archives through a fake curl, on Linux once more without xz)
+3. GitHub Release with the binaries, the `.mcpb` and SHA256SUMS; a stable one also gets `install.sh`
 4. npm publish via trusted publishing (OIDC, no token; skipped if the version exists)
 5. `Formula/better-tg-cli.rb` rendered by `scripts/homebrew-formula.mjs` and pushed to
    `TheVilfer/homebrew-tap` with the `TAP_DEPLOY_KEY` deploy key

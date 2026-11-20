@@ -1,53 +1,106 @@
 import { TelegramClient, Api, Rich, utils } from 'teleproto';
 import { StringSession } from 'teleproto/sessions/index.js';
-import { CustomFile } from 'teleproto/client/uploads.js';
 import { clientParams } from './client-options.js';
-import { connectClient } from './transport.js';
-import { isStrictChatResolution } from './resolve-mode.js';
+import { connectClient, transportSetting } from './transport.js';
+import { getInvocation, isStrictChatResolution } from './resolve-mode.js';
+import { CliError, EXIT, formatCandidates, SESSION_ERRORS, sessionEndedBy, shellCommand, usageError } from './errors.js';
+import type { ChatCandidate } from './errors.js';
 import { generateRandomLong } from 'teleproto/Helpers.js';
 import { computeCheck } from 'teleproto/Password.js';
-import { getCredentials, getSessionString, setSessionString, isConfigured, loadConfig } from './config.js';
+import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
 import bigInt from 'big-integer';
-import { existsSync, mkdirSync, statSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync } from 'fs';
 import { isMock } from './paths.js';
-import { basename, join } from 'path';
+import { join } from 'path';
 import { isTTY } from './spinner.js';
+import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
+import { LOGIN_CODE_HIDDEN, maskForModel } from './mcp-output.js';
+import { loginHint } from './login-hint.js';
+import { fileSnapshot, uploadable } from './file-snapshot.js';
+import { apiMarker, INVITE_LINK } from './approval-action.js';
+import { accountKey, DIALOG_CACHE_TTL_MS, dialogCacheDisabled, logDialogCache, readDialogCache, writeDialogCache, type CachedChat } from './dialog-cache.js';
+
+/** First words of the error getClient() throws for a session Telegram no longer accepts (onboard looks for it). */
+export const SESSION_EXPIRED = 'Session expired or was revoked.';
 
 let clientInstance: TelegramClient | null = null;
+/** The session clientInstance was connected with */
+let clientSession: string | undefined;
 
-export async function getClient(): Promise<TelegramClient> {
+const ANOTHER_ACCOUNT_ERROR = 'Another account logged in after this write was approved. Nothing was sent; run the command again for a new approval.';
+
+/** `snapshot`: a config the caller already loaded (`telegram check`), used instead of a new read. */
+export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   if (clientInstance?.connected) {
+    // The write guard may have connected (to look up the recipients) before it checked the approval
+    if (clientSession !== undefined && approvedForAnotherSession(clientSession)) throw new Error(ANOTHER_ACCOUNT_ERROR);
     return clientInstance;
   }
 
   if (isMock()) {
+    if (approvedForAnotherSession(MOCK_ACCOUNT)) throw new Error(ANOTHER_ACCOUNT_ERROR);
     // Imported on demand so a normal run never loads the mock
     const { createMockClient } = await import('./mock/client.js');
     clientInstance = createMockClient();
+    clientSession = MOCK_ACCOUNT;
     return clientInstance;
   }
 
-  if (!isConfigured()) {
-    throw new Error('Not configured. Run "telegram onboard" (guided login in the browser) or "telegram auth --qr" in a terminal.');
+  // One snapshot: credentials, session, transport and test-DC flag all come from the same store read
+  // (a second read after the 1 s cache could see something else or fail)
+  const config = snapshot ?? loadConfig(() => {});
+  if (!isConfigured(config)) {
+    throw new CliError('Not configured.', 'not_configured', EXIT.NOT_LOGGED_IN, { hint: loginHint() });
   }
 
-  const { apiId, apiHash } = getCredentials();
-  const sessionString = getSessionString() || '';
+  const { apiId, apiHash } = getCredentials(config);
+  const sessionString = config.sessionString || '';
+  // A write approved in mode "ask" connects only as the account it was approved for
+  if (approvedForAnotherSession(sessionString)) {
+    throw new Error(ANOTHER_ACCOUNT_ERROR);
+  }
 
   // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
   // A fresh StringSession per attempt: a failed TCP try must not leave state behind for WSS.
-  clientInstance = await connectClient(t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(undefined, t)));
+  const testServers = !!config.testServers;
+  clientInstance = await connectClient(
+    t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(testServers, t)),
+    { setting: transportSetting(undefined, config) },
+  );
+  clientSession = sessionString;
 
-  if (!await clientInstance.isUserAuthorized()) {
-    const invited = loadConfig(() => {}).credentialSource === 'invite';
-    throw new Error(
-      invited
-        ? 'Session expired or was revoked. Log in again: telegram logout && telegram auth --login-key'
-        : 'Not authenticated. Run "telegram onboard" or "telegram auth --qr" to log in.'
-    );
-  }
+  await checkSession(clientInstance);
 
   return clientInstance;
+}
+
+/**
+ * RPC errors that mean Telegram no longer accepts this session (logged out elsewhere, revoked, the
+ * account deleted or banned): only these make a stored login "expired". Anything else (no network,
+ * a timeout, flood wait, a 2FA password still to enter) is not a reason to log in again and replace
+ * the session. One list (SESSION_ERRORS in src/errors.ts) for getClient, onboard/telegram_setup and
+ * the exit code of any later call.
+ */
+export const AUTH_ERRORS = SESSION_ERRORS;
+
+export function isAuthError(e: unknown): boolean {
+  return sessionEndedBy(e) !== undefined;
+}
+
+/**
+ * Whether the saved login still works, by the reason a probe fails: an auth error (the session was
+ * revoked, expired, its key dropped) is "log in again", exit 5 (code session_expired, the message
+ * starts with SESSION_EXPIRED); anything else (no network, FLOOD_WAIT) is thrown as it is and keeps
+ * its own code. teleproto's isUserAuthorized() is not used: it answers false for any failure, a
+ * dropped connection included.
+ */
+export async function checkSession(client: Pick<TelegramClient, 'invoke'>): Promise<void> {
+  try {
+    await client.invoke(new Api.updates.GetState());
+  } catch (error) {
+    if (!isAuthError(error)) throw error;
+    throw new CliError(SESSION_EXPIRED, 'session_expired', EXIT.NOT_LOGGED_IN, { hint: loginHint() });
+  }
 }
 
 export async function createClient(apiId: number, apiHash: string): Promise<TelegramClient> {
@@ -70,8 +123,12 @@ export async function disconnectClient(): Promise<void> {
     }
     clientInstance = null;
   }
+  clientSession = undefined;
   resolvedChatCache.clear();
   dialogsCache = null;
+  allDialogsCache = null;
+  dialogsReadAt = 0;
+  allDialogsReadAt = 0;
 }
 
 // Cache resolved chat entities by identifier (normalized) to avoid re-fetching
@@ -81,17 +138,181 @@ const resolvedChatCache = new Map<string, ResolvedEntity>();
 // One dialogs snapshot per process: resolving many chats (e.g. sync over 100 chats)
 // must not refetch the full dialog list for every chat.
 let dialogsCache: ReturnType<TelegramClient['getDialogs']> | null = null;
+/** When dialogsCache / allDialogsCache were read (started): inbox and chats reuse only a fresh one. */
+let dialogsReadAt = 0;
+let allDialogsReadAt = 0;
+/**
+ * How old a list read in this process may be for inbox and chats to show it instead of reading
+ * again: seconds, so unread counters and last messages stay live (an MCP server lives for hours).
+ */
+const DIALOGS_REUSE_MS = 10_000;
+
+/** One page of dialogs: enough for IDs and most accounts. */
+export const DIALOG_PAGE = 500;
+/** How far a title lookup reads before it gives up proving a title unique. */
+export const DIALOG_MAX = 5000;
 
 function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['getDialogs']> {
   if (!dialogsCache) {
-    dialogsCache = client.getDialogs({ limit: 500 });
+    dialogsCache = client.getDialogs({ limit: DIALOG_PAGE }).then(dialogs => {
+      // A cut first page never replaces a whole list that is still fresh
+      const account = dialogCacheAccount(client);
+      if (account && (dialogs.length < DIALOG_PAGE || !readDialogCache(account))) saveDialogList(account, dialogs, dialogs.length < DIALOG_PAGE);
+      return dialogs;
+    });
+    dialogsReadAt = Date.now();
     dialogsCache.catch(() => { dialogsCache = null; });
   }
   return dialogsCache;
 }
 
+/**
+ * The account the dialog list on disk (src/dialog-cache.ts) belongs to: only for the client
+ * getClient() built, named by a hash of its session. Any other client (a test's own) never
+ * reads or writes the file.
+ */
+function dialogCacheAccount(client: TelegramClient): string | undefined {
+  return client === clientInstance && clientSession !== undefined ? accountKey(clientSession) : undefined;
+}
+
+function saveDialogList(account: string, dialogs: Dialogs, complete: boolean): void {
+  const chats: CachedChat[] = [];
+  for (const d of dialogs) {
+    const e = d.entity;
+    if (d.id === undefined || !(e instanceof Api.User || e instanceof Api.Chat || e instanceof Api.Channel)) continue;
+    const hash = e instanceof Api.Chat ? undefined : e.accessHash?.toString();
+    const username = e instanceof Api.Chat ? undefined : e.username ?? undefined;
+    chats.push({ id: d.id.toString(), title: d.title ?? '', ...(username ? { username } : {}), type: dialogKind(d) as CachedChat['type'], ...(hash ? { accessHash: hash } : {}) });
+  }
+  writeDialogCache(account, complete, chats);
+}
+
+/** The title a dialog has for an entity (what the cached title was taken from). */
+function dialogTitle(entity: ResolvedEntity): string {
+  return entity instanceof Api.User ? [entity.firstName, entity.lastName].filter(Boolean).join(' ') : entity.title;
+}
+
+function inputPeerOf(c: CachedChat): Api.TypeInputPeer {
+  const hash = bigInt(c.accessHash ?? '0');
+  if (c.type === 'user' || c.type === 'bot') return new Api.InputPeerUser({ userId: bigInt(c.id), accessHash: hash });
+  if (c.type === 'group') return new Api.InputPeerChat({ chatId: bigInt(c.id.replace(/^-/, '')) });
+  return new Api.InputPeerChannel({ channelId: bigInt(c.id.replace(/^-100/, '')), accessHash: hash });
+}
+
+/** What the list on disk says about a name: the chat, an answer for the caller, or nothing. */
+type DiskLookup =
+  | { entity: ResolvedEntity; listedAt: string }
+  | { error: CliError; listedAt: string }
+  | { miss: string };
+
+/**
+ * The cheap way to a chat: the dialog list on disk names it, and one small call (users.GetUsers,
+ * messages.GetChats or channels.GetChannels) fetches it, instead of reading the whole list. A hit
+ * is an ID, a @username, or a title exactly one chat had in the whole list (or, failing that, the
+ * one title containing it), which the chat still has now.
+ *
+ * A read that the whole, fresh list answers otherwise gets that answer from disk too: a title that
+ * several chats share or contain is ambiguous_chat, a name no chat has is chat_not_found, with the
+ * candidates and `listedAt`. Reading the list again on a big account is a minute of FLOOD_WAITs.
+ * Writes never take a title from disk (another chat may have taken it since) and never get an answer
+ * from it. Anything else, and any failure, is a miss: the caller reads the list as before.
+ */
+async function fromDialogCache(client: TelegramClient, asGiven: string, identifier: string, username: string | undefined, isNumericId: boolean): Promise<DiskLookup> {
+  const account = dialogCacheAccount(client);
+  if (!account) return { miss: 'not the CLI client' };
+  if (dialogCacheDisabled()) return { miss: 'TG_NO_CACHE=1' };
+  const saved = readDialogCache(account);
+  if (!saved) return { miss: 'no fresh list on disk' };
+  const listedAt = new Date(saved.savedAt).toISOString();
+  const strict = isStrictChatResolution();
+  const needle = (username ? username.replace(/^@/, '') : identifier).trim().toLowerCase();
+  let hit: CachedChat | undefined;
+  let exact: CachedChat[] = [];
+  let partial: CachedChat[] = [];
+  if (username) {
+    hit = saved.chats.find(c => c.username?.toLowerCase() === needle);
+  } else if (isNumericId) {
+    hit = saved.chats.find(c => c.id === identifier);
+  } else if (saved.complete && !strict) {
+    exact = saved.chats.filter(c => c.title.trim().toLowerCase() === needle);
+    partial = exact.length ? [] : saved.chats.filter(c => c.title.toLowerCase().includes(needle));
+    if (exact.length === 1) hit = exact[0];
+    else if (!exact.length && partial.length === 1) hit = partial[0];
+  }
+  if (hit) {
+    const entity = await fetchCached(client, hit, needle, username, isNumericId, !exact.length && !username && !isNumericId);
+    // Renamed or gone since the list was saved: it is stale, so it answers nothing more
+    return entity ? { entity, listedAt } : { miss: 'the chat changed since the list was saved' };
+  }
+  if (username) return { miss: 'the @username is not in the list' };
+  // A chat newer than the list (a DM, a channel just joined) is named by the ID inbox or chats just
+  // printed, and a bare ID cannot be fetched without the access hash the first dialog page carries
+  if (isNumericId) return { miss: 'the ID is not in the list' };
+  if (strict) return { miss: 'writes read a fresh list' };
+  if (!saved.complete) return { miss: 'the list on disk is not the whole list' };
+  // A list this process already read is fresher than the file
+  if (dialogsCache || allDialogsCache) return { miss: 'the list was read in this process' };
+  const from = { listedAt };
+  if (exact.length > 1) return { error: ambiguousChat(asGiven, exact, 'exact', from), listedAt };
+  if (partial.length > 1) return { error: ambiguousChat(asGiven, partial, 'partial', from), listedAt };
+  return { error: chatNotFound(asGiven, saved.chats, from), listedAt };
+}
+
+/** Fetch the chat the list on disk named, and check it is still that chat. */
+async function fetchCached(client: TelegramClient, hit: CachedChat, needle: string, username: string | undefined, isNumericId: boolean, partial: boolean): Promise<ResolvedEntity | undefined> {
+  try {
+    const entity = await client.getEntity(inputPeerOf(hit));
+    if (!(entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel)) return undefined;
+    if (utils.getPeerId(entity).toString() !== hit.id) return undefined;
+    // Renamed, or the @username moved on: not the chat that was named
+    if (username && (entity instanceof Api.Chat || entity.username?.toLowerCase() !== needle)) return undefined;
+    if (!username && !isNumericId) {
+      const title = dialogTitle(entity).trim().toLowerCase();
+      if (partial ? !title.includes(needle) : title !== needle) return undefined;
+    }
+    return entity;
+  } catch {
+    return undefined;
+  }
+}
+
+let allDialogsCache: Promise<{ dialogs: Dialogs; complete: boolean }> | null = null;
+
+/**
+ * The dialog list a title is matched against, and whether it is the whole list. A full first page
+ * may be cut: a chat with the same title can sit beyond it, so the list is read on (once per
+ * process) up to DIALOG_MAX dialogs. Past that a title is never proven unique.
+ */
+async function dialogsForTitles(client: TelegramClient): Promise<{ dialogs: Dialogs; complete: boolean }> {
+  const first = await getDialogsCached(client);
+  if (first.length < DIALOG_PAGE) return { dialogs: first, complete: true };
+  if (!allDialogsCache) {
+    allDialogsCache = client.getDialogs({ limit: DIALOG_MAX }).then(dialogs => {
+      const complete = dialogs.length < DIALOG_MAX;
+      const account = dialogCacheAccount(client);
+      if (account) saveDialogList(account, dialogs, complete);
+      return { dialogs, complete };
+    });
+    allDialogsReadAt = Date.now();
+    allDialogsCache.catch(() => { allDialogsCache = null; });
+  }
+  return allDialogsCache;
+}
+
 function cacheKey(identifier: string): string {
   return identifier.trim().toLowerCase();
+}
+
+/**
+ * Recipients the write guard resolved for an approval (or for its description), by the identifier
+ * as given. The write takes exactly these objects: a second lookup (after a disconnect, with other
+ * matching, or a @username that changed hands meanwhile) could name someone else than the
+ * person approved. Unlike the cache above it survives disconnectClient().
+ */
+const pinnedPeers = new Map<string, ResolvedEntity>();
+
+export function pinPeer(identifier: string, entity: ResolvedEntity): void {
+  pinnedPeers.set(identifier, entity);
 }
 
 export async function getMe(client: TelegramClient): Promise<Api.User> {
@@ -102,10 +323,20 @@ export async function getMe(client: TelegramClient): Promise<Api.User> {
   return me;
 }
 
+/** Values of `--type` in chats and inbox: the chat types plus "bot" (users that are bots). */
+export const CHAT_TYPES = ['user', 'bot', 'group', 'supergroup', 'channel'] as const;
+
+/** Whether a chat passes `--type`: "user" keeps its old meaning (bots included), "bot" only bots. */
+export function matchesChatType(chat: Pick<ChatInfo, 'type' | 'bot'>, type: string): boolean {
+  return type === 'bot' ? chat.type === 'user' && !!chat.bot : chat.type === type;
+}
+
 export interface ChatInfo {
   id: string;
   title: string;
   type: 'user' | 'group' | 'supergroup' | 'channel';
+  /** A bot account (type stays "user"); `--type bot` lists only these. */
+  bot?: boolean;
   username?: string;
   unreadCount: number;
   lastMessage?: string;
@@ -116,12 +347,48 @@ export interface ChatInfo {
   full?: MessageFull;
 }
 
+/**
+ * The dialog list for inbox and chats (all folders), shared with chat lookup: a list this process
+ * read seconds ago is shown again instead of a second messages.GetDialogs (a FLOOD_WAIT on a big
+ * account), and a list read here becomes the one chat lookup uses, in memory and on disk (the
+ * whole list, or a full first page when there is no fresh list; never a list cut at a small -n).
+ * Counters and last messages always come from Telegram: the file keeps only what names a chat.
+ */
+async function sharedDialogs(client: TelegramClient, limit: number): Promise<Dialogs[number][]> {
+  // Only the client getClient() built: another one (a test's own) shares nothing
+  if (client !== clientInstance) return client.getDialogs({ limit });
+  const now = Date.now();
+  if (allDialogsCache && now - allDialogsReadAt <= DIALOGS_REUSE_MS) {
+    const all = await allDialogsCache.catch(() => undefined);
+    if (all && (all.complete || all.dialogs.length >= limit)) return all.dialogs.slice(0, limit);
+  }
+  if (dialogsCache && now - dialogsReadAt <= DIALOGS_REUSE_MS) {
+    const first = await dialogsCache.catch(() => undefined);
+    // A first page shorter than DIALOG_PAGE is the whole list
+    if (first && (first.length < DIALOG_PAGE || first.length >= limit)) return first.slice(0, limit);
+  }
+  const dialogs = await client.getDialogs({ limit });
+  const complete = dialogs.length < limit;
+  if (complete || limit >= DIALOG_PAGE) {
+    dialogsCache = Promise.resolve(dialogs);
+    dialogsReadAt = now;
+    // As far as a title lookup would read: it need not read this list again
+    if (dialogs.length >= DIALOG_PAGE && (complete || limit >= DIALOG_MAX)) {
+      allDialogsCache = Promise.resolve({ dialogs, complete });
+      allDialogsReadAt = now;
+    }
+    const account = dialogCacheAccount(client);
+    if (account && (complete || !readDialogCache(account))) saveDialogList(account, dialogs, complete);
+  }
+  return dialogs;
+}
+
 export async function getDialogs(
   client: TelegramClient,
   limit = 100,
   options: { archived?: boolean; full?: boolean } = {}
 ): Promise<ChatInfo[]> {
-  const dialogs = await client.getDialogs({ limit, archived: options.archived });
+  const dialogs = options.archived === undefined ? await sharedDialogs(client, limit) : await client.getDialogs({ limit, archived: options.archived });
   const now = Math.floor(Date.now() / 1000);
   const chats: ChatInfo[] = [];
 
@@ -129,11 +396,14 @@ export async function getDialogs(
     let type: ChatInfo['type'] = 'user';
     let title = dialog.title || 'Unknown';
     let username: string | undefined;
+    let bot: boolean | undefined;
 
     if (dialog.isUser) {
       type = 'user';
       const entity = dialog.entity as Api.User;
       username = entity.username ?? undefined;
+      bot = entity.bot || undefined;
+      if (entity.self) title = SAVED_MESSAGES;
     } else if (dialog.entity instanceof Api.Channel) {
       // Check Channel first: GramJS reports megagroups as isGroup too
       type = dialog.entity.megagroup ? 'supergroup' : 'channel';
@@ -146,6 +416,7 @@ export async function getDialogs(
       id: dialog.id?.toString() || '',
       title,
       type,
+      bot,
       username,
       unreadCount: dialog.unreadCount,
       lastMessage: dialog.message instanceof Api.Message ? messageText(dialog.message) : undefined,
@@ -199,7 +470,7 @@ export type ButtonType =
   | 'unknown';
 
 export interface ButtonInfo {
-  /** 1-based flat index across all rows (what the user passes to `tg click`). */
+  /** 1-based flat index across all rows (what the user passes to `telegram click`). */
   index: number;
   row: number;
   col: number;
@@ -238,6 +509,8 @@ export interface MessageInfo {
   chatTitle?: string;
   /** Comment/reply count for channel posts and thread roots. */
   replies?: number;
+  /** Forum topic of the message (1 = General), set when a whole forum is read without --topic. */
+  topicId?: number;
   /** Opt-in (`--full`): every other useful field of the Message. Absent in default output. */
   full?: MessageFull;
 }
@@ -408,6 +681,12 @@ function classifyButton(btn: RawButton, index: number, row: number, col: number)
  * `read`/`search`/`watch`/`click` show the actual reply instead of "(no text)".
  */
 export function messageText(msg: Api.Message): string {
+  const text = plainMessageText(msg);
+  if (!isOverMcp()) return text;
+  return maskForModel(text, isLoginServiceMessage(msg) ? 'service' : 'chat');
+}
+
+function plainMessageText(msg: Api.Message): string {
   if (msg.message) return msg.message;
   if (msg.richMessage) {
     try {
@@ -419,12 +698,102 @@ export function messageText(msg: Api.Message): string {
   return '';
 }
 
+/** The MCP server sets TG_MCP on every call and TG_READ_ONLY on the read tool. */
+const isOverMcp = (): boolean => !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
+
+/**
+ * Service accounts whose messages carry login codes: 777000 (Telegram) delivers the codes of this
+ * account, 489000 ("Verification Codes") the codes other services send through Telegram Gateway.
+ */
+const LOGIN_SERVICE_USER_IDS = new Set(['777000', '489000']);
+
+const isLoginServicePeer = (peer: unknown): boolean =>
+  !!peer && typeof peer === 'object' && 'userId' in peer && LOGIN_SERVICE_USER_IDS.has(String((peer as { userId: unknown }).userId));
+
+/**
+ * A message from (or in the chat with, or forwarded from) a login-code service account (777000 or
+ * 489000). Works on a TL `Message` and on its JSON form.
+ */
+function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown }): boolean {
+  const fwd = msg.fwdFrom as { fromId?: unknown } | null | undefined;
+  return isLoginServicePeer(msg.peerId) || isLoginServicePeer(msg.fromId) || isLoginServicePeer(fwd?.fromId);
+}
+
+export { LOGIN_CODE_HIDDEN };
+
+/** Keys whose strings are IDs, hashes, dates or type tags rather than message content. */
+const NOT_CONTENT_KEY = /^(className|_|type|kind|mimeType|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
+
+/**
+ * Plain data with every gift-code link masked and, for a login-service message (`login`), every
+ * piece of its content with codes hidden, at any depth: text, entity URLs, button texts, URLs and
+ * queries, a quote, a link preview. Callback data (and any other bytes, already a string here) and
+ * a copy button's text are hidden whole: in a service message they exist to carry the code.
+ */
+function maskContent<T>(value: T, login: boolean, key = ''): T {
+  if (typeof value === 'string') {
+    if (!login || NOT_CONTENT_KEY.test(key)) return maskForModel(value, 'chat') as T;
+    if (key === 'data' || key === 'copyText') return (value ? LOGIN_CODE_HIDDEN : value) as T;
+    return maskLoginCodes(value) as T;
+  }
+  if (Array.isArray(value)) return value.map(v => maskContent(v, login, key)) as T;
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskContent(v, login, k)])) as T;
+  }
+  return value;
+}
+
+/**
+ * Over MCP, `value` built from `msg` with gift links masked, and login codes hidden if `msg` is from
+ * a login service; in a terminal as is.
+ */
+function maskedForMcp<T>(msg: Api.Message, value: T): T {
+  return value !== undefined && isOverMcp() ? maskContent(value, isLoginServiceMessage(msg)) : value;
+}
+
+/**
+ * Hide login codes in a service message and keep the rest of the text (maskForModel at the level
+ * `service`): gift links first, then the word after "code:" (`Login code: 52813`, `This is your
+ * login code: aB3dE9fG`, `Код для входа в Telegram: 52813`) and any other run of letters and digits
+ * with a digit in it, four characters or longer.
+ */
+export function maskLoginCodes(text: string): string {
+  return maskForModel(text, 'service');
+}
+
 /**
  * Sender name/id without an extra round-trip: teleproto attaches the entities
  * returned with the message, so `msg.sender` is usually already resolved. In a
  * private chat an incoming message has no `fromId` (the peer is the sender),
  * which the old `fromId`-only lookup reported as "Unknown".
  */
+/** The account's own user ID, asked once per client (undefined if Telegram would not say). */
+const selfIds = new WeakMap<object, Promise<string | undefined>>();
+function selfId(client: TelegramClient): Promise<string | undefined> {
+  let id = selfIds.get(client);
+  if (!id) {
+    id = Promise.resolve().then(() => client.getMe()).then(me => (me instanceof Api.User ? me.id.toString() : undefined), () => undefined);
+    selfIds.set(client, id);
+  }
+  return id;
+}
+
+/**
+ * Whether the account itself wrote a message. `out` alone misses some: a message saved into Saved
+ * Messages, or one sent from another device into a group, can come with out=false. The sender is
+ * fromId, or the chat itself in a private chat; it is ours when that is the account's own user.
+ */
+async function isFromSelf(client: TelegramClient, msg: Api.Message): Promise<boolean> {
+  if (msg.out) return true;
+  const peer = msg.fromId ?? msg.peerId;
+  if (!(peer instanceof Api.PeerUser)) return false;
+  const me = await selfId(client);
+  return me !== undefined && peer.userId.toString() === me;
+}
+
+/** The title of a private chat, a group or a channel; the chat with yourself is "Saved Messages". */
+export const SAVED_MESSAGES = 'Saved Messages';
+
 async function resolveSender(client: TelegramClient, msg: Api.Message): Promise<{ sender: string; senderId?: string }> {
   let entity: unknown = msg.sender ?? undefined;
   if (!entity) {
@@ -447,8 +816,13 @@ async function resolveSender(client: TelegramClient, msg: Api.Message): Promise<
   return { sender: msg.out ? 'You' : 'Unknown' };
 }
 
-/** Build a display-friendly button layout from a message's reply markup. */
+/** Build a display-friendly button layout from a message's reply markup (over MCP, masked). */
 export function extractButtons(msg: Api.Message): ButtonLayout | undefined {
+  return maskedForMcp(msg, rawButtonLayout(msg));
+}
+
+/** The button layout exactly as the message carries it, never masked: what a press would send. */
+function rawButtonLayout(msg: Api.Message): ButtonLayout | undefined {
   const markup = msg.replyMarkup;
   if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
     return undefined;
@@ -468,6 +842,11 @@ export function extractButtons(msg: Api.Message): ButtonLayout | undefined {
   });
 
   return { isInline, rows };
+}
+
+/** The media of a message as it is shown (over MCP, its file name masked as the message text is). */
+function shownMediaInfo(msg: Api.Message): MediaInfo | undefined {
+  return maskedForMcp(msg, extractMediaInfo(msg));
 }
 
 function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
@@ -536,25 +915,7 @@ function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
   return undefined;
 }
 
-export function parseTimeOffset(offset: string): Date {
-  const now = new Date();
-  const match = offset.match(/^(\d+)([mhdw])$/);
-  if (!match) {
-    // Absolute dates: "2026-09-01", "2026-09-01T12:00"
-    const abs = Date.parse(offset);
-    if (!Number.isNaN(abs)) return new Date(abs);
-    throw new Error(`Invalid time: ${offset}. Use "30m", "1h", "7d", "2w" or a date like "2026-09-01"`);
-  }
-  const value = parseInt(match[1]);
-  const unit = match[2];
-  switch (unit) {
-    case 'm': return new Date(now.getTime() - value * 60 * 1000);
-    case 'h': return new Date(now.getTime() - value * 60 * 60 * 1000);
-    case 'd': return new Date(now.getTime() - value * 24 * 60 * 60 * 1000);
-    case 'w': return new Date(now.getTime() - value * 7 * 24 * 60 * 60 * 1000);
-    default: throw new Error(`Unknown time unit: ${unit}`);
-  }
-}
+export { parseTimeOffset } from './time.js';
 
 /** Convert a raw message into the CLI's MessageInfo shape. Pass `full` to attach MessageFull. */
 export async function toMessageInfo(client: TelegramClient, msg: Api.Message, opts: { full?: boolean } = {}): Promise<MessageInfo> {
@@ -566,8 +927,8 @@ export async function toMessageInfo(client: TelegramClient, msg: Api.Message, op
     senderId,
     text: messageText(msg),
     replyToMsgId: msg.replyTo?.replyToMsgId,
-    isOutgoing: msg.out ?? false,
-    media: extractMediaInfo(msg),
+    isOutgoing: await isFromSelf(client, msg),
+    media: shownMediaInfo(msg),
     buttons: extractButtons(msg),
     replies: msg.replies?.replies || undefined,
   };
@@ -642,14 +1003,15 @@ export function buildMessageFull(msg: Api.Message): MessageFull {
       replyToMsgId: r.replyToMsgId ?? undefined,
       topMsgId: r.replyToTopId ?? undefined,
       forumTopic: r.forumTopic || undefined,
-      quoteText: r.quoteText ?? undefined,
+      // A quote of a login-service message hides its codes too (the quoted peer is in the header)
+      quoteText: r.quoteText != null && isOverMcp() && isLoginServicePeer(r.replyToPeerId) ? maskLoginCodes(r.quoteText) : r.quoteText ?? undefined,
       replyToPeerId: r.replyToPeerId ? peerIdStr(r.replyToPeerId) : undefined,
     };
   }
 
   const media = buildFullMedia(msg);
   if (media) full.media = media;
-  return full;
+  return maskedForMcp(msg, full);
 }
 
 function docAttributes(doc: Api.Document): Partial<FullMediaInfo> {
@@ -746,21 +1108,31 @@ export interface GetMessagesOptions {
   from?: string;
   /** Read the replies thread of this message (channel post comments or a forum topic ID). */
   thread?: number;
+  /** `thread` is a forum topic: refuse a chat that is not a forum instead of reading an empty thread. */
+  topic?: boolean;
   /** Attach MessageFull to each message (the `--full` flag). */
   full?: boolean;
+  /** Look for one message past `limit`, so `hasMore` is known, never guessed from a full page. */
+  probe?: boolean;
 }
 
 export async function getMessages(
   client: TelegramClient,
   chatIdentifier: string,
   options: GetMessagesOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; threadChatId?: string }> {
-  const { limit = 50, offsetId, minDate, maxDate, minId, from, thread, full } = options;
+): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; threadChatId?: string; forum?: boolean; hasMore?: boolean }> {
+  const { offsetId, minDate, maxDate, minId, from, thread, full } = options;
+  const wanted = options.limit ?? 50;
+  // With probe: one more than asked; finding it proves there is a next page
+  const limit = options.probe ? wanted + 1 : wanted;
   let threadChatId: string | undefined;
 
   // Find the chat by name or username
   const entity = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(entity);
+  const chatId = utils.getPeerId(entity).toString();
+  const forum = hasTopics(entity);
+  if (options.topic && !forum) throw notAForum(entity);
   const fromUser = from ? await resolveChat(client, from) : undefined;
 
   const messages: MessageInfo[] = [];
@@ -825,7 +1197,10 @@ export async function getMessages(
       }
       if (messages.length >= limit) break;
 
-      messages.push(await toMessageInfo(client, msg, { full }));
+      const info = await toMessageInfo(client, msg, { full });
+      // A whole forum mixes its topics: label each message with its own
+      if (forum && !thread) info.topicId = msg.replyTo?.forumTopic ? (msg.replyTo.replyToTopId ?? msg.replyTo.replyToMsgId ?? 1) : 1;
+      messages.push(info);
     }
 
     if (reachedMinDate) break;
@@ -850,7 +1225,9 @@ export async function getMessages(
     if (batch.length < batchLimit) break;
   }
 
-  return { messages, chatTitle, threadChatId };
+  const hasMore = messages.length > wanted;
+  if (hasMore) messages.length = wanted;
+  return { messages, chatTitle, chatId, threadChatId, ...(forum ? { forum } : {}), ...(options.probe ? { hasMore } : {}) };
 }
 
 /** Fetch specific messages by ID (missing/deleted IDs are skipped). */
@@ -859,7 +1236,7 @@ export async function getMessagesByIds(
   chatIdentifier: string,
   ids: number[],
   options: { full?: boolean } = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; missing: number[] }> {
+): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; missing: number[] }> {
   const entity = await resolveChat(client, chatIdentifier);
   const raw = await client.getMessages(entity, { ids });
   const messages: MessageInfo[] = [];
@@ -870,14 +1247,16 @@ export async function getMessagesByIds(
       found.add(msg.id);
     }
   }
-  return { messages, chatTitle: getChatTitle(entity), missing: ids.filter(id => !found.has(id)) };
+  return { messages, chatTitle: getChatTitle(entity), chatId: utils.getPeerId(entity).toString(), missing: ids.filter(id => !found.has(id)) };
 }
 
 export async function downloadMessageMedia(
   client: TelegramClient,
   chatIdentifier: string,
   messageId: number,
-  outputDir: string
+  outputDir: string,
+  /** Called with the target file before the folder is created or anything is written; may throw. */
+  checkPath?: (filePath: string) => void,
 ): Promise<{ filePath: string; media: MediaInfo } | null> {
   const entity = await resolveChat(client, chatIdentifier);
 
@@ -891,18 +1270,38 @@ export async function downloadMessageMedia(
   const mediaInfo = extractMediaInfo(msg);
   if (!mediaInfo) return null;
 
+  const fileName = buildMediaFilename(mediaInfo, msg.id);
+  const filePath = join(outputDir, fileName);
+  checkPath?.(filePath);
+  assertDownloadTarget(filePath);
+
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
   }
-
-  const fileName = buildMediaFilename(mediaInfo, msg.id);
-  const filePath = join(outputDir, fileName);
 
   const result = await client.downloadMedia(msg, { outputFile: filePath });
   // downloadMedia returns the path/Buffer; when outputFile is a string, file is written there.
   const savedPath = typeof result === 'string' ? result : filePath;
 
   return { filePath: savedPath, media: mediaInfo };
+}
+
+/**
+ * A download target must be a regular file or nothing. teleproto is always handed this full file
+ * path, but where a directory sits at it, teleproto picks a file of its own inside that directory
+ * (`getProperFilename`), and a write follows a symbolic link wherever it points. Either way the
+ * bytes would land somewhere nobody checked, so both are refused before anything is written.
+ */
+export function assertDownloadTarget(filePath: string): void {
+  let st;
+  try {
+    st = lstatSync(filePath);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw e;
+  }
+  if (st.isSymbolicLink()) throw new Error(`Refusing to download through a symbolic link: ${filePath}`);
+  if (!st.isFile()) throw new Error(`Refusing to download: ${filePath} exists and is not a regular file`);
 }
 
 export function buildMediaFilename(media: MediaInfo, messageId: number): string {
@@ -947,6 +1346,12 @@ function guessExtension(media: MediaInfo): string {
   return '.bin';
 }
 
+/**
+ * The parse mode a send or edit passes to teleproto. Its client parses Markdown when a call leaves
+ * parseMode undefined (`__init__` would go out as italic "init"), so plain text says `false`.
+ */
+export const parseModeOf = (mode?: 'html' | 'md'): 'html' | 'md' | false => mode ?? false;
+
 export async function sendFileMessage(
   client: TelegramClient,
   chatIdentifier: string,
@@ -966,12 +1371,13 @@ export async function sendFileMessage(
     ? new Api.InputReplyToMessage({ replyToMsgId: options.replyToMsgId ?? options.topic, topMsgId: options.topic })
     : options.replyToMsgId;
 
+  // The bytes the approval was checked against (read once per process), never the path again
   const result = await client.sendFile(entity, {
-    file: filePath,
+    file: uploadable(fileSnapshot(filePath)),
     caption: options.caption,
     forceDocument: options.asDocument,
     replyTo,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
     silent: options.silent,
   });
 
@@ -1012,6 +1418,7 @@ export interface SearchOptions {
 function peerTitle(peer: Api.TypePeer, chats: Api.TypeChat[], users: Api.TypeUser[]): string | undefined {
   if (peer instanceof Api.PeerUser) {
     const u = users.find((x): x is Api.User => x instanceof Api.User && x.id.equals(peer.userId));
+    if (u?.self) return SAVED_MESSAGES;
     return u ? [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || undefined : undefined;
   }
   const id = peer instanceof Api.PeerChat ? peer.chatId : peer instanceof Api.PeerChannel ? peer.channelId : undefined;
@@ -1019,17 +1426,29 @@ function peerTitle(peer: Api.TypePeer, chats: Api.TypeChat[], users: Api.TypeUse
   return c && 'title' in c ? c.title : undefined;
 }
 
+/**
+ * One search, one object, as `read` gives: the chat's ID and title with --chat; without it every
+ * message carries its own chatId and chatTitle.
+ */
+export interface SearchResult {
+  query: string;
+  chatTitle?: string;
+  chatId?: string;
+  messages: MessageInfo[];
+  hasMore?: boolean;
+}
+
 export async function searchMessages(
   client: TelegramClient,
   query: string,
   options: SearchOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle?: string }[]> {
+): Promise<SearchResult> {
   const { chat, limit = 50, minDate, maxDate, from, type, full } = options;
   if (type && !SEARCH_FILTERS[type]) {
-    throw new Error(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
+    throw usageError(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
   }
   if (from && !chat) {
-    throw new Error('--from needs --chat (Telegram global search cannot filter by sender)');
+    throw usageError('--from needs --chat (Telegram global search cannot filter by sender)');
   }
   const filter = type ? SEARCH_FILTERS[type]() : new Api.InputMessagesFilterEmpty();
   const minTs = minDate ? Math.floor(minDate.getTime() / 1000) : 0;
@@ -1049,7 +1468,7 @@ export async function searchMessages(
         maxDate: maxTs,
         offsetId: 0,
         addOffset: 0,
-        limit,
+        limit: limit + 1,
         maxId: 0,
         minId: 0,
         hash: bigInt(0),
@@ -1057,12 +1476,14 @@ export async function searchMessages(
     );
 
     const messages: MessageInfo[] = [];
+    // Every result carries its chat ID, as in global search, so a reply needs no second lookup
+    const chatId = utils.getPeerId(entity).toString();
     if ('messages' in res) {
-      for (const msg of res.messages) {
-        if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg, { full }));
+      for (const msg of res.messages.slice(0, limit)) {
+        if (msg instanceof Api.Message) messages.push({ ...(await toMessageInfo(client, msg, { full })), chatId });
       }
     }
-    return [{ messages, chatTitle: getChatTitle(entity) }];
+    return { query, chatTitle: getChatTitle(entity), chatId, messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) };
   }
 
   // Global search: results span chats, so tag each message with its chat
@@ -1075,13 +1496,13 @@ export async function searchMessages(
       offsetRate: 0,
       offsetPeer: new Api.InputPeerEmpty(),
       offsetId: 0,
-      limit,
+      limit: limit + 1,
     })
   );
 
   const messages: MessageInfo[] = [];
   if ('messages' in res) {
-    for (const msg of res.messages) {
+    for (const msg of res.messages.slice(0, limit)) {
       if (!(msg instanceof Api.Message)) continue;
       const info = await toMessageInfo(client, msg, { full });
       info.chatId = utils.getPeerId(msg.peerId).toString();
@@ -1089,17 +1510,28 @@ export async function searchMessages(
       messages.push(info);
     }
   }
-  return [{ messages }];
+  return { query, messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) };
+}
+
+/**
+ * Whether a search has results past the first `limit`: the extra one asked for came back, or the
+ * exact total says so (the server may cap a page below limit + 1). A full page alone proves nothing.
+ */
+function searchHasMore(res: object, limit: number): boolean {
+  const r = res as { messages?: unknown[]; count?: unknown; inexact?: unknown };
+  const got = r.messages?.length ?? 0;
+  if (got > limit) return true;
+  return typeof r.count === 'number' && !r.inexact && r.count > got;
 }
 
 export async function sendMessage(
   client: TelegramClient,
-  chatIdentifier: string,
+  chatIdentifier: string | ResolvedEntity,
   text: string,
   replyToMsgId?: number,
   options: { parseMode?: 'html' | 'md'; schedule?: number; silent?: boolean; topic?: number } = {}
 ): Promise<Api.Message> {
-  const entity = await resolveChat(client, chatIdentifier);
+  const entity = typeof chatIdentifier === 'string' ? await resolveChat(client, chatIdentifier) : chatIdentifier;
 
   // Forum topics: the topic's root message is the thread; replies inside it keep topMsgId
   const replyTo = options.topic
@@ -1109,7 +1541,7 @@ export async function sendMessage(
   const result = await client.sendMessage(entity, {
     message: text,
     replyTo,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
     schedule: options.schedule,
     silent: options.silent,
   });
@@ -1320,7 +1752,18 @@ export async function getAdminGroups(client: TelegramClient): Promise<ChatInfo[]
 
 export type ResolvedEntity = Api.User | Api.Chat | Api.Channel;
 
+/**
+ * Whether a chat has forum topics: a forum supergroup, or the private chat with a bot that shows
+ * its chats as topics (botForumView); the topic methods take either peer.
+ */
+export function hasTopics(entity: ResolvedEntity): boolean {
+  if (entity instanceof Api.Channel) return !!entity.forum;
+  return entity instanceof Api.User && !!entity.bot && !!entity.botForumView;
+}
+
 export async function resolveChat(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
+  const pinned = pinnedPeers.get(identifier);
+  if (pinned) return pinned;
   const key = `${isStrictChatResolution() ? 'strict:' : ''}${cacheKey(identifier)}`;
   const cached = resolvedChatCache.get(key);
   if (cached) return cached;
@@ -1333,23 +1776,47 @@ export async function resolveChat(client: TelegramClient, identifier: string): P
 const SELF_ALIASES = new Set(['me', 'self', 'saved', 'saved messages', 'избранное']);
 
 async function resolveChatUncached(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
+  // The name as the caller wrote it: what a candidate's command replaces
+  const asGiven = identifier;
   // Saved Messages: resolve to our own user before any title matching, otherwise
   // "me" substring-matches arbitrary chat titles ("Game", "Meetup", ...).
   if (SELF_ALIASES.has(identifier.trim().toLowerCase())) {
     return await client.getMe();
   }
 
+  // A t.me link names its chat exactly: never a title search ("Team https://t.me/x" titles)
+  const link = parseChatLink(identifier);
+  if (link?.invite) {
+    throw usageError(`${identifier} is an invite link; it does not name a chat you can read or write`,
+      'Join it first (telegram join <link>), then use the chat ID from telegram chats.');
+  }
+  if (link?.id) identifier = link.id;
+
   // Check if it's a username (starts with @)
-  if (identifier.startsWith('@')) {
-    const entity = await client.getEntity(identifier);
+  const username = link?.username ? `@${link.username}` : identifier.startsWith('@') ? identifier : undefined;
+  const isNumericId = /^-?\d+$/.test(identifier);
+  // The dialog list on disk: a chat, or (for a read) the answer to a miss, with no list read at all
+  const disk = await fromDialogCache(client, asGiven, identifier, username, isNumericId);
+  if ('entity' in disk) {
+    logDialogCache(`hit "${asGiven}" -> ${utils.getPeerId(disk.entity).toString()} (list from ${disk.listedAt})`);
+    return disk.entity;
+  }
+  if ('error' in disk) {
+    logDialogCache(`hit "${asGiven}" -> ${disk.error.code} (list from ${disk.listedAt})`);
+    throw disk.error;
+  }
+  const reads = !username && !dialogsCache;
+  logDialogCache(`${reads ? 'refresh' : 'miss'} "${asGiven}": ${disk.miss}${reads ? '; reading the dialog list from Telegram' : ''}`);
+  if (username) {
+    const entity = await client.getEntity(username);
     if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
       return entity;
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   }
 
-  const dialogs = await getDialogsCached(client);
-  const isNumericId = /^-?\d+$/.test(identifier);
+  // IDs are matched in the first page (then asked of Telegram); titles need the whole list
+  const { dialogs, complete } = isNumericId ? { dialogs: await getDialogsCached(client), complete: true } : await dialogsForTitles(client);
 
   let dialog;
   if (isNumericId) {
@@ -1358,23 +1825,29 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
   } else {
     const needle = identifier.trim().toLowerCase();
     const exact = dialogs.filter(d => d.title?.trim().toLowerCase() === needle);
-    if (isStrictChatResolution()) {
-      // Writes: exactly one exact title, or refuse with the candidates
-      if (exact.length > 1) {
-        throw new Error(`"${identifier}" matches ${exact.length} chats; use an ID:\n${describeCandidates(exact)}`);
+    // Never a silent pick between several chats: the caller would act on (or report) the wrong one
+    if (exact.length > 1) throw ambiguousChat(asGiven, exact.map(named), 'exact');
+    dialog = exact[0];
+    if (!dialog) {
+      const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
+      if (isStrictChatResolution() && partial.length) {
+        // Writes: exactly one exact title, or refuse with the candidates
+        throw new CliError(`No chat is titled exactly "${identifier}"; writes need an ID, @username or the exact title`, 'chat_not_exact', EXIT.USAGE, {
+          candidates: chatCandidates(partial.map(named)), hint: 'Run the command again with one of these IDs.',
+          text: `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial.map(named))}`,
+        });
       }
-      dialog = exact[0];
-      if (!dialog) {
-        const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
-        if (partial.length) {
-          throw new Error(
-            `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial)}`,
-          );
-        }
-      }
-    } else {
-      // Reads: exact title first, then partial match
-      dialog = exact[0] ?? dialogs.find(d => d.title?.toLowerCase().includes(needle));
+      // Reads: one partial match is fine, several are a question for the caller
+      if (partial.length > 1) throw ambiguousChat(asGiven, partial.map(named), 'partial');
+      dialog = partial[0];
+    }
+    // One match in a cut list proves nothing: another chat beyond the cut may have the same title
+    if (dialog && !complete) {
+      const matched = exact.length ? exact : [dialog];
+      throw new CliError(`"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title; use an ID or @username`, 'ambiguous_or_unverified', EXIT.USAGE, {
+        candidates: chatCandidates(matched.map(named)), hint: 'Run the command again with this ID, or with the chat\'s @username.',
+        text: `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title. Use an ID or @username:\n${describeCandidates(matched.map(named))}`,
+      });
     }
   }
 
@@ -1393,22 +1866,158 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   } catch {
-    throw new Error(`Chat not found: ${identifier}`);
+    throw chatNotFound(asGiven, dialogs.map(named));
   }
 }
 
-function describeCandidates(dialogs: Awaited<ReturnType<TelegramClient['getDialogs']>>): string {
-  const lines = dialogs.slice(0, 5).map(d => {
-    const kind = d.isUser ? 'user' : d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
-    const username = (d.entity as { username?: string } | undefined)?.username;
-    return `  ${d.id} ${kind} ${d.title}${username ? ` @${username}` : ''}`;
+type Dialogs = Awaited<ReturnType<TelegramClient['getDialogs']>>;
+
+function dialogKind(d: Dialogs[number]): string {
+  if (d.isUser) return (d.entity as Api.User | undefined)?.bot ? 'bot' : 'user';
+  return d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
+}
+
+/**
+ * The command that lists chats matching a name (`--preview 0`: titles, no message text), with
+ * `--json` when the caller's command had it, so an agent gets JSON back from it too.
+ */
+export function chatsQueryCommand(name: string): string[] {
+  return ['chats', '-q', name, '--preview', '0', ...(getInvocation()?.includes('--json') ? ['--json'] : [])];
+}
+
+/** A chat as a candidate names it: from a dialog read now, or from the list on disk. */
+type NamedChat = { id: string; title: string; type: string };
+
+function named(d: Dialogs[number]): NamedChat {
+  return { id: String(d.id), title: d.title ?? '', type: dialogKind(d) };
+}
+
+/**
+ * The caller's command again with `id` in place of the chat name: only when the name stands in it
+ * exactly once (as an argument or `--option=name`), so the swap cannot hit another argument.
+ */
+function rerunWith(asGiven: string, id: string): string[] | undefined {
+  const invocation = getInvocation();
+  if (!invocation || !asGiven) return undefined;
+  const at = invocation.flatMap((a, i) => a === asGiven || (a.startsWith('--') && a.endsWith(`=${asGiven}`) && a.indexOf('=') === a.length - asGiven.length - 1) ? [i] : []);
+  if (at.length !== 1) return undefined;
+  const command = [...invocation];
+  const arg = command[at[0]];
+  command[at[0]] = arg === asGiven ? id : `${arg.slice(0, arg.indexOf('='))}=${id}`;
+  return command;
+}
+
+/**
+ * Candidates show only what tells chats apart: ID, title, type (never a @username), and, for a
+ * read, the caller's command re-run with that ID.
+ */
+function chatCandidates(chats: NamedChat[], asGiven?: string, max = 5): ChatCandidate[] {
+  return chats.slice(0, max).map(c => {
+    // Never for a write: a ready "send <guessed chat> …" invites sending to a chat nobody chose
+    const command = asGiven === undefined || isStrictChatResolution() ? undefined : rerunWith(asGiven, c.id);
+    return { id: c.id, title: c.title, type: c.type, ...(command ? { command } : {}) };
   });
-  if (dialogs.length > 5) lines.push(`  … and ${dialogs.length - 5} more`);
-  return lines.join('\n');
+}
+
+/** Where the candidates came from, when it was the list on disk: said in the hint and as `listedAt`. */
+type FromDisk = { listedAt: string };
+
+function diskNote(from?: FromDisk): string {
+  if (!from) return '';
+  return ` This list is from ${from.listedAt} (up to ${DIALOG_CACHE_TTL_MS / 60_000} minutes old); for a chat that is new or renamed since, run the command with TG_NO_CACHE=1 to read the list from Telegram again.`;
+}
+
+/** Several chats have (or contain) this title: never a silent pick, the caller chooses by ID. */
+function ambiguousChat(asGiven: string, chats: NamedChat[], match: 'exact' | 'partial', from?: FromDisk): CliError {
+  const summary = match === 'exact'
+    ? `"${asGiven}" matches ${chats.length} chats; use an ID`
+    : `"${asGiven}" is part of ${chats.length} chat titles; use an ID or the exact title`;
+  const candidates = chatCandidates(chats, asGiven);
+  const hint = `Run the command again with one of these IDs${candidates.some(c => c.command) ? ' (each candidate has its command)' : ''}.${diskNote(from)}`;
+  return new CliError(summary, 'ambiguous_chat', EXIT.USAGE, {
+    candidates, hint, ...(from ? { listedAt: from.listedAt } : {}),
+    text: `${summary}:\n${describeCandidates(chats)}${from ? `\n${diskNote(from).trim()}` : ''}`,
+  });
+}
+
+/**
+ * What a t.me link (or tg://resolve) names: a public @username, a private channel by its ID
+ * (t.me/c/<id>/…), or an invite. Anything that is not a link is undefined.
+ */
+export function parseChatLink(text: string): { username?: string; id?: string; invite?: boolean } | undefined {
+  const value = text.trim();
+  const tg = /^tg:\/\/resolve\?(?:.*&)?domain=([A-Za-z0-9_]{4,})/i.exec(value);
+  if (tg) return { username: tg[1] };
+  const m = /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/(.+)$/i.exec(value);
+  if (!m) return undefined;
+  const path = m[1].split(/[?#]/)[0].replace(/\/+$/, '');
+  if (/^(\+|joinchat\/)/i.test(path)) return { invite: true };
+  const priv = /^c\/(\d+)(?:\/\d+)*$/i.exec(path);
+  if (priv) return { id: `-100${priv[1]}` };
+  const user = /^(?:s\/)?([A-Za-z][A-Za-z0-9_]{3,})(?:\/\d+)*$/.exec(path);
+  return user ? { username: user[1] } : undefined;
+}
+
+function describeCandidates(chats: NamedChat[]): string {
+  return formatCandidates(chatCandidates(chats), chats.length);
+}
+
+/** Edit distance, for "did you mean" (titles are short, so the quadratic table is fine). */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/** "Chat not found" with the closest titles (by the whole title or one of its words) and the next command. */
+function chatNotFound(identifier: string, chats: NamedChat[], from?: FromDisk): CliError {
+  const needle = identifier.trim().replace(/^@/, '').toLowerCase();
+  const limit = Math.max(1, Math.floor(needle.length / 3));
+  const scored = chats
+    .map(d => {
+      const title = d.title.toLowerCase();
+      const words = [title, ...title.split(/\s+/)].filter(Boolean);
+      return { d, score: Math.min(...words.map(w => editDistance(needle, w))) };
+    })
+    .filter(x => needle && x.score <= limit)
+    .sort((a, b) => a.score - b.score);
+  const candidates = chatCandidates(scored.map(x => x.d), identifier);
+  // The command as an argv too: the text came from the caller. --preview 0: titles, no message text
+  const command = chatsQueryCommand(identifier);
+  const hint = `${diskNote(from).trim()}${from ? ' ' : ''}List matching chats: ${shellCommand(command)}`;
+  return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
+    candidates, hint, command, ...(from ? { listedAt: from.listedAt } : {}),
+    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', hint].filter(Boolean).join('\n'),
+  });
+}
+
+/**
+ * The chat an identifier resolves to (cached after the command's own call): its ID and title.
+ * `topic`: the caller reads a forum topic, so a chat without topics is refused as getMessages does.
+ */
+export async function chatRef(client: TelegramClient, identifier: string, options: { topic?: boolean } = {}): Promise<{ chatId: string; chatTitle: string }> {
+  const entity = await resolveChat(client, identifier);
+  if (options.topic && !hasTopics(entity)) throw notAForum(entity);
+  return { chatId: utils.getPeerId(entity).toString(), chatTitle: getChatTitle(entity) };
+}
+
+function notAForum(entity: ResolvedEntity): CliError {
+  return new CliError(`${getChatTitle(entity)} (${utils.getPeerId(entity)}) is not a forum, so it has no topics`, 'not_a_forum', EXIT.USAGE, {
+    hint: 'Read it without --topic; for the comments of one message use --thread <id>.',
+  });
 }
 
 function getChatTitle(entity: ResolvedEntity): string {
   if (entity instanceof Api.User) {
+    if (entity.self) return SAVED_MESSAGES;
     return entity.firstName || entity.username || 'Unknown';
   }
   if (entity instanceof Api.Chat || entity instanceof Api.Channel) {
@@ -1443,6 +2052,10 @@ export function parseDuration(duration: string): { seconds: number; isForever: b
     default: throw new Error(`Unknown duration unit: ${unit}`);
   }
 
+  // Telegram takes the end as an int of Unix seconds: a longer one would wrap to some other date
+  if (!Number.isSafeInteger(seconds) || Math.floor(Date.now() / 1000) + seconds > MAX_INT32) {
+    throw new Error(`Duration ${duration} is too long; use "forever" for no end`);
+  }
   return { seconds, isForever: false };
 }
 
@@ -1784,6 +2397,7 @@ export async function removeChatFromFolder(
 
 function getChatTitleFromEntity(entity: Api.User | Api.Chat | Api.Channel | Api.ChatForbidden | Api.ChannelForbidden): string {
   if (entity instanceof Api.User) {
+    if (entity.self) return SAVED_MESSAGES;
     return entity.firstName || entity.username || 'Unknown User';
   }
   if (entity instanceof Api.Chat || entity instanceof Api.Channel) {
@@ -1811,16 +2425,13 @@ export async function kickUser(
 ): Promise<{ success: boolean; message: string }> {
   const chat = await resolveChat(client, chatIdentifier);
 
-  // Get the user to kick
+  // The same lookup the write guard used for the approval (and the very object, when it did)
   let user: Api.User;
   try {
-    const entity = await client.getEntity(userIdentifier);
-    if (!(entity instanceof Api.User)) {
-      return { success: false, message: 'Target is not a user' };
-    }
-    user = entity;
+    user = await resolveUser(client, userIdentifier);
   } catch (e) {
-    return { success: false, message: `User not found: ${userIdentifier}` };
+    const msg = e instanceof Error ? e.message : String(e);
+    return { success: false, message: msg === 'Target is not a user' ? msg : `User not found: ${userIdentifier}` };
   }
 
   if (chat instanceof Api.Channel) {
@@ -1917,14 +2528,34 @@ export async function forwardMessages(
   msgIds: number[],
   toChat: string,
   options: { silent?: boolean; dropAuthor?: boolean } = {}
-): Promise<{ count: number; fromTitle: string; toTitle: string }> {
+): Promise<{ count: number; fromTitle: string; toTitle: string; forwardedIds: number[] }> {
   const from = await resolveChat(client, fromChat);
   const to = await resolveChat(client, toChat);
 
+  // Over MCP: Telegram copies the source media, so a contact card or a location the model never
+  // saw (MCP hides them when reading) would reach the recipient. Check the sources first.
+  // A message that could not be fetched is refused too: it cannot be checked.
+  if (isOverMcp()) {
+    const sources = await client.getMessages(from, { ids: msgIds });
+    for (const [i, id] of msgIds.entries()) {
+      const m = sources[i];
+      if (!(m instanceof Api.Message) || m.id !== id) {
+        throw new Error(`Refused over MCP: message ${id} was not found or cannot be checked before forwarding. Forward it in a terminal.`);
+      }
+      if (isSharedLocationOrContact(m.media) || hasRichLocation(m)) {
+        throw new Error(`Refused over MCP: message ${id} holds a contact card or a location; forwarding it would share them. Forward it in a terminal.`);
+      }
+      if (isLoginServiceMessage(m)) {
+        throw new Error(`Refused over MCP: message ${id} is from a login-code service account (777000 or 489000) and may hold a login code.`);
+      }
+    }
+  }
+
   // forwardMessages throws if the forward fails; on success every requested id
-  // was forwarded. The returned array under-reports (a GramJS quirk), so we
-  // report the requested count instead.
-  await client.forwardMessages(to, {
+  // was forwarded. The returned array under-reports (a GramJS quirk), so the
+  // count is the requested one; forwardedIds are only the copies Telegram's
+  // answer confirms (their IDs in the destination chat).
+  const sent = await client.forwardMessages(to, {
     messages: msgIds,
     fromPeer: from,
     silent: options.silent,
@@ -1935,7 +2566,21 @@ export async function forwardMessages(
     count: msgIds.length,
     fromTitle: getChatTitle(from),
     toTitle: getChatTitle(to),
+    forwardedIds: (sent ?? []).filter((m): m is Api.Message => m instanceof Api.Message).map(m => m.id),
   };
+}
+
+/** Media that carries a phone number or a place: a contact card, a geo point, live location or a venue. */
+function isSharedLocationOrContact(media: Api.TypeMessageMedia | undefined): boolean {
+  return media instanceof Api.MessageMediaContact || media instanceof Api.MessageMediaGeo
+    || media instanceof Api.MessageMediaGeoLive || media instanceof Api.MessageMediaVenue;
+}
+
+/** A map block (or any geo or venue object) inside a rich message. */
+function hasRichLocation(msg: Api.Message): boolean {
+  const rich = (msg as { richMessage?: unknown }).richMessage;
+  if (rich == null) return false;
+  return /"(?:className|_)":"[^"]*(geo|venue|pageBlockMap)/i.test(JSON.stringify(rich, (_k, v) => plainJsonValue(v)));
 }
 
 // --- Pin / Unpin ---
@@ -2031,16 +2676,20 @@ export interface ClickOutcome {
 function findRawButton(
   markup: Api.ReplyInlineMarkup | Api.ReplyKeyboardMarkup,
   layout: ButtonLayout,
+  rawLayout: ButtonLayout,
   selector: ClickSelector
-): { raw: RawButton; info: ButtonInfo } | null {
+): { raw: RawButton; info: ButtonInfo; rawInfo: ButtonInfo } | null {
   const flatRaw: RawButton[] = [];
   for (const row of markup.rows) for (const b of row.buttons) flatRaw.push(b);
   const flatInfo = layout.rows.flat();
+  const flatRawInfo = rawLayout.rows.flat();
 
   let pos = -1;
   if (selector.index != null) {
     pos = selector.index - 1;
   } else if (selector.dataBase64 != null) {
+    // Only the payload as shown: over MCP a hidden payload (a login code) must not be guessable
+    // through "found" vs "not found". The raw bytes serve only the fingerprint.
     pos = flatInfo.findIndex((b) => b.type === 'callback' && b.data === selector.dataBase64);
   } else if (selector.text != null) {
     const needle = selector.text.trim().toLowerCase();
@@ -2049,12 +2698,69 @@ function findRawButton(
   }
 
   if (pos < 0 || pos >= flatRaw.length) return null;
-  return { raw: flatRaw[pos], info: flatInfo[pos] };
+  return { raw: flatRaw[pos], info: flatInfo[pos], rawInfo: flatRawInfo[pos] };
 }
 
 function buttonSignature(layout?: ButtonLayout): string {
   if (!layout) return '';
   return layout.rows.flat().map((b) => `${b.type}:${b.text}:${b.data ?? b.url ?? ''}`).join('|');
+}
+
+/** What pressing a button does, as the person approved it: kind, label and what it sends. */
+export function buttonFingerprint(info: ButtonInfo): string {
+  const { index, type, text, data, url, query, copyText, requiresPassword } = info;
+  return JSON.stringify({ index, type, text, data: data ?? null, url: url ?? null, query: query ?? null, copyText: copyText ?? null, requiresPassword: !!requiresPassword });
+}
+
+/** The button the write guard showed for an approved click; set only after the approval held. */
+let approvedButton: string | undefined;
+
+export function expectButton(fingerprint: string | undefined): void {
+  approvedButton = fingerprint;
+}
+
+/** Finds the button a click would press, without pressing it (the guard shows it for approval). */
+export async function findButton(
+  client: TelegramClient,
+  chatIdentifier: string,
+  msgId: number,
+  selector: ClickSelector,
+): Promise<FoundButton> {
+  const entity = await resolveChat(client, chatIdentifier);
+  const msg = await fetchRawMessage(client, entity, msgId);
+  if (!msg) throw new Error(`Message #${msgId} not found`);
+
+  const markup = msg.replyMarkup;
+  if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
+    throw new Error(`Message #${msgId} has no buttons`);
+  }
+  const rawLayout = rawButtonLayout(msg)!;
+  const layout = maskedForMcp(msg, rawLayout);
+  const match = findRawButton(markup, layout, rawLayout, selector);
+  if (!match) {
+    const label = selector.index != null ? `#${selector.index}` : selector.dataBase64 != null ? `data ${selector.dataBase64}` : `"${selector.text}"`;
+    const available = layout.rows.flat().map(b => `[${b.index}] ${b.text || '(no label)'}`).join(', ');
+    throw new CliError(`Button ${label} not found on message #${msgId}`, 'button_not_found', EXIT.ERROR, {
+      hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
+    });
+  }
+  // The approval binds to the button as the message carries it: over MCP two versions of a button can
+  // look the same once masked (a hidden payload, a masked gift link) while they send different bytes
+  return { entity, msg, layout, ...match, fingerprint: buttonFingerprint(match.rawInfo) };
+}
+
+/**
+ * A button a click would press: `info` is what the model is shown (masked over MCP), `rawInfo` the
+ * button as the message carries it (for the person approving), `fingerprint` binds `rawInfo`.
+ */
+export interface FoundButton {
+  entity: ResolvedEntity;
+  msg: Api.Message;
+  layout: ButtonLayout;
+  raw: RawButton;
+  info: ButtonInfo;
+  rawInfo: ButtonInfo;
+  fingerprint: string;
 }
 
 /**
@@ -2071,23 +2777,24 @@ export async function clickButton(
   selector: ClickSelector,
   options: { password?: string; waitMs?: number } = {}
 ): Promise<ClickOutcome> {
+  const found = await findButton(client, chatIdentifier, msgId, selector);
+  // Over MCP the outcome hides login codes (of a service message) and gift links too (URL, copy text, notes)
+  return maskedForMcp(found.msg, await pressButton(client, msgId, found, options));
+}
+
+async function pressButton(
+  client: TelegramClient,
+  msgId: number,
+  found: FoundButton,
+  options: { password?: string; waitMs?: number }
+): Promise<ClickOutcome> {
   const { waitMs = 1500 } = options;
-  const entity = await resolveChat(client, chatIdentifier);
-  const msg = await fetchRawMessage(client, entity, msgId);
-  if (!msg) throw new Error(`Message #${msgId} not found`);
-
-  const markup = msg.replyMarkup;
-  if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
-    throw new Error(`Message #${msgId} has no buttons`);
+  const { entity, msg, layout, raw, info, fingerprint } = found;
+  // The bot may have changed the keyboard since the person approved this click: never press
+  // another button (or send other bytes) than the one they saw
+  if (approvedButton !== undefined && fingerprint !== approvedButton) {
+    throw new Error(`The buttons of message #${msgId} changed after the approval; nothing was pressed. Run the command again to approve the button as it is now.`);
   }
-  const layout = extractButtons(msg)!;
-  const match = findRawButton(markup, layout, selector);
-  if (!match) {
-    const label = selector.index != null ? `#${selector.index}` : selector.dataBase64 != null ? `data ${selector.dataBase64}` : `"${selector.text}"`;
-    throw new Error(`Button ${label} not found on message #${msgId}`);
-  }
-
-  const { raw, info } = match;
   const beforeText = messageText(msg);
   const beforeSig = buttonSignature(layout);
 
@@ -2120,7 +2827,7 @@ export async function clickButton(
 
   // Plain reply-keyboard button: pressing it just sends its label as a message.
   if (kind instanceof Api.ButtonTypeDefault) {
-    const sent = await sendMessage(client, chatIdentifier, raw.text);
+    const sent = await sendMessage(client, entity, raw.text);
     const outcome: ClickOutcome = { button: info, action: 'sent_text', sentMessageId: sent.id, note: `Reply-keyboard button — sent "${raw.text}" as a message.` };
     await collectBotResponse(client, entity, msgId, beforeText, beforeSig, waitMs, outcome);
     return outcome;
@@ -2221,7 +2928,7 @@ export async function editMessageText(
   const result = await client.editMessage(entity, {
     message: msgId,
     text,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
   });
   return { chatTitle: getChatTitle(entity), id: result?.id ?? msgId };
 }
@@ -2231,10 +2938,39 @@ export async function deleteChatMessages(
   chatIdentifier: string,
   msgIds: number[],
   revoke: boolean
-): Promise<{ chatTitle: string; count: number }> {
+): Promise<{ chatTitle: string; count: number; forEveryone: boolean }> {
   const entity = await resolveChat(client, chatIdentifier);
+  await assertMessagesInChat(client, entity, msgIds);
   await client.deleteMessages(entity, msgIds, { revoke });
-  return { chatTitle: getChatTitle(entity), count: msgIds.length };
+  // What Telegram did, not what was asked: a channel or supergroup ignores "just for me"
+  return { chatTitle: getChatTitle(entity), count: msgIds.length, forEveryone: revoke || deletesForEveryone(entity) };
+}
+
+/** The message IDs of `delete` (`123` or `123,124`), as the command parses them. */
+export function parseIdList(text: string): number[] {
+  return text.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n));
+}
+
+/** Where Telegram deletes for everyone whatever `--just-me` says: channels and supergroups. */
+export function deletesForEveryone(entity: ResolvedEntity): boolean {
+  return entity instanceof Api.Channel;
+}
+
+/**
+ * Every message to delete exists and belongs to this chat. In private chats and basic groups
+ * Telegram deletes by message ID alone (messages.DeleteMessages carries no chat), so an ID from
+ * another chat would delete there, under a "yes" to this one. Refuses the whole operation.
+ */
+export async function assertMessagesInChat(client: TelegramClient, entity: ResolvedEntity, msgIds: number[]): Promise<void> {
+  const want = utils.getPeerId(entity).toString();
+  const found = await client.getMessages(entity, { ids: msgIds });
+  const bad = msgIds.filter((id, i) => {
+    const m = found[i] as unknown;
+    return !(m instanceof Api.Message || m instanceof Api.MessageService) || m.id !== id || !m.peerId || utils.getPeerId(m.peerId).toString() !== want;
+  });
+  if (bad.length) {
+    throw new Error(`Message${bad.length > 1 ? 's' : ''} ${bad.map(id => `#${id}`).join(', ')} not found in ${getChatTitle(entity)} (id ${want}); nothing was deleted. Check the IDs with \`telegram read\`.`);
+  }
 }
 
 export async function markChatRead(
@@ -2261,8 +2997,8 @@ export async function getPinnedMessages(
         date: new Date(msg.date * 1000),
         sender: (await resolveSender(client, msg)).sender,
         text: messageText(msg),
-        isOutgoing: msg.out ?? false,
-        media: extractMediaInfo(msg),
+        isOutgoing: await isFromSelf(client, msg),
+        media: shownMediaInfo(msg),
         buttons: extractButtons(msg),
       });
     }
@@ -2428,7 +3164,7 @@ export async function joinChat(
   target: string
 ): Promise<{ title: string }> {
   // Invite link (t.me/+hash or t.me/joinchat/hash) → ImportChatInvite; otherwise JoinChannel.
-  const inviteMatch = target.match(/(?:t\.me\/(?:joinchat\/|\+)|^\+)([A-Za-z0-9_-]+)/);
+  const inviteMatch = target.match(INVITE_LINK);
   if (inviteMatch) {
     const res = await client.invoke(new Api.messages.ImportChatInvite({ hash: inviteMatch[1] }));
     let title = 'chat';
@@ -2495,9 +3231,9 @@ export async function createGroup(
   const users: Api.TypeInputUser[] = [];
   for (const u of userIdentifiers) {
     const entity = await resolveChat(client, u);
-    if (entity instanceof Api.User) {
-      users.push(new Api.InputUser({ userId: entity.id, accessHash: entity.accessHash || bigInt(0) }));
-    }
+    // Every member the person approved, or no group: dropping one silently changes what was approved
+    if (!(entity instanceof Api.User)) throw new Error(`${u} is not a user; a group's members are users`);
+    users.push(new Api.InputUser({ userId: entity.id, accessHash: entity.accessHash || bigInt(0) }));
   }
   const res = await client.invoke(new Api.messages.CreateChat({ users, title }));
   let id = '';
@@ -2569,10 +3305,8 @@ export async function setProfilePhoto(
   client: TelegramClient,
   filePath: string
 ): Promise<void> {
-  const file = await client.uploadFile({
-    file: new CustomFile(basename(filePath), statSync(filePath).size, filePath),
-    workers: 1,
-  });
+  // The bytes the approval was checked against (read once per process), never the path again
+  const file = await client.uploadFile({ file: uploadable(fileSnapshot(filePath)), workers: 1 });
   await client.invoke(new Api.photos.UploadProfilePhoto({ file }));
 }
 
@@ -2586,6 +3320,7 @@ export async function downloadAvatar(
   if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
   const fileName = `avatar_${entity.id.toString()}.jpg`;
   const filePath = join(outputDir, fileName);
+  assertDownloadTarget(filePath);
   const result = await client.downloadProfilePhoto(entity, { outputFile: filePath });
   if (!result) return { filePath: null, title };
   return { filePath: typeof result === 'string' ? result : filePath, title };
@@ -2646,8 +3381,9 @@ export async function getUserStories(
 
 // --- Admin Management Functions ---
 
+/** A user argument, found like every other recipient (resolveChat), so the approval and the write agree. */
 async function resolveUser(client: TelegramClient, userIdentifier: string): Promise<Api.User> {
-  const entity = await client.getEntity(userIdentifier);
+  const entity = await resolveChat(client, userIdentifier);
   if (!(entity instanceof Api.User)) {
     throw new Error('Target is not a user');
   }
@@ -2931,8 +3667,8 @@ export async function getForumTopics(
   options: { limit?: number; query?: string } = {}
 ): Promise<{ chatTitle: string; topics: ForumTopicInfo[] }> {
   const entity = await resolveChat(client, chatIdentifier);
-  if (!(entity instanceof Api.Channel) || !entity.forum) {
-    throw new Error(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups)`);
+  if (!hasTopics(entity)) {
+    throw new CliError(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups and bots with topics)`, 'not_a_forum', EXIT.USAGE);
   }
   const res = await client.invoke(
     new Api.messages.GetForumTopics({
@@ -2957,7 +3693,7 @@ export async function getForumTopics(
       });
     }
   }
-  return { chatTitle: entity.title, topics };
+  return { chatTitle: getChatTitle(entity), topics };
 }
 
 /** Public t.me link to a message (private chats/groups have no message links). */
@@ -3019,18 +3755,25 @@ export async function listContacts(client: TelegramClient, query?: string): Prom
  * Build any TL request from the schema and invoke it (issue #47 "reachability"). Peer/file fields
  * are passed through `materializeApiParams`: `{"_chat": "<identifier>"}` resolves a chat the same
  * way every other command does (title, @username, ID or "me"; strict under a write), and
- * `{"_base64": "…"}` / `{"_hex": "…"}` become raw bytes. Everything else is passed verbatim;
- * teleproto resolves any remaining entity-like fields (a bare @username/ID) on invoke.
+ * `{"_base64": "…"}` / `{"_hex": "…"}` become raw bytes. A bare string in a peer-typed field was
+ * already turned into `{"_chat"}` by runApiMethod (bindStringPeers), before the approval.
  */
 export async function invokeApi(
   client: TelegramClient,
   methodName: string,
   rawParams: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const { resolveApiMethod } = await import('./api-methods.js');
-  const { ctor } = resolveApiMethod(methodName);
+  const { resolveApiMethod, mcpPaidStarsRefusal, mcpParamRefusal, geoParamRefusal } = await import('./api-methods.js');
+  const { mcpApiAllowlistRefusal } = await import('./mcp-api-allowlist.js');
+  const { ctor, className } = resolveApiMethod(methodName);
+  const notAllowed = mcpApiAllowlistRefusal(className);
+  if (notAllowed) throw new Error(notAllowed);
   const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
   const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
+  // Checked again on the fields the request really carries (Stars, stakes, coordinates over MCP)
+  const fields = { ...request } as Record<string, unknown>;
+  const refusal = geoParamRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields) ?? mcpParamRefusal(className, fields);
+  if (refusal) throw new Error(refusal);
   return client.invoke(request);
 }
 
@@ -3040,24 +3783,104 @@ async function materializeApiParams(client: TelegramClient, value: unknown): Pro
   }
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
-    if (typeof obj._chat === 'string') return resolveChat(client, obj._chat);
-    if (typeof obj._base64 === 'string') return Buffer.from(obj._base64, 'base64');
-    if (typeof obj._hex === 'string') return Buffer.from(obj._hex, 'hex');
-    if (typeof obj._bigint === 'string' || typeof obj._bigint === 'number') return bigInt(String(obj._bigint));
-    const out: Record<string, unknown> = {};
+    // The same rule the approval used to find the chats in these params (apiChatRefs)
+    switch (apiMarker(obj)) {
+      case 'chat': return resolveChat(client, obj._chat as string);
+      case 'base64': return Buffer.from(obj._base64 as string, 'base64');
+      case 'hex': return Buffer.from(obj._hex as string, 'hex');
+      case 'bigint': return bigInt(String(obj._bigint));
+    }
+    // Prototype-free, so no field (allowPaidStars) is inherited after the checks in runApiMethod
+    const out = Object.create(null) as Record<string, unknown>;
     for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
     return out;
   }
   return value;
 }
 
+/**
+ * Keys a raw result over MCP shows as "[redacted]", at any depth: phone numbers (a `User`, a contact
+ * card and its vCard), birthdays, the private note about a contact, and every location field
+ * (geo points, a business or geo-group location, a venue address).
+ */
+const MCP_REDACTED_KEY = /^(phone|phoneNumber|vcard|birthday|businessLocation|note|location|address)$|geo/i;
+
+/**
+ * Keys redacted over MCP only on some constructors (lowercase name → keys): the place ID and its
+ * directory (Foursquare, Google Places) of a venue, which find the hidden address again, and the
+ * slug of a Premium gift code, which is the redeem link itself.
+ */
+const MCP_REDACTED_BY_TYPE: [RegExp, Set<string>][] = [
+  [/venue/, new Set(['venueId', 'provider'])],
+  [/^messageactiongiftcode$/, new Set(['slug'])],
+  // A giveaway's result and a boost carry the slug of the gift code they hand out
+  [/./, new Set(['giftCodeSlug', 'usedGiftSlug'])],
+];
+
+/** The constructor name of a value in a raw result: `className` (TL `toJSON`) or the JSON `_`. */
+function tlTypeName(val: unknown): string | undefined {
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return undefined;
+  const v = val as { className?: unknown; _?: unknown };
+  const name = typeof v.className === 'string' ? v.className : typeof v._ === 'string' ? v._ : undefined;
+  return name?.toLowerCase();
+}
+
+/** Big integers as strings and bytes as base64, the plain part of the result replacer. */
+function plainJsonValue(val: unknown): unknown {
+  if (typeof val === 'bigint') return val.toString();
+  if (bigInt.isInstance(val)) return val.toString();
+  if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+  return val;
+}
+
+/**
+ * A message of a login service with its codes hidden in all its content: `message`, `richMessage`,
+ * entity URLs, reply markup (texts, URLs, copy texts; bytes such as callback data hidden whole), a
+ * quote and a link preview.
+ */
+function maskLoginServiceJson(val: Record<string, unknown>): Record<string, unknown> {
+  // An array's strings are read under the key that holds the array (recentReactors: […])
+  const arrayKey = new WeakMap<object, string>();
+  return JSON.parse(JSON.stringify(val, function (this: Record<string, unknown>, k: string, v: unknown) {
+    const orig = this[k];
+    if (orig instanceof Uint8Array) return LOGIN_CODE_HIDDEN;
+    // A big integer (an ID, a size; its toJSON already made it a string) is a number, not content
+    if (typeof orig === 'bigint' || bigInt.isInstance(orig)) return plainJsonValue(orig);
+    const plain = plainJsonValue(v);
+    if (plain !== v) return plain;
+    if (typeof v === 'string') return maskContent(v, true, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
+    if (Array.isArray(v)) arrayKey.set(v, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
+    return v;
+  })) as Record<string, unknown>;
+}
+
 /** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
 export function serializeApiResult(result: unknown): string {
+  const overMcp = isOverMcp();
   const pretty = isTTY || process.env.TG_JSON_PRETTY === '1';
-  const replacer = (_key: string, val: unknown): unknown => {
-    if (typeof val === 'bigint') return val.toString();
-    if (bigInt.isInstance(val)) return val.toString();
-    if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+  const replacer = function (this: unknown, _key: string, val: unknown): unknown {
+    const plain = plainJsonValue(val);
+    if (plain !== val) return plain;
+    // help.GetConfig may carry a token that logs into Telegram's web pages as this account
+    if (_key === 'autologinToken' && val) return '[redacted]';
+    if (!overMcp) return val;
+    // Over MCP: phone numbers, birthdays, private notes and locations stay out of the model's context
+    if (val != null && MCP_REDACTED_KEY.test(_key)) return '[redacted]';
+    const holder = tlTypeName(this);
+    if (val != null && holder && MCP_REDACTED_BY_TYPE.some(([type, keys]) => type.test(holder) && keys.has(_key))) return '[redacted]';
+    // A gift-code link redeems the gift for whoever opens it, wherever it appears
+    if (typeof val === 'string') return maskForModel(val, 'chat');
+    // Login codes from the service accounts 777000 and 489000 (history, search, dialogs, a short update)
+    const type = tlTypeName(val);
+    const obj = val as Record<string, unknown>;
+    if ((type === 'message' && isLoginServiceMessage(obj))
+      || (type === 'updateshortmessage' && LOGIN_SERVICE_USER_IDS.has(String(obj.userId)))) {
+      return maskLoginServiceJson(obj);
+    }
+    // A quote of a login-service message, in a message of another chat: its text and entities
+    if (type === 'messagereplyheader' && isLoginServicePeer(obj.replyToPeerId)) {
+      return maskLoginServiceJson(obj);
+    }
     return val;
   };
   const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);
@@ -3837,9 +4660,9 @@ export const permissionPresets = { MUTE_RIGHTS };
 
 // --- Forum topics: create / edit / close / reopen / pin (write) -------------------------------
 
-async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<Api.Channel> {
+async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<ResolvedEntity> {
   const entity = await resolveChat(client, chatIdentifier);
-  if (!(entity instanceof Api.Channel) || !entity.forum) throw new Error(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`);
+  if (!hasTopics(entity)) throw new CliError(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`, 'not_a_forum', EXIT.USAGE);
   return entity;
 }
 

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { readStdinOnce } from '../text.js';
 import { resolveApiMethod } from '../api-methods.js';
 import { runApiMethod } from '../api-run.js';
+import { CliError, EXIT, fail, usageError } from '../errors.js';
 
 export const apiCommand = new Command('api')
   .description('Call any raw Telegram TL method (full API reachability; output is JSON)')
@@ -13,10 +14,14 @@ export const apiCommand = new Command('api')
     'Peer/byte fields:',
     '  {"_chat": "<id|@user|title|me>"}  resolve a chat as other commands do',
     '  {"_base64": "…"} / {"_hex": "…"}  raw bytes',
-    'Other entity-like fields also accept a bare @username or ID (resolved on send).',
+    'A peer/user/channel field also takes a bare "@username" or ID: it is resolved like {"_chat"}',
+    'before the write is approved, and the request goes to the chat that was approved.',
     '',
     'Read methods (Get*/Check*/Search*/Resolve*) run without write access; everything else is a',
-    'write and needs `telegram write-access on`. Paying, account deletion, session termination,',
+    'write: in mode "ask" each call waits for the user\'s approval, in mode "on" it runs. Writes',
+    'despite the name: messages.GetBotCallbackAnswer, ephemeral.GetCallbackAnswer,',
+    'messages.GetInlineBotResults, and messages.GetMessagesViews with increment.',
+    'Paying, account deletion, session termination,',
     '2FA changes and sharing your location are always refused.',
     '',
     'Every method also has a typed top-level command: `telegram <namespace> <method>` (e.g.',
@@ -35,8 +40,7 @@ export const apiCommand = new Command('api')
       const resolved = resolveApiMethod(method);
       canonical = resolved.className;
     } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exit(1);
+      fail(new CliError(error instanceof Error ? error.message : String(error), 'unknown_method', EXIT.USAGE, { hint: 'List the methods: telegram schema' }));
     }
 
     const raw = options.params === '-' ? readStdinOnce() : options.params;
@@ -46,9 +50,8 @@ export const apiCommand = new Command('api')
         throw new Error('params must be a JSON object');
       }
     } catch (error) {
-      console.error(`Invalid --params JSON: ${error instanceof Error ? error.message : String(error)}`);
-      process.exit(1);
+      fail(usageError(`Invalid --params JSON: ${error instanceof Error ? error.message : String(error)}`, 'Pass a JSON object, e.g. --params \'{"limit":10}\'.'));
     }
 
-    await runApiMethod(canonical, parsed, { auditCommand: 'api' });
+    await runApiMethod(canonical, parsed, { auditCommand: 'api', paramsFromStdin: options.params === '-' });
   });

@@ -1,58 +1,154 @@
 import { Command } from 'commander';
+import { loginHint } from '../login-hint.js';
 import { getClient, getMe, disconnectClient } from '../client.js';
-import { isConfigured, loadConfig } from '../config.js';
-import { configDir, isMock, profile } from '../paths.js';
+import { isConfigured, loadConfig, secretFileConflicts, secretSource, type TgConfig } from '../config.js';
+import { configDir, isMock, isMockAsk, profile } from '../paths.js';
 import { mockStatePath } from '../mock/world.js';
-import { isSecretStoreAvailable } from '../secrets.js';
-import { isOnePasswordAvailable } from '../onepassword.js';
-import { isKeychainAvailable } from '../keychain.js';
-import { isLibsecretAvailable } from '../libsecret.js';
+import { getSecretBackendLabel, writesLine, writesOf, writeStatus, writesTextLine } from '../status.js';
+import { transportSetting } from '../transport.js';
+import { errorDetails, EXIT, fail } from '../errors.js';
+import { VERSION } from '../version.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 
-function getSecretBackendLabel(): string {
-  if (isOnePasswordAvailable()) return '1Password';
-  if (isKeychainAvailable()) return 'macOS Keychain';
-  if (isLibsecretAvailable()) return 'Secret Service (libsecret)';
-  return 'config file (plaintext)';
+/** Where the session of this snapshot actually came from, not just which store is reachable. */
+function sessionStorageLabel(config: TgConfig): string {
+  if (secretSource('sessionString', config) === 'file') {
+    return 'config.json5 (plaintext file, used as is; it is not moved into the secret store)';
+  }
+  return getSecretBackendLabel();
 }
 
+/**
+ * `check --json`: one object, also on failure (then with `error`, and the exit code of that error).
+ * {configured, authenticated, account?, writeMode, writes, writeUntil?, writeModeProtected, secretStore,
+ *  profile, transport, testServers, version, mock?, error?}
+ */
 export const checkCommand = new Command('check')
-  .description('Verify session and credentials')
-  .action(async () => {
+  .description('Verify session and credentials, and show the write mode')
+  .option('--json', 'Output as JSON (configured, authenticated, account, writeMode, …)')
+  .action(async (options: { json?: boolean }) => {
+    const json = !!options.json;
     if (isMock()) {
       const me = await getMe(await getClient());
-      console.log(chalk.green('Mock mode: no Telegram session is used'));
-      console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
-      console.log(`State file: ${mockStatePath()} (delete it to start over)`);
+      // The guard is skipped under TG_MOCK (writes only change the local state file), unless
+      // TG_MOCK_ASK rehearses mode "ask"
+      const mode = isMockAsk() ? 'ask' : 'on';
+      if (json) {
+        console.log(JSON.stringify({
+          configured: true, authenticated: true, mock: true,
+          account: { id: me.id.toString(), ...(me.username ? { username: me.username } : {}) },
+          writeMode: mode, writes: writesOf(mode), writeModeProtected: false, profile: profile() || null, version: VERSION,
+        }));
+      } else {
+        console.log(chalk.green('Mock mode: no Telegram session is used'));
+        console.log(chalk.bold(`${writesLine(mode)} ${mode === 'ask'
+          ? '(mock: TG_MOCK_ASK rehearses approvals; writes only change the state file)'
+          : '(mock: writes only change the state file, no approval)'}`));
+        console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
+        console.log(`State file: ${mockStatePath()} (delete it to start over)`);
+      }
       await disconnectClient();
       return;
     }
-    if (!isConfigured()) {
-      const p = profile();
-      console.log(chalk.red(p
-        ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram auth [--test-dc]`
-        : 'Not configured. Run "telegram onboard" or "telegram auth --qr" first.'));
+    // One snapshot for the whole check: the conflicts, the session, the transport and the servers
+    let config: TgConfig;
+    let configured: boolean;
+    let conflicts: string[];
+    try {
+      config = loadConfig(() => {});
+      configured = isConfigured(config);
+      conflicts = secretFileConflicts(config);
+    } catch (error) {
+      // e.g. the secret store could not be read
+      if (json) fail(error);
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
       process.exit(1);
+    }
+    const write = writeStatus();
+    const base = {
+      ...write, profile: profile() || null, transport: transportLabel(config), testServers: !!config.testServers, version: VERSION,
+    };
+    if (!configured) {
+      const p = profile();
+      const message = p
+        ? `Profile "${p}" is not configured. Run: TG_PROFILE=${p} telegram onboard [--test-dc] (a person at their own terminal can use \`TG_PROFILE=${p} telegram auth --qr\` instead)`
+        : `Not configured. ${loginHint()}`;
+      if (json) {
+        console.log(JSON.stringify({ configured: false, authenticated: false, ...base, error: { code: 'not_configured', message } }));
+      } else {
+        console.log(chalk.red(message));
+      }
+      process.exit(EXIT.NOT_LOGGED_IN);
+    }
+
+    // Before connecting: with a dead stored session this is the hint that the file holds another one
+    for (const key of conflicts) {
+      const line = `config.json5 also holds a ${key} that differs from the secret store; the stored one is used.`;
+      if (json) console.error(line);
+      else console.log(chalk.yellow(line));
     }
 
     const spinner = ora('Checking session...').start();
 
     try {
-      const client = await getClient();
+      const client = await getClient(config);
       const me = await getMe(client);
 
-      spinner.succeed(chalk.green('Session valid'));
-      console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
-      console.log(`Secret storage: ${getSecretBackendLabel()}`);
-      if (profile()) console.log(`Profile: ${profile()} (${configDir()})`);
-      if (loadConfig(() => {}).testServers) console.log('Servers: TEST (not production)');
+      if (json) {
+        spinner.stop();
+        console.log(JSON.stringify({
+          configured: true, authenticated: true,
+          account: { id: me.id.toString(), ...(me.username ? { username: me.username } : {}) },
+          ...base, sessionStore: sessionStorageLabel(config),
+        }));
+      } else {
+        spinner.succeed(chalk.green('Session valid'));
+        console.log(chalk.bold(writesTextLine(write)));
+        console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
+        console.log(`Session stored in: ${sessionStorageLabel(config)}`);
+        if (profile()) console.log(`Profile: ${profile()} (${configDir()})`);
+        if (config.testServers) console.log('Servers: TEST (not production)');
+      }
 
       await disconnectClient();
     } catch (error) {
+      const details = errorDetails(error);
+      // Only an ended session (exit 5) is a reason to log in again; no network or a rate limit
+      // says nothing about the session
+      const ended = details.exitCode === EXIT.NOT_LOGGED_IN;
+      if (json) {
+        spinner.stop();
+        console.log(JSON.stringify({
+          configured: true, authenticated: false, ...base,
+          error: {
+            code: details.code, message: details.message,
+            ...(details.hint ? { hint: details.hint } : {}),
+            ...(details.command ? { command: details.command } : {}),
+            ...(details.retryAfterSeconds !== undefined ? { retryAfterSeconds: details.retryAfterSeconds } : {}),
+          },
+        }));
+        process.exit(details.exitCode);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (!ended) {
+        spinner.fail(chalk.red(details.code === 'flood_wait' ? 'Could not check the session: Telegram rate limit' : 'Could not check the session'));
+        console.error(details.message);
+        if (details.hint) console.error(details.hint);
+        console.error('The stored login was not judged; this is no reason to log in again.');
+        process.exit(details.exitCode);
+      }
       spinner.fail(chalk.red('Session invalid or expired'));
-      console.error(error instanceof Error ? error.message : error);
-      console.log('\nRun "telegram auth" to re-authenticate.');
-      process.exit(1);
+      console.error(message);
+      if (!message.includes(loginHint())) console.log(`\n${loginHint()}`);
+      process.exit(details.exitCode);
     }
   });
+
+function transportLabel(config: TgConfig): string {
+  try {
+    return transportSetting(undefined, config);
+  } catch {
+    return 'invalid TG_TRANSPORT';
+  }
+}

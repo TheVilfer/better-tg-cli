@@ -46,6 +46,15 @@ folder and contacts.
   `auth`, `onboard`, `logout`, `write-access` and `update` refuse to run.
 - **The write guard is skipped**, because a mock write only changes that local file. This is the
   one exception to "no way to skip the confirmation"; the strict chat matching of writes stays.
+- **Rehearsing approvals: `TG_MOCK_ASK=1`** (with `TG_MOCK`, for development and tests only) makes
+  the mock account behave as write mode "ask": a write stops with exit 3, the action (recipient
+  looked up by name) and a code, and goes through once with `TG_APPROVE=<code>`. The approvals and
+  their signing key stay in the mock profile as files; no secret store is touched. Over MCP
+  (`TG_MOCK=1 TG_MOCK_ASK=1 telegram mcp`) the same flow runs through `telegram_write`, with or
+  without the client's dialog. `test/approval-ux.test.ts` and `test/mcp-approval.test.ts` use it.
+- **Rehearsing failures: `TG_MOCK_FAIL=network|FLOOD_WAIT_<n>|<RPC_ERROR>`** makes the mock's
+  `getMe` and `getEntity` throw as teleproto would (no connection, a rate limit, any RPC error).
+  A media of a mock message with `downloadFails: true` fails to download.
 - **Not covered:** `watch`, polls, stories, inline bots, admin actions (kick, promote, create,
   join, leave) and profile edits. They fail with `mock: … is not implemented`; add a handler to
   `MockClient.invoke()`, or test them against a dev profile.
@@ -95,6 +104,17 @@ A dev profile can use:
   The built-in debugger can't attach to Bun, which is why these entries use Node and tsx.
 - `bun --inspect-wait src/index.ts <args>` gives a debug.bun.sh URL, if you prefer Bun's inspector.
 - teleproto logs go to stderr only, so `--json` output stays parseable at any `TG_LOG_LEVEL`.
+- **Chat lookup and the dialog list on disk** (`src/dialog-cache.ts`): with `TG_DEBUG_CACHE=1` (that
+  line alone) or `TG_LOG_LEVEL=debug` (amid teleproto's debug log) every chat lookup prints one
+  stderr line, also under the mock: `dialog cache: hit "<name>" -> <id>`
+  or `-> chat_not_found|ambiguous_chat` (answered from the saved list, no `GetDialogs`),
+  `refresh "<name>": <reason>; reading the dialog list from Telegram`, or `miss "<name>": <reason>`
+  (no list read: a @username, or the list this process already holds). `TG_NO_CACHE=1` skips the
+  saved list (and saves a fresh one). Two runs of `TG_LOG_LEVEL=debug telegram read <title> -n 1`
+  prove the cache on a real account: `refresh`, then `hit`. `inbox`, `chats` (without `--archived`)
+  and `groups` read the same list: a whole list (or a full first page when no fresh list is saved)
+  becomes the saved one, and a list this process read in the last 10 s is shown again instead of a
+  second `GetDialogs`. Their counters and last messages never come from disk.
 - **MCP in Claude Desktop.** The `.mcpb` extension (`node scripts/mcpb.mjs <out>` after a build)
   runs on Claude's built-in Node, an Electron utility process: its `execPath` is an app helper that
   won't start as Node, so there `telegram mcp` runs each call in a worker thread instead of a child

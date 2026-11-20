@@ -4,6 +4,8 @@ import { getClient, downloadAvatar, disconnectClient } from '../client.js';
 import { formatJson } from '../formatters/json.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
+import { assertLocalWriteAllowed } from '../guard.js';
+import { fail } from '../errors.js';
 
 export const avatarCommand = new Command('avatar')
   .description("Download a user's or chat's profile photo")
@@ -11,6 +13,7 @@ export const avatarCommand = new Command('avatar')
   .option('-o, --output <dir>', 'Output directory', '.')
   .option('--json', 'Output as JSON')
   .action(async (chat, options) => {
+    await assertLocalWriteAllowed();
     const outputDir = resolve(options.output);
     const spinner = ora(`Downloading avatar for "${chat}"...`).start();
     try {
@@ -26,8 +29,6 @@ export const avatarCommand = new Command('avatar')
       }
       await disconnectClient();
     } catch (error) {
-      spinner.fail('Failed to download avatar');
-      console.error(error instanceof Error ? error.message : error);
-      process.exit(1);
+      fail(error, spinner, 'Failed to download avatar');
     }
   });
