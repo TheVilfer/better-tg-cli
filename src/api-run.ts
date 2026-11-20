@@ -2,6 +2,7 @@ import { getClient, invokeApi, serializeApiResult, disconnectClient } from './cl
 import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, mcpParamRefusal, plainParams } from './api-methods.js';
 import { mcpApiAllowlistRefusal } from './mcp-api-allowlist.js';
 import { assertWriteEnabled } from './guard.js';
+import { bindStringPeers } from './api-peers.js';
 import { auditLog } from './audit.js';
 import ora from './spinner.js';
 import { CliError, EXIT, fail } from './errors.js';
@@ -30,6 +31,9 @@ export async function runApiMethod(
   const refusal = apiRefusalReason(canonical, params) ?? mcpApiAllowlistRefusal(canonical) ?? mcpPaidStarsRefusal(canonical, params)
     ?? mcpParamRefusal(canonical, params);
   if (refusal) fail(new CliError(refusal, 'refused', EXIT.ERROR));
+  // A bare "@name" in a peer field becomes {_chat}: approved as the ID it resolves to now, and the
+  // request is built from that same resolved chat (never resolved again by teleproto on invoke)
+  bindStringPeers(canonical, params);
 
   // A read that may spend Stars (allowPaidStars) or add a view (increment) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);

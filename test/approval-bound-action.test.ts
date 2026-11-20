@@ -146,6 +146,33 @@ describe('every recipient, in every role, is approved as the ID it resolves to',
     expect(lost.code).toBe(1);
     expect(lost.err).toContain('Not sent, nothing to approve');
   });
+
+  it('api: a bare "@name" in a peer-typed field (top level, --json-params, nested) is bound the same way', () => {
+    const cli = account();
+    const code = (r: { err: string }) => /TG_APPROVE=([A-Z2-9]{6})/.exec(r.err)![1];
+    const params = JSON.stringify({ peer: '@alice_example', unread: true });
+    const asked = cli(['api', 'messages.MarkDialogUnread', '-p', params]);
+    expect(asked.code).toBe(3);
+    expect(asked.err).toContain('Chat in params.peer: Alice Example (user, @alice_example, id 1001)');
+    // The generated command's --json-params and a peer inside a nested constructor are found too
+    const gen = cli(['messages', 'mark-dialog-unread', '--unread', '--json-params', JSON.stringify({ peer: '@alice_example' })]);
+    expect(gen.err).toContain('Chat in params.peer: Alice Example (user, @alice_example, id 1001)');
+    const nested = cli(['api', 'messages.SendMessage', '-p', JSON.stringify({
+      peer: { _chat: 'me' }, message: 'hi', replyTo: { _: 'inputReplyToMessage', replyToMsgId: 1, replyToPeerId: '@bob_sample' },
+    })]);
+    expect(nested.err).toContain('Chat in params.replyTo.replyToPeerId: Bob Sample (user, @bob_sample, id 1002)');
+    // The username moves to another account: the code no longer fits
+    edit(cli, swapUsername(1001, 1002));
+    const r = cli(['api', 'messages.MarkDialogUnread', '-p', params], { approve: code(asked) });
+    expect(r.code).toBe(3);
+    expect(r.err).toContain('not accepted: the approval was for a different command or text');
+    expect((cli.chat(1001) as any).markedUnread).toBeUndefined();
+    // Unchanged, the approved call marks the chat that was shown
+    const ok = account();
+    const again = ok(['api', 'messages.MarkDialogUnread', '-p', params]);
+    expect(ok(['api', 'messages.MarkDialogUnread', '-p', params], { approve: code(again) }).code).toBe(0);
+    expect((ok.chat(1001) as any).markedUnread).toBe(true);
+  });
 });
 
 describe('delete touches only messages of the chat the person saw', () => {

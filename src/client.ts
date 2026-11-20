@@ -3467,8 +3467,8 @@ export async function listContacts(client: TelegramClient, query?: string): Prom
  * Build any TL request from the schema and invoke it (issue #47 "reachability"). Peer/file fields
  * are passed through `materializeApiParams`: `{"_chat": "<identifier>"}` resolves a chat the same
  * way every other command does (title, @username, ID or "me"; strict under a write), and
- * `{"_base64": "…"}` / `{"_hex": "…"}` become raw bytes. Everything else is passed verbatim;
- * teleproto resolves any remaining entity-like fields (a bare @username/ID) on invoke.
+ * `{"_base64": "…"}` / `{"_hex": "…"}` become raw bytes. A bare string in a peer-typed field was
+ * already turned into `{"_chat"}` by runApiMethod (bindStringPeers), before the approval.
  */
 export async function invokeApi(
   client: TelegramClient,
