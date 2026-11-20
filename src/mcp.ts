@@ -15,7 +15,7 @@ import { getWriteValue } from './write-store.js';
 import { isMock, isMockAsk } from './paths.js';
 import { getSessionString } from './config.js';
 import { holdsMaskedValue, maskGiftCodes } from './mcp-output.js';
-import { checkSession, openSetupPage } from './setup.js';
+import { checkStoredSession, openSetupPage } from './setup.js';
 import { savedMode } from './write-mode.js';
 import { openBrowser } from './commands/onboard.js';
 import type { OnboardSession } from './onboard.js';
@@ -740,11 +740,11 @@ function setupResult(url: string, step: 'login' | 'mode', extra: { sessionExpire
 export async function runSetup(options: { readOnly?: boolean } = {}): Promise<ToolResult> {
   if (isMock()) return text('Mock mode (TG_MOCK): the fake account needs no login and no setup page. Unset TG_MOCK to use a real account.');
   if (setupJob) return setupResult(setupJob.url, setupJob.step, { reused: true, ...(setupJob.readOnly ? { readOnly: true } : {}) });
-  let state: Awaited<ReturnType<typeof checkSession>>['state'];
+  let state: Awaited<ReturnType<typeof checkStoredSession>>['state'];
   let checked: string | undefined;
   try {
     // The stored session as it was before the check: the page may replace only that one
-    ({ state, snapshot: checked } = await checkSession());
+    ({ state, snapshot: checked } = await checkStoredSession());
   } catch (e) {
     return text(`Could not check the stored login (${e instanceof Error ? e.message : String(e)}). Nothing changed; try again once this is fixed.`, true);
   }

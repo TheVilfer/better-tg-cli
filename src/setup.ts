@@ -12,7 +12,7 @@ import { applyModeChoice, savedMode } from './write-mode.js';
  * can't be read) throws: that is not a reason to log in again.
  */
 export async function sessionState(): Promise<'none' | 'alive' | 'expired'> {
-  return (await checkSession()).state;
+  return (await checkStoredSession()).state;
 }
 
 /**
@@ -20,7 +20,7 @@ export async function sessionState(): Promise<'none' | 'alive' | 'expired'> {
  * another process while Telegram was being asked is then not taken for the session that was checked.
  * Pass `snapshot` to openSetupPage as `checkedSession`.
  */
-export async function checkSession(): Promise<{ state: 'none' | 'alive' | 'expired'; snapshot: string | undefined }> {
+export async function checkStoredSession(): Promise<{ state: 'none' | 'alive' | 'expired'; snapshot: string | undefined }> {
   const snapshot = freshSessionString();
   if (!isConfigured() || !getSessionString()) return { state: 'none', snapshot };
   try {
@@ -57,7 +57,7 @@ function profileTestServers(): boolean {
  * `readOnly` (a `--read-only` MCP server): the login only, no default mode and no mode step.
  *
  * The login replaces the profile's session only if nobody else did meanwhile: the session that was
- * checked (`checkedSession`, the snapshot of checkSession, taken before its network check), or else
+ * checked (`checkedSession`, the snapshot of checkStoredSession, taken before its network check), or else
  * the one found when the page opened, must still be the stored one when the new login is saved.
  */
 export function openSetupPage(options: { emit(e: OnboardEvent): void; modeOnly?: boolean; testDc?: boolean; broker?: string; fromModel?: boolean; readOnly?: boolean; checkedSession?: string }): Promise<OnboardSession> {
