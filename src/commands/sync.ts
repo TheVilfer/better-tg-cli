@@ -47,15 +47,18 @@ function writeSyncMeta(outputDir: string, meta: SyncMeta): void {
   writeFileSync(exportPath(outputDir, join(outputDir, '.sync-meta.json')), JSON.stringify(meta, null, 2));
 }
 
+/**
+ * The Markdown of one message. With `downloadMedia`, a media download that fails is returned as
+ * `mediaError` (no lines): the caller stops the chat before this message, so --resume retries it.
+ */
 async function formatMessageLines(
   client: TelegramClient,
   chatId: string,
-  chatTitle: string,
   msg: MessageInfo,
   outputDir: string,
   chatMediaDir: string,
   downloadMedia: boolean
-): Promise<string[]> {
+): Promise<{ lines: string[]; mediaError?: string }> {
   const time = msg.date.toISOString().replace('T', ' ').substring(0, 19);
   const sender = msg.isOutgoing ? 'You' : msg.sender;
   const reply = msg.replyToMsgId ? ` (reply to #${msg.replyToMsgId})` : '';
@@ -81,14 +84,7 @@ async function formatMessageLines(
         }
       } catch (mediaErr) {
         if (mediaErr instanceof ExportPathError) throw mediaErr;
-        lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
-        console.error(
-          chalk.yellow(
-            `\nWarning: media download failed for ${chatTitle}#${msg.id}: ${
-              mediaErr instanceof Error ? mediaErr.message : mediaErr
-            }`
-          )
-        );
+        return { lines: [], mediaError: mediaErr instanceof Error ? mediaErr.message : String(mediaErr) };
       }
     } else {
       lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
@@ -99,7 +95,7 @@ async function formatMessageLines(
     lines.push(`> ${msg.text || '(no text)'}`);
   }
   lines.push(`*#${msg.id}*\n`);
-  return lines;
+  return { lines };
 }
 
 /**
@@ -211,7 +207,7 @@ export const syncCommand = new Command('sync')
   .option('--output <dir>', 'Output directory', './telegram-sync')
   .option('--media', 'Also download photos and documents alongside markdown')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
-  .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}], failed?:[{chatId, title, code, error}]} (exit 1 if any chat failed)')
+  .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}], failed?:[{chatId, title, code, error, messageId?}]} (exit 1 if any chat or, with --media, any download failed)')
   .action(async (options) => {
     await assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
@@ -267,7 +263,7 @@ export const syncCommand = new Command('sync')
       let newMessages = 0;
       // What happened to each chat: the agent needs the file path and whether anything was new
       const report: { chatId: string; title: string; file: string; added: number; lastId?: number }[] = [];
-      const failed: { chatId: string; title: string; code: string; error: string }[] = [];
+      const failed: { chatId: string; title: string; code: string; error: string; messageId?: number }[] = [];
       for (const chat of chats) {
         try {
           spinner.text = `Syncing "${chat.title}"...`;
@@ -298,39 +294,58 @@ export const syncCommand = new Command('sync')
           // Sort messages chronologically
           messages.sort((a, b) => a.date.getTime() - b.date.getTime());
 
+          // With --media, the chat stops before the first message whose media could not be
+          // downloaded: the file and the checkpoint end before it, so --resume tries it again
           const body: string[] = [];
+          const kept: MessageInfo[] = [];
+          let mediaFailure: { id: number; error: string } | undefined;
           for (const msg of messages) {
-            body.push(...(await formatMessageLines(client, chat.id, chat.title, msg, outputDir, chatMediaDir, !!options.media)));
-          }
-
-          let content: string;
-          if (append && minId) {
-            // Append new messages to the existing file
-            content = readFileSync(filePath, 'utf-8').trimEnd() + '\n\n' + body.join('\n');
-          } else {
-            const header: string[] = [`# ${chat.title}`, `\n${chatIdLine(chat.id)}`, `Type: ${chat.type}`];
-            if (chat.username) {
-              header.push(`Username: @${chat.username}`);
+            const f = await formatMessageLines(client, chat.id, msg, outputDir, chatMediaDir, !!options.media);
+            if (f.mediaError !== undefined) {
+              mediaFailure = { id: msg.id, error: f.mediaError };
+              break;
             }
-            header.push(`\nSynced: ${new Date().toISOString()}`);
-            // Resumed into a new file: the earlier messages are in a previous export
-            if (minId) header.push(`Continues after message #${minId} (earlier messages are in a previous export)`);
-            header.push(`Messages: ${messages.length}`);
-            header.push('\n---\n');
-            content = [...header, ...body].join('\n');
+            body.push(...f.lines);
+            kept.push(msg);
           }
 
-          writeFileSync(exportPath(outputDir, filePath), content);
+          if (kept.length > 0) {
+            let content: string;
+            if (append && minId) {
+              // Append new messages to the existing file
+              content = readFileSync(filePath, 'utf-8').trimEnd() + '\n\n' + body.join('\n');
+            } else {
+              const header: string[] = [`# ${chat.title}`, `\n${chatIdLine(chat.id)}`, `Type: ${chat.type}`];
+              if (chat.username) {
+                header.push(`Username: @${chat.username}`);
+              }
+              header.push(`\nSynced: ${new Date().toISOString()}`);
+              // Resumed into a new file: the earlier messages are in a previous export
+              if (minId) header.push(`Continues after message #${minId} (earlier messages are in a previous export)`);
+              header.push(`Messages: ${kept.length}`);
+              header.push('\n---\n');
+              content = [...header, ...body].join('\n');
+            }
 
-          meta[chat.id] = {
-            title: chat.title,
-            lastMessageId: Math.max(minId ?? 0, ...messages.map(m => m.id)),
-            lastSyncDate: new Date().toISOString(),
-          };
+            writeFileSync(exportPath(outputDir, filePath), content);
 
-          synced++;
-          newMessages += messages.length;
-          report.push({ chatId: chat.id, title: chat.title, file: filePath, added: messages.length, lastId: meta[chat.id].lastMessageId });
+            meta[chat.id] = {
+              title: chat.title,
+              lastMessageId: Math.max(minId ?? 0, ...kept.map(m => m.id)),
+              lastSyncDate: new Date().toISOString(),
+            };
+
+            synced++;
+            newMessages += kept.length;
+            report.push({ chatId: chat.id, title: chat.title, file: filePath, added: kept.length, lastId: meta[chat.id].lastMessageId });
+          }
+
+          if (mediaFailure) {
+            const message = `media of message #${mediaFailure.id} could not be downloaded (${mediaFailure.error}); ` +
+              `the export of this chat stops before it, and --resume tries it again`;
+            failed.push({ chatId: chat.id, title: chat.title, code: 'media_download_failed', error: message, messageId: mediaFailure.id });
+            console.error(chalk.yellow(`\nWarning: "${chat.title}": ${message}`));
+          }
         } catch (error) {
           if (error instanceof ExportPathError) throw error;
           // Go on with the other chats, but never call a partial export a success

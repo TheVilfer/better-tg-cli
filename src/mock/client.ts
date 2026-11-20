@@ -460,6 +460,9 @@ export class MockClient {
 
   /** Writes a placeholder: mock messages have no real file behind them. */
   async downloadMedia(message: Api.Message, params: { outputFile?: string } = {}): Promise<string | Buffer> {
+    if (this.chat(message.peerId).messages.find(m => m.id === message.id)?.media?.downloadFails) {
+      throw new Error('FILE_REFERENCE_EXPIRED: the mock media of this message cannot be downloaded');
+    }
     const content = Buffer.from(`mock media of message ${message.id}\n`);
     if (typeof params.outputFile !== 'string') return content;
     mkdirSync(dirname(params.outputFile), { recursive: true });

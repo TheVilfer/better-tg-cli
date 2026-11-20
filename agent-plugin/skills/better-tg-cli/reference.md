@@ -186,6 +186,9 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
 - `sync --resume` is incremental. Checkpoints are per chat ID in `DIR/.sync-meta.json`. A resumed
   run fetches everything after the checkpoint and ignores the default `--days` window, also when
   it starts a new file (an export from before the file name carried the chat ID).
+- With `--media`, a file that fails to download stops that chat just before its message: the chat
+  gets a `failed[]` entry (`code:"media_download_failed"`, `messageId`), the exit code is 1, and the
+  checkpoint stays before it, so `sync --resume --media` tries it again.
 
 ## Raw API (`telegram api` and `telegram <namespace> <method>`)
 

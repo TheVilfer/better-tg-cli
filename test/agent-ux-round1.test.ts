@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -332,4 +332,31 @@ describe('12 the skill says what the CLI does', () => {
     expect(markRead[0]).not.toMatch(/messageId/);
     expect(ref).toMatch(/\| `forward` \|.*`messageIds` are the \*\*source\*\* IDs.*`forwardedIds`/);
   });
+});
+
+describe('sync --media: a failed download is a failure that --resume retries', () => {
+  it('goes to failed[], exits 1, and the file and checkpoint stop before that message', async () => {
+    const state = await worldFile(w => { w.chats.find(c => c.id === 1001)!.messages.find(m => m.id === 3)!.media!.downloadFails = true; });
+    const out = join(home, `sync-media-${n++}`);
+    const first = cli(['sync', '--chat', '1001', '--all', '--media', '--json', '--output', out], {}, state);
+    expect(first.code).toBe(1);
+    const r = oneJson(first.out);
+    expect(r.failed).toEqual([expect.objectContaining({ chatId: '1001', code: 'media_download_failed', messageId: 3 })]);
+    expect(r.chats).toEqual([expect.objectContaining({ chatId: '1001', added: 2, lastId: 2 })]);
+    expect(JSON.parse(readFileSync(join(out, '.sync-meta.json'), 'utf8'))['1001'].lastMessageId).toBe(2);
+    const file = r.chats[0].file as string;
+    expect(readFileSync(file, 'utf8')).not.toContain('*#3*');
+
+    // The file can be downloaded now: --resume picks it up, and the rest of the chat
+    const w = JSON.parse(readFileSync(state, 'utf8'));
+    delete w.chats.find((c: { id: number }) => c.id === 1001).messages.find((m: { id: number }) => m.id === 3).media.downloadFails;
+    writeFileSync(state, JSON.stringify(w));
+    const again = cli(['sync', '--chat', '1001', '--all', '--media', '--resume', '--json', '--output', out], {}, state);
+    expect(again.code).toBe(0);
+    expect(oneJson(again.out).chats).toEqual([expect.objectContaining({ chatId: '1001', added: 3, lastId: 5 })]);
+    const text = readFileSync(file, 'utf8');
+    expect(text.match(/\*#3\*/g)).toHaveLength(1);
+    expect(text).toContain('*#5*');
+    expect(existsSync(join(out, 'media', '1001'))).toBe(true);
+  }, 30_000);
 });
