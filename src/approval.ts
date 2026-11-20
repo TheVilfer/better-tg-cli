@@ -134,7 +134,7 @@ export function actionHash(argv: string[], stdin?: string): string {
 /**
  * The hash an approval is bound to. A parsed action (the command commander ran) is hashed in its
  * normalized form, recipients as resolved IDs, so flag order and output-only flags don't matter;
- * the body on stdin stays exact, and every file it names is bound by content. Without a parsed
+ * the body on stdin is exact as sent (stdinBody), and every file it names is bound by content. Without a parsed
  * command it is the exact argv (actionHash).
  */
 export function approvalHash(action: ParsedAction, peers: Map<string, PeerInfo>, stdin?: string, bound: unknown[] = []): string {
@@ -173,7 +173,7 @@ export function readsStdin(argv: string[]): boolean {
 }
 
 /**
- * Set by the MCP server for a write it hands stdin to: the child's guard then hashes all of stdin,
+ * Set by the MCP server for a write it hands stdin to: the child's guard then hashes the stdin body,
  * as the server did when it asked the user. It can only add stdin to an approval, never drop it.
  */
 export const STDIN_IN_APPROVAL_ENV = 'TG_APPROVAL_STDIN';
@@ -235,8 +235,8 @@ export function consumeApproval(code: string, hash: string, session: string | un
 
 /**
  * The action as the user should see it when only the raw argv is known (no parsed command): the
- * exact command, plus the whole stdin text if any. The approval covers every byte, so the person
- * sees every byte (no truncation).
+ * exact command, plus the whole stdin body if any (as sent, stdinBody). The approval covers every
+ * byte of it, so the person sees every byte (no truncation).
  */
 export function describeAction(argv: string[], stdin?: string): string {
   return describeParsedAction({ command: argv[0] ?? '', args: [], options: [], argv, parsed: false }, new Map(), stdin);

@@ -14,7 +14,7 @@ import { isMock } from './paths.js';
 import { join } from 'path';
 import { isTTY } from './spinner.js';
 import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
-import { LOGIN_CODE_HIDDEN, LOGIN_CODE_PHRASE, maskGiftCodes } from './mcp-output.js';
+import { LOGIN_CODE_HIDDEN, maskForModel } from './mcp-output.js';
 import { loginHint } from './login-hint.js';
 import { fileSnapshot, uploadable } from './file-snapshot.js';
 import { apiMarker, INVITE_LINK } from './approval-action.js';
@@ -513,7 +513,7 @@ function classifyButton(btn: RawButton, index: number, row: number, col: number)
 export function messageText(msg: Api.Message): string {
   const text = plainMessageText(msg);
   if (!isOverMcp()) return text;
-  return maskGiftCodes(isLoginServiceMessage(msg) ? maskLoginCodes(text) : text);
+  return maskForModel(text, isLoginServiceMessage(msg) ? 'service' : 'chat');
 }
 
 function plainMessageText(msg: Api.Message): string {
@@ -552,7 +552,7 @@ function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFro
 export { LOGIN_CODE_HIDDEN };
 
 /** Keys whose strings are IDs, hashes, dates or type tags rather than message content. */
-const NOT_CONTENT_KEY = /^(className|_|type|kind|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
+const NOT_CONTENT_KEY = /^(className|_|type|kind|mimeType|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
 
 /**
  * Plain data with every gift-code link masked and, for a login-service message (`login`), every
@@ -562,9 +562,9 @@ const NOT_CONTENT_KEY = /^(className|_|type|kind|accessHash|hash|date|editDate|r
  */
 function maskContent<T>(value: T, login: boolean, key = ''): T {
   if (typeof value === 'string') {
-    if (!login || NOT_CONTENT_KEY.test(key)) return maskGiftCodes(value) as T;
+    if (!login || NOT_CONTENT_KEY.test(key)) return maskForModel(value, 'chat') as T;
     if (key === 'data' || key === 'copyText') return (value ? LOGIN_CODE_HIDDEN : value) as T;
-    return maskGiftCodes(maskLoginCodes(value)) as T;
+    return maskLoginCodes(value) as T;
   }
   if (Array.isArray(value)) return value.map(v => maskContent(v, login, key)) as T;
   if (value && typeof value === 'object' && !(value instanceof Date)) {
@@ -582,14 +582,13 @@ function maskedForMcp<T>(msg: Api.Message, value: T): T {
 }
 
 /**
- * Hide login codes in a service message and keep the rest of the text: the word after "code:"
- * (`Login code: 52813`, `This is your login code: aB3dE9fG`, `Код для входа в Telegram: 52813`) and
- * any other run of letters and digits with a digit in it, four characters or longer.
+ * Hide login codes in a service message and keep the rest of the text (maskForModel at the level
+ * `service`): gift links first, then the word after "code:" (`Login code: 52813`, `This is your
+ * login code: aB3dE9fG`, `Код для входа в Telegram: 52813`) and any other run of letters and digits
+ * with a digit in it, four characters or longer.
  */
 export function maskLoginCodes(text: string): string {
-  return text
-    .replace(LOGIN_CODE_PHRASE, `$1${LOGIN_CODE_HIDDEN}`)
-    .replace(/(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_-])/g, LOGIN_CODE_HIDDEN);
+  return maskForModel(text, 'service');
 }
 
 /**
@@ -646,6 +645,11 @@ function rawButtonLayout(msg: Api.Message): ButtonLayout | undefined {
   });
 
   return { isInline, rows };
+}
+
+/** The media of a message as it is shown (over MCP, its file name masked as the message text is). */
+function shownMediaInfo(msg: Api.Message): MediaInfo | undefined {
+  return maskedForMcp(msg, extractMediaInfo(msg));
 }
 
 function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
@@ -727,7 +731,7 @@ export async function toMessageInfo(client: TelegramClient, msg: Api.Message, op
     text: messageText(msg),
     replyToMsgId: msg.replyTo?.replyToMsgId,
     isOutgoing: msg.out ?? false,
-    media: extractMediaInfo(msg),
+    media: shownMediaInfo(msg),
     buttons: extractButtons(msg),
     replies: msg.replies?.replies || undefined,
   };
@@ -1145,6 +1149,12 @@ function guessExtension(media: MediaInfo): string {
   return '.bin';
 }
 
+/**
+ * The parse mode a send or edit passes to teleproto. Its client parses Markdown when a call leaves
+ * parseMode undefined (`__init__` would go out as italic "init"), so plain text says `false`.
+ */
+export const parseModeOf = (mode?: 'html' | 'md'): 'html' | 'md' | false => mode ?? false;
+
 export async function sendFileMessage(
   client: TelegramClient,
   chatIdentifier: string,
@@ -1170,7 +1180,7 @@ export async function sendFileMessage(
     caption: options.caption,
     forceDocument: options.asDocument,
     replyTo,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
     silent: options.silent,
   });
 
@@ -1321,7 +1331,7 @@ export async function sendMessage(
   const result = await client.sendMessage(entity, {
     message: text,
     replyTo,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
     schedule: options.schedule,
     silent: options.silent,
   });
@@ -2459,19 +2469,22 @@ export async function findButton(
       hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
     });
   }
-  const { rawInfo, ...shown } = match;
   // The approval binds to the button as the message carries it: over MCP two versions of a button can
   // look the same once masked (a hidden payload, a masked gift link) while they send different bytes
-  return { entity, msg, layout, ...shown, fingerprint: buttonFingerprint(rawInfo) };
+  return { entity, msg, layout, ...match, fingerprint: buttonFingerprint(match.rawInfo) };
 }
 
-/** A button a click would press: `info` is what is shown, `fingerprint` binds the unmasked button. */
+/**
+ * A button a click would press: `info` is what the model is shown (masked over MCP), `rawInfo` the
+ * button as the message carries it (for the person approving), `fingerprint` binds `rawInfo`.
+ */
 export interface FoundButton {
   entity: ResolvedEntity;
   msg: Api.Message;
   layout: ButtonLayout;
   raw: RawButton;
   info: ButtonInfo;
+  rawInfo: ButtonInfo;
   fingerprint: string;
 }
 
@@ -2640,7 +2653,7 @@ export async function editMessageText(
   const result = await client.editMessage(entity, {
     message: msgId,
     text,
-    parseMode: options.parseMode,
+    parseMode: parseModeOf(options.parseMode),
   });
   return { chatTitle: getChatTitle(entity), id: result?.id ?? msgId };
 }
@@ -2710,7 +2723,7 @@ export async function getPinnedMessages(
         sender: (await resolveSender(client, msg)).sender,
         text: messageText(msg),
         isOutgoing: msg.out ?? false,
-        media: extractMediaInfo(msg),
+        media: shownMediaInfo(msg),
         buttons: extractButtons(msg),
       });
     }
@@ -3551,10 +3564,19 @@ function plainJsonValue(val: unknown): unknown {
  * quote and a link preview.
  */
 function maskLoginServiceJson(val: Record<string, unknown>): Record<string, unknown> {
-  const plain = JSON.parse(JSON.stringify(val, function (this: Record<string, unknown>, k: string, v: unknown) {
-    return this[k] instanceof Uint8Array ? LOGIN_CODE_HIDDEN : plainJsonValue(v);
+  // An array's strings are read under the key that holds the array (recentReactors: […])
+  const arrayKey = new WeakMap<object, string>();
+  return JSON.parse(JSON.stringify(val, function (this: Record<string, unknown>, k: string, v: unknown) {
+    const orig = this[k];
+    if (orig instanceof Uint8Array) return LOGIN_CODE_HIDDEN;
+    // A big integer (an ID, a size; its toJSON already made it a string) is a number, not content
+    if (typeof orig === 'bigint' || bigInt.isInstance(orig)) return plainJsonValue(orig);
+    const plain = plainJsonValue(v);
+    if (plain !== v) return plain;
+    if (typeof v === 'string') return maskContent(v, true, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
+    if (Array.isArray(v)) arrayKey.set(v, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
+    return v;
   })) as Record<string, unknown>;
-  return maskContent(plain, true);
 }
 
 /** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
@@ -3572,7 +3594,7 @@ export function serializeApiResult(result: unknown): string {
     const holder = tlTypeName(this);
     if (val != null && holder && MCP_REDACTED_BY_TYPE.some(([type, keys]) => type.test(holder) && keys.has(_key))) return '[redacted]';
     // A gift-code link redeems the gift for whoever opens it, wherever it appears
-    if (typeof val === 'string') return maskGiftCodes(val);
+    if (typeof val === 'string') return maskForModel(val, 'chat');
     // Login codes from the service accounts 777000 and 489000 (history, search, dialogs, a short update)
     const type = tlTypeName(val);
     const obj = val as Record<string, unknown>;
@@ -3580,9 +3602,9 @@ export function serializeApiResult(result: unknown): string {
       || (type === 'updateshortmessage' && LOGIN_SERVICE_USER_IDS.has(String(obj.userId)))) {
       return maskLoginServiceJson(obj);
     }
-    // A quote of a login-service message, in a message of another chat
-    if (type === 'messagereplyheader' && typeof obj.quoteText === 'string' && isLoginServicePeer(obj.replyToPeerId)) {
-      return { ...obj, quoteText: maskLoginCodes(obj.quoteText) };
+    // A quote of a login-service message, in a message of another chat: its text and entities
+    if (type === 'messagereplyheader' && isLoginServicePeer(obj.replyToPeerId)) {
+      return maskLoginServiceJson(obj);
     }
     return val;
   };

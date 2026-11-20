@@ -10,7 +10,8 @@ import {
 import { apiChatRefs, declaredReadsStdin, describeParsedAction, oneLine, parsedAction, peerArgs, type ParsedAction, type PeerInfo } from './approval-action.js';
 import { prepareAction, type Prepared } from './approval-prepare.js';
 import { lookupPeers } from './peer-lookup.js';
-import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
+import { maskForModel } from './mcp-output.js';
+import { readStdinOnce, sealStdin, stdinBody, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 import { getSessionString } from './config.js';
 import { CliError, errorDetails, errorJson, EXIT, ExitSignal, wantsJson, type ChatCandidate, type Hint } from './errors.js';
@@ -160,7 +161,8 @@ async function approvalScope(argv: string[], opts: GuardOptions): Promise<Scope>
   // A curated command covers stdin only where it reads it (`set-bio -` sets the bio to "-")
   const declared = declaredReadsStdin(action);
   const covered = opts.readsStdin === true || (declared ?? readsStdin(argv)) || stdinWasRead() || process.env[STDIN_IN_APPROVAL_ENV] === '1';
-  const stdin = covered ? readStdinOnce() : undefined;
+  // The body as the command sends it (readTextArg): what the person sees and the hash covers
+  const stdin = covered ? stdinBody(readStdinOnce()) : undefined;
   if (opts.apiParams && action.parsed) action.apiPeers = apiChatRefs(opts.apiParams);
   let peers = new Map<string, PeerInfo>();
   try {
@@ -264,8 +266,12 @@ async function requireApproval(argv: string[], opts: GuardOptions): Promise<void
   const code = createApproval(scope.hash, session);
   const minutes = APPROVAL_TTL_MS / 60_000;
   const shown = shownStdin(scope, argv, opts);
-  const description = describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines);
   const mcp = !!process.env.TG_MCP;
+  // Over MCP this description goes to the model only (the user's dialog comes from the describe run):
+  // every value masked before it is escaped, as the MCP server could not do on the finished text
+  const description = mcp
+    ? describeParsedAction(scope.action, scope.peers, shown, scope.prepared.modelLines ?? scope.prepared.lines, t => maskForModel(t, 'echo'))
+    : describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines);
   const retry = mcp
     ? undefined // the MCP server knows the exact tool call and adds it
     : { argv: ['telegram', ...argv], env: { TG_APPROVE: code } };

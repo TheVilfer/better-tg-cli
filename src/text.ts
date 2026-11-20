@@ -40,9 +40,18 @@ export function sealStdin(): void {
   stdinSealed = true;
 }
 
+/**
+ * The body a command sends for stdin: all of it but one trailing line break (LF or CRLF), which
+ * `echo` and editors add. The write guard shows and hashes this same text, so the approved body is
+ * the sent one.
+ */
+export function stdinBody(raw: string): string {
+  return raw.replace(/\r?\n$/, '');
+}
+
 export function readTextArg(value: string): string {
   if (value !== '-') return value;
-  const text = readStdinOnce().replace(/\r?\n$/, '');
+  const text = stdinBody(readStdinOnce());
   if (!text) throw new Error('Empty message on stdin');
   return text;
 }

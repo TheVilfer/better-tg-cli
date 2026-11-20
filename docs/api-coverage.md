@@ -237,11 +237,28 @@ below (location and contact media, `forward` of a contact card or a location) pr
 and stay, but no new ones are added on content grounds. Concretely, every
 MCP output, raw or curated: hides login codes in all content of a message from the service
 accounts 777000 (Telegram) and 489000 (Verification Codes): text, `richMessage`, entity URLs,
-button texts, URLs, copy texts and callback data, the quote and the link preview, plus a quote of
-such a message elsewhere. It also masks the slug of every gift link (`t.me/giftcode/<slug>`,
+button texts, URLs, copy texts and callback data, the quote and the link preview, the media file
+name, title and caption, plus a quote of such a message elsewhere (its text and entity URLs).
+It also masks the slug of every gift link (`t.me/giftcode/<slug>`,
 `telegram.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`) as `[gift code hidden]`, in the CLI
-under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself. A raw
+under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself (the whole slug, with
+percent-encoding). What the server says about a call (an approval's action, the result of a
+write, every error) also hides a code after a `code:` / `код:` label: the word right before the
+colon (Russian label words such as `для входа в Telegram` or `подтверждения` allowed after `код`),
+with nothing or a label word such as `login`, `verification`, `Telegram`, `your` before it, so
+`Promo code:` or `exit code:` stay;
+content a read shows is not touched by that rule. All of it is one function, `maskForModel()` in
+`src/mcp-output.ts`; JSON keeps its keys, numbers and IDs. A raw
 result additionally redacts the fields listed below: the raw API is a power tool.
+
+**Where masking stops.** Masking is best-effort against the forms honest authors produce:
+Telegram's own login messages (777000, 489000) and gift links as clients make them
+(`t.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`). On the echo path (text the model itself
+wrote in argv, stdin or a caption) the model already holds the value, so there the priority is
+not to over-mask. Known limits, not covered: HTML or Markdown markup splitting a code
+(`Login code: <b>52813</b>`), an explicit port in a `t.me` URL (`t.me:443/giftcode/…`), callback
+data that carries a gift link Base64-encoded, a code split across `richMessage` nodes, and
+percent-encoded host or parameter names (`t.me/%67iftcode/…`, `sl%75g=`).
 
 Over MCP (the `telegram_read` and `telegram_write` tools) a raw call, `api <method>` or a
 generated `<namespace> <method>` command, runs only if its method is one of these **91**

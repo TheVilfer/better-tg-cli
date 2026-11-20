@@ -15,6 +15,8 @@ export interface Prepared {
   bound: unknown[];
   /** More lines for the person to read */
   lines: string[];
+  /** The same lines for the MCP model where they differ from `lines` (a button as the model sees it) */
+  modelLines?: string[];
   /** Called once the approval for this action held, before the write runs */
   onApproved(): void;
 }
@@ -87,9 +89,11 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     const id = parseInt(arg(action, 'messageId') ?? '', 10);
     if (selector && Number.isInteger(id)) {
       const client = await getClient();
-      const { info, fingerprint } = await findButton(client, arg(action, 'chat')!, id, selector);
+      const { info, rawInfo, fingerprint } = await findButton(client, arg(action, 'chat')!, id, selector);
       prepared.bound.push(['button', fingerprint]);
-      prepared.lines.push(`  Pressing: ${describeButton(info)}`);
+      // The person sees the button that will be pressed; the model only its masked copy
+      prepared.modelLines = [...prepared.lines, `  Pressing: ${describeButton(info)}`];
+      prepared.lines.push(`  Pressing: ${describeButton(rawInfo)}`);
       prepared.onApproved = () => expectButton(fingerprint);
     }
   }
