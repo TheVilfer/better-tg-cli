@@ -188,7 +188,9 @@ Buttons that need 2FA take `--password`. `--no-wait` skips waiting for the bot's
   it starts a new file (an export from before the file name carried the chat ID).
 - With `--media`, a file that fails to download stops that chat just before its message: the chat
   gets a `failed[]` entry (`code:"media_download_failed"`, `messageId`), the exit code is 1, and the
-  checkpoint stays before it, so `sync --resume --media` tries it again.
+  checkpoint stays before it, so `sync --resume --media` tries it again. After 3 failed runs the
+  file is given up: the message is exported with a "(download failed)" placeholder, its
+  `failed[]` entry has `skipped:true`, and the export moves on.
 
 ## Raw API (`telegram api` and `telegram <namespace> <method>`)
 

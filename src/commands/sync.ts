@@ -28,8 +28,13 @@ interface SyncMeta {
     title: string;
     lastMessageId: number;
     lastSyncDate: string;
+    /** --media: failed downloads per message ID, so a file that never downloads stops the chat only so often */
+    mediaAttempts?: Record<string, number>;
   };
 }
+
+/** After this many failed runs, a media download is given up: a placeholder, and the export moves on. */
+export const MEDIA_ATTEMPTS = 3;
 
 function readSyncMeta(outputDir: string): SyncMeta {
   const metaPath = join(outputDir, '.sync-meta.json');
@@ -49,7 +54,8 @@ function writeSyncMeta(outputDir: string, meta: SyncMeta): void {
 
 /**
  * The Markdown of one message. With `downloadMedia`, a media download that fails is returned as
- * `mediaError` (no lines): the caller stops the chat before this message, so --resume retries it.
+ * `mediaError`, with a placeholder in the lines: the caller stops the chat before this message (so
+ * --resume retries it), or keeps it once the download was given up.
  */
 async function formatMessageLines(
   client: TelegramClient,
@@ -63,6 +69,7 @@ async function formatMessageLines(
   const sender = msg.isOutgoing ? 'You' : msg.sender;
   const reply = msg.replyToMsgId ? ` (reply to #${msg.replyToMsgId})` : '';
   const lines: string[] = [`**${sender}** - ${time}${reply}`];
+  let mediaError: string | undefined;
 
   if (msg.media) {
     if (downloadMedia) {
@@ -84,7 +91,9 @@ async function formatMessageLines(
         }
       } catch (mediaErr) {
         if (mediaErr instanceof ExportPathError) throw mediaErr;
-        return { lines: [], mediaError: mediaErr instanceof Error ? mediaErr.message : String(mediaErr) };
+        // The caller decides: stop before this message, or (given up) keep it with this placeholder
+        lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
+        mediaError = mediaErr instanceof Error ? mediaErr.message : String(mediaErr);
       }
     } else {
       lines.push(`> _[${formatMediaLabel(msg.media)}]_`);
@@ -95,7 +104,7 @@ async function formatMessageLines(
     lines.push(`> ${msg.text || '(no text)'}`);
   }
   lines.push(`*#${msg.id}*\n`);
-  return { lines };
+  return mediaError === undefined ? { lines } : { lines, mediaError };
 }
 
 /**
@@ -207,7 +216,7 @@ export const syncCommand = new Command('sync')
   .option('--output <dir>', 'Output directory', './telegram-sync')
   .option('--media', 'Also download photos and documents alongside markdown')
   .option('--resume', 'Incremental sync: only fetch messages newer than the last sync')
-  .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}], failed?:[{chatId, title, code, error, messageId?}]} (exit 1 if any chat or, with --media, any download failed)')
+  .option('--json', 'Output as JSON: {output, added, chats:[{chatId, title, file, added, lastId}], failed?:[{chatId, title, code, error, messageId?, skipped?}]} (exit 1 if any chat or, with --media, any download failed)')
   .action(async (options) => {
     await assertLocalWriteAllowed();
     const spinner = ora('Starting sync...').start();
@@ -263,7 +272,7 @@ export const syncCommand = new Command('sync')
       let newMessages = 0;
       // What happened to each chat: the agent needs the file path and whether anything was new
       const report: { chatId: string; title: string; file: string; added: number; lastId?: number }[] = [];
-      const failed: { chatId: string; title: string; code: string; error: string; messageId?: number }[] = [];
+      const failed: { chatId: string; title: string; code: string; error: string; messageId?: number; skipped?: boolean }[] = [];
       for (const chat of chats) {
         try {
           spinner.text = `Syncing "${chat.title}"...`;
@@ -296,18 +305,30 @@ export const syncCommand = new Command('sync')
 
           // With --media, the chat stops before the first message whose media could not be
           // downloaded: the file and the checkpoint end before it, so --resume tries it again
+          // After MEDIA_ATTEMPTS failed runs the file is given up, so one that never downloads
+          // (deleted, expired) cannot hold the chat back for good
           const body: string[] = [];
           const kept: MessageInfo[] = [];
-          let mediaFailure: { id: number; error: string } | undefined;
+          const attempts = { ...(meta[chat.id]?.mediaAttempts ?? {}) };
+          const failures: { id: number; error: string; attempt: number; skipped: boolean }[] = [];
           for (const msg of messages) {
             const f = await formatMessageLines(client, chat.id, msg, outputDir, chatMediaDir, !!options.media);
             if (f.mediaError !== undefined) {
-              mediaFailure = { id: msg.id, error: f.mediaError };
-              break;
+              const attempt = (attempts[msg.id] ?? 0) + 1;
+              const skipped = attempt >= MEDIA_ATTEMPTS;
+              failures.push({ id: msg.id, error: f.mediaError, attempt, skipped });
+              if (!skipped) {
+                attempts[msg.id] = attempt;
+                break;
+              }
+              delete attempts[msg.id];
+            } else {
+              delete attempts[msg.id];
             }
             body.push(...f.lines);
             kept.push(msg);
           }
+          const mediaAttempts = Object.keys(attempts).length ? { mediaAttempts: attempts } : {};
 
           if (kept.length > 0) {
             let content: string;
@@ -333,17 +354,23 @@ export const syncCommand = new Command('sync')
               title: chat.title,
               lastMessageId: Math.max(minId ?? 0, ...kept.map(m => m.id)),
               lastSyncDate: new Date().toISOString(),
+              ...mediaAttempts,
             };
 
             synced++;
             newMessages += kept.length;
             report.push({ chatId: chat.id, title: chat.title, file: filePath, added: kept.length, lastId: meta[chat.id].lastMessageId });
+          } else if (failures.length) {
+            // Nothing kept: only the attempt count changes, the checkpoint stays where it was
+            const { mediaAttempts: _old, ...rest } = meta[chat.id] ?? { title: chat.title, lastMessageId: minId ?? 0, lastSyncDate: new Date().toISOString() };
+            meta[chat.id] = { ...rest, ...mediaAttempts };
           }
 
-          if (mediaFailure) {
-            const message = `media of message #${mediaFailure.id} could not be downloaded (${mediaFailure.error}); ` +
-              `the export of this chat stops before it, and --resume tries it again`;
-            failed.push({ chatId: chat.id, title: chat.title, code: 'media_download_failed', error: message, messageId: mediaFailure.id });
+          for (const f of failures) {
+            const message = f.skipped
+              ? `media of message #${f.id} could not be downloaded (${f.error}); given up after ${f.attempt} attempts, the message is exported without it`
+              : `media of message #${f.id} could not be downloaded (${f.error}); the export of this chat stops before it, and --resume tries it again (attempt ${f.attempt} of ${MEDIA_ATTEMPTS})`;
+            failed.push({ chatId: chat.id, title: chat.title, code: 'media_download_failed', error: message, messageId: f.id, ...(f.skipped ? { skipped: true } : {}) });
             console.error(chalk.yellow(`\nWarning: "${chat.title}": ${message}`));
           }
         } catch (error) {

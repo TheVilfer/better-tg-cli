@@ -361,6 +361,33 @@ describe('sync --media: a failed download is a failure that --resume retries', (
   }, 30_000);
 });
 
+describe('sync --media: a file that never downloads holds the chat back only so often', () => {
+  it('stops twice, then exports the message with a placeholder and moves on', async () => {
+    const state = await worldFile(w => { w.chats.find(c => c.id === 1001)!.messages.find(m => m.id === 3)!.media!.downloadFails = true; });
+    const out = join(home, `sync-media-${n++}`);
+    const run = () => cli(['sync', '--chat', '1001', '--all', '--media', '--resume', '--json', '--output', out], {}, state);
+    for (const attempt of [1, 2]) {
+      const r = run();
+      expect(r.code).toBe(1);
+      expect(oneJson(r.out).failed[0]).toMatchObject({ messageId: 3, code: 'media_download_failed' });
+      expect(oneJson(r.out).failed[0].skipped).toBeUndefined();
+      expect(oneJson(r.out).failed[0].error).toContain(`attempt ${attempt} of 3`);
+    }
+    const third = run();
+    expect(third.code).toBe(1);
+    const r3 = oneJson(third.out);
+    expect(r3.failed[0]).toMatchObject({ messageId: 3, skipped: true });
+    expect(r3.chats[0]).toMatchObject({ lastId: 5 });
+    const text = readFileSync(r3.chats[0].file, 'utf8');
+    expect(text).toContain('(download failed)_');
+    expect(text.match(/\*#3\*/g)).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(out, '.sync-meta.json'), 'utf8'))['1001'].mediaAttempts).toBeUndefined();
+    const fourth = run();
+    expect(fourth.code).toBe(0);
+    expect(oneJson(fourth.out).chats[0]).toMatchObject({ added: 0 });
+  }, 60_000);
+});
+
 describe('the write guard keeps how long to wait', () => {
   it('a rate limit while looking up the recipient: flood_wait, exit 1, retryAfterSeconds in the JSON error', () => {
     const r = cli(['send', '@alice_example', 'hi', '--json'], { TG_MOCK_ASK: '1', TG_MOCK_FAIL: 'FLOOD_WAIT_30' });
