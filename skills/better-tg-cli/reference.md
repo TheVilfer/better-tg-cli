@@ -280,14 +280,15 @@ command.
   a write (the `telegram_write` MCP tool): it goes through the write guard and is logged to the audit
   file. In mode `ask` a raw write asks for the user's approval of that one call, as any write does,
   so `write-access on` is never needed for it. Writes despite the `Get` prefix:
-  `messages.GetBotCallbackAnswer` and `messages.GetInlineBotResults` (see below).
+  `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer`, `messages.GetInlineBotResults`,
+  and `messages.GetMessagesViews` with `increment` (see below).
 - **Always refused**, even with write access (the command still exists and refuses, exit 1; its
   `--help` says "always refused"): the whole `auth.*` namespace (login/session — use `telegram auth`),
   account/session takeover and 2FA/password/phone changes, data export (takeout) and Passport
   identity docs, external-site login (url-auth), ownership transfer, money-withdrawal tokens and
   paying / Stars-spending, and anything that shares your phone number or location (including
   contact/geo media in `SendMedia`). A few `Get*` methods that actually change state are treated
-  as writes: pressing a button (`messages.GetBotCallbackAnswer`), an inline query
+  as writes: pressing a button (`messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer`), an inline query
   (`messages.GetInlineBotResults`, the bot gets the query and your user ID), and
   `messages.GetMessagesViews` with `increment`. Read-only payments (balances, transactions) and
   session *listing* (`account.GetAuthorizations`) are allowed in a terminal. Full table in `docs/api-coverage.md` §4.

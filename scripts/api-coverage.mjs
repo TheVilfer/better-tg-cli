@@ -465,6 +465,7 @@ function build() {
   lines.push('- `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.');
   lines.push('- `messages.GetInlineBotResults` — sends the query and your user ID to an external bot (the');
   lines.push('  `inline` command is a write for the same reason).');
+  lines.push('- `messages.GetMessagesViews` with `increment` — adds a view (a read without it).');
   lines.push('');
   lines.push('**Refused outright, even with write access** (issue #47: account/session takeover, phone or');
   lines.push('location sharing, paying):');

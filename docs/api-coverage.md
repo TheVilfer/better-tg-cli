@@ -173,6 +173,7 @@ audited against the whole schema:
 - `messages.GetBotCallbackAnswer`, `ephemeral.GetCallbackAnswer` — press a bot button.
 - `messages.GetInlineBotResults` — sends the query and your user ID to an external bot (the
   `inline` command is a write for the same reason).
+- `messages.GetMessagesViews` with `increment` — adds a view (a read without it).
 
 **Refused outright, even with write access** (issue #47: account/session takeover, phone or
 location sharing, paying):

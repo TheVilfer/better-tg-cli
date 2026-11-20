@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { cliArgs } from './cli.js';
 import { seedWorld, type MockWorld } from '../src/mock/world.js';
+import { TL_METHODS } from '../src/generated/tl-commands.js';
+import { isApiReadMethod } from '../src/api-methods.js';
 
 // Review round 1 of the agent-ready CLI: the CLI as an agent runs it (a child process, stdin
 // closed, no TTY) on the mock account, so nothing reaches Telegram.
@@ -344,8 +346,20 @@ describe('12 the skill says what the CLI does', () => {
     }
     const api = cli(['api', '--help']).out.replace(/\s+/g, ' ');
     expect(api).not.toContain('write and needs `telegram write-access on`');
-    expect(api).toContain('messages.GetBotCallbackAnswer, messages.GetInlineBotResults');
+    expect(api).toContain('messages.GetBotCallbackAnswer, ephemeral.GetCallbackAnswer, messages.GetInlineBotResults');
     expect(cli(['messages', 'send-message', '--help']).out).toMatch(/Access in a terminal: write — needs write access \(mode "ask": the user approves each call\)/);
+  }, 30_000);
+
+  it('every Get*-named write of src/api-methods.ts is named in the skill, the reference, api --help and the coverage doc', () => {
+    const getWrites = TL_METHODS.map(m => m[2]).filter(n => /^get/i.test(n.split('.').pop()!) && !isApiReadMethod(n));
+    expect(getWrites).toContain('ephemeral.GetCallbackAnswer');
+    const api = cli(['api', '--help']).out.replace(/\s+/g, ' ');
+    const coverage = readFileSync(join(__dirname, '..', 'docs', 'api-coverage.md'), 'utf8');
+    for (const name of getWrites) {
+      for (const f of ['SKILL.md', 'reference.md']) expect(read(f), `${f}: ${name}`).toContain(name);
+      expect(api, `api --help: ${name}`).toContain(name);
+      expect(coverage, `api-coverage.md: ${name}`).toContain(name);
+    }
   }, 30_000);
 });
 
