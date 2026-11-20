@@ -27,12 +27,12 @@ description: Reads, searches and sends Telegram messages on the user's own accou
 | What can the bot do? | `buttons <bot> <msgId>`; pressing is `click`, a write |
 | Answer Alice | `reply <chatId> <msgId> -`, text on stdin, a write |
 
-Unsure of a flag: `<command> --help` or `help-all -g <word>`.
+Unsure of a flag: `<command> --help`, `help-all -g <word>`.
 
 ## Writes
 
 1. Write only what the user asked for, to an ID or @username (titles must be exact).
-2. Check the mode first: `write-access` (MCP `telegram_read ["write-access"]`). `read-only` → exit 4,
+2. Check the mode first: `write-access` (MCP `telegram_read {"args":["write-access"]}`). `read-only` → exit 4,
    see [writing.md](writing.md#write-modes). `on` → the first call already sends: agree on the
    action before it. `ask` → go on.
 3. In `ask`, call once without a code. A client dialog is answered by the user. Otherwise (exit 3,

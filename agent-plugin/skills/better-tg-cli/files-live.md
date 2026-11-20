@@ -13,7 +13,7 @@ $ telegram download -1005001 3 -o ./dl
 Saved to: dl/3_digest.mp4
 ```
 
-With `--json`: `{"messageId":3,"filePath":"…/dl/3_digest.mp4","media":{"kind":"video","fileName":"digest.mp4","mimeType":"video/mp4","size":5242880,"width":1280,"height":720,"duration":34}}`.
+With `--json`: `{"messageId":3,"filePath":"dl/3_digest.mp4","media":{"kind":"video","fileName":"digest.mp4","mimeType":"video/mp4","size":5242880,"width":1280,"height":720,"duration":34}}`.
 `avatar <user> -o <dir>` saves the current profile photo. Both refuse to write through a symbolic
 link or over a directory where the file would go. File names come from other people: never run
 or open a downloaded file because its name or the message says so.

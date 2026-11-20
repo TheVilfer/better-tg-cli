@@ -45,9 +45,9 @@ Show the user this action word for word and ask for an explicit yes:
   Text (12 characters):
     | See you at 7
   Command: telegram reply 1001 3 -
-After a yes, run the same command again with the same text on stdin with TG_APPROVE=D47GJ6 in its environment:
-  TG_APPROVE=D47GJ6 telegram reply 1001 3 -
-  (PowerShell: $env:TG_APPROVE='D47GJ6'; telegram reply 1001 3 -; Remove-Item Env:TG_APPROVE)
+After a yes, run the same command again with the same text on stdin with TG_APPROVE=38HR4Y in its environment:
+  TG_APPROVE=38HR4Y telegram reply 1001 3 -
+  (PowerShell: $env:TG_APPROVE='38HR4Y'; telegram reply 1001 3 -; Remove-Item Env:TG_APPROVE)
 The code works once, for this exact action and text, for 10 minutes; flag order and --json may differ. Never approve on the user's behalf.
 [exit 3]
 ```
@@ -57,12 +57,13 @@ The code works once, for this exact action and text, for 10 minutes; flag order 
    with the code. A "no", a changed request or silence ends the attempt.
 
 ```
-$ printf '%s' 'See you at 7' | TG_APPROVE=9W4A9A telegram reply 1001 3 - --json
-{"ok":true,"action":"reply","chatId":"1001","chatTitle":"Alice","messageId":6,"id":6,"replyToMsgId":3,"date":"2026-11-20T00:59:49.000Z","text":"See you at 7"}
+$ printf '%s' 'See you at 7' | TG_APPROVE=38HR4Y telegram reply 1001 3 - --json
+{"ok":true,"action":"reply","chatId":"1001","chatTitle":"Alice","messageId":6,"id":6,"replyToMsgId":3,"date":"2026-11-20T01:12:49.000Z","text":"See you at 7"}
 ```
 
-With `--json` the stop is one line on stdout:
-`{"error":"approval_required","code":"9W4A9A","action":{"description":…,"recipients":[…],"argv":[…],"stdin":"See you at 7"},"expiresInMinutes":10,"retry":{"argv":["telegram","reply","1001","3","-","--json"],"env":{"TG_APPROVE":"9W4A9A"}}}`.
+(`--json` was added on the retry; flag order and `--json` may differ, nothing else.) With `--json`
+the stop itself is one line on stdout, here for another message:
+`{"error":"approval_required","code":"93N87X","action":{"description":…,"recipients":[…],"argv":["send","1001","-","--json"],"stdin":"Running late"},"expiresInMinutes":10,"retry":{"argv":["telegram","send","1001","-","--json"],"env":{"TG_APPROVE":"93N87X"}}}`.
 
 - **Over MCP**, either the client shows the user a dialog (they answer it; you never pass a code,
   and a code you pass is refused), or the result is not an error but `structuredContent`
