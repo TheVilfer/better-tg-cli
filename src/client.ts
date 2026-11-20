@@ -14,7 +14,7 @@ import { isMock } from './paths.js';
 import { join } from 'path';
 import { isTTY } from './spinner.js';
 import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
-import { LOGIN_CODE_HIDDEN, LOGIN_CODE_PHRASE, maskGiftCodes } from './mcp-output.js';
+import { LOGIN_CODE_HIDDEN, maskForModel } from './mcp-output.js';
 import { loginHint } from './login-hint.js';
 import { fileSnapshot, uploadable } from './file-snapshot.js';
 import { apiMarker, INVITE_LINK } from './approval-action.js';
@@ -513,7 +513,7 @@ function classifyButton(btn: RawButton, index: number, row: number, col: number)
 export function messageText(msg: Api.Message): string {
   const text = plainMessageText(msg);
   if (!isOverMcp()) return text;
-  return maskGiftCodes(isLoginServiceMessage(msg) ? maskLoginCodes(text) : text);
+  return maskForModel(text, isLoginServiceMessage(msg) ? 'service' : 'chat');
 }
 
 function plainMessageText(msg: Api.Message): string {
@@ -562,9 +562,9 @@ const NOT_CONTENT_KEY = /^(className|_|type|kind|accessHash|hash|date|editDate|r
  */
 function maskContent<T>(value: T, login: boolean, key = ''): T {
   if (typeof value === 'string') {
-    if (!login || NOT_CONTENT_KEY.test(key)) return maskGiftCodes(value) as T;
+    if (!login || NOT_CONTENT_KEY.test(key)) return maskForModel(value, 'chat') as T;
     if (key === 'data' || key === 'copyText') return (value ? LOGIN_CODE_HIDDEN : value) as T;
-    return maskGiftCodes(maskLoginCodes(value)) as T;
+    return maskLoginCodes(value) as T;
   }
   if (Array.isArray(value)) return value.map(v => maskContent(v, login, key)) as T;
   if (value && typeof value === 'object' && !(value instanceof Date)) {
@@ -582,14 +582,13 @@ function maskedForMcp<T>(msg: Api.Message, value: T): T {
 }
 
 /**
- * Hide login codes in a service message and keep the rest of the text: the word after "code:"
- * (`Login code: 52813`, `This is your login code: aB3dE9fG`, `Код для входа в Telegram: 52813`) and
- * any other run of letters and digits with a digit in it, four characters or longer.
+ * Hide login codes in a service message and keep the rest of the text (maskForModel at the level
+ * `service`): gift links first, then the word after "code:" (`Login code: 52813`, `This is your
+ * login code: aB3dE9fG`, `Код для входа в Telegram: 52813`) and any other run of letters and digits
+ * with a digit in it, four characters or longer.
  */
 export function maskLoginCodes(text: string): string {
-  return text
-    .replace(LOGIN_CODE_PHRASE, `$1${LOGIN_CODE_HIDDEN}`)
-    .replace(/(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_-])/g, LOGIN_CODE_HIDDEN);
+  return maskForModel(text, 'service');
 }
 
 /**
@@ -3572,7 +3571,7 @@ export function serializeApiResult(result: unknown): string {
     const holder = tlTypeName(this);
     if (val != null && holder && MCP_REDACTED_BY_TYPE.some(([type, keys]) => type.test(holder) && keys.has(_key))) return '[redacted]';
     // A gift-code link redeems the gift for whoever opens it, wherever it appears
-    if (typeof val === 'string') return maskGiftCodes(val);
+    if (typeof val === 'string') return maskForModel(val, 'chat');
     // Login codes from the service accounts 777000 and 489000 (history, search, dialogs, a short update)
     const type = tlTypeName(val);
     const obj = val as Record<string, unknown>;

@@ -535,7 +535,11 @@ function build() {
   lines.push('button texts, URLs, copy texts and callback data, the quote and the link preview, plus a quote of');
   lines.push('such a message elsewhere. It also masks the slug of every gift link (`t.me/giftcode/<slug>`,');
   lines.push('`telegram.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`) as `[gift code hidden]`, in the CLI');
-  lines.push('under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself. A raw');
+  lines.push('under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself (the whole slug, with');
+  lines.push('percent-encoding). What the server says about a call (an approval\'s action, the result of a');
+  lines.push('write, every error) also hides a code after a standalone `code:` / `код:` label; content a read');
+  lines.push('shows is not touched by that rule. All of it is one function, `maskForModel()` in');
+  lines.push('`src/mcp-output.ts`; JSON keeps its keys, numbers and IDs. A raw');
   lines.push('result additionally redacts the fields listed below: the raw API is a power tool.');
   lines.push('');
   lines.push(`Over MCP (the \`telegram_read\` and \`telegram_write\` tools) a raw call, \`api <method>\` or a`);

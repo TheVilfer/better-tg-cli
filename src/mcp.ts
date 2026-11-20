@@ -14,7 +14,7 @@ import { parseWriteState } from './write-state.js';
 import { getWriteValue } from './write-store.js';
 import { isMock, isMockAsk } from './paths.js';
 import { getSessionString } from './config.js';
-import { holdsMaskedValue, maskGiftCodes, maskSensitiveDeep } from './mcp-output.js';
+import { holdsMaskedValue, maskDeep, maskForModel, maskOutput, type MaskLevel } from './mcp-output.js';
 import { checkStoredSession, openSetupPage } from './setup.js';
 import { savedMode } from './write-mode.js';
 import { openBrowser } from './commands/onboard.js';
@@ -386,9 +386,13 @@ function cliBase(): string[] {
  */
 type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean; refusedExit?: number; refusedRun?: RunOutput };
 
-/** Every output the model gets, raw or curated, text or JSON, error or not: gift links masked, then capped. */
-const cap = (raw: string) => {
-  const s = maskGiftCodes(raw);
+/**
+ * Every output the model gets, raw or curated, text or JSON, error or not: masked (maskOutput; JSON
+ * keeps its structure and numbers), then capped. `chat` (gift links only) is for what a read shows;
+ * `echo` (also login codes after "code:") for what a write echoes back and for every error.
+ */
+const cap = (raw: string, level: MaskLevel) => {
+  const s = maskOutput(raw, level);
   return s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n[truncated: ${s.length - MAX_OUTPUT} more characters; narrow the query with -n, --max-text or filters]` : s;
 };
 
@@ -422,19 +426,21 @@ function isJson(out: string): boolean {
 }
 
 /** The tool result of one CLI run, except a write waiting for approval (see result()). Exported for tests. */
-export function cliResult(code: number | null, timedOut: boolean, out: string, err: string): ToolResult {
-  if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out)}`, true);
+export function cliResult(code: number | null, timedOut: boolean, out: string, err: string, level: MaskLevel = 'echo'): ToolResult {
+  if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out, level)}`, true);
   // The approval result keeps its own shape (the approval flow owns it)
-  if (code === EXIT_NEEDS_APPROVAL) return text(cap([err.trim(), out.trim()].filter(Boolean).join('\n')) || `exit ${code}`, true);
+  if (code === EXIT_NEEDS_APPROVAL) return text(cap([err.trim(), out.trim()].filter(Boolean).join('\n'), 'echo') || `exit ${code}`, true);
   const exitCode = code ?? 1;
   // The exit code says what kind of failure it was; stderr (diagnostics such as the MOCK MODE
   // banner) stays out of a JSON text, so the model can parse it
-  const structuredContent = { exitCode, ...(err.trim() ? { stderr: cap(err.trim()) } : {}) };
+  const structuredContent = { exitCode, ...(err.trim() ? { stderr: cap(err.trim(), 'echo') } : {}) };
   if (exitCode !== 0) {
     const body = isJson(out) ? out.trim() : [err.trim(), out.trim()].filter(Boolean).join('\n');
-    return { ...text(cap(body) || `exit ${exitCode}`, true), structuredContent };
+    return { ...text(cap(body, 'echo') || `exit ${exitCode}`, true), structuredContent };
   }
-  return { ...text(cap(out.trimEnd() || err.trim() || '(no output)')), structuredContent };
+  // stdout of a success is what a read shows or a write echoes; only stderr in its place is a diagnostic
+  const shown = out.trimEnd() ? cap(out.trimEnd(), level) : cap(err.trim() || '(no output)', 'echo');
+  return { ...text(shown), structuredContent };
 }
 
 /**
@@ -456,37 +462,40 @@ export interface RunOutput { code: number | null; timedOut: boolean; out: string
  * says so in `structuredContent` (status, code, the action, how to call again) and its text has the
  * action for the user and the MCP instruction only.
  */
-export function result(plan: Pick<Plan, 'argv' | 'stdin'>, r: RunOutput): ToolResult {
+export function result(plan: Pick<Plan, 'argv' | 'stdin'> & { readOnly?: boolean }, r: RunOutput): ToolResult {
   const { code, timedOut, out, err } = r;
-  if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out)}`, true);
+  // A gift link or login code in the call is never echoed back (the result of a send, an approval's
+  // retry). Only such a write gets the login-code mask on its output too: what a read or any other
+  // write shows (a bot's answer to a click) is chat content, with gift links masked only.
+  const sensitive = [...plan.argv, plan.stdin ?? ''].some(holdsMaskedValue);
+  const level: MaskLevel = !plan.readOnly && sensitive ? 'echo' : 'chat';
+  if (timedOut) return text(`Timed out after ${CALL_TIMEOUT_MS / 1000}s\n${cap(out, level)}`, true);
   if (code === EXIT_NEEDS_APPROVAL) {
     const pending = approvalLine(out);
     if (pending) {
-      // A gift link or login code in the call is never echoed back: the model repeats its own call
-      // with the code added instead of copying the arguments from here
-      const sensitive = [...plan.argv, plan.stdin ?? ''].some(holdsMaskedValue);
+      // The model repeats its own call with the code added instead of copying the arguments from here
       const note = `The arguments are not repeated here because they hold a gift link or a login code. After the user's yes, call telegram_write again with exactly the same args and stdin as this call, plus "approval": "${pending.code}".`;
       const retry = sensitive
         ? { tool: 'telegram_write', sameArgumentsAsThisCall: true, arguments: { approval: pending.code }, note }
         : { tool: 'telegram_write', arguments: { args: plan.argv, ...(plan.stdin ? { stdin: plan.stdin } : {}), approval: pending.code } };
       // The human sees the action in full in the dialog or terminal; the model gets it with gift
       // links and recognized login codes masked
-      const said = cap(maskSensitiveDeep(err.trim()));
+      const said = cap(err.trim(), 'echo');
       return {
         content: [{ type: 'text', text: sensitive ? `${said}\n${note}` : said }],
         structuredContent: {
           status: 'approval_required',
           code: pending.code,
-          action: maskSensitiveDeep(pending.action),
+          action: maskDeep(pending.action, 'echo'),
           expiresInMinutes: pending.expiresInMinutes,
-          ...(pending.rejected ? { rejected: maskSensitiveDeep(pending.rejected) } : {}),
+          ...(pending.rejected ? { rejected: maskDeep(pending.rejected, 'echo') } : {}),
           retry,
         },
       };
     }
   }
   // Everything else, an exit 3 without the guard's line included, keeps the exit code
-  return cliResult(code, timedOut, out, err);
+  return cliResult(code, timedOut, out, err, level);
 }
 
 /** The guard's `approval_required` line in a run's stdout. */
@@ -651,7 +660,8 @@ export async function gateWrite(plan: Plan, input: Record<string, unknown>, elic
 
 export async function handleMessage(msg: RpcMessage, run = runCli, options: McpOptions = {}): Promise<object | undefined> {
   const reply = (result: unknown) => ({ jsonrpc: '2.0', id: msg.id, result });
-  const fail = (code: number, message: string) => ({ jsonrpc: '2.0', id: msg.id ?? null, error: { code, message } });
+  // An error message may quote what the model sent (an unknown method): masked like every output
+  const fail = (code: number, message: string) => ({ jsonrpc: '2.0', id: msg.id ?? null, error: { code, message: maskForModel(message, 'echo') } });
   if (msg.method === undefined) return msg.id === undefined ? undefined : fail(-32600, 'Invalid request');
   if (msg.id === undefined) return undefined; // notifications (initialized, cancelled) need no reply
 
@@ -681,7 +691,8 @@ export async function handleMessage(msg: RpcMessage, run = runCli, options: McpO
       const input = (msg.params?.arguments ?? {}) as Record<string, unknown>;
       if (name === 'telegram_setup') return reply(await (options.setup ?? (() => runSetup({ readOnly: options.readOnly })))());
       const plan = planCall(name, input);
-      if (typeof plan === 'string') return reply(text(plan, true));
+      // An unknown tool or command may be quoted in the refusal: masked like every output
+      if (typeof plan === 'string') return reply(text(maskForModel(plan, 'echo'), true));
       if (!plan.readOnly) {
         const refused = await gateWrite(plan, input, options.elicit, options.describe);
         if (refused) {
@@ -691,7 +702,7 @@ export async function handleMessage(msg: RpcMessage, run = runCli, options: McpO
           if (failed && failed.code !== null && failed.code !== 0) return reply(describeFailure(failed));
           // Masked like every output; a failed describe run keeps the CLI's exit code
           const exitCode = (plan as Plan).refusedExit;
-          return reply({ ...text(cap(refused), true), ...(exitCode !== undefined ? { structuredContent: { exitCode } } : {}) });
+          return reply({ ...text(cap(refused, 'echo'), true), ...(exitCode !== undefined ? { structuredContent: { exitCode } } : {}) });
         }
       }
       return reply(await run(plan));
@@ -745,7 +756,7 @@ export async function runSetup(options: { readOnly?: boolean } = {}): Promise<To
     // The stored session as it was before the check: the page may replace only that one
     ({ state, snapshot: checked } = await checkStoredSession());
   } catch (e) {
-    return text(`Could not check the stored login (${e instanceof Error ? e.message : String(e)}). Nothing changed; try again once this is fixed.`, true);
+    return text(maskForModel(`Could not check the stored login (${e instanceof Error ? e.message : String(e)}). Nothing changed; try again once this is fixed.`, 'echo'), true);
   }
   if (state === 'alive') {
     const { mode } = savedMode();
@@ -843,7 +854,7 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
         const res = await handleMessage(msg, runCli, opts);
         if (res) send(res);
       } catch (e) {
-        send({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } });
+        send({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32603, message: maskForModel(e instanceof Error ? e.message : String(e), 'echo') } });
       }
     });
   });

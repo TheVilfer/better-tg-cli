@@ -187,3 +187,74 @@ describe('the dialog shows who gets the write, by name (5.2)', () => {
     }
   });
 });
+
+describe('login codes stay out of what the model gets on every write path (masking review)', () => {
+  const approveAndRun = async (args: Record<string, unknown>) => {
+    const first = await handleMessage(call(args), run) as Reply;
+    expect(first.result.structuredContent!.status).toBe('approval_required');
+    const second = await handleMessage(call({ ...args, approval: first.result.structuredContent!.code }), run) as Reply;
+    return { first, second };
+  };
+
+  it('a line break or tab next to the code (argv LF, stdin CRLF and TAB) never shows it in the action or Command', async () => {
+    const cases = [
+      { args: ['send', '-1004001', 'Login code:\n52813'] },
+      { args: ['send', '-1004001', '-'], stdin: 'Login code:\r\n52813' },
+      { args: ['send', '-1004001', '-'], stdin: 'Login code:\t52813' },
+    ];
+    for (const c of cases) {
+      const r = await handleMessage(call(c), run) as Reply;
+      const s = r.result.structuredContent!;
+      expect(s.status).toBe('approval_required');
+      expect(JSON.stringify(r.result)).not.toContain('52813');
+      expect(s.action.description).toContain('[login code hidden]');
+      expect(s.action.description).toMatch(/Command: telegram send -1004001 /);
+      expect(s.retry).toMatchObject({ sameArgumentsAsThisCall: true });
+      // The approval covers the raw value: the same call with the code sends it as written
+      const sent = await handleMessage(call({ ...c, approval: s.code }), run) as Reply;
+      expect(sent.result.isError).toBeUndefined();
+    }
+  });
+
+  it('a code in a recipient or in the approval value, escaped by the CLI, stays hidden too', async () => {
+    for (const args of [
+      { args: ['send', 'Login code:\n52813', 'hi'] },
+      { args: ['send', 'Login code:\n52813', 'hi', '--json'] },
+      { args: ['send', '-1004001', 'hi'], approval: 'Login code:\n52813' },
+    ]) {
+      const r = await handleMessage(call(args), run) as Reply;
+      expect(JSON.stringify(r.result), JSON.stringify(args)).not.toContain('52813');
+    }
+  });
+
+  it('the human dialog still shows the raw code (the describe run is not masked)', async () => {
+    const d = await describeWithCli({ argv: ['send', '-1004001', 'Login code:\n52813'], readOnly: false, stdin: '' }, spawnCli);
+    expect(d).toMatchObject({ description: expect.stringContaining('52813') });
+  });
+
+  it('send, reply and send-file --json results mask the outgoing text and keep IDs exact', async () => {
+    setKnownCommands(['send', 'read', 'reply', 'send-file']);
+    const file = join(env.root, 'note.txt');
+    (await import('node:fs')).writeFileSync(file, 'hello');
+    const calls = [
+      { args: ['send', '-1004001', 'Login code: 52813', '--json'], field: 'text' },
+      { args: ['reply', '-1004001', '1', '-', '--json'], stdin: 'Login code:\n52813', field: 'text' },
+      { args: ['send-file', '-1004001', file, '-c', 'Login code: 52813', '--json'], field: 'caption' },
+    ];
+    for (const { field, ...c } of calls) {
+      const { second } = await approveAndRun(c);
+      expect(second.result.isError).toBeUndefined();
+      const text = second.result.content[0].text;
+      expect(text).not.toContain('52813');
+      const parsed = JSON.parse(text);
+      expect(parsed[field]).toContain('[login code hidden]');
+      expect(parsed.chatId).toBe('-1004001');
+      expect(typeof parsed.messageId).toBe('number');
+      expect(parsed.id).toBe(parsed.messageId);
+      expect(Number.isInteger(parsed.messageId)).toBe(true);
+    }
+    // Plain text output keeps the message ID and the chat ID
+    const { second } = await approveAndRun({ args: ['send', '-1004001', 'Login code: 52813'] });
+    expect(second.result.content[0].text).toMatch(/Message ID: \d+ in Team \(-1004001\)/);
+  });
+});

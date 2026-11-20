@@ -240,7 +240,11 @@ accounts 777000 (Telegram) and 489000 (Verification Codes): text, `richMessage`,
 button texts, URLs, copy texts and callback data, the quote and the link preview, plus a quote of
 such a message elsewhere. It also masks the slug of every gift link (`t.me/giftcode/<slug>`,
 `telegram.me/giftcode/<slug>`, `tg://giftcode?slug=<slug>`) as `[gift code hidden]`, in the CLI
-under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself. A raw
+under `TG_MCP` / `TG_READ_ONLY` and once more on the MCP result itself (the whole slug, with
+percent-encoding). What the server says about a call (an approval's action, the result of a
+write, every error) also hides a code after a standalone `code:` / `код:` label; content a read
+shows is not touched by that rule. All of it is one function, `maskForModel()` in
+`src/mcp-output.ts`; JSON keeps its keys, numbers and IDs. A raw
 result additionally redacts the fields listed below: the raw API is a power tool.
 
 Over MCP (the `telegram_read` and `telegram_write` tools) a raw call, `api <method>` or a

@@ -212,71 +212,78 @@ export function visible(text: string): string {
 
 const quoteArg = (a: string): string => (/^[\w@./:=+-]+$/.test(a) ? a : JSON.stringify(oneLine(a)));
 
-export function describePeer(raw: string, info: PeerInfo | undefined): string {
-  if (!info) return `${quoteArg(raw)} (not looked up)`;
-  if (!info.ok) return `${quoteArg(raw)} — could not be looked up (${oneLine(info.error)})`;
+/** What a value shows: as is for the person approving, masked for the model (see describeParsedAction). */
+type Mask = (text: string) => string;
+const asIs: Mask = t => t;
+
+export function describePeer(raw: string, info: PeerInfo | undefined, mask: Mask = asIs): string {
+  if (!info) return `${quoteArg(mask(raw))} (not looked up)`;
+  if (!info.ok) return `${quoteArg(mask(raw))} — could not be looked up (${oneLine(mask(info.error))})`;
   if (info.self) return `Saved Messages (your own chat, id ${info.id})`;
   const extra = [info.type, info.username ? `@${oneLine(info.username)}` : undefined, `id ${info.id}`].filter(Boolean).join(', ');
-  return `${oneLine(info.title)} (${extra})`;
+  return `${oneLine(mask(info.title))} (${extra})`;
 }
 
-function textBlock(label: string, text: string): string {
+function textBlock(label: string, raw: string, mask: Mask): string {
+  const text = mask(raw);
   const body = visible(text.replace(/\r?\n$/, '')).split('\n').map(l => `    | ${l}`).join('\n');
   return `  ${label} (${[...text].length} characters):\n${body}`;
 }
 
-function flagText(key: string, value: unknown): string {
+function flagText(key: string, value: unknown, mask: Mask): string {
   const flag = `--${key.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)}`;
   if (value === true) return flag;
   if (value === false) return `--no-${flag.slice(2)}`;
-  return `${flag} ${Array.isArray(value) ? value.map(v => quoteArg(String(v))).join(' ') : quoteArg(String(value))}`;
+  return `${flag} ${Array.isArray(value) ? value.map(v => quoteArg(mask(String(v)))).join(' ') : quoteArg(mask(String(value)))}`;
 }
 
 /**
  * The action as the person approving it reads it: what happens, to whom (name, type, @username,
  * id), where in the chat, every argument, the full text, and the exact command as the last line.
- * `stdin` is the whole body when the command takes it from stdin.
+ * `stdin` is the whole body when the command takes it from stdin. `mask` (the copy for the MCP
+ * model) is applied to every value before it is escaped or quoted: an escaped line break or tab
+ * would otherwise split a code from its label where no mask finds it.
  */
-export function describeParsedAction(action: ParsedAction, peers: Map<string, PeerInfo>, stdin?: string, extra: string[] = []): string {
+export function describeParsedAction(action: ParsedAction, peers: Map<string, PeerInfo>, stdin?: string, extra: string[] = [], mask: Mask = asIs): string {
   const d = action.parsed ? DESCRIPTORS[action.command] : undefined;
   // Only a field the handler really reads from stdin shows stdin in its place; elsewhere "-" is
   // what gets sent, and stdin (if any) is shown on its own below
   const fromStdin = (name: string, value: string | string[]) => value === '-' && stdin !== undefined && (!action.parsed || d?.stdin === name);
   const lines: string[] = [];
   const texts: string[] = [];
-  const verb = d?.verb ?? (action.command === 'api' || !action.parsed ? `Run "telegram ${oneLine(action.command)}"` : `Run "telegram ${oneLine(action.command)}" (Telegram API method)`);
+  const verb = d?.verb ?? (action.command === 'api' || !action.parsed ? `Run "telegram ${oneLine(mask(action.command))}"` : `Run "telegram ${oneLine(mask(action.command))}" (Telegram API method)`);
   lines.push(`  ${verb}`);
   for (const a of action.args) {
     const values = Array.isArray(a.value) ? a.value : [a.value];
     if (d?.peers?.[a.name] && !values.some(v => d.notPeer?.(a.name, v))) {
-      for (const v of values) lines.push(`  ${d.peers[a.name]}: ${describePeer(v, peers.get(v))}`);
+      for (const v of values) lines.push(`  ${d.peers[a.name]}: ${describePeer(v, peers.get(v), mask)}`);
     } else if (d?.text?.[a.name]) {
-      texts.push(textBlock(d.text[a.name], fromStdin(a.name, a.value) ? stdin! : values.join(' ')));
+      texts.push(textBlock(d.text[a.name], fromStdin(a.name, a.value) ? stdin! : values.join(' '), mask));
     } else if (fromStdin(a.name, a.value)) {
-      texts.push(textBlock(d?.labels?.[a.name] ?? 'Text', stdin!));
+      texts.push(textBlock(d?.labels?.[a.name] ?? 'Text', stdin!, mask));
     } else {
       const label = d?.labels?.[a.name] ?? a.name;
-      const shown = /^message|^msg|topicId/.test(a.name) ? values.map(v => (/^\d+$/.test(v) ? `#${v}` : quoteArg(v))) : values.map(quoteArg);
+      const shown = values.map(v => (/^message|^msg|topicId/.test(a.name) && /^\d+$/.test(v) ? `#${v}` : quoteArg(mask(v))));
       lines.push(`  ${label}: ${shown.join(', ')}`);
     }
   }
-  for (const p of action.apiPeers ?? []) lines.push(`  Chat in ${oneLine(p.path)}: ${describePeer(p.value, peers.get(p.value))}`);
-  lines.push(...extra);
+  for (const p of action.apiPeers ?? []) lines.push(`  Chat in ${oneLine(mask(p.path))}: ${describePeer(p.value, peers.get(p.value), mask)}`);
+  lines.push(...extra.map(mask));
   const options = new Map(action.options);
-  if (options.has('topic')) lines.push(`  Topic: #${oneLine(String(options.get('topic')))} (a thread of a forum)`);
-  if (options.has('replyTo')) lines.push(`  In reply to: message #${oneLine(String(options.get('replyTo')))}`);
+  if (options.has('topic')) lines.push(`  Topic: #${oneLine(mask(String(options.get('topic'))))} (a thread of a forum)`);
+  if (options.has('replyTo')) lines.push(`  In reply to: message #${oneLine(mask(String(options.get('replyTo'))))}`);
   if (options.has('caption')) {
     const caption = String(options.get('caption'));
-    texts.push(textBlock('Caption', caption === '-' && stdin !== undefined && d?.stdinOption === 'caption' ? stdin : caption));
+    texts.push(textBlock('Caption', caption === '-' && stdin !== undefined && d?.stdinOption === 'caption' ? stdin : caption, mask));
   }
   const rest = action.options.filter(([k]) => !['topic', 'replyTo', 'caption'].includes(k));
-  if (rest.length) lines.push(`  Options: ${rest.map(([k, v]) => flagText(k, v)).join(' ')}`);
+  if (rest.length) lines.push(`  Options: ${rest.map(([k, v]) => flagText(k, v, mask)).join(' ')}`);
   // A body on stdin that no argument names ("-p -", or stdin handed over by the MCP server)
   const named = action.args.some(a => fromStdin(a.name, a.value)) || (options.get('caption') === '-' && d?.stdinOption === 'caption');
   // A curated command shows stdin only in the field that reads it: elsewhere it is not sent
-  if (stdin !== undefined && !named && !d) texts.push(textBlock(action.parsed ? 'Input (stdin)' : 'Text (stdin)', stdin));
+  if (stdin !== undefined && !named && !d) texts.push(textBlock(action.parsed ? 'Input (stdin)' : 'Text (stdin)', stdin, mask));
   lines.push(...texts);
-  lines.push(`  Command: telegram ${action.argv.map(quoteArg).join(' ')}`);
+  lines.push(`  Command: telegram ${action.argv.map(a => quoteArg(mask(a))).join(' ')}`);
   return lines.join('\n');
 }
 

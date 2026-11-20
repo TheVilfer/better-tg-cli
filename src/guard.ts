@@ -10,6 +10,7 @@ import {
 import { apiChatRefs, declaredReadsStdin, describeParsedAction, oneLine, parsedAction, peerArgs, type ParsedAction, type PeerInfo } from './approval-action.js';
 import { prepareAction, type Prepared } from './approval-prepare.js';
 import { lookupPeers } from './peer-lookup.js';
+import { maskForModel } from './mcp-output.js';
 import { readStdinOnce, sealStdin, stdinWasRead } from './text.js';
 import { setWriteContext } from './audit.js';
 import { getSessionString } from './config.js';
@@ -264,8 +265,10 @@ async function requireApproval(argv: string[], opts: GuardOptions): Promise<void
   const code = createApproval(scope.hash, session);
   const minutes = APPROVAL_TTL_MS / 60_000;
   const shown = shownStdin(scope, argv, opts);
-  const description = describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines);
   const mcp = !!process.env.TG_MCP;
+  // Over MCP this description goes to the model only (the user's dialog comes from the describe run):
+  // every value masked before it is escaped, as the MCP server could not do on the finished text
+  const description = describeParsedAction(scope.action, scope.peers, shown, scope.prepared.lines, mcp ? t => maskForModel(t, 'echo') : undefined);
   const retry = mcp
     ? undefined // the MCP server knows the exact tool call and adds it
     : { argv: ['telegram', ...argv], env: { TG_APPROVE: code } };
