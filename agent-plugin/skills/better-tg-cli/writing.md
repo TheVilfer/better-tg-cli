@@ -21,7 +21,7 @@ mode; its JSON has `writeMode`.
 
 | Mode | A write… | Next step for you |
 |---|---|---|
-| `read-only` | stops with exit 4 (`write_disabled`) | stop and tell the user writes are off. Only the user changes the mode: on the `telegram_setup` page or with `telegram write-access ask` in their own terminal. Never run `write-access` to change it yourself |
+| `read-only` | stops with exit 4 (`write_disabled`) | stop and tell the user writes are off. Only the user changes the mode: on the `telegram_setup` page or with `telegram write-access ask` in their own terminal. Never change it on your own or as a step toward another request. The one exception: the user tells you in their own words to switch to `ask` (a cloud computer where they have no terminal); then run `telegram write-access ask`, never `on` |
 | `ask` | stops with exit 3 and an approval code | show the action, wait for a yes, repeat with the code |
 | `on` | runs at once | agree on the exact action with the user before the first call |
 
