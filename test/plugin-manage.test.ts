@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { delimiter, join, resolve, sep } from 'node:path';
 import { cliArgs } from './cli.js';
 
 // Before any module under test is imported: a temp HOME and a mock account, so nothing here can
@@ -17,12 +18,15 @@ const env = await vi.hoisted(async () => {
   return { root };
 });
 
-import { createElicitor, elicitApproved, handleManage, handleMessage, manageRequest, setKnownCommands } from '../src/mcp.js';
+import { createElicitor, elicitApproved, handleManage, handleMessage, manageRequest, planCall, pluginExpectation, setKnownCommands } from '../src/mcp.js';
+import { prepareAction } from '../src/approval-prepare.js';
+import { dpapiDelete, dpapiDeps, dpapiGetStrict, dpapiGetStrictAsync, dpapiSet, dpapiStore, isDpapiAvailable } from '../src/dpapi.js';
+import { sleepSync } from '../src/file-lock.js';
 import { createRpcProcessor } from '../src/mcp-http.js';
-import { applyPrepared, manageDeps, onPath, prepareInstall, prepareUpdate, terminalCommand } from '../src/plugins/manage.js';
-import { commitInstall, dataGet, dataSet, loadPlugin, pluginsRoot, readLock, storeDeps } from '../src/plugins/store.js';
-import { getPluginSecret, pluginSecretDeps, setPluginSecret } from '../src/plugins/secrets.js';
-import { readLocalSnapshot, type Fetch } from '../src/plugins/source.js';
+import { applyPrepared, cleanupPendingSecrets, manageDeps, onPath, prepareInstall, prepareRemove, prepareUpdate, terminalCommand } from '../src/plugins/manage.js';
+import { backendKeyStore, commitInstall, dataGet, dataSet, loadPlugin, pendingSecrets, pluginsRoot, readLock, storeDeps } from '../src/plugins/store.js';
+import { backendStore, erasePluginSecret, getPluginSecret, getPluginSecretAsync, pluginSecretDeps, pluginSecretKey, setPluginSecret, slotIn } from '../src/plugins/secrets.js';
+import { localPathProblem, parseSource, readLocalSnapshot, type Fetch } from '../src/plugins/source.js';
 import { VERSION } from '../src/version.js';
 
 const NET_LAB = resolve('test/fixtures/plugins/net-lab');
@@ -203,10 +207,14 @@ describe('plugin update: a new snapshot, the same installation', () => {
     const dir = pluginDir(NET_LAB);
     await install(dir);
     const id = readLock().plugins['net-lab'].installId;
-    setPluginSecret(id, 'apikey', 'key-aaaa-1111');
-    setPluginSecret(id, 'other', 'key-bbbb-2222');
+    const m0 = readLocalSnapshot(dir).manifest;
+    setPluginSecret(id, slotIn(m0, 'apikey'), 'key-aaaa-1111');
+    setPluginSecret(id, slotIn(m0, 'other'), 'key-bbbb-2222');
     // Only the header of `other` changes
     rewrite(dir, m => { m.secrets[1].inject.header = 'X-Other-Key'; });
+    const m1 = readLocalSnapshot(dir).manifest;
+    expect(slotIn(m1, 'apikey')).toEqual(slotIn(m0, 'apikey'));
+    expect(slotIn(m1, 'other').gen).not.toBe(slotIn(m0, 'other').gen);
     const p = await prepareUpdate('net-lab', readLocalSnapshot(dir).revision);
     if (p.op !== 'update') throw new Error('expected an update');
     expect(p.diff.reset).toEqual([{ name: 'other', why: 'changed' }]);
@@ -214,34 +222,105 @@ describe('plugin update: a new snapshot, the same installation', () => {
     expect(p.question).toContain('Set again:   other');
     const r = applyPrepared(p);
     expect(r.mustSetAgain).toEqual([['plugin', 'secret', 'set', 'net-lab', 'other']]);
-    expect(getPluginSecret(id, 'apikey')).toBe('key-aaaa-1111');
-    expect(getPluginSecret(id, 'other')).toBeNull();
+    expect(r.secretsNotRemoved).toBeUndefined();
+    expect(readLock().plugins['net-lab'].secrets).toEqual({ apikey: slotIn(m1, 'apikey').gen, other: slotIn(m1, 'other').gen });
+    expect(getPluginSecret(id, slotIn(m1, 'apikey'))).toBe('key-aaaa-1111');
+    expect(getPluginSecret(id, slotIn(m1, 'other'))).toBeNull();
+    // The old generation is deleted after the switch, not kept around
+    expect(getPluginSecret(id, slotIn(m0, 'other'))).toBeNull();
+    expect(pendingSecrets()).toEqual([]);
     // paths and format count as a change too; a dropped secret is deleted
-    setPluginSecret(id, 'other', 'key-cccc-3333');
+    setPluginSecret(id, slotIn(m1, 'other'), 'key-cccc-3333');
     rewrite(dir, m => { m.secrets = [m.secrets[1]]; });
     const q = await prepareUpdate('net-lab', readLocalSnapshot(dir).revision);
     if (q.op !== 'update') throw new Error('expected an update');
     expect(q.diff.reset).toEqual([{ name: 'apikey', why: 'removed' }]);
     expect(q.diff.newly.secrets).toEqual([]);
     applyPrepared(q);
-    expect(getPluginSecret(id, 'apikey')).toBeNull();
-    expect(getPluginSecret(id, 'other')).toBe('key-cccc-3333');
+    expect(getPluginSecret(id, slotIn(m1, 'apikey'))).toBeNull();
+    expect(getPluginSecret(id, slotIn(m1, 'other'))).toBe('key-cccc-3333');
     expect(JSON.stringify(audit())).not.toContain('key-');
   });
 
-  it('a secret the store fails to delete stops the update: the old snapshot stays', async () => {
+  it('review #2: a run still on the old revision reads only its own generation, never the value set for the new rule', async () => {
+    const dir = pluginDir(NET_LAB);
+    await install(dir);
+    const id = readLock().plugins['net-lab'].installId;
+    // What a run that started before the update holds: the old manifest, read once
+    const running = loadPlugin('net-lab').manifest;
+    const get = () => getPluginSecretAsync(id, slotIn(running, 'apikey'), new AbortController().signal);
+    setPluginSecret(id, slotIn(running, 'apikey'), 'old-key-1111');
+    expect(await get()).toBe('old-key-1111');
+    // Another process updates: the key now goes to another header; the human types the new key
+    rewrite(dir, m => { m.secrets[0].inject.header = 'X-Moved-Key'; });
+    applyPrepared(await prepareUpdate('net-lab', readLocalSnapshot(dir).revision) as never);
+    const now = loadPlugin('net-lab').manifest;
+    setPluginSecret(id, slotIn(now, 'apikey'), 'new-key-2222');
+    // The old run asks again for its next request: neither the old value (deleted) nor the new one
+    expect(await get()).toBeNull();
+    expect(getPluginSecret(id, slotIn(now, 'apikey'))).toBe('new-key-2222');
+  });
+
+  it('review #6: nothing live is deleted before the switch; a failed apply keeps the old revision with its secrets, audited', async () => {
     const dir = pluginDir(NET_LAB);
     await install(dir);
     const before = readLock().plugins['net-lab'];
+    const m0 = loadPlugin('net-lab').manifest;
+    setPluginSecret(before.installId, slotIn(m0, 'apikey'), 'key-dddd-4444');
+    setPluginSecret(before.installId, slotIn(m0, 'other'), 'key-eeee-5555');
+    // Both secrets move: as if the first old value were deleted and then the switch failed
+    rewrite(dir, m => { m.secrets[0].inject.header = 'X-A'; m.secrets[1].inject.header = 'X-B'; });
+    const p = await prepareUpdate('net-lab', readLocalSnapshot(dir).revision);
+    storeDeps.afterSnapshot = () => { throw new Error('crash before the switch'); };
+    expect(() => applyPrepared(p as never)).toThrow('crash before the switch');
+    expect(readLock().plugins['net-lab']).toEqual(before);
+    // The old revision still works with both of its values
+    expect(getPluginSecret(before.installId, slotIn(m0, 'apikey'))).toBe('key-dddd-4444');
+    expect(getPluginSecret(before.installId, slotIn(m0, 'other'))).toBe('key-eeee-5555');
+    // The cleanup record names live values only: a later cleanup keeps them
+    cleanupPendingSecrets();
+    expect(getPluginSecret(before.installId, slotIn(m0, 'apikey'))).toBe('key-dddd-4444');
+    expect(pendingSecrets()).toEqual([]);
+    const failed = audit().at(-1)!;
+    expect(failed).toMatchObject({ command: 'plugin update', target: 'net-lab', result: { success: false, error: 'error', reason: 'crash before the switch' } });
+    expect(failed.plugin).toMatchObject({ installId: before.installId, fromRevision: before.revision });
+    delete storeDeps.afterSnapshot;
+    // A new generation that cannot be cleared stops the update before the switch, old one intact
     const mem = new Map<string, string>();
     pluginSecretDeps.store = { get: k => mem.get(k) ?? null, set: (k, v) => { mem.set(k, v); return true; }, delete: () => false };
-    setPluginSecret(before.installId, 'other', 'key-dddd-4444');
-    rewrite(dir, m => { m.secrets[1].inject.origin = 'https://api.example.com'; m.secrets[1].inject.header = 'X-Moved'; });
-    const p = await prepareUpdate('net-lab', readLocalSnapshot(dir).revision);
-    expect(() => applyPrepared(p as never)).toThrow(expect.objectContaining({ code: 'secret_store_unavailable' }));
+    setPluginSecret(before.installId, slotIn(m0, 'apikey'), 'key-ffff-6666');
+    mem.set(pluginSecretKey(before.installId, slotIn(readLocalSnapshot(dir).manifest, 'apikey')), 'stale-from-earlier');
+    const q = await prepareUpdate('net-lab', readLocalSnapshot(dir).revision);
+    expect(() => applyPrepared(q as never)).toThrow(expect.objectContaining({ code: 'secret_store_unavailable' }));
     expect(readLock().plugins['net-lab']).toEqual(before);
-    expect(snapshotFolders()).toEqual([before.installId]);
-    expect(loadPlugin('net-lab').entry.revision).toBe(before.revision);
+    expect(getPluginSecret(before.installId, slotIn(m0, 'apikey'))).toBe('key-ffff-6666');
+    expect(audit().at(-1)).toMatchObject({ command: 'plugin update', result: { success: false, error: 'secret_store_unavailable' } });
+  });
+
+  it('review #6: an old generation the store fails to delete is recorded and retried; the new revision never reads it', async () => {
+    const dir = pluginDir(NET_LAB);
+    await install(dir);
+    const id = readLock().plugins['net-lab'].installId;
+    const m0 = loadPlugin('net-lab').manifest;
+    const mem = new Map<string, string>();
+    let broken = true;
+    pluginSecretDeps.store = {
+      get: k => mem.get(k) ?? null, set: (k, v) => { mem.set(k, v); return true; },
+      delete: k => { if (broken) throw new Error('store busy'); return mem.delete(k); },
+    };
+    setPluginSecret(id, slotIn(m0, 'other'), 'key-gggg-7777');
+    rewrite(dir, m => { m.secrets[1].inject.origin = 'https://api.example.com'; m.secrets[1].inject.header = 'X-Moved'; });
+    const r = applyPrepared(await prepareUpdate('net-lab', readLocalSnapshot(dir).revision) as never);
+    // The update went through: the old value is under another generation, which no run of it reads
+    expect(r).toMatchObject({ ok: true, action: 'plugin update', secretsNotRemoved: ['other'], mustSetAgain: [['plugin', 'secret', 'set', 'net-lab', 'other']] });
+    const m1 = loadPlugin('net-lab').manifest;
+    expect(getPluginSecret(id, slotIn(m1, 'other'))).toBeNull();
+    expect(pendingSecrets()).toEqual([{ name: 'net-lab', installId: id, secrets: [`other:${slotIn(m0, 'other').gen}`] }]);
+    // Retried later, once the store answers
+    broken = false;
+    expect(cleanupPendingSecrets().get(id)).toEqual([]);
+    expect(getPluginSecret(id, slotIn(m0, 'other'))).toBeNull();
+    expect(pendingSecrets()).toEqual([]);
   });
 
   it('atomic: a failure after the new snapshot is written leaves the old one registered and working', async () => {
@@ -449,7 +528,7 @@ describe('without a dialog the model gets the exact command for the terminal on 
     expect(res.structuredContent).toMatchObject({ status: 'human_required', commands: [{ operation: 'install', argv: ['plugin', 'install', real, '--expect', rev] }] });
     const cmd = res.structuredContent!.commands[0].command as string;
     // The host's own paths are quoted by the rules tested in "shapes"; here the parts and their order
-    expect(cmd).toMatch(/^TG_MOCK=\S+ telegram plugin install '.+my plugin' --expect \S+$/);
+    expect(cmd).toMatch(/^TG_PROFILE=mock TG_MOCK=\S+ telegram plugin install '.+my plugin' --expect \S+$/);
     expect(cmd).toContain(` --expect ${rev}`);
     expect(res.content[0].text).toContain(cmd);
     expect(Object.keys(readLock().plugins)).toEqual([]);
@@ -463,7 +542,7 @@ describe('without a dialog the model gets the exact command for the terminal on 
     const commit = gh.publish(pluginDir(NET_LAB), NET_FILES);
     const r = await handleMessage(call(['plugin', 'install', 'github:someone/lab']), neverRun, {}) as Reply;
     const cmd = r.result.structuredContent?.commands[0].command as string;
-    expect(cmd).toMatch(/^TG_MOCK=\S+ npx /);
+    expect(cmd).toMatch(/^TG_PROFILE=mock TG_MOCK=\S+ npx /);
     expect(cmd.endsWith(` npx better-tg-cli@${VERSION} plugin install github:someone/lab --expect ${commit}`)).toBe(true);
   });
 
@@ -471,15 +550,23 @@ describe('without a dialog the model gets the exact command for the terminal on 
     delete process.env.TG_MOCK;
     process.env.TG_PROFILE = 'work';
     const argv = ['plugin', 'install', "/tmp/it's here", '--expect', `sha256-${'A+/'.repeat(14)}A=`];
+    // The profile and "no mock" are set explicitly: the terminal's own TG_PROFILE / TG_MOCK never win
     expect(terminalCommand(argv, { platform: 'linux', onPath: () => true }))
-      .toBe(`TG_PROFILE=work telegram plugin install '/tmp/it'\\''s here' --expect sha256-${'A+/'.repeat(14)}A=`);
+      .toBe(`TG_PROFILE=work TG_MOCK='' telegram plugin install '/tmp/it'\\''s here' --expect sha256-${'A+/'.repeat(14)}A=`);
     expect(terminalCommand(argv, { platform: 'darwin', onPath: () => false, version: '1.2.3' }))
-      .toBe(`TG_PROFILE=work npx better-tg-cli@1.2.3 plugin install '/tmp/it'\\''s here' --expect sha256-${'A+/'.repeat(14)}A=`);
+      .toBe(`TG_PROFILE=work TG_MOCK='' npx better-tg-cli@1.2.3 plugin install '/tmp/it'\\''s here' --expect sha256-${'A+/'.repeat(14)}A=`);
     const win = ['plugin', 'install', "C:\\Users\\O'Neil\\my plugin", '--expect', `sha256-${'A+/'.repeat(14)}A=`];
+    // PowerShell: the terminal's values are saved and put back in finally (set for this one command only)
+    const save = '$tgSaved0 = $env:TG_PROFILE; $tgSaved1 = $env:TG_MOCK; try { ';
+    const restore = ' } finally { $env:TG_PROFILE = $tgSaved0; $env:TG_MOCK = $tgSaved1 }';
     expect(terminalCommand(win, { platform: 'win32', onPath: () => true }))
-      .toBe(`$env:TG_PROFILE='work'; telegram plugin install 'C:\\Users\\O''Neil\\my plugin' --expect 'sha256-${'A+/'.repeat(14)}A='; Remove-Item Env:TG_PROFILE`);
+      .toBe(`${save}$env:TG_PROFILE = 'work'; $env:TG_MOCK = ''; telegram plugin install 'C:\\Users\\O''Neil\\my plugin' --expect 'sha256-${'A+/'.repeat(14)}A='${restore}`);
     expect(terminalCommand(['plugin', 'update', 'net-lab'], { platform: 'win32', onPath: () => false, version: '1.2.3' }))
-      .toBe("$env:TG_PROFILE='work'; npx 'better-tg-cli@1.2.3' plugin update net-lab; Remove-Item Env:TG_PROFILE");
+      .toBe(`${save}$env:TG_PROFILE = 'work'; $env:TG_MOCK = ''; npx 'better-tg-cli@1.2.3' plugin update net-lab${restore}`);
+    // A .cmd shim (telegram.cmd, npx.cmd) is parsed again by cmd.exe: its metacharacters give no command
+    for (const odd of ['C:\\a&calc', 'C:\\100%', 'C:\\a^b', 'C:\\a|b', 'C:\\a"b']) {
+      expect(terminalCommand(['plugin', 'install', odd], { platform: 'win32', onPath: () => true }), odd).toBeUndefined();
+    }
     // PowerShell takes typographic quotes as quotes: such a path gives no command at all (they are not ASCII)
     expect(terminalCommand(['plugin', 'install', 'C:\\a\u2019; calc; \u2018b'], { platform: 'win32', onPath: () => true })).toBeUndefined();
     // Anything but printable ASCII gives no command at all (the human types the path)
@@ -487,7 +574,9 @@ describe('without a dialog the model gets the exact command for the terminal on 
       expect(terminalCommand(['plugin', 'install', odd], { platform: 'linux', onPath: () => true }), odd).toBeUndefined();
     }
     process.env.TG_PROFILE = '';
-    expect(terminalCommand(['plugin', 'remove', 'net-lab', '--keep-data'], { platform: 'win32', onPath: () => true })).toBe('telegram plugin remove net-lab --keep-data');
+    expect(terminalCommand(['plugin', 'remove', 'net-lab', '--keep-data'], { platform: 'win32', onPath: () => true }))
+      .toBe(`${save}$env:TG_PROFILE = ''; $env:TG_MOCK = ''; telegram plugin remove net-lab --keep-data${restore}`);
+    expect(terminalCommand(['plugin', 'list'], { platform: 'linux', onPath: () => true })).toBe("TG_PROFILE='' TG_MOCK='' telegram plugin list");
   });
 
   it('onPath looks through PATH (and PATHEXT on Windows) without running anything', () => {
@@ -499,8 +588,22 @@ describe('without a dialog the model gets the exact command for the terminal on 
     writeFileSync(join(bin, 'telegram.CMD'), '');
     expect(onPath('telegram', { PATH: bin, PATHEXT: '.EXE;.CMD' }, 'win32')).toBe(true);
     if (host === 'linux') expect(onPath('telegram', { PATH: bin }, 'linux')).toBe(false);
-    writeFileSync(join(bin, 'telegram'), '');
+    writeFileSync(join(bin, 'telegram'), '', { mode: 0o755 });
     expect(onPath('telegram', { PATH: [join(home, 'nonexistent'), bin].join(delimiter) }, host)).toBe(true);
+  });
+
+  // chmod and X_OK mean nothing on a Windows host
+  it.skipIf(process.platform === 'win32')('review #12: on POSIX a `telegram` file this user cannot execute is not on PATH (the npx fallback is used)', () => {
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'telegram'), '#!/bin/sh\n', { mode: 0o644 });
+    expect(onPath('telegram', { PATH: bin }, 'linux')).toBe(false);
+    expect(terminalCommand(['plugin', 'list'], { platform: 'linux', onPath: b => onPath(b, { PATH: bin }, 'linux'), version: '1.2.3' })).toMatch(/ npx better-tg-cli@1\.2\.3 plugin list$/);
+    chmodSync(join(bin, 'telegram'), 0o755);
+    expect(onPath('telegram', { PATH: bin }, 'linux')).toBe(true);
+    // Windows rules: an extension from PATHEXT, no execute bit
+    writeFileSync(join(bin, 'telegram.CMD'), '', { mode: 0o644 });
+    expect(onPath('telegram', { PATH: bin, PATHEXT: '.CMD' }, 'win32')).toBe(true);
   });
 
   it('update and remove fall back too; an argv that does not parse is no request', async () => {
@@ -512,9 +615,10 @@ describe('without a dialog the model gets the exact command for the terminal on 
     const rev = readLocalSnapshot(dir).revision;
     const u = await handleMessage(call(['plugin', 'update', 'tone-of-voice', `--expect=${rev}`]), neverRun, {}) as Reply;
     expect(u.result.structuredContent?.commands[0]).toMatchObject({ argv: ['plugin', 'update', 'tone-of-voice', '--expect', rev] });
-    expect(u.result.structuredContent?.commands[0].command).toMatch(new RegExp(`^TG_MOCK=\\S+ telegram plugin update tone-of-voice --expect ${rev.replace(/[+/]/g, '\\$&')}$`));
+    expect(u.result.structuredContent?.commands[0].command).toMatch(new RegExp(`^TG_PROFILE=mock TG_MOCK=\\S+ telegram plugin update tone-of-voice --expect ${rev.replace(/[+/]/g, '\\$&')}$`));
     const rm = await handleMessage(call(['plugin', 'remove', 'tone-of-voice', '--keep-data']), neverRun, {}) as Reply;
-    expect(rm.result.structuredContent?.commands[0].command).toMatch(/^TG_MOCK=\S+ telegram plugin remove tone-of-voice --keep-data$/);
+    const e = readLock().plugins['tone-of-voice'];
+    expect(rm.result.structuredContent?.commands[0].command).toMatch(new RegExp(`^TG_PROFILE=mock TG_MOCK=\\S+ telegram plugin remove tone-of-voice --keep-data --expect-install ${e.installId}:${e.installId}$`));
     expect(manageRequest('plugin update', ['--expect', rev])).toBeUndefined();
     expect(manageRequest('plugin remove', ['a', 'b'])).toBeUndefined();
     expect(manageRequest('plugin update', ['x', '--force'])).toBeUndefined();
@@ -568,5 +672,296 @@ describe('the CLI: plugin update in a terminal', { timeout: 60_000 }, () => {
     expect(yes.json).toMatchObject({ ok: true, action: 'plugin update', revision: rev, installId: before.installId });
     expect(cli(['plugin', 'update', '--json']).json).toMatchObject({ ok: true, results: [{ name: 'tone-of-voice', upToDate: true }] });
     expect(existsSync(join(pluginsRoot(), before.installId))).toBe(false);
+  });
+});
+
+// ---------- review fixes (review-p4.md) ----------
+
+describe('review fixes of plugin management', () => {
+  beforeEach(() => setKnownCommands(['plugin', 'plugin install', 'plugin update', 'plugin remove', 'plugin list', 'plugin run']));
+  afterEach(() => {
+    setKnownCommands([]);
+    delete storeDeps.keyStore;
+    delete dpapiDeps.store;
+    delete dpapiDeps.available;
+  });
+
+  /** A DPAPI file store over a reversible fake crypter: what runs on Windows, minus PowerShell. */
+  const fakeCrypter = { protect: (b: string) => `x${b}`, unprotect: (b: string) => b.slice(1) };
+  const dpapiFile = () => join(home, 'AppData', 'tg', 'secrets.dpapi');
+  /** The adapters production builds over src/secrets.ts, here over the DPAPI functions with `instance` behind them. */
+  const overDpapi = (instance: ReturnType<typeof dpapiStore>) => {
+    const use = <T>(fn: () => T): T => { dpapiDeps.store = instance; dpapiDeps.available = true; return fn(); };
+    const backend = {
+      available: () => use(() => isDpapiAvailable()),
+      getStrict: (k: string, fresh: boolean) => use(() => dpapiGetStrict(k, fresh)),
+      getStrictAsync: (k: string, signal: AbortSignal) => use(() => dpapiGetStrictAsync(k, signal)),
+      set: (k: string, v: string) => use(() => dpapiSet(k, v)),
+      delete: (k: string) => use(() => dpapiDelete(k)),
+    };
+    return { secrets: backendStore(backend), key: backendKeyStore(backend) };
+  };
+
+  it('#1: DPAPI reads that decide something are fresh: a secret another process set is deleted, not skipped from a stale copy', () => {
+    const dir = pluginDir(NET_LAB);
+    const serverProc = dpapiStore(dpapiFile, fakeCrypter);
+    const otherProc = dpapiStore(dpapiFile, fakeCrypter);
+    // The plugin registry key and secrets live in the DPAPI file, seen by two processes
+    storeDeps.keyStore = overDpapi(otherProc).key;
+    pluginSecretDeps.store = overDpapi(otherProc).secrets;
+    commitInstall(readLocalSnapshot(dir));
+    const id = readLock().plugins['net-lab'].installId;
+    const slot = slotIn(readLocalSnapshot(dir).manifest, 'other');
+    const key = pluginSecretKey(id, slot);
+    // The long-lived server caches the file while the secret is not set yet
+    expect(serverProc.getStrict(key)).toEqual({ ok: true, value: null });
+    otherProc.set(key, 'typed-in-the-terminal');
+    expect(serverProc.getStrict(key)).toEqual({ ok: true, value: null });
+    expect(dpapiStore(dpapiFile, fakeCrypter).getStrict(key)).toEqual({ ok: true, value: 'typed-in-the-terminal' });
+    // The server's update deletes it from the file, through the same adapter as production
+    pluginSecretDeps.store = overDpapi(serverProc).secrets;
+    expect(erasePluginSecret(id, slot)).toBe(true);
+    expect(otherProc.getStrict(key, true)).toEqual({ ok: true, value: null });
+  });
+
+  it('#1: the registry key is read afresh before one is made, and never made over a registry with plugins', () => {
+    const serverProc = dpapiStore(dpapiFile, fakeCrypter);
+    const otherProc = dpapiStore(dpapiFile, fakeCrypter);
+    // The server cached "no key" before another process made the first install
+    expect(serverProc.getStrict('pluginRegistryKey')).toEqual({ ok: true, value: null });
+    storeDeps.keyStore = overDpapi(otherProc).key;
+    commitInstall(readLocalSnapshot(pluginDir(TONE)));
+    const made = otherProc.getStrict('pluginRegistryKey', true);
+    // The server installs next: it finds that key instead of signing a new one over it
+    storeDeps.keyStore = overDpapi(serverProc).key;
+    commitInstall(readLocalSnapshot(pluginDir(NET_LAB)));
+    expect(otherProc.getStrict('pluginRegistryKey', true)).toEqual(made);
+    expect(Object.keys(readLock().plugins).sort()).toEqual(['net-lab', 'tone-of-voice']);
+    // The key is gone from the store while plugins are registered: refused, no key is made
+    let sets = 0;
+    storeDeps.keyStore = { available: () => true, get: () => ({ ok: true, value: null }), set: () => { sets++; return true; } };
+    const extra = pluginDir(TONE, m => { m.name = 'tone-two'; });
+    writeFileSync(join(extra, 'SKILL.md'), readFileSync(join(extra, 'SKILL.md'), 'utf8').replace('name: tone-of-voice', 'name: tone-two'));
+    expect(() => commitInstall(readLocalSnapshot(extra))).toThrow(expect.objectContaining({ code: 'plugin_lock_invalid' }));
+    expect(sets).toBe(0);
+  });
+
+  it('#3: every change of secrets.dpapi holds one lock: a write-access change by another process is not undone', async () => {
+    const file = dpapiFile();
+    const seed = dpapiStore(() => file, fakeCrypter);
+    const secret = 'plugin-secret-default-11111111-2222-4333-8444-555555555555-apikey-g0123456789abcdef';
+    seed.set('writeEnabled', 'on');
+    seed.set(secret, 'some-secret-value');
+    const ready = join(home, 'child-ready');
+    const script = join(home, 'write-access-off.mts');
+    writeFileSync(script, [
+      `import { writeFileSync } from 'node:fs';`,
+      `import { dpapiStore } from ${JSON.stringify(pathToFileURL(resolve('src/dpapi.ts')).href)};`,
+      `const crypter = { protect: (b) => 'x' + b, unprotect: (b) => b.slice(1) };`,
+      `const store = dpapiStore(() => ${JSON.stringify(file)}, crypter);`,
+      `writeFileSync(${JSON.stringify(ready)}, '1');`,
+      `process.exit(store.set('writeEnabled', 'off') ? 0 : 1);`,
+    ].join('\n'));
+    let child: ReturnType<typeof spawn> | undefined;
+    let exited: Promise<number | null> | undefined;
+    // This process deletes a plugin secret; between its read and its rename the other process
+    // switches write access off (`telegram write-access off` in another terminal)
+    const slow = dpapiStore(() => file, {
+      ...fakeCrypter,
+      protect: b => {
+        if (!child) {
+          child = spawn(process.execPath, ['--import', 'tsx', script], { cwd: resolve('.'), stdio: 'ignore' });
+          exited = new Promise(r => child!.on('exit', r));
+          const until = Date.now() + 20_000;
+          while (!existsSync(ready) && Date.now() < until) sleepSync(20);
+          // Time enough for the other write to land if nothing held it back
+          sleepSync(800);
+        }
+        return fakeCrypter.protect(b);
+      },
+    });
+    expect(slow.delete(secret)).toBe(true);
+    expect(await exited).toBe(0);
+    const after = dpapiStore(() => file, fakeCrypter);
+    expect(after.getStrict('writeEnabled', true)).toEqual({ ok: true, value: 'off' });
+    expect(after.getStrict(secret, true)).toEqual({ ok: true, value: null });
+  }, 60_000);
+
+  it('#4: network, namespace and device paths are refused before any file system call, on every platform', async () => {
+    for (const p of ['\\\\server\\share\\plugin', '//server/share/plugin', '\\/server/share', '\\\\?\\C:\\plugin', '//?/C:/plugin', '\\\\.\\pipe\\x', '\\??\\C:\\x', 'NUL', 'C:\\work\\con.txt', 'plugins/AUX', 'c:\\x\\COM1 .\\y', 'lpt9']) {
+      expect(localPathProblem(p), p).toBeDefined();
+      expect(() => parseSource(p), p).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+      // The recorded path of an update is checked again: a usage error, not "no such folder" from a lookup
+      expect(() => readLocalSnapshot(p), p).toThrow(expect.objectContaining({ code: 'invalid_argument' }));
+      expect(manageRequest('plugin install', [p]), p).toBeUndefined();
+    }
+    for (const p of ['C:\\Users\\me\\plugin', './my-plugin', '/home/me/console', 'C:\\connect\\nul-free', 'compass']) expect(localPathProblem(p), p).toBeUndefined();
+    await expect(prepareInstall('\\\\attacker.example\\share\\p', undefined)).rejects.toMatchObject({ code: 'invalid_argument' });
+    // Over MCP: refused as a request, nothing prepared or read
+    const r = await handleMessage(call(['plugin', 'install', '//attacker.example/share/p']), neverRun, {}) as Reply;
+    expect(r.result.isError).toBe(true);
+  });
+
+  it('#5: the expect_required hint is a command built from argv: binary, profile, quoting for sh and PowerShell', async () => {
+    const dir = pluginDir(TONE, undefined, join(home, 'my $(touch pwned); `x` folder'));
+    await install(dir);
+    touchSkill(dir);
+    const real = realpathSync(dir);
+    manageDeps.onPath = () => true;
+    for (const platform of ['linux', 'win32'] as const) {
+      manageDeps.platform = platform;
+      const e = await prepareUpdate('tone-of-voice', undefined).then(() => undefined, (x: unknown) => x as { code: string; hint: string; fields: Json });
+      expect(e?.code).toBe('expect_required');
+      expect(e?.fields.validate).toEqual(['plugin', 'validate', real]);
+      expect(e?.hint).toContain(`Check the folder in a terminal: ${terminalCommand(['plugin', 'validate', real])}`);
+      expect(e?.hint).toContain(`Then: ${terminalCommand(['plugin', 'update', 'tone-of-voice'])} --expect <the revision it prints>`);
+    }
+    manageDeps.platform = 'linux';
+    const posix = terminalCommand(['plugin', 'validate', real])!;
+    // One quoted argument: no expansion, no second command
+    expect(posix).toMatch(/^TG_PROFILE=mock TG_MOCK=\S+ telegram plugin validate '[^']*my \$\(touch pwned\); `x` folder'$/);
+    manageDeps.platform = 'win32';
+    expect(terminalCommand(['plugin', 'validate', real])).toContain(`telegram plugin validate '${real}'`);
+    expect(existsSync(join(home, 'pwned'))).toBe(false);
+  });
+
+  it('#7: an update back to an earlier revision (A → B → A) is another snapshot: old dialogs and approvals no longer hold', async () => {
+    const dir = pluginDir(NET_LAB);
+    await install(dir);
+    const a = readLock().plugins['net-lab'];
+    const before = readFileSync(join(dir, 'SKILL.md'), 'utf8');
+    // Shown before the updates: a remove dialog, a run approval, the server's expectation for a run
+    const shownRemove = prepareRemove('net-lab', false);
+    const runAction = {
+      command: 'plugin run', parsed: true, argv: ['plugin', 'run', 'net-lab', 'fetch', '--input', '{}'],
+      args: [{ name: 'name', value: 'net-lab' }, { name: 'command', value: 'fetch' }], options: [['input', '{}']],
+    } as never;
+    const boundA = (await prepareAction(runAction)).bound;
+    const plan = planCall('telegram_write', { args: ['plugin', 'run', 'net-lab', 'fetch', '--input', '{}'] });
+    if (typeof plan === 'string' || !plan.plugin) throw new Error('expected a classified plugin run');
+    const expectA = pluginExpectation(plan.plugin);
+    touchSkill(dir);
+    applyPrepared(await prepareUpdate('net-lab', readLocalSnapshot(dir).revision) as never);
+    writeFileSync(join(dir, 'SKILL.md'), before);
+    applyPrepared(await prepareUpdate('net-lab', readLocalSnapshot(dir).revision) as never);
+    const a2 = readLock().plugins['net-lab'];
+    expect([a2.installId, a2.revision]).toEqual([a.installId, a.revision]);
+    expect(a2.snapshot).not.toBe(a.snapshot ?? a.installId);
+    expect(() => applyPrepared(shownRemove)).toThrow(expect.objectContaining({ code: 'plugin_changed' }));
+    expect(readLock().plugins['net-lab']).toBeDefined();
+    expect((await prepareAction(runAction)).bound).not.toEqual(boundA);
+    const plan2 = planCall('telegram_write', { args: ['plugin', 'run', 'net-lab', 'fetch', '--input', '{}'] });
+    if (typeof plan2 === 'string' || !plan2.plugin) throw new Error('expected a classified plugin run');
+    expect(pluginExpectation(plan2.plugin)).not.toBe(expectA);
+    // A run child started with the old expectation is refused before anything runs
+    const r = cli(['plugin', 'run', 'net-lab', 'fetch', '--input', '{}', '--json'], { TG_MCP: '1', TG_PLUGIN_EXPECT: expectA });
+    expect(r.json?.error?.code, r.out + r.err).toBe('plugin_changed');
+  });
+
+  it('#8: a dialog is settled only by a well-formed response with exactly its id, from this server instance', async () => {
+    const sent: Json[] = [];
+    const first = createElicitor(o => sent.push(o as Json), 5_000);
+    const pending = first.elicit('approve?');
+    const id = sent.at(-1)!.id as string;
+    expect(id).toMatch(/^tg-elicit-[0-9a-f]{16}-1$/);
+    let settled: boolean | undefined;
+    void pending.then(v => { settled = v; });
+    const yes = { action: 'accept', content: { approve: true } };
+    // A numeric id, or one that String() would coerce into the dialog's id, settles nothing
+    expect(first.answer({ jsonrpc: '2.0', id: 1, result: yes } as never)).toBe(false);
+    first.answer({ jsonrpc: '2.0', id: [id], result: yes } as never);
+    // No jsonrpc, or both result and error: not a response
+    first.answer({ id, result: yes } as never);
+    first.answer({ jsonrpc: '2.0', id, result: yes, error: { code: 1 } } as never);
+    // A restarted server: its dialog #1 is not the old one's
+    const sent2: Json[] = [];
+    const second = createElicitor(o => sent2.push(o as Json), 5_000);
+    const pending2 = second.elicit('approve?');
+    let settled2: boolean | undefined;
+    void pending2.then(v => { settled2 = v; });
+    expect(sent2.at(-1)!.id).not.toBe(id);
+    expect(second.answer({ jsonrpc: '2.0', id, result: yes } as never)).toBe(true); // swallowed, never a request
+    await new Promise(r => setTimeout(r, 20));
+    expect([settled, settled2]).toEqual([undefined, undefined]);
+    // The exact id settles it; an error response is a no
+    expect(first.answer({ jsonrpc: '2.0', id, result: { action: 'accept', content: {} } } as never)).toBe(true); // Hermes' empty Allow
+    expect(await pending).toBe(true);
+    expect(second.answer({ jsonrpc: '2.0', id: sent2.at(-1)!.id, error: { code: -32600, message: 'no' } } as never)).toBe(true);
+    expect(await pending2).toBe(false);
+  });
+
+  it('#9: the command sets the profile and the mock state explicitly, as an absolute path', () => {
+    manageDeps.platform = 'linux';
+    manageDeps.onPath = () => true;
+    // A relative state file is this process's, resolved here, not in the human's working folder
+    const sh = (v: string) => (/^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`);
+    process.env.TG_MOCK = 'rel/mock-state.json';
+    expect(terminalCommand(['plugin', 'list'])).toBe(`TG_PROFILE=mock TG_MOCK=${sh(resolve('rel/mock-state.json'))} telegram plugin list`);
+    process.env.TG_MOCK = '1';
+    process.env.TG_PROFILE = 'mock-two';
+    const cmd = terminalCommand(['plugin', 'list'])!;
+    expect(cmd.startsWith('TG_PROFILE=mock-two TG_MOCK=')).toBe(true);
+    expect(cmd).toContain(`${sep}tg-mock-two${sep}mock-state.json`);
+    expect(cmd.endsWith(' telegram plugin list')).toBe(true);
+  });
+
+  it('#10: the remove dialog names the profile, grants, destinations and the secrets it deletes; the command is bound to the installation', async () => {
+    const dir = pluginDir(NET_LAB);
+    await install(dir);
+    const e = readLock().plugins['net-lab'];
+    const p = prepareRemove('net-lab', true);
+    for (const line of [
+      '  Profile:  mock',
+      '  Effects:  network',
+      '  Sends to: https://api.example.com, https://other.example.com, https://wrong.example.net',
+      '  Secrets:  apikey, other: deleted from the secret store (also with --keep-data)',
+    ]) expect(p.question).toContain(line);
+    expect(p.question).toMatch(/  Can read: .*messages you wrote yourself/);
+    expect(p.argv).toEqual(['plugin', 'remove', 'net-lab', '--keep-data', '--expect-install', `${e.installId}:${e.installId}`]);
+    expect(manageRequest('plugin remove', ['net-lab', '--expect-install', `${e.installId}:${e.installId}`])).toEqual({ op: 'remove', name: 'net-lab', keepData: false, expectInstall: `${e.installId}:${e.installId}` });
+    expect(manageRequest('plugin remove', ['net-lab', '--expect-install', 'x'])).toBeUndefined();
+    // The plugin is removed and installed again under the name: the command made earlier is refused
+    applyPrepared(prepareRemove('net-lab', false));
+    await install(dir);
+    const r = cli(['plugin', 'remove', 'net-lab', '--expect-install', `${e.installId}:${e.installId}`, '--json'], { TG_MOCK_HUMAN: 'yes' });
+    expect(r.json?.error?.code, r.out + r.err).toBe('plugin_changed');
+    expect(readLock().plugins['net-lab'].installId).not.toBe(e.installId);
+    const now = readLock().plugins['net-lab'];
+    expect(cli(['plugin', 'remove', 'net-lab', '--expect-install', `${now.installId}:${now.installId}`, '--json'], { TG_MOCK_HUMAN: 'yes' }).json).toMatchObject({ ok: true });
+  });
+
+  it('#11: a cancelled `plugin update` stops at once: the request in flight is aborted, no further plugin is fetched', async () => {
+    const a = fakeRepo('someone', 'lab');
+    const b = fakeRepo('other', 'tone');
+    const route: Fetch = (url, init) => (url.includes('/repos/other/tone') ? b.fetchImpl(url, init) : a.fetchImpl(url, init));
+    manageDeps.fetch = route;
+    a.publish(pluginDir(NET_LAB), NET_FILES);
+    const toneDir = pluginDir(TONE);
+    const toneFiles = JSON.parse(readFileSync(join(toneDir, 'tg-plugin.json'), 'utf8')).files as string[];
+    b.publish(toneDir, toneFiles);
+    applyPrepared(await prepareInstall('github:someone/lab', undefined, { fetch: route }));
+    applyPrepared(await prepareInstall('github:other/tone', undefined, { fetch: route }));
+    const labDir = pluginDir(NET_LAB, m => { m.description = 'v2'; });
+    a.publish(labDir, NET_FILES);
+    touchSkill(toneDir);
+    b.publish(toneDir, toneFiles);
+    const ctl = new AbortController();
+    const seen: string[] = [];
+    let inFlight: AbortSignal | undefined;
+    manageDeps.fetch = (url, init) => {
+      seen.push(url);
+      // The user cancels while the first plugin's request is on its way; the stub honours the signal
+      if (!inFlight) {
+        inFlight = init.signal;
+        ctl.abort();
+      }
+      if (init.signal?.aborted) return Promise.reject(new Error('aborted'));
+      return route(url, init);
+    };
+    const r = await handleManage({ op: 'update' }, { elicit: async () => { throw new Error('no dialog after a cancel'); } }, ctl.signal);
+    expect(r).toBeUndefined();
+    expect(inFlight?.aborted).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen.some(u => u.includes('/repos/other/tone'))).toBe(false);
   });
 });

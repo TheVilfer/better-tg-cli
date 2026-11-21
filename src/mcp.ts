@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -21,9 +22,9 @@ import { openBrowser } from './commands/onboard.js';
 import type { OnboardSession } from './onboard.js';
 import { parseSource } from './plugins/source.js';
 import { humanCommand } from './plugins/human.js';
-import { loadPlugin, readLock } from './plugins/store.js';
+import { loadPlugin, readLock, snapshotId } from './plugins/store.js';
 import {
-  applyPrepared, declined, expectProblem, manageDeps, prepareInstall, prepareRemove, prepareUpdate, terminalCommand, type Prepared, type PrepareOptions,
+  applyPrepared, declined, EXPECT_INSTALL_RE, expectProblem, manageDeps, prepareInstall, prepareRemove, prepareUpdate, terminalCommand, type Prepared, type PrepareOptions,
 } from './plugins/manage.js';
 import { CliError, errorDetails, errorJson, EXIT } from './errors.js';
 
@@ -241,8 +242,11 @@ function classifyPlugin(args: string[]): CallClass {
 /** Options of `plugin run` that take a value (the rest are flags). */
 const RUN_VALUED = new Set(['--input', '--target']);
 
-/** The installation a `plugin run` was classified by: the child runs only that one (PLUGIN_EXPECT_ENV). */
-export interface PluginExpectation { installId: string; revision: string }
+/** The installation and snapshot a `plugin run` was classified by: the child runs only that one (PLUGIN_EXPECT_ENV). */
+export interface PluginExpectation { installId: string; revision: string; snapshot: string }
+
+/** The value of PLUGIN_EXPECT_ENV for an installation: installId, revision and snapshot (an update back to a revision is another snapshot). */
+export const pluginExpectation = (e: PluginExpectation): string => `${e.installId} ${e.revision} ${e.snapshot}`;
 
 /**
  * The environment variable that tells a `plugin run` child which installation its call was
@@ -271,7 +275,7 @@ function pluginRunGroup(rest: string[]): { group: 'read' | 'write'; plugin?: Plu
   try {
     const { manifest, entry } = loadPlugin(name);
     const group = (manifest.commands ?? []).find(c => c.name === command)?.effects.length ? 'write' : 'read';
-    return { group, plugin: { installId: entry.installId, revision: entry.revision } };
+    return { group, plugin: { installId: entry.installId, revision: entry.revision, snapshot: snapshotId(entry) } };
   } catch {
     return { group: 'read' };
   }
@@ -309,7 +313,7 @@ function secretArgv(path: string, rest: string[]): string[] | undefined {
 export type ManageRequest =
   | { op: 'install'; source: string; expect?: string }
   | { op: 'update'; name?: string; expect?: string }
-  | { op: 'remove'; name: string; keepData: boolean };
+  | { op: 'remove'; name: string; keepData: boolean; expectInstall?: string };
 
 const NAME_ONLY = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -322,10 +326,18 @@ const NAME_ONLY = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export function manageRequest(path: string, rest: string[]): ManageRequest | undefined {
   const operands: string[] = [];
   let expect: string | undefined;
+  let expectInstall: string | undefined;
   let keepData = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--json') continue;
+    // The installation a remove command was made for (it only narrows what is removed)
+    if (path === 'plugin remove' && (a === '--expect-install' || a.startsWith('--expect-install='))) {
+      if (expectInstall !== undefined) return undefined;
+      expectInstall = a === '--expect-install' ? rest[++i] : a.slice('--expect-install='.length);
+      if (expectInstall === undefined || !EXPECT_INSTALL_RE.test(expectInstall)) return undefined;
+      continue;
+    }
     if (path !== 'plugin remove' && (a === '--expect' || a.startsWith('--expect='))) {
       if (expect !== undefined) return undefined;
       expect = a === '--expect' ? rest[++i] : a.slice('--expect='.length);
@@ -359,7 +371,7 @@ export function manageRequest(path: string, rest: string[]): ManageRequest | und
     if (expect !== undefined && !operands.length) return undefined;
     return { op: 'update', ...(operands[0] ? { name: operands[0] } : {}), ...(expect ? { expect } : {}) };
   }
-  if (path === 'plugin remove' && operands.length === 1) return { op: 'remove', name: operands[0], keepData };
+  if (path === 'plugin remove' && operands.length === 1) return { op: 'remove', name: operands[0], keepData, ...(expectInstall ? { expectInstall } : {}) };
   return undefined;
 }
 
@@ -610,7 +622,7 @@ export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   delete env[DESCRIBE_ENV];
   // The installation a plugin run was classified by: from this call's plan only, never inherited
   delete env[PLUGIN_EXPECT_ENV];
-  if (plan.plugin) env[PLUGIN_EXPECT_ENV] = `${plan.plugin.installId} ${plan.plugin.revision}`;
+  if (plan.plugin) env[PLUGIN_EXPECT_ENV] = pluginExpectation(plan.plugin);
   if (plan.describe && !plan.readOnly) env[DESCRIBE_ENV] = '1';
   if (plan.approval && !plan.readOnly && !plan.describe) env.TG_APPROVE = plan.approval;
   // The write guard then hashes stdin into the approval, as gateWrite did
@@ -809,24 +821,28 @@ export async function handleManage(req: ManageRequest, options: Pick<McpOptions,
   if (options.readOnly || process.env.TG_READ_ONLY) {
     return text(`This server is read-only: plugins are not installed, updated or removed through it. The user can run "telegram plugin ${req.op} …" in their own terminal.`, true);
   }
-  const opts: PrepareOptions = { fetch: manageDeps.fetch, cliVersion: manageDeps.cliVersion, via: 'mcp' };
+  const opts: PrepareOptions = { fetch: manageDeps.fetch, cliVersion: manageDeps.cliVersion, via: 'mcp', ...(signal ? { signal } : {}) };
   // What the human will be asked about, prepared before anything is shown; update without a name: every plugin
   const prepared: Prepared[] = [];
   const upToDate: { name: string; version: string; revision: string }[] = [];
   const failed: Record<string, unknown>[] = [];
   // A folder the model named is read here before any human saw anything: whatever goes wrong with
   // it gives one answer, so a call cannot probe which paths exist or what is in them
-  const modelFolder = req.op === 'install' && parseSource(req.source).type === 'local';
+  let modelFolder = false;
   try {
+    modelFolder = req.op === 'install' && parseSource(req.source).type === 'local';
     if (req.op === 'install') prepared.push(await prepareInstall(req.source, req.expect, opts));
-    else if (req.op === 'remove') prepared.push(prepareRemove(req.name, req.keepData));
+    else if (req.op === 'remove') prepared.push(prepareRemove(req.name, req.keepData, req.expectInstall));
     else {
       for (const name of req.name ? [req.name] : Object.keys(readLock().plugins).sort()) {
+        // Cancelled: no further plugin is fetched (the one in flight was stopped through `signal`)
+        if (signal?.aborted) return undefined;
         try {
           const p = await prepareUpdate(name, req.expect, opts);
           if (p.op === 'up-to-date') upToDate.push({ name, version: p.entry.version, revision: p.entry.revision });
           else prepared.push(p);
         } catch (e) {
+          if (signal?.aborted) return undefined;
           if (req.name) throw e;
           const d = errorDetails(e);
           failed.push({ name, error: { code: d.code, message: d.message, ...(d.hint ? { hint: d.hint } : {}) } });
@@ -834,6 +850,7 @@ export async function handleManage(req: ManageRequest, options: Pick<McpOptions,
       }
     }
   } catch (e) {
+    if (signal?.aborted) return undefined;
     if (modelFolder && !['plugin_exists', 'secret_store_unavailable', 'plugin_busy', 'plugin_lock_invalid'].includes(errorDetails(e).code)) {
       return errorResult(new CliError('That folder could not be read as a plugin; nothing was installed', 'plugin_invalid', EXIT.ERROR, {
         hint: 'Ask the user to check it in a terminal on this computer: telegram plugin validate <folder>',
@@ -992,7 +1009,7 @@ export async function describeWithCli(plan: Plan, run: (p: Plan) => Promise<RunO
   };
 }
 
-type RpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown>; result?: unknown };
+type RpcMessage = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 
 export interface McpOptions {
   readOnly?: boolean;
@@ -1219,10 +1236,13 @@ export function elicitApproved(result: unknown): boolean {
  */
 export function createElicitor(send: (obj: object) => void, timeoutMs = ELICIT_TIMEOUT_MS) {
   const waiting = new Map<string, (msg: RpcMessage) => void>();
+  // A random prefix per server instance: an answer a client delivers late, after the server
+  // restarted and its counter began again, never matches a dialog of this instance
+  const instance = randomBytes(8).toString('hex');
   let nextId = 0;
   const elicit = (message: string, signal?: AbortSignal) => new Promise<boolean>(resolve => {
     if (signal?.aborted) return resolve(false);
-    const id = `tg-elicit-${++nextId}`;
+    const id = `tg-elicit-${instance}-${++nextId}`;
     const finish = (approved: boolean) => {
       clearTimeout(timer);
       waiting.delete(id);
@@ -1250,16 +1270,23 @@ export function createElicitor(send: (obj: object) => void, timeoutMs = ELICIT_T
       },
     });
   });
+  /**
+   * Only a well-formed JSON-RPC response (jsonrpc "2.0", a string id, exactly one of result and
+   * error, no method) whose id is exactly one this instance sent and still waits for settles a
+   * dialog: a numeric or otherwise coerced id never does. An error response is not an approval.
+   */
   const answer = (msg: RpcMessage): boolean => {
-    if (msg.method !== undefined || msg.id == null) return false;
-    const done = waiting.get(String(msg.id));
+    if (msg.method !== undefined || typeof msg.id !== 'string') return false;
+    const m = msg;
+    const wellFormed = m.jsonrpc === '2.0' && ('result' in m) !== ('error' in m);
+    const done = wellFormed ? waiting.get(msg.id) : undefined;
     if (done) {
-      waiting.delete(String(msg.id));
+      waiting.delete(msg.id);
       done(msg);
       return true;
     }
-    // A late answer to a dialog nobody waits for any more (cancelled, timed out): not a request either
-    return typeof msg.id === 'string' && msg.id.startsWith('tg-elicit-');
+    // A late answer to a dialog nobody waits for any more (cancelled, timed out, another instance): swallowed, never a request
+    return msg.id.startsWith('tg-elicit-');
   };
   return { elicit, answer };
 }

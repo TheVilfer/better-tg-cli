@@ -198,7 +198,7 @@ describe('plugin run: input, output, target, proposals', { timeout: 120_000 }, (
   it('effects storage: a local write in the shell, refused on the MCP read tool (TG_READ_ONLY) with nothing saved', () => {
     expect(lab(h, ['save', '--input', '{"value":"first"}']).json.data).toEqual({ saved: 5 });
     expect(probe(h, 'get').json.data.result).toBe('first');
-    const refused = lab(h, ['save', '--input', '{"value":"second"}'], { TG_MCP: '1', TG_READ_ONLY: '1', TG_PLUGIN_EXPECT: `${labInstall.installId} ${labInstall.revision}` });
+    const refused = lab(h, ['save', '--input', '{"value":"second"}'], { TG_MCP: '1', TG_READ_ONLY: '1', TG_PLUGIN_EXPECT: `${labInstall.installId} ${labInstall.revision} ${labInstall.installId}` });
     expect(refused.code).toBe(1);
     expect(refused.json.error.code).toBe('write_on_read_tool');
     expect(probe(h, 'get').json.data.result).toBe('first');
@@ -325,7 +325,7 @@ describe('plugin run over MCP: the installation the call was classified by (#5)'
       };
       const plan = planCall('telegram_write', { args: ['plugin', 'run', 'sandbox-lab', 'save', '--input', '{"value":"x"}', '--json'] });
       expect(plan).toMatchObject({ plugin: { installId: first.installId, revision: first.revision } });
-      expect(childEnv(plan as Parameters<typeof childEnv>[0]).TG_PLUGIN_EXPECT).toBe(`${first.installId} ${first.revision}`);
+      expect(childEnv(plan as Parameters<typeof childEnv>[0]).TG_PLUGIN_EXPECT).toBe(`${first.installId} ${first.revision} ${first.installId}`);
       let asked = 0;
       const elicit = async () => {
         asked++;
@@ -438,11 +438,13 @@ describe('plugin run over MCP: cancellation', { timeout: 120_000 }, () => {
     });
   }
 
-  /** Waits until the server has sent something with this id (a request of its own, such as a dialog). */
-  async function sent(s: { got: Set<unknown> }, id: unknown, ms = 30_000) {
+  /** Waits for the server's first dialog (its id has a random per-instance prefix) and returns its id. */
+  async function sentDialog(s: { got: Set<unknown> }, ms = 30_000): Promise<string> {
     const until = Date.now() + ms;
-    while (!s.got.has(id)) {
-      if (Date.now() > until) throw new Error(`the server never sent ${String(id)}`);
+    for (;;) {
+      const id = [...s.got].find(x => typeof x === 'string' && /^tg-elicit-[0-9a-f]{16}-1$/.test(x));
+      if (id) return id as string;
+      if (Date.now() > until) throw new Error('the server never sent a dialog');
       await new Promise(r => setTimeout(r, 50));
     }
   }
@@ -454,14 +456,14 @@ describe('plugin run over MCP: cancellation', { timeout: 120_000 }, () => {
     const s = server(h, { TG_MOCK_ASK: '1' });
     await s.request(0, { method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: {} } } });
     void s.request(1, saveCall);
-    await sent(s, 'tg-elicit-1');
+    const dialog = await sentDialog(s);
     const t = Date.now();
     s.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } });
     const next = await s.request(2, { method: 'tools/call', params: { name: 'telegram_read', arguments: { args: ['plugin', 'list', '--json'] } } });
     expect(next.result.isError).toBeUndefined();
     expect(Date.now() - t).toBeLessThan(10_000);
     // The user's late yes to the closed dialog changes nothing and gets no answer
-    s.send({ jsonrpc: '2.0', id: 'tg-elicit-1', result: { action: 'accept', content: { approve: true } } });
+    s.send({ jsonrpc: '2.0', id: dialog, result: { action: 'accept', content: { approve: true } } });
     await new Promise(r => setTimeout(r, 500));
     expect(s.got.has(1)).toBe(false);
     s.p.stdin.end();
@@ -475,7 +477,7 @@ describe('plugin run over MCP: cancellation', { timeout: 120_000 }, () => {
     const s = server(h, { TG_MOCK_ASK: '1' });
     await s.request(0, { method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: {} } } });
     void s.request(1, saveCall);
-    await sent(s, 'tg-elicit-1');
+    await sentDialog(s);
     const t = Date.now();
     s.p.stdin.end();
     await s.exited;

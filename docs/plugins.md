@@ -358,14 +358,25 @@ The plugin never sees a secret. The manifest says where the host puts it:
   install meanwhile gives `plugin_changed` and nothing is stored). `plugin secret rm <plugin> <secret>`
   deletes it (also the human's). `plugin show <plugin>` lists each secret as `set` or `not set` (never
   the value), and `plugin remove` deletes the secrets of the installation: it records them in the
-  host's state (`plugin-state/pending-secret-cleanup.json`, names only) in the same locked step that
-  removes the installation, so a secret the store fails to delete is deleted by the next plugin
-  command, silently; `plugin secret rm <plugin> <secret>` also deletes one a removed plugin left.
+  host's state (`plugin-state/pending-secret-cleanup.json`, names and generations only) in the same
+  locked step that removes the installation, so a secret the store fails to delete is deleted by the
+  next plugin command, silently; `plugin secret rm <plugin> <secret>` also deletes one a removed
+  plugin left.
 - **Where it is kept**: the profile's secret store (macOS Keychain, Linux Secret Service, Windows
   DPAPI or 1Password, the one that holds the session) under a key the core builds from the profile,
-  the installation ID and the secret name (`plugin-secret-<profile>-<installId>-<name>`). Without a
-  store a secret cannot be set (`secret_store_unavailable`). Under `TG_MOCK` it is a `0600` file next
-  to the mock state, never a real store.
+  the installation ID, the secret name and the **generation** of its inject rule
+  (`plugin-secret-<profile>-<installId>-<name>-g<generation>`). The generation is the first 16 hex
+  digits of a SHA-256 over the rule (origin, paths, header, format), pinned per secret in the signed
+  registry entry (`secrets: {name: generation}`) and checked against the installed manifest. A value
+  is therefore stored for one destination only: an update that keeps the rule keeps the value, one
+  that changes it starts an empty generation, and a run still on the old revision reads only the old
+  generation (never a value typed for the new destination). Without a store a secret cannot be set
+  (`secret_store_unavailable`). Under `TG_MOCK` it is a `0600` file next to the mock state, never a
+  real store. A read that decides something (whether a value is there before it is deleted, the
+  registry key before one is made) reads the store afresh, never the copy a long-lived process (the
+  MCP server) decrypted earlier; on Windows every change of `secrets.dpapi` (the session, write
+  access, plugin secrets) holds the lock file `secrets.dpapi.lock` across its read, change and
+  rename, so one process never writes back another's old copy.
 - **Where it goes**: the host adds the header (`format` with `{value}` replaced) only to a request
   whose origin is `inject.origin` and, with `paths`, whose path equals one of them or starts with it
   followed by `/` (`/v1` covers `/v1/chat`, not `/v1x`). Without `paths` it goes to every path of the
@@ -487,7 +498,9 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   Windows). No write mode skips it (`on` included), and a `TG_APPROVE` code never stands in for it.
   Without a terminal or dialog the command is refused (`no_human_channel`); a "no" is
   `not_confirmed`. On Windows the dialog's text reaches a fixed PowerShell script on stdin, so no
-  summary is too long for it. `--expect <revision>` pins what is installed or updated to: a folder's
+  summary is too long for it. The remove question comes from the signed registry: source, revision,
+  installation, profile, what the plugin could read, its effects and destinations, the secrets that
+  are deleted (with `--keep-data` too) and what happens to the data. `--expect <revision>` pins what is installed or updated to: a folder's
   `sha256-…` content hash (as `plugin validate` prints it), or a GitHub commit SHA (the ref named in
   the source must resolve to it; the ref itself is what is recorded, so a later update follows it);
   anything else is `plugin_revision_mismatch`.
@@ -515,18 +528,38 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   command for the human's terminal **on the server's computer**, built after the same prepare step
   and pinned to the revision it found: `telegram plugin install /abs/dir --expect sha256-…`,
   `telegram plugin install github:owner/repo@v1 --expect <commit>`, `telegram plugin update x
-  --expect <revision>`, `telegram plugin remove x`. `telegram` is used when it is on the server's
-  PATH, otherwise the CLI pinned to the server's version, `npx better-tg-cli@X.Y.Z …` (an `.mcpb`
-  has no `telegram`). The profile goes along (`TG_PROFILE=dev …`; a mock server's command carries its
-  `TG_MOCK=…`), quoted for POSIX sh, or for PowerShell on Windows
-  (`$env:TG_PROFILE='dev'; telegram …; Remove-Item Env:TG_PROFILE`). Only printable ASCII is put
-  into a command: a path with anything else (a line break, a look-alike quote, a control character)
-  gives no command, and the human types the folder themselves. The result has
-  `structuredContent: {status: "human_required", commands: [{operation, name, argv, command}]}`.
+  --expect <revision>`, `telegram plugin remove x --expect-install <installId>:<snapshot>` (a hidden
+  option: only that installation and snapshot is removed, one installed again or updated since is
+  `plugin_changed`). `telegram` is used when it is on the server's PATH (on POSIX a file this user
+  may execute; on Windows one with a PATHEXT extension), otherwise the CLI pinned to the server's
+  version, `npx better-tg-cli@X.Y.Z …` (an `.mcpb` has no `telegram`). The server's effective
+  profile and mock context are set explicitly, whatever the human's terminal has: `TG_PROFILE`
+  always (empty for the default profile) and `TG_MOCK` as the absolute path of the server's mock
+  state (empty outside the mock). They reach that one command only: POSIX
+  `TG_PROFILE=dev TG_MOCK='' telegram …`; PowerShell saves the terminal's values and restores them
+  (`$tgSaved0 = $env:TG_PROFILE; $tgSaved1 = $env:TG_MOCK; try { $env:TG_PROFILE = 'dev';
+  $env:TG_MOCK = ''; telegram … } finally { $env:TG_PROFILE = $tgSaved0; $env:TG_MOCK = $tgSaved1 }`).
+  Only printable ASCII is put into a command: a path with anything else (a line break, a look-alike
+  quote, a control character), or on Windows with a character `cmd.exe` would parse again behind a
+  `.cmd` shim (`" % ^ & | < > !`), gives no command, and the human types the folder themselves. The
+  same builder makes every command in a hint, such as the `plugin validate` of `expect_required`.
+  The result has `structuredContent: {status: "human_required", commands: [{operation, name, argv,
+  command}]}`.
+- **Folder paths.** A network share (`\\server\share`, `//server/share`), a Windows namespace path
+  (`\\?\`, `\\.\`, `\??\`) or a device name (`CON`, `NUL`, `COM1`, … in any part) is not a
+  plugin source, on every platform and before any file is touched (`invalid_argument`): Windows would
+  connect to the named server, offering the user's credentials, before anyone was asked. A recorded
+  path is checked again on update.
+- **Dialog answers.** The server's elicitation IDs are `tg-elicit-<random instance>-<n>`; only a
+  well-formed JSON-RPC response (`jsonrpc: "2.0"`, a string ID, exactly one of `result` and `error`)
+  with exactly that ID settles a dialog, so a numeric or coerced ID, or a late answer to a server
+  that restarted, never does. Cancelling `plugin update` stops the GitHub request in flight and
+  fetches no further plugin.
 - **Binding to the snapshot.** The approval of a `plugin run` (in mode `ask`: the MCP dialog,
   `approval_required` or `TG_APPROVE`) shows the plugin, the command, the installation and revision,
-  the effects and the input, and its hash covers the `installId`, the revision, the command's effects
-  and the input. The run checks that the installation it loaded is the approved one
+  the effects and the input, and its hash covers the `installId`, the revision, the snapshot folder,
+  the command's effects and the input (an update back to an earlier revision is another snapshot, so
+  an approval or dialog from before does not hold again). The run checks that the installation it loaded is the approved one
   (`plugin_changed`), so a plugin removed and installed again (or updated) in between needs a new
   approval. The MCP server classifies from the installed manifest, and the run decides again from
   the snapshot it loaded: a command that gained an effect is refused on `telegram_read`
@@ -619,8 +652,8 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   never held across the human's dialog or a download: under the lock, `remove` checks that the
   registered installation is still the one the human was shown, and `data set/delete` that the
   plugin they write for is still installed (`plugin_changed` otherwise). In write mode "ask" an
-  approval of `data set/delete` covers the `installId` and revision too, so it does not carry over
-  to a plugin installed under the same name since.
+  approval of `data set/delete` covers the `installId`, revision and snapshot too, so it does not
+  carry over to a plugin installed under the same name since, or updated meanwhile.
 - **Identity of an installation.** Data (`plugin-data/<installId>/<telegram-user-id>/`, keys are
   logical names `^[a-z0-9][a-z0-9._-]{0,63}$`, declared in `storage.keys`) and secrets are bound to the
   `installId`. After `remove --keep-data`, installing the same name again (from any source) is a new
@@ -635,13 +668,20 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   one that only changes code or texts (the summary then says nothing new is asked for); without a yes
   the old snapshot stays. A name of another plugin in the source is refused (`plugin_invalid`); a
   tampered installation is not updated (`plugin_tampered`: remove and install it again).
-  The installation keeps its `installId`, so its data, settings and secrets stay; an approval bound to
-  the old revision no longer holds. A secret whose destination changed, or that the plugin no longer
-  declares, is deleted from the secret store (the result lists those to set again as `mustSetAgain`).
-  That deletion runs under the plugin lock before the switch; if the store fails, nothing is updated.
-  The switch is atomic: the new snapshot is written beside the old one and the signed registry write
-  is the one commit point, so a failure or a crash before it leaves the old snapshot registered and
-  working (a stray folder is never read); the old folder is deleted after it. Installing a name that
+  The installation keeps its `installId`, so its data, settings and the secrets whose rule did not
+  change stay; an approval bound to the old snapshot no longer holds. A secret whose destination
+  changed moves to a new, empty generation (the result lists it to set again as `mustSetAgain`), and
+  one the plugin no longer declares is dropped. Nothing live is deleted before the switch: under the
+  plugin lock the new snapshot is written beside the old one, the new generations are cleared (an
+  update back to an earlier rule must not find an old value there; if the store fails, nothing is
+  updated), the old generations are recorded in `pending-secret-cleanup.json`, and the signed
+  registry write is the one commit point. A failure or a crash before it leaves the old snapshot
+  registered and working with all its secrets (a stray folder is never read, and the cleanup never
+  deletes a generation the registered installation reads). After it the old folder and the old
+  generations are deleted; one the store fails to delete is listed as `secretsNotRemoved` and retried
+  by the next plugin command. A change the human confirmed that fails is audited (`success: false`
+  with the error code and a one-line `reason`). The registry key is never made while a registry with
+  plugins exists (`plugin_lock_invalid`). Installing a name that
   is installed is refused (`plugin_exists`, with the update command in the hint).
 - **Official plugins**: a list of owners inside the CLI (`TheVilfer`), matched against the canonical
   owner GitHub returns, and only for a commit that repository published itself: the ref named at
@@ -651,8 +691,8 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   from a fork installs as a third-party plugin, and the summary says why. The mark grants nothing:
   install still asks the human.
 - **Audit** (`audit.jsonl` of the profile): install and update (also a declined one; an update with
-  the revision and version it left, what was newly accepted and the names of the secrets it reset),
-  remove, each with `via: "terminal"|"mcp"`, `data set` and
+  the revision and version it left, what was newly accepted and the names of the secrets it reset;
+  one confirmed but failed with `result.reason`), remove, each with `via: "terminal"|"mcp"`, `data set` and
   `data delete` with the plugin, version, revision, installation ID, key and size; every `run` with
   the plugin, revision, installation, command, the names of the host APIs it called, the types of the
   proposals it returned and the outcome (an error code), and for a run that sent requests

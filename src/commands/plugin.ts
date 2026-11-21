@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { isMainThread, parentPort, workerData } from 'node:worker_threads';
 import type { TelegramClient } from 'teleproto';
 import { disconnectClient, getClient, getMe } from '../client.js';
@@ -19,10 +19,10 @@ import { readLocalSnapshot, type Fetch } from '../plugins/source.js';
 import {
   assertApprovedInstall, cursorLoad, cursorSave, dataDelete, dataDeleteGuarded, dataGet, dataKeyProblem, dataList,
   dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, pendingSecrets, readLock, settingsRead, settingsWrite,
-  withCurrentInstall,
+  snapshotId, withCurrentInstall,
 } from '../plugins/store.js';
 import { humanCommand, humanConfirms, humanRequired, originLabel, revisionLabel, secretPathsLabel, type Confirm } from '../plugins/human.js';
-import { deletePluginSecret, getPluginSecret, getPluginSecretAsync, secretStates, setPluginSecret } from '../plugins/secrets.js';
+import { erasePluginSecret, getPluginSecret, getPluginSecretAsync, parseSlotText, secretStates, setPluginSecret, slotIn, slotOf } from '../plugins/secrets.js';
 import { devBackend, runBackend } from '../plugins/http-backend.js';
 import { validate } from '../plugins/json-schema.js';
 import { oneLine } from '../approval-action.js';
@@ -255,7 +255,7 @@ const showCommand = new Command('show')
  * settings. Host lines only; the plugin's descriptions are one line each.
  */
 function showOverview(entry: LockEntry, m: Manifest, asJson: boolean): void {
-  const states = secretStates(entry.installId, (m.secrets ?? []).map(x => x.name));
+  const states = secretStates(entry.installId, m.secrets ?? []);
   const stored = settingsRead(entry);
   const secrets = (m.secrets ?? []).map(x => ({
     name: x.name, description: oneLine(x.description), origin: x.inject.origin, header: x.inject.header,
@@ -448,7 +448,7 @@ function installCursors(entry: LockEntry): CursorStore {
  */
 /**
  * Over MCP the server names the installation it classified `plugin run` by (TG_PLUGIN_EXPECT,
- * installId and revision). Another one installed meanwhile under the same name is refused before
+ * installId, revision and snapshot: an update back to an earlier revision is another snapshot). Another one installed meanwhile under the same name is refused before
  * anything of it runs: its command may have other effects than the ones the call was routed and
  * approved for. A call over MCP without the variable is refused too (the server always sets it
  * when it found the plugin; when it did not, nothing was classified to run).
@@ -457,7 +457,7 @@ function assertExpectedInstall(entry: LockEntry): void {
   const expected = process.env.TG_PLUGIN_EXPECT;
   const overMcp = !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
   if (expected === undefined && !overMcp) return;
-  if (expected !== `${entry.installId} ${entry.revision}`) {
+  if (expected !== `${entry.installId} ${entry.revision} ${snapshotId(entry)}`) {
     throw new CliError(`Plugin "${entry.name}" changed after this call was checked (installation ${entry.installId}); nothing was run`, 'plugin_changed', EXIT.ERROR, {
       hint: 'Call the command again: it is checked against the plugin installed now.',
     });
@@ -535,7 +535,8 @@ const runCommand = runOptions(new Command('run')
         ...(sends ? {
           network: {
             backend: runBackend(),
-            secret: (secret: string, signal: AbortSignal) => getPluginSecretAsync(installed.installId, secret, signal),
+            // The generation of this run's manifest: a value set for another inject rule (an update meanwhile) is never read
+            secret: (secret: string, signal: AbortSignal) => getPluginSecretAsync(installed.installId, slotIn(m, secret), signal),
             setCommand: (secret: string) => ['plugin', 'secret', 'set', name, secret],
           },
         } : {}),
@@ -735,7 +736,8 @@ const secretSetCommand = new Command('set')
       const value = await (pluginDeps.readSecret ?? promptHidden)(`Value for ${d.name} (input hidden): `);
       // The prompt may have waited long: stored only for the installation that is still registered
       // (a `plugin remove` meanwhile would otherwise leave the value under a removed installation)
-      withCurrentInstall(entry, 'the secret was not stored', () => setPluginSecret(entry.installId, d.name, value));
+      // Under the generation of the inject rule just shown: an update meanwhile is plugin_changed
+      withCurrentInstall(entry, 'the secret was not stored', () => setPluginSecret(entry.installId, slotOf(d), value));
       auditLog({
         timestamp: new Date().toISOString(), command: 'plugin secret set', target: name,
         plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, key: d.name },
@@ -759,7 +761,8 @@ const secretRmCommand = new Command('rm')
       if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw secretHumanRequired(argv, 'Plugin secrets are managed by the user in their own terminal, never over MCP');
       // A removed plugin whose secret is still in the store (its cleanup failed): delete that one
       if (!own(readLock().plugins, name)) {
-        const orphans = pendingSecrets().filter(p => p.name === name && p.secrets.includes(secret));
+        const named = (p: { secrets: string[] }) => p.secrets.some(t => parseSlotText(t)?.name === secret);
+        const orphans = pendingSecrets().filter(p => p.name === name && named(p));
         if (!orphans.length) findEntry(name);
         const left = cleanupPendingSecrets(p => p.name === name);
         if (orphans.some(p => left.get(p.installId)?.includes(secret))) throw new CliError(`Could not delete the secret ${secret} of the removed plugin ${name} from the secret store`, 'secret_store_unavailable', EXIT.ERROR);
@@ -769,8 +772,8 @@ const secretRmCommand = new Command('rm')
       }
       const { entry, manifest: m } = loadPlugin(name, cliVersion());
       const d = declaredSecret(m, secret);
-      const existed = getPluginSecret(entry.installId, d.name) !== null;
-      if (existed && !deletePluginSecret(entry.installId, d.name)) throw new CliError(`Could not delete the secret ${d.name} from the secret store`, 'secret_store_unavailable', EXIT.ERROR);
+      const existed = getPluginSecret(entry.installId, slotOf(d)) !== null;
+      if (existed && !erasePluginSecret(entry.installId, slotOf(d))) throw new CliError(`Could not delete the secret ${d.name} from the secret store`, 'secret_store_unavailable', EXIT.ERROR);
       auditLog({
         timestamp: new Date().toISOString(), command: 'plugin secret rm', target: name,
         plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, key: d.name },
@@ -794,12 +797,14 @@ const removeCommand = new Command('remove')
   .description('Remove a plugin and its data (--keep-data keeps the data); the user confirms in a terminal or dialog')
   .argument('<name>', 'Plugin name')
   .option('--keep-data', 'Keep its saved data (a new install of the same name does not see it: it is a new installation)')
+  // Set in the commands made for the user (MCP without a dialog): only that installation and snapshot is removed
+  .addOption(new Option('--expect-install <installId:snapshot>', 'Remove only this installation and snapshot').hideHelp())
   .option('--json', 'Output as JSON')
-  .action(async (name: string, options: { keepData?: boolean; json?: boolean }) => {
-    const argv = ['plugin', 'remove', name, ...(options.keepData ? ['--keep-data'] : [])];
+  .action(async (name: string, options: { keepData?: boolean; expectInstall?: string; json?: boolean }) => {
+    const argv = ['plugin', 'remove', name, ...(options.keepData ? ['--keep-data'] : []), ...(options.expectInstall ? ['--expect-install', options.expectInstall] : [])];
     try {
       if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw humanRequired(argv);
-      const r = await confirmAndApply(prepareRemove(name, !!options.keepData));
+      const r = await confirmAndApply(prepareRemove(name, !!options.keepData, options.expectInstall));
       const secretsLeft = (r.secretsNotRemoved as string[] | undefined) ?? [];
       if (options.json) console.log(json(r));
       else {

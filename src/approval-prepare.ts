@@ -4,7 +4,7 @@ import {
 } from './client.js';
 import { fileSnapshot, sealFileSnapshots, snapshotDigest } from './file-snapshot.js';
 import { descriptorOf, oneLine, type ParsedAction } from './approval-action.js';
-import { expectInstall, loadPlugin } from './plugins/store.js';
+import { expectInstall, loadPlugin, snapshotId } from './plugins/store.js';
 import { revisionLabel } from './plugins/human.js';
 import { readStdinOnce, stdinBody } from './text.js';
 import { createHash } from 'node:crypto';
@@ -105,13 +105,13 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     // The approval covers this installation of the plugin: one installed under the same name later
     // (another source, other code) does not inherit it
     const { entry } = loadPlugin(arg(action, 'name') ?? '');
-    prepared.bound.push(['plugin', entry.installId, entry.revision]);
+    prepared.bound.push(['plugin', entry.installId, entry.revision, snapshotId(entry)]);
     prepared.lines.push(`  Installation: ${entry.installId} (${revisionLabel(entry.source, entry.revision)})`);
     prepared.onApproved = () => expectInstall(entry);
   }
   if (action.command === 'plugin run') {
     // This installation and snapshot, this command with its effects, this input: an update in
-    // between (another snapshot) invalidates the approval
+    // between (another snapshot, even one back to the same revision) invalidates the approval
     const { entry, manifest } = loadPlugin(arg(action, 'name') ?? '');
     const command = (manifest.commands ?? []).find(c => c.name === arg(action, 'command'));
     const input = action.options.find(([k]) => k === 'input')?.[1];
@@ -121,7 +121,7 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     const origins = effects.includes('network') ? [...(manifest.network ?? [])].sort() : [];
     const secrets = effects.includes('network') ? (manifest.secrets ?? []).map(s => `${s.name} → ${s.inject.origin}${s.inject.paths ? ` ${s.inject.paths.join(',')}` : ''}`).sort() : [];
     const inputHash = createHash('sha256').update(inputText).digest('base64');
-    prepared.bound.push(['plugin', entry.installId, entry.revision, command?.name ?? arg(action, 'command'), effects, origins, secrets, inputHash]);
+    prepared.bound.push(['plugin', entry.installId, entry.revision, snapshotId(entry), command?.name ?? arg(action, 'command'), effects, origins, secrets, inputHash]);
     prepared.lines.push(`  Installation: ${entry.installId} (${revisionLabel(entry.source, entry.revision)})`);
     const does = [
       effects.includes('storage') && 'save this plugin\'s data',

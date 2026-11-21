@@ -86,13 +86,24 @@ export function revisionLabel(s: ResolvedSource, revision: string): string {
   return oneLine(s.type === 'github' ? `commit ${revision}` : `content ${revision}`);
 }
 
-/** The question before `plugin remove`; every field comes from the registry and is shown as one line. */
+/**
+ * The question before `plugin remove`; every field comes from the signed registry and is shown as
+ * one line: what the installation was allowed (so the human sees which plugin this is), and what
+ * goes with it, the secrets included, which are deleted with --keep-data too.
+ */
 export function removeQuestion(entry: LockEntry, keepData: boolean): string {
+  const a = entry.accepted;
+  const list = (xs: readonly string[], none: string) => (xs.length ? xs.map(x => oneLine(x)).join(', ') : none);
   return [
     `Remove the Better-TG-CLI plugin "${oneLine(entry.name)}" ${oneLine(entry.version)}?`,
-    `  Source:  ${originLabel(entry.source)} (${revisionLabel(entry.source, entry.revision)})`,
-    `  Install: ${oneLine(entry.installId)}`,
-    `  Data:    ${keepData ? 'kept on this computer (a later install of the same name starts empty)' : 'deleted for every account'}`,
+    `  Source:   ${originLabel(entry.source)} (${revisionLabel(entry.source, entry.revision)})`,
+    `  Install:  ${oneLine(entry.installId)}`,
+    `  Profile:  ${profile() ?? 'default'}`,
+    `  Can read: ${a.permissions.length ? a.permissions.map(p => PERMISSION_TEXT[p as keyof typeof PERMISSION_TEXT] ?? oneLine(p)).join('; ') : 'nothing from Telegram'}`,
+    `  Effects:  ${list(a.effects, 'none')}`,
+    `  Sends to: ${list(a.network, 'nowhere')}`,
+    `  Secrets:  ${a.secrets.length ? `${list(a.secrets, '')}: deleted from the secret store${keepData ? ' (also with --keep-data)' : ''}` : 'none'}`,
+    `  Data:     ${keepData ? 'kept on this computer (a later install of the same name starts empty)' : 'deleted for every account'}`,
   ].join('\n');
 }
 

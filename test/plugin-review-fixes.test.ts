@@ -366,7 +366,7 @@ describe('#10 the questions show every field as one line', { skip: !canSymlink }
     const entry = install();
     const evil: LockEntry = { ...entry, version: '1.0.0\n  Data:    kept', revision: 'x\u001b]0;t\u0007', source: { type: 'local', path: '/a\nb' } };
     const q = removeQuestion(evil, false);
-    expect(q.split('\n')).toHaveLength(4);
+    expect(q.split('\n')).toHaveLength(9);
     expect(q).not.toMatch(/[\u001b\u0007]/);
     expect(q.split('\n').filter(l => l.startsWith('  Data:'))).toHaveLength(1);
   });
@@ -390,7 +390,8 @@ describe('#8 the MCP request keeps --expect and the mock context (P4: install/up
     process.env.TG_MOCK = join(root, 'my state.json');
     try {
       expect(terminalCommand(['plugin', 'remove', 'tone-of-voice'], { onPath: () => true, platform: 'linux' }))
-        .toBe(`TG_MOCK='${join(root, 'my state.json')}' TG_PROFILE=plugin-fixes telegram plugin remove tone-of-voice`);
+        // The effective profile (a mock run uses "mock" whatever TG_PROFILE says), then the state file
+        .toBe(`TG_PROFILE=mock TG_MOCK='${join(root, 'my state.json')}' telegram plugin remove tone-of-voice`);
     } finally {
       delete process.env.TG_MOCK;
     }

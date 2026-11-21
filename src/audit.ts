@@ -13,6 +13,8 @@ export interface AuditEntry {
     success: boolean;
     messageId?: number;
     error?: string;
+    /** A plugin change the human confirmed that did not happen: why, in one line (never a secret) */
+    reason?: string;
   };
   /** Set by the write guard: the profile's mode and, in "ask" mode, how this write was approved */
   writeMode?: 'ask' | 'on';

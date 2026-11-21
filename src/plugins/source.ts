@@ -34,7 +34,34 @@ export function parseSource(text: string): Source {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) || /^(npm|gitlab|git|http|https):/i.test(text)) {
     throw usageError(`Unsupported plugin source "${text}"`, 'Plugins install from github:owner/repo[@ref] or a local folder.');
   }
+  assertLocalPath(text);
   return { type: 'local', path: text };
+}
+
+const DEVICE_RE = /^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3]|conin\$|conout\$)$/i;
+
+/**
+ * Why a folder path is not a plugin source on this computer, judged as Windows would read it on
+ * every platform (the path may come from a model, and the check runs before any file is touched):
+ * a network share (`\\server\share`, `//server/share`) would make Windows connect to that server
+ * and offer the user's credentials before anyone was asked; the namespaces `\\?\`, `\\.\` and
+ * `\??\` and device names (CON, NUL, COM1, …, in any part of the path) are no folders either.
+ */
+export function localPathProblem(path: string): string | undefined {
+  const p = path.replace(/\//g, '\\');
+  if (p.startsWith('\\\\')) return p.startsWith('\\\\?\\') || p.startsWith('\\\\.\\') ? 'a Windows device or namespace path' : 'a network path (a share on another computer)';
+  if (p.startsWith('\\??\\')) return 'a Windows device or namespace path';
+  for (const part of p.split('\\')) {
+    const base = part.split('.')[0].replace(/[ .]+$/, '').split(':')[0];
+    if (DEVICE_RE.test(base)) return 'a Windows device name';
+  }
+  return undefined;
+}
+
+/** Refuses a network, namespace or device path before anything reads it (localPathProblem). */
+export function assertLocalPath(path: string): void {
+  const why = localPathProblem(path);
+  if (why) throw usageError(`"${path}" is ${why}, not a plugin folder`, 'Give a folder on this computer\'s own disk that holds tg-plugin.json, or github:owner/repo.');
 }
 
 export function sourceLabel(s: Source): string {
@@ -152,6 +179,8 @@ function readLocalFile(root: string, rel: string, maxBytes: number): Uint8Array 
 
 /** A snapshot of a local folder: the listed files only, hashed; the revision is their combined hash. */
 export function readLocalSnapshot(path: string, cliVersion = VERSION): Snapshot {
+  // Before the first file system call: a recorded path is checked again as well
+  assertLocalPath(path);
   let root: string;
   try {
     root = realpathSync(resolve(path));
@@ -175,6 +204,19 @@ export function readLocalSnapshot(path: string, cliVersion = VERSION): Snapshot 
 // ---------- GitHub ----------
 
 export const GITHUB_API = 'https://api.github.com';
+
+/**
+ * The signal of one GitHub request: its own 30 s timeout, or the caller's cancellation (a cancelled
+ * MCP call). Combined by hand, since Node 20.0 has no AbortSignal.any; `done` lets go of both.
+ */
+function requestSignal(outer?: AbortSignal): { signal: AbortSignal; done: () => void } {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error('timed out after 30 s')), 30_000);
+  const onAbort = () => ctl.abort(new Error('cancelled'));
+  if (outer?.aborted) onAbort();
+  else outer?.addEventListener('abort', onAbort, { once: true });
+  return { signal: ctl.signal, done: () => { clearTimeout(timer); outer?.removeEventListener('abort', onAbort); } };
+}
 export type Fetch = (url: string, init: { headers: Record<string, string>; signal?: AbortSignal }) => Promise<{
   ok: boolean; status: number; headers: { get(name: string): string | null }; json(): Promise<unknown>;
 }>;
@@ -189,28 +231,41 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
  * submodule is refused, sizes are checked before anything is downloaded) and fetched as a git blob,
  * whose SHA-1 is verified. No token is sent. `fetchImpl` is replaced in tests.
  */
-export async function fetchGithubSnapshot(source: Extract<Source, { type: 'github' }>, fetchImpl: Fetch = fetch as unknown as Fetch, cliVersion = VERSION): Promise<Snapshot> {
+export async function fetchGithubSnapshot(source: Extract<Source, { type: 'github' }>, fetchImpl: Fetch = fetch as unknown as Fetch, cliVersion = VERSION, signal?: AbortSignal): Promise<Snapshot> {
   const label = sourceLabel(source);
+  const cancelled = () => new CliError(`Fetching ${label} from GitHub was cancelled`, 'cancelled', EXIT.ERROR);
   const get = async (path: string): Promise<unknown> => {
-    let res: Awaited<ReturnType<Fetch>>;
+    if (signal?.aborted) throw cancelled();
+    const req = requestSignal(signal);
     try {
-      res = await fetchImpl(`${GITHUB_API}${path}`, {
-        headers: { Accept: 'application/vnd.github+json', 'User-Agent': `better-tg-cli/${VERSION}`, 'X-GitHub-Api-Version': '2022-11-28' },
-        signal: AbortSignal.timeout(30_000),
-      });
-    } catch (e) {
-      throw new CliError(`Could not reach GitHub for ${label}: ${(e as Error).message}`, 'network', EXIT.ERROR);
+      let res: Awaited<ReturnType<Fetch>>;
+      try {
+        res = await fetchImpl(`${GITHUB_API}${path}`, {
+          headers: { Accept: 'application/vnd.github+json', 'User-Agent': `better-tg-cli/${VERSION}`, 'X-GitHub-Api-Version': '2022-11-28' },
+          signal: req.signal,
+        });
+      } catch (e) {
+        if (signal?.aborted) throw cancelled();
+        throw new CliError(`Could not reach GitHub for ${label}: ${(e as Error).message}`, 'network', EXIT.ERROR);
+      }
+      if (res.status === 404) throw new CliError(`Not found on GitHub: ${label} (the repository must be public, the ref must exist)`, 'plugin_source_not_found', EXIT.ERROR);
+      if ((res.status === 403 || res.status === 429) && (res.headers.get('x-ratelimit-remaining') === '0' || res.status === 429)) {
+        const reset = Number(res.headers.get('x-ratelimit-reset'));
+        const wait = Number.isFinite(reset) && reset > 0 ? Math.max(0, Math.ceil(reset - Date.now() / 1000)) : undefined;
+        throw new CliError('GitHub API rate limit reached (60 requests an hour without a login)', 'rate_limited', EXIT.ERROR, {
+          ...(wait !== undefined ? { retryAfterSeconds: wait, hint: `Try again in ${Math.ceil(wait / 60)} min.` } : {}),
+        });
+      }
+      if (!res.ok) throw new CliError(`GitHub answered ${res.status} for ${label}`, 'github_error', EXIT.ERROR);
+      try {
+        return await res.json();
+      } catch (e) {
+        if (signal?.aborted) throw cancelled();
+        throw e;
+      }
+    } finally {
+      req.done();
     }
-    if (res.status === 404) throw new CliError(`Not found on GitHub: ${label} (the repository must be public, the ref must exist)`, 'plugin_source_not_found', EXIT.ERROR);
-    if ((res.status === 403 || res.status === 429) && (res.headers.get('x-ratelimit-remaining') === '0' || res.status === 429)) {
-      const reset = Number(res.headers.get('x-ratelimit-reset'));
-      const wait = Number.isFinite(reset) && reset > 0 ? Math.max(0, Math.ceil(reset - Date.now() / 1000)) : undefined;
-      throw new CliError('GitHub API rate limit reached (60 requests an hour without a login)', 'rate_limited', EXIT.ERROR, {
-        ...(wait !== undefined ? { retryAfterSeconds: wait, hint: `Try again in ${Math.ceil(wait / 60)} min.` } : {}),
-      });
-    }
-    if (!res.ok) throw new CliError(`GitHub answered ${res.status} for ${label}`, 'github_error', EXIT.ERROR);
-    return res.json();
   };
   const bad = (what: string) => new CliError(`Unexpected answer from GitHub (${what}) for ${label}`, 'github_error', EXIT.ERROR);
 
@@ -292,7 +347,8 @@ export async function fetchGithubSnapshot(source: Extract<Source, { type: 'githu
   let official = false;
   let officialNote: string | undefined;
   if (OFFICIAL_OWNERS.includes(owner)) {
-    official = await publishedBy(fetchImpl, base, sha, source.ref, repo.default_branch);
+    official = await publishedBy(fetchImpl, base, sha, source.ref, repo.default_branch, signal);
+    if (signal?.aborted) throw cancelled();
     if (!official) officialNote = `commit ${sha.slice(0, 12)} could not be confirmed on a branch or tag of ${owner}/${name} (it may come from a fork)`;
   }
   const snap = finish({ type: 'github', owner, repo: name, ...(source.ref ? { ref: source.ref } : {}), commit: sha }, sha, manifestBytes, files, official, cliVersion);
@@ -304,18 +360,22 @@ export async function fetchGithubSnapshot(source: Extract<Source, { type: 'githu
  * its branches or tags (annotated tags peeled) pointing at it, or the commit is in the history of its
  * default branch (compare: identical or behind). Any other answer or error means no.
  */
-async function publishedBy(fetchImpl: Fetch, base: string, sha: string, ref: string | undefined, defaultBranch: string): Promise<boolean> {
+async function publishedBy(fetchImpl: Fetch, base: string, sha: string, ref: string | undefined, defaultBranch: string, signal?: AbortSignal): Promise<boolean> {
   const get = async (path: string): Promise<Record<string, unknown> | undefined> => {
+    if (signal?.aborted) return undefined;
+    const req = requestSignal(signal);
     try {
       const res = await fetchImpl(`${GITHUB_API}${path}`, {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': `better-tg-cli/${VERSION}`, 'X-GitHub-Api-Version': '2022-11-28' },
-        signal: AbortSignal.timeout(30_000),
+        signal: req.signal,
       });
       if (!res.ok) return undefined;
       const body = await res.json();
       return isObj(body) ? body : undefined;
     } catch {
       return undefined;
+    } finally {
+      req.done();
     }
   };
   const peel = async (obj: unknown): Promise<string | undefined> => {

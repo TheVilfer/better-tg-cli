@@ -1,8 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import {
-  closeSync, constants, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync,
-} from 'node:fs';
-import { hostname } from 'node:os';
+import { mkdirSync, renameSync } from 'node:fs';
+import { breakStale, lockToken, releaseLock, tryLock, withLockFile } from '../file-lock.js';
 import { join } from 'node:path';
 import { configDir, isMock } from '../paths.js';
 import { CliError, EXIT } from '../errors.js';
@@ -15,6 +13,7 @@ import {
   type Effect, type Manifest, type Permission,
 } from './manifest.js';
 import { sha256, type ResolvedSource, type Snapshot } from './source.js';
+import { GEN_RE, parseSlotText, secretGenerations, slotText } from './secret-slots.js';
 import {
   anchor, listDir, readRegular, removeRegular, removeTree, safeDir, UnsafePath, writeRegular,
 } from './safe-fs.js';
@@ -89,6 +88,12 @@ export interface LockEntry {
   files: Record<string, string>;
   /** What the human accepted at install */
   accepted: { permissions: Permission[]; effects: Effect[]; network: string[]; secrets: string[] };
+  /**
+   * The generation of each declared secret's inject rule, by name (secret-slots.ts): the store key
+   * its value lives under. Absent in an entry written before generations (then derived from the
+   * verified manifest).
+   */
+  secrets?: Record<string, string>;
 }
 
 interface Lock { lockfileVersion: 1; plugins: Record<string, LockEntry> }
@@ -104,7 +109,12 @@ export const own = (o: object, k: string): boolean => Object.hasOwn(o, k);
 // ---------- the registry key ----------
 
 /** Where the registry key lives; tests replace it (an in-memory store, or one that is unavailable). */
-export interface KeyStore { available(): boolean; get(): { ok: true; value: string | null } | { ok: false; reason: string }; set(value: string): boolean }
+export interface KeyStore {
+  available(): boolean;
+  /** `fresh`: never a copy cached in this process (DPAPI), for a read that decides whether to make a key */
+  get(fresh?: boolean): { ok: true; value: string | null } | { ok: false; reason: string };
+  set(value: string): boolean;
+}
 
 export const storeDeps: {
   keyStore?: KeyStore; lockTimeoutMs: number; lockStaleMs: number;
@@ -126,11 +136,16 @@ const mockKeyStore: KeyStore = {
   },
 };
 
-const secretKeyStore: KeyStore = {
-  available: isSecretStoreAvailable,
-  get: () => secretGetStrict(KEY_NAME),
-  set: value => secretSet(KEY_NAME, value),
-};
+/** The registry key in a secret store (src/secrets.ts; a test passes the DPAPI functions over a fake crypter). */
+export function backendKeyStore(b: { available(): boolean; getStrict(key: string, fresh: boolean): ReturnType<KeyStore['get']>; set(key: string, value: string): boolean }): KeyStore {
+  return { available: () => b.available(), get: (fresh = false) => b.getStrict(KEY_NAME, fresh), set: value => b.set(KEY_NAME, value) };
+}
+
+const secretKeyStore = backendKeyStore({
+  available: () => isSecretStoreAvailable(),
+  getStrict: (key, fresh) => secretGetStrict(key, false, fresh),
+  set: (key, value) => secretSet(key, value),
+});
 
 const keyStore = (): KeyStore => storeDeps.keyStore ?? (isMock() ? mockKeyStore : secretKeyStore);
 
@@ -141,23 +156,47 @@ const storeUnavailable = (why: string) => new CliError(
 
 /**
  * The profile's registry key. `create` makes one at the first install; reads never do, so a
- * registry without its key in the store is refused instead of being signed anew.
+ * registry without its key in the store is refused instead of being signed anew. Before making one
+ * the store is read afresh (a key another process made since this one cached "none" is used), and a
+ * key is never made while a registry with plugins exists: that registry was signed with a key this
+ * process cannot see, and a new key would drop every installation in it.
  */
 function registryKey(create: boolean): Buffer | undefined {
   const store = keyStore();
   if (!store.available()) throw storeUnavailable('no macOS Keychain, Secret Service, DPAPI or 1Password here');
-  const r = store.get();
+  const r = store.get(create);
   if (!r.ok) throw storeUnavailable(r.reason);
   if (r.value) {
     if (!/^[0-9a-f]{64}$/.test(r.value)) throw storeUnavailable('the plugin registry key in it is damaged');
     return Buffer.from(r.value, 'hex');
   }
   if (!create) return undefined;
+  if (registryHasPlugins()) throw lockInvalid('the registry key is not in this profile\'s secret store, and a new one is not made over a registry that has plugins');
   const fresh = randomBytes(32).toString('hex');
   if (!store.set(fresh)) throw storeUnavailable('it did not save the plugin registry key');
   const back = store.get();
   if (!back.ok || back.value !== fresh) throw storeUnavailable('the plugin registry key did not read back');
   return Buffer.from(fresh, 'hex');
+}
+
+/** A registry file with at least one plugin, or one that does not parse (read without its key, never trusted). */
+function registryHasPlugins(): boolean {
+  const root = home();
+  if (!root) return false;
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = readRegular(root, `plugins/${LOCK_FILE}`, { maxBytes: LOCK_BYTES, singleLink: true });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    return true;
+  }
+  if (!bytes || !bytes.length) return false;
+  try {
+    const raw = JSON.parse(new TextDecoder().decode(bytes)) as { plugins?: unknown };
+    return !(typeof raw?.plugins === 'object' && raw.plugins !== null && !Array.isArray(raw.plugins) && !Object.keys(raw.plugins).length);
+  } catch {
+    return true;
+  }
 }
 
 /** JSON with sorted keys: the form the MAC covers, the same for the object written and the one read back. */
@@ -177,68 +216,6 @@ export function lockMac(key: Buffer, body: { lockfileVersion: 1; plugins: unknow
 
 // ---------- the inter-process lock ----------
 
-const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-const O_NOFOLLOW = (constants as Record<string, number | undefined>).O_NOFOLLOW ?? 0;
-
-/** A lock left by a process that is gone (same computer) or older than lockStaleMs is taken over. */
-function breakStale(path: string): boolean {
-  let seen: string;
-  let age: number;
-  try {
-    const st = lstatSync(path);
-    age = Date.now() - st.mtimeMs;
-    seen = st.isFile() ? readFileSync(path, 'utf8') : '';
-  } catch {
-    return true; // gone meanwhile: try again
-  }
-  const [pid, host] = seen.split(' ');
-  const dead = host === hostname() && /^\d+$/.test(pid) && !alive(Number(pid));
-  if (!dead && age < storeDeps.lockStaleMs && !(seen === '' && age > 5_000)) return false;
-  // Moved aside first: two processes breaking it at once cannot both delete a fresh lock
-  const aside = `${path}.stale-${randomUUID().slice(0, 8)}`;
-  try {
-    renameSync(path, aside);
-  } catch {
-    return true;
-  }
-  let got = '';
-  try { got = readFileSync(aside, 'utf8'); } catch { /* vanished */ }
-  if (got !== seen) {
-    // Someone else's fresh lock: put it back where it was, unless a newer one is there already
-    try { linkSync(aside, path); } catch { /* a newer lock holds the place */ }
-  }
-  rmSync(aside, { force: true });
-  return true;
-}
-
-/** One attempt at the lock file: true when taken, false when someone else holds it. */
-function tryLock(path: string, token: string): boolean {
-  try {
-    const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW, 0o600);
-    try { writeSync(fd, token); } finally { closeSync(fd); }
-    return true;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-    return false;
-  }
-}
-
-function releaseLock(path: string, token: string): void {
-  try {
-    if (readFileSync(path, 'utf8') === token) unlinkSync(path);
-  } catch { /* already gone */ }
-}
-
 const lockBusy = (path: string) => new CliError('Another telegram process is changing plugins right now', 'plugin_busy', EXIT.ERROR, {
   hint: `Try again in a moment. If no other telegram process is running, delete ${path}.`,
 });
@@ -256,20 +233,14 @@ export function withPluginLock<T>(fn: () => T): T {
   if (lockHeld) return fn();
   const root = home(true)!;
   const path = join(root, '.plugins.lock');
-  const token = `${process.pid} ${hostname()} ${randomUUID()}`;
-  const deadline = Date.now() + storeDeps.lockTimeoutMs;
-  while (!tryLock(path, token)) {
-    if (breakStale(path)) continue;
-    if (Date.now() >= deadline) throw lockBusy(path);
-    sleep(50);
-  }
-  lockHeld = true;
-  try {
-    return fn();
-  } finally {
-    lockHeld = false;
-    releaseLock(path, token);
-  }
+  return withLockFile(path, { timeoutMs: storeDeps.lockTimeoutMs, staleMs: storeDeps.lockStaleMs, busy: () => lockBusy(path) }, () => {
+    lockHeld = true;
+    try {
+      return fn();
+    } finally {
+      lockHeld = false;
+    }
+  });
 }
 
 /**
@@ -296,12 +267,12 @@ export function assertGuard(guard: WriteGuard | undefined, what: string): void {
 async function withPluginLockGuarded<T>(guard: WriteGuard, what: string, fn: () => T): Promise<T> {
   const root = home(true)!;
   const path = join(root, '.plugins.lock');
-  const token = `${process.pid} ${hostname()} ${randomUUID()}`;
+  const token = lockToken();
   const busyAt = Date.now() + storeDeps.lockTimeoutMs;
   for (;;) {
     assertGuard(guard, what);
     if (tryLock(path, token)) break;
-    if (breakStale(path)) continue;
+    if (breakStale(path, storeDeps.lockStaleMs)) continue;
     if (Date.now() >= busyAt) throw lockBusy(path);
     await new Promise(r => setTimeout(r, Math.max(1, Math.min(50, guard.deadline - Date.now()))));
   }
@@ -345,7 +316,17 @@ function checkEntry(key: string, e: unknown): LockEntry {
     || typeof x.official !== 'boolean' || !checkSource(x.source)) throw bad('missing fields');
   if (typeof x.accepted !== 'object' || x.accepted === null || !strings(x.accepted.permissions) || !strings(x.accepted.effects)
     || !strings(x.accepted.network) || !strings(x.accepted.secrets)) throw bad('bad accepted permissions');
-  return { ...x, files };
+  let secrets: Record<string, string> | undefined;
+  if (x.secrets !== undefined) {
+    if (typeof x.secrets !== 'object' || x.secrets === null || Array.isArray(x.secrets)) throw bad('bad secret generations');
+    secrets = bare<string>();
+    for (const [n, g] of Object.entries(x.secrets)) {
+      if (!KEY_RE.test(n) || !x.accepted.secrets.includes(n) || typeof g !== 'string' || !GEN_RE.test(g)) throw bad('bad secret generations');
+      secrets[n] = g;
+    }
+    if (!sameSet(Object.keys(secrets), x.accepted.secrets)) throw bad('bad secret generations');
+  }
+  return { ...x, files, ...(secrets ? { secrets } : {}) };
 }
 
 const emptyLock = (): Lock => ({ lockfileVersion: 1, plugins: bare<LockEntry>() });
@@ -418,10 +399,17 @@ export function findEntry(name: string): LockEntry {
   return plugins[name];
 }
 
-/** The registered installation is still `entry` (same installId and revision); otherwise nothing is changed. */
+/**
+ * The same installation and snapshot: installId, revision and the snapshot folder (an update back to
+ * an earlier revision is another snapshot, so what was shown or approved for the first one is stale).
+ */
+export const sameInstall = (a: Pick<LockEntry, 'installId' | 'revision' | 'snapshot'>, b: Pick<LockEntry, 'installId' | 'revision' | 'snapshot'>): boolean =>
+  a.installId === b.installId && a.revision === b.revision && snapshotId(a) === snapshotId(b);
+
+/** The registered installation is still `entry` (same installId, revision and snapshot); otherwise nothing is changed. */
 function assertCurrent(lock: Lock, entry: LockEntry, nothing: string): LockEntry {
   const cur = own(lock.plugins, entry.name) ? lock.plugins[entry.name] : undefined;
-  if (!cur || cur.installId !== entry.installId || cur.revision !== entry.revision) {
+  if (!cur || !sameInstall(cur, entry)) {
     throw new CliError(`Plugin "${entry.name}" was removed or installed again meanwhile; ${nothing}`, 'plugin_changed', EXIT.ERROR, {
       hint: 'Check `telegram plugin list`, then run the command again.',
     });
@@ -496,6 +484,10 @@ export function verifyInstalled(entry: LockEntry, cliVersion = VERSION): Verifie
   const a = entry.accepted;
   if (!sameSet(m.permissions ?? [], a.permissions) || !sameSet(allEffects(m), a.effects) || !sameSet(m.network ?? [], a.network)
     || !sameSet((m.secrets ?? []).map(s => s.name), a.secrets)) return fail('it declares permissions that were not accepted');
+  if (entry.secrets) {
+    const gens = secretGenerations(m);
+    if (Object.keys(gens).some(n => entry.secrets![n] !== gens[n])) return fail('where its secrets go differs from the lock');
+  }
   return { ok: true, entry, manifest: m, files, ...(check.unsupported ? { unsupported: check.unsupported } : {}) };
 }
 
@@ -585,7 +577,7 @@ export function commitInstall(snapshot: Snapshot, now = new Date()): LockEntry {
     const entry: LockEntry = {
       name, version: m.version, installId, specVersion: snapshot.specVersion, source: snapshot.source, revision: snapshot.revision,
       official: snapshot.official, installedAt: now.toISOString(), manifest: hashes[MANIFEST_FILE], files: hashes,
-      accepted: acceptedOf(m),
+      accepted: acceptedOf(m), secrets: secretGenerations(m),
     };
     const plugins = bare<LockEntry>();
     for (const [k, v] of Object.entries(lock.plugins)) plugins[k] = v;
@@ -602,14 +594,17 @@ export function commitInstall(snapshot: Snapshot, now = new Date()): LockEntry {
 
 /**
  * Switches an installation to a new snapshot the human confirmed, under the lock and only while
- * `old` is still the registered installation (same installId and revision; `plugin_changed`
- * otherwise). The installId stays, so data, settings and secrets stay attached. `beforeSwitch` runs
- * under the same lock once the new snapshot is written and before the registry switches (the
- * secrets that must be set again are deleted there: if that fails, the old snapshot stays). The new snapshot is written beside the old one (plugins/<new folder>/), and the
- * signed registry write is the one commit point: a failure or a crash before it leaves the old
- * snapshot registered and working; the old folder is deleted after it.
+ * `old` is still the registered installation (same installId, revision and snapshot;
+ * `plugin_changed` otherwise). The installId stays, so data, settings and the secrets whose inject
+ * rule did not change stay attached. The new snapshot is written beside the old one
+ * (plugins/<new folder>/), then `beforeSwitch` runs (it clears the new generations of changed
+ * secrets: never a live value), then the old generations to drop (`retire`, `name:gen`) are recorded
+ * in the pending cleanup, and the signed registry write is the one commit point: a failure or a
+ * crash before it leaves the old snapshot registered and working with all its secrets (the record
+ * names live values then, which the cleanup never deletes). The old folder is deleted after it; the
+ * caller deletes the retired values (cleanupPendingSecrets), retried by later commands.
  */
-export function commitUpdate(old: LockEntry, snapshot: Snapshot, beforeSwitch: () => void = () => {}, now = new Date()): LockEntry {
+export function commitUpdate(old: LockEntry, snapshot: Snapshot, o: { beforeSwitch?: () => void; retire?: string[] } = {}, now = new Date()): LockEntry {
   const name = snapshot.manifest.name;
   if (name !== old.name) throw new Error('an update keeps the plugin name');
   const hashes = snapshotHashes(snapshot);
@@ -625,14 +620,15 @@ export function commitUpdate(old: LockEntry, snapshot: Snapshot, beforeSwitch: (
     const entry: LockEntry = {
       ...old, version: m.version, specVersion: snapshot.specVersion, source: snapshot.source, revision: snapshot.revision,
       official: snapshot.official, manifest: hashes[MANIFEST_FILE], files: hashes, accepted: acceptedOf(m),
-      snapshot: folder, updatedAt: now.toISOString(),
+      secrets: secretGenerations(m), snapshot: folder, updatedAt: now.toISOString(),
     };
     const plugins = bare<LockEntry>();
     for (const [k, v] of Object.entries(lock.plugins)) plugins[k] = v;
     plugins[name] = entry;
     try {
       // After the new snapshot is safely written, before the switch: a failure here leaves the old one
-      beforeSwitch();
+      o.beforeSwitch?.();
+      if (o.retire?.length) addPendingSecrets({ name, installId: old.installId, secrets: o.retire });
       storeDeps.afterSnapshot?.();
       writeLock(plugins, key);
     } catch (e) {
@@ -652,7 +648,7 @@ export function commitUpdate(old: LockEntry, snapshot: Snapshot, beforeSwitch: (
  */
 /**
  * Runs `fn` under the plugin lock only while `entry` is still the registered installation (same
- * installId and revision); otherwise `plugin_changed` and `fn` never runs.
+ * installId, revision and snapshot); otherwise `plugin_changed` and `fn` never runs.
  */
 export function withCurrentInstall<T>(entry: LockEntry, nothing: string, fn: () => T): T {
   return withPluginLock(() => {
@@ -668,7 +664,9 @@ export function removeInstall(entry: LockEntry, keepData: boolean): void {
     assertCurrent(lock, entry, 'nothing was removed');
     // Its secrets are deleted after the lock is let go (the store is slow and may fail): recorded
     // first, in the same section that drops the entry, so a deletion that fails is retried later
-    if (entry.accepted.secrets.length) addPendingSecrets({ name: entry.name, installId: entry.installId, secrets: [...entry.accepted.secrets] });
+    // Its generations, and for an entry written before generations the bare names it used then
+    const slots = [...(installedSlots(entry) ?? []), ...(entry.secrets ? [] : entry.accepted.secrets)];
+    if (slots.length) addPendingSecrets({ name: entry.name, installId: entry.installId, secrets: slots });
     const plugins = bare<LockEntry>();
     for (const [k, v] of Object.entries(lock.plugins)) if (k !== entry.name) plugins[k] = v;
     writeLock(plugins, key!);
@@ -682,8 +680,23 @@ export function removeInstall(entry: LockEntry, keepData: boolean): void {
 
 // ---------- secrets of removed installations, still to delete ----------
 
-/** Secrets of a removed installation that are not deleted from the secret store yet. */
+/**
+ * Stored secret values to delete: of a removed installation, or old generations an update replaced.
+ * `secrets` are slots, `name:gen` (a bare name: the key of an install made before generations).
+ */
 export interface PendingSecrets { name: string; installId: string; secrets: string[] }
+
+/**
+ * The slots (`name:gen`) an installation's runs read: pinned in its entry, or derived from its
+ * verified manifest for an entry written before generations; undefined when neither can be told.
+ */
+export function installedSlots(entry: LockEntry): string[] | undefined {
+  const gens = entry.secrets ?? (() => {
+    const v = verifyInstalled(entry);
+    return v.ok ? secretGenerations(v.manifest) : undefined;
+  })();
+  return gens && Object.entries(gens).map(([name, gen]) => slotText({ name, gen }));
+}
 
 const PENDING_REL = 'plugin-state/pending-secret-cleanup.json';
 
@@ -707,7 +720,7 @@ export function pendingSecrets(): PendingSecrets[] {
   }
   if (!Array.isArray(parsed)) return [];
   return parsed.filter((p): p is PendingSecrets => !!p && typeof p === 'object' && typeof p.name === 'string' && typeof p.installId === 'string'
-    && UUID_RE.test(p.installId) && strings(p.secrets) && p.secrets.every((x: string) => KEY_RE.test(x)));
+    && UUID_RE.test(p.installId) && strings(p.secrets) && p.secrets.every((x: string) => parseSlotText(x) !== undefined));
 }
 
 function writePending(list: PendingSecrets[]): void {
@@ -720,11 +733,17 @@ function writePending(list: PendingSecrets[]): void {
   }
 }
 
+/** Adds slots to an installation's record (merged: an update, then a remove, both keep theirs). */
 function addPendingSecrets(p: PendingSecrets): void {
-  withPluginLock(() => writePending([...pendingSecrets().filter(x => x.installId !== p.installId), p]));
+  withPluginLock(() => {
+    const list = pendingSecrets();
+    const had = list.find(x => x.installId === p.installId);
+    const merged = { ...p, secrets: [...new Set([...(had?.secrets ?? []), ...p.secrets])] };
+    writePending([...list.filter(x => x.installId !== p.installId), merged]);
+  });
 }
 
-/** After a deletion attempt: `left` are the secrets of this installation still in the store. */
+/** After a deletion attempt: `left` are the slots of this installation still to delete. */
 export function settlePendingSecrets(installId: string, left: string[]): void {
   withPluginLock(() => {
     const list = pendingSecrets();
@@ -735,17 +754,17 @@ export function settlePendingSecrets(installId: string, left: string[]): void {
 
 // ---------- the installation a write was approved for ----------
 
-let approvedInstall: { name: string; installId: string; revision: string } | undefined;
+let approvedInstall: Pick<LockEntry, 'name' | 'installId' | 'revision' | 'snapshot'> | undefined;
 
-/** Called when an approval of `plugin data set/delete` held: the write must reach this very installation. */
-export function expectInstall(e: Pick<LockEntry, 'name' | 'installId' | 'revision'>): void {
-  approvedInstall = { name: e.name, installId: e.installId, revision: e.revision };
+/** Called when an approval of `plugin data set/delete` held: the write must reach this very installation and snapshot. */
+export function expectInstall(e: Pick<LockEntry, 'name' | 'installId' | 'revision' | 'snapshot'>): void {
+  approvedInstall = { name: e.name, installId: e.installId, revision: e.revision, snapshot: snapshotId(e) };
 }
 
 /** Refuses an installation other than the approved one (removed and installed again since the approval). */
 export function assertApprovedInstall(entry: LockEntry): void {
   const a = approvedInstall;
-  if (a && (a.name !== entry.name || a.installId !== entry.installId || a.revision !== entry.revision)) {
+  if (a && (a.name !== entry.name || !sameInstall(a, entry))) {
     throw new CliError(`The approval was for another installation of "${a.name}" (${a.installId}); nothing was changed`, 'plugin_changed', EXIT.ERROR, {
       hint: 'Show the user the action again and ask for a new approval.',
     });

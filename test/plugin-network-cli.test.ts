@@ -17,6 +17,7 @@ const env = await vi.hoisted(async () => {
   return { root };
 });
 
+import { secretGeneration } from '../src/plugins/secret-slots.js';
 import { childEnv, classifyCall, handleMessage, planCall, result, setKnownCommands, type RunOutput } from '../src/mcp.js';
 
 const LAB = resolve('test/fixtures/plugins/net-lab');
@@ -57,10 +58,12 @@ function mockHttp(home: string, fixtures: unknown[]) {
   writeFileSync(join(plugins(home), 'mock-http', 'api.json'), JSON.stringify(fixtures));
 }
 /** A secret as the mock account keeps it (its own file, never a real store), under the core's key. */
+/** A value stored as `plugin secret set` would: under the generation of the installed manifest's inject rule. */
 function mockSecret(home: string, installId: string, name: string, value: string) {
   const file = join(plugins(home), 'plugin-secrets.json');
   const all = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
-  all[`plugin-secret-mock-${installId}-${name}`] = value;
+  const decl = JSON.parse(readFileSync(join(LAB, 'tg-plugin.json'), 'utf8')).secrets.find((d: { name: string }) => d.name === name);
+  all[`plugin-secret-mock-${installId}-${name}-g${secretGeneration(decl)}`] = value;
   writeFileSync(file, JSON.stringify(all), { mode: 0o600 });
 }
 const profileDir = (home: string, name: string) => (process.platform === 'win32' ? join(home, 'AppData', name) : join(home, '.config', name));
@@ -146,7 +149,7 @@ describe('the guard in each mode and transport (mock account)', { timeout: 60_00
     const { installId, revision } = install(h);
     mockHttp(h, ECHO);
     // As the server starts the child: the installation it classified the call by
-    const r = fetch(h, 'https://api.example.com/v2/open', { TG_READ_ONLY: '1', TG_MCP: '1', TG_PLUGIN_EXPECT: `${installId} ${revision}` });
+    const r = fetch(h, 'https://api.example.com/v2/open', { TG_READ_ONLY: '1', TG_MCP: '1', TG_PLUGIN_EXPECT: `${installId} ${revision} ${installId}` });
     expect(r.code).toBe(1);
     expect(r.json.error.code).toBe('write_on_read_tool');
     expect(audit(h).filter(a => a.command === 'plugin run')).toEqual([]);

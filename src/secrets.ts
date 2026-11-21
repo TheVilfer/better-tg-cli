@@ -52,13 +52,14 @@ export function secretGet(key: string, fresh = false): string | null {
  * secretGet that tells a missing key ({ok: true, value: null}) from a failed read ({ok: false}).
  * `fileHasValue`: config.json5 holds this key too. 1Password can only tell "missing" by its error
  * text, so it may say "missing" only when nothing else could be used instead (see opGetStrict).
+ * `fresh`: as for secretGet (only DPAPI caches).
  */
-export function secretGetStrict(key: string, fileHasValue = false): StrictRead {
+export function secretGetStrict(key: string, fileHasValue = false, fresh = false): StrictRead {
   const provider = activeProvider();
   if (provider === 'op') return opGetStrict(key, fileHasValue);
   if (provider === 'keychain') return keychainGetStrict(key);
   if (provider === 'libsecret') return libsecretGetStrict(key);
-  if (provider === 'dpapi') return dpapiGetStrict(key);
+  if (provider === 'dpapi') return dpapiGetStrict(key, fresh);
   return { ok: false, reason: 'no secret store is available' };
 }
 

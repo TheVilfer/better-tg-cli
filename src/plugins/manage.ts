@@ -1,20 +1,21 @@
 import { createHash } from 'node:crypto';
-import { statSync } from 'node:fs';
-import { join } from 'node:path';
+import { accessSync, constants, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { auditLog } from '../audit.js';
 import { CliError, EXIT, usageError } from '../errors.js';
 import { isMock, profile } from '../paths.js';
+import { mockStatePath } from '../mock/world.js';
 import { VERSION } from '../version.js';
 import { oneLine } from '../approval-action.js';
 import { allEffects, type Manifest } from './manifest.js';
 import { pluginSource } from './catalog.js';
 import { fetchGithubSnapshot, parseSource, readLocalSnapshot, type Fetch, type Snapshot } from './source.js';
 import {
-  assertCanSignLater, commitInstall, commitUpdate, findEntry, own, pendingSecrets, readLock, removeInstall, settlePendingSecrets,
-  tampered, verifyInstalled, type LockEntry,
+  assertCanSignLater, commitInstall, commitUpdate, findEntry, installedSlots, own, pendingSecrets, readLock, removeInstall, settlePendingSecrets,
+  snapshotId, tampered, verifyInstalled, withPluginLock, type LockEntry,
 } from './store.js';
 import { installSummary, originLabel, removeQuestion, updateSummary, type UpdateDiff } from './human.js';
-import { deletePluginSecret, getPluginSecret } from './secrets.js';
+import { erasePluginSecret, parseSlotText, secretGeneration, secretGenerations, slotText } from './secrets.js';
 
 /**
  * Installing, updating and removing a plugin (docs/plugins.md §8 "The human", §9 "Update"), split in
@@ -38,6 +39,8 @@ export interface PrepareOptions {
   fetch?: Fetch; cliVersion?: string;
   /** Where the human was asked, for the audit entry */
   via?: 'terminal' | 'mcp';
+  /** Stops a GitHub fetch (a cancelled MCP call) */
+  signal?: AbortSignal;
 }
 
 export type Prepared =
@@ -68,7 +71,7 @@ async function takeSnapshot(source: ReturnType<typeof parseSource>, expect: stri
     if (expect !== undefined && !COMMIT_RE.test(expect)) throw usageError('--expect for a GitHub plugin is the commit SHA (40 hex characters); a folder takes its sha256-… revision');
     // Tests never reach GitHub: a test that forgot to inject its fetch fails here instead
     if (process.env.VITEST && !opts.fetch) throw new Error('A test reached the GitHub API: inject a fetch (pluginDeps.fetch / manageDeps.fetch)');
-    const snap = await fetchGithubSnapshot(source, opts.fetch, cli);
+    const snap = await fetchGithubSnapshot(source, opts.fetch, cli, opts.signal);
     if (expect !== undefined && snap.revision !== expect) {
       throw mismatch(`commit of ${originLabel(snap.source)}`, snap.revision, expect, 'The branch or tag moved since the command was made. Check the new commit, then run it again.');
     }
@@ -97,7 +100,7 @@ function digestOf(p: Draft): string {
     part(Object.keys(p.snapshot.hashes).sort().map(k => [k, p.snapshot.hashes[k]]));
     for (const [k, bytes] of [...p.snapshot.files].sort(([a], [b]) => (a < b ? -1 : 1))) { part(k); h.update(bytes); }
   }
-  if ('old' in p) part([p.old.installId, p.old.revision, p.old.snapshot ?? null]);
+  if ('old' in p) part([p.old.installId, p.old.revision, snapshotId(p.old)]);
   if (p.op === 'remove') part(p.keepData);
   return `sha256-${h.digest('base64')}`;
 }
@@ -128,15 +131,19 @@ export async function prepareInstall(sourceText: string, expect: string | undefi
 // ---------- update ----------
 
 const minus = (a: readonly string[], b: readonly string[]) => a.filter(x => !b.includes(x));
-const injectKey = (x: NonNullable<Manifest['secrets']>[number]) =>
-  JSON.stringify([x.inject.origin, x.inject.header, x.inject.format, x.inject.paths === undefined ? null : [...x.inject.paths]]);
 
-/** What a new manifest asks for beyond what was accepted for `old`, and which stored secrets must go. */
+/** The generations the old installation's secrets live under: pinned, or derived from its verified manifest. */
+const oldGenerations = (old: LockEntry, oldManifest: Manifest): Record<string, string> => old.secrets ?? secretGenerations(oldManifest);
+
+/**
+ * What a new manifest asks for beyond what was accepted for `old`, and which stored secrets must go:
+ * a secret whose inject rule changed (another generation, secret-slots.ts) or that was dropped.
+ */
 export function updateDiff(old: LockEntry, oldManifest: Manifest, m: Manifest): UpdateDiff {
   const a = old.accepted;
-  const was = new Map((oldManifest.secrets ?? []).map(x => [x.name, injectKey(x)]));
+  const was = oldGenerations(old, oldManifest);
   const secrets = m.secrets ?? [];
-  const changed = secrets.filter(x => a.secrets.includes(x.name) && was.get(x.name) !== injectKey(x)).map(x => x.name);
+  const changed = secrets.filter(x => a.secrets.includes(x.name) && was[x.name] !== secretGeneration(x)).map(x => x.name);
   const names = secrets.map(x => x.name);
   return {
     newly: {
@@ -174,8 +181,15 @@ export async function prepareUpdate(name: string, expect: string | undefined, op
   }
   if (source.type === 'local') {
     if (expect === undefined) {
-      throw new CliError(`The folder of "${name}" changed (${source.path}); updating from a folder takes the new content's hash`, 'expect_required', EXIT.USAGE, {
-        hint: `Check the folder with \`telegram plugin validate ${source.path}\`, then: telegram plugin update ${name} --expect <the revision it prints>`,
+      // The commands are built like every command for the human: argv, the binary, the profile and the platform's quoting
+      const validate = ['plugin', 'validate', source.path];
+      const check = terminalCommand(validate);
+      const update = terminalCommand(['plugin', 'update', name]);
+      throw new CliError(`The folder of "${name}" changed; updating from a folder takes the new content's hash`, 'expect_required', EXIT.USAGE, {
+        hint: check && update
+          ? `Check the folder in a terminal: ${check}\nThen: ${update} --expect <the revision it prints>`
+          : `The folder's path has characters that are not put into a command: run "plugin validate" on the folder in a terminal (typing its path), then "plugin update ${name} --expect <the revision it prints>".`,
+        fields: { validate },
       });
     }
     if (expect !== snap.revision) throw mismatch('folder\'s content', snap.revision, expect, 'Check what changed in the folder, then run it again.');
@@ -195,11 +209,25 @@ export async function prepareUpdate(name: string, expect: string | undefined, op
 
 // ---------- remove ----------
 
-export function prepareRemove(name: string, keepData: boolean): Extract<Prepared, { op: 'remove' }> {
+/** `--expect-install`: the installation and snapshot a remove command was made for, `<installId>:<snapshot>`. */
+export const EXPECT_INSTALL_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const installRef = (e: LockEntry): string => `${e.installId}:${snapshotId(e)}`;
+
+/**
+ * `expectInstall` (from a command made for the human): only that installation and snapshot is
+ * removed; one installed again under the name since, or updated, is `plugin_changed`.
+ */
+export function prepareRemove(name: string, keepData: boolean, expectInstall?: string): Extract<Prepared, { op: 'remove' }> {
+  if (expectInstall !== undefined && !EXPECT_INSTALL_RE.test(expectInstall)) throw usageError('--expect-install takes <installId>:<snapshot> as a command made for the user names it');
   const entry = findEntry(name);
+  if (expectInstall !== undefined && expectInstall !== installRef(entry)) {
+    throw new CliError(`Plugin "${name}" was installed again or updated since this command was made; nothing was removed`, 'plugin_changed', EXIT.ERROR, {
+      hint: `Check \`telegram plugin list\`; to remove the plugin installed now: telegram plugin remove ${name}`,
+    });
+  }
   return withDigest({
     op: 'remove' as const, name, question: removeQuestion(entry, keepData), old: entry, keepData,
-    argv: ['plugin', 'remove', name, ...(keepData ? ['--keep-data'] : [])],
+    argv: ['plugin', 'remove', name, ...(keepData ? ['--keep-data'] : []), '--expect-install', installRef(entry)],
   });
 }
 
@@ -215,6 +243,25 @@ const changedMeanwhile = (what: string) => new CliError(`${what} changed after i
  * the lock by commitInstall / commitUpdate / removeInstall). Writes the audit entry.
  */
 export function applyPrepared(p: Prepared, opts: PrepareOptions = {}): Record<string, unknown> {
+  try {
+    return applyChecked(p, opts);
+  } catch (e) {
+    // A change the human said yes to that did not happen is audited too, with why
+    const code = e instanceof CliError ? e.code : 'error';
+    const plugin = p.op === 'remove'
+      ? { name: p.name, version: p.old.version, revision: p.old.revision, installId: p.old.installId, keepData: p.keepData }
+      : { name: p.name, version: p.snapshot.manifest.version, revision: p.snapshot.revision, ...(p.op === 'update' ? { installId: p.old.installId, fromRevision: p.old.revision } : {}) };
+    try {
+      auditLog({
+        timestamp: new Date().toISOString(), command: `plugin ${p.op}`, target: p.name, plugin: { ...plugin, via: opts.via ?? 'terminal' },
+        result: { success: false, error: code, reason: oneLine(e instanceof Error ? e.message : String(e)).slice(0, 300) },
+      });
+    } catch { /* the error itself is what the caller reports */ }
+    throw e;
+  }
+}
+
+function applyChecked(p: Prepared, opts: PrepareOptions): Record<string, unknown> {
   const { digest, ...rest } = p;
   if (digestOf(rest) !== digest) throw changedMeanwhile('The prepared plugin change');
   if ('snapshot' in p && p.snapshot.source.type === 'local') {
@@ -244,23 +291,34 @@ export function applyPrepared(p: Prepared, opts: PrepareOptions = {}): Record<st
     };
   }
   if (p.op === 'update') {
-    const { old, snapshot: snap, diff } = p;
+    const { old, snapshot: snap, diff, oldManifest } = p;
     const reset = diff.reset.map(r => r.name);
-    // Deleted under the lock before the switch: a value the human gave for the old destination
-    // never reaches a new one, and a failure here leaves the old snapshot registered
-    const entry = commitUpdate(old, snap, () => {
-      for (const secret of reset) {
-        let gone = false;
-        try {
-          gone = getPluginSecret(old.installId, secret) === null || deletePluginSecret(old.installId, secret);
-        } catch { /* gone stays false */ }
-        if (!gone) {
-          throw new CliError(`Could not delete the stored secret ${secret} of "${old.name}", which the update must reset; nothing was updated`, 'secret_store_unavailable', EXIT.ERROR, {
-            hint: `Delete it yourself (telegram plugin secret rm ${old.name} ${secret}), then update again.`,
-          });
+    // Secrets live per generation of their inject rule: a changed rule is a new, empty generation
+    // (a value typed for the old destination never reaches the new one, and a run still on the old
+    // revision reads only the old generation). Nothing live is deleted before the registry switch;
+    // the old generations are recorded with it and deleted after, retried until the store agrees.
+    const was = oldGenerations(old, oldManifest);
+    const now = secretGenerations(snap.manifest);
+    const retire = [
+      ...Object.entries(was).filter(([n, g]) => now[n] !== g).map(([name, gen]) => slotText({ name, gen })),
+      // Values an install made before generations kept under the bare name: no run reads them any more
+      ...(old.secrets ? [] : old.accepted.secrets),
+    ];
+    const fresh = Object.entries(now).filter(([n, g]) => was[n] !== g).map(([name, gen]) => ({ name, gen }));
+    const entry = commitUpdate(old, snap, {
+      retire,
+      // A new generation must start empty (an update back to an earlier rule could find an old value there)
+      beforeSwitch: () => {
+        for (const slot of fresh) {
+          if (!erasePluginSecret(old.installId, slot)) {
+            throw new CliError(`Could not clear the secret store for ${slot.name} of "${old.name}"; nothing was updated`, 'secret_store_unavailable', EXIT.ERROR, {
+              hint: 'Check that the secret store answers (telegram check), then update again.',
+            });
+          }
         }
-      }
+      },
     });
+    const secretsLeft = cleanupPendingSecrets(x => x.installId === old.installId).get(old.installId) ?? [];
     const setAgain = diff.reset.filter(r => r.why === 'changed').map(r => r.name);
     auditLog({
       timestamp: at, command: 'plugin update', target: entry.name,
@@ -275,6 +333,8 @@ export function applyPrepared(p: Prepared, opts: PrepareOptions = {}): Record<st
       from: { version: old.version, revision: old.revision }, version: entry.version, revision: entry.revision, source: pluginSource(entry.name, entry.version),
       newlyAccepted: diff.newly, ...(diff.reset.length ? { secretsReset: diff.reset } : {}),
       ...(setAgain.length ? { mustSetAgain: setAgain.map(s => ['plugin', 'secret', 'set', entry.name, s]) } : {}),
+      // Old values the store did not delete yet: never read (another generation), retried by the next plugin command
+      ...(secretsLeft.length ? { secretsNotRemoved: secretsLeft } : {}),
     };
   }
   const { old, keepData } = p;
@@ -305,45 +365,54 @@ export function declined(p: Prepared, via: 'terminal' | 'mcp' = 'terminal'): Cli
 }
 
 /**
- * Deletes the secrets of removed installations that `plugin remove` recorded (its own, and any an
- * earlier remove could not delete); returns, per installation, the names still in the store. A
- * name is settled only once the store said it is gone.
+ * Deletes the stored secrets that `plugin remove` and `plugin update` recorded (a removed
+ * installation's, the old generations an update replaced, and any an earlier attempt could not
+ * delete); returns, per installation, the names still in the store. Under the plugin lock, in one
+ * section with the check: a slot the registered installation reads now (its removal did not
+ * complete, or an update went back to that rule) is live and only dropped from the record. A slot
+ * is settled once the store said it is gone.
  */
 export function cleanupPendingSecrets(only?: (p: { name: string; installId: string }) => boolean): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  const installed = new Set(Object.values(readLock().plugins).map(e => e.installId));
-  for (const p of pendingSecrets()) {
-    if (only && !only(p)) continue;
-    // Still installed (its removal did not complete): its secrets are live, the record is dropped
-    if (installed.has(p.installId)) {
-      settlePendingSecrets(p.installId, []);
-      continue;
-    }
-    const left: string[] = [];
-    for (const secret of p.secrets) {
-      try {
-        if (getPluginSecret(p.installId, secret) !== null && !deletePluginSecret(p.installId, secret)) left.push(secret);
-      } catch {
-        left.push(secret);
+  return withPluginLock(() => {
+    const out = new Map<string, string[]>();
+    const entries = new Map(Object.values(readLock().plugins).map(e => [e.installId, e]));
+    for (const p of pendingSecrets()) {
+      if (only && !only(p)) continue;
+      const entry = entries.get(p.installId);
+      // Installed, but which slots it reads cannot be told (an old entry that fails its check): nothing of it is deleted
+      const live = entry ? installedSlots(entry) : [];
+      const left: string[] = [];
+      for (const text of p.secrets) {
+        const slot = parseSlotText(text);
+        if (!slot || live === undefined || live.includes(text)) continue;
+        if (!erasePluginSecret(p.installId, slot)) left.push(text);
       }
+      settlePendingSecrets(p.installId, left);
+      out.set(p.installId, [...new Set(left.map(t => parseSlotText(t)!.name))]);
     }
-    settlePendingSecrets(p.installId, left);
-    out.set(p.installId, left);
-  }
-  return out;
+    return out;
+  });
 }
 
 // ---------- the command for the human's terminal ----------
 
-/** A program on PATH, as the shell would find it (PATHEXT on Windows); never runs anything. */
+/**
+ * A program on PATH, as the shell would find it: on Windows a file with one of PATHEXT's extensions,
+ * elsewhere a file this user may execute (X_OK; a plain file named `telegram` does not count, the
+ * shell would answer "Permission denied"). Never runs anything.
+ */
 export function onPath(bin: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): boolean {
-  const dirs = (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
-  const exts = platform === 'win32' ? ['', ...(env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : [''];
+  const win = platform === 'win32';
+  const dirs = (env.PATH ?? env.Path ?? '').split(win ? ';' : ':').filter(Boolean);
+  const exts = win ? ['', ...(env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : [''];
   for (const dir of dirs) {
     for (const ext of exts) {
+      const file = join(dir, bin + ext);
       try {
-        if (statSync(join(dir, bin + ext)).isFile()) return true;
-      } catch { /* not here */ }
+        if (!statSync(file).isFile()) continue;
+        if (!win) accessSync(file, constants.X_OK);
+        return true;
+      } catch { /* not here, or not executable */ }
     }
   }
   return false;
@@ -360,29 +429,31 @@ const psArg = (v: string) => (/^--?[a-z][a-z-]*$/.test(v) ? v : psQuote(v));
 
 /**
  * The exact command for the human's terminal on this (the server's) computer: `telegram …` when it
- * is on PATH, else the CLI pinned to this version through npx (an .mcpb has no `telegram`), with
- * this profile (and under TG_MOCK the same mock state), quoted for the platform's shell: POSIX sh,
- * or PowerShell on Windows (the variables are set for that one command and cleared after it).
+ * is on PATH, else the CLI pinned to this version through npx (an .mcpb has no `telegram`), quoted
+ * for the platform's shell (POSIX sh, or PowerShell on Windows). The profile and the mock context
+ * are this process's, set explicitly whatever the terminal has: TG_PROFILE always (empty for the
+ * default profile), TG_MOCK as the absolute path of this mock state, or empty outside the mock. They
+ * reach that one command only: POSIX `VAR=… cmd`; PowerShell saves the terminal's values and puts
+ * them back in `finally`.
  */
 export function terminalCommand(argv: string[], o: { platform?: NodeJS.Platform; onPath?: (bin: string) => boolean; version?: string } = {}): string | undefined {
   const platform = o.platform ?? manageDeps.platform ?? process.platform;
   const has = o.onPath ?? manageDeps.onPath ?? ((b: string) => onPath(b, process.env, platform));
   const bin = has('telegram') ? ['telegram'] : ['npx', `better-tg-cli@${o.version ?? VERSION}`];
-  const env: [string, string][] = [];
-  if (isMock()) {
-    env.push(['TG_MOCK', process.env.TG_MOCK!]);
-    if (process.env.TG_PROFILE) env.push(['TG_PROFILE', process.env.TG_PROFILE]);
-  } else {
-    const p = profile();
-    if (p) env.push(['TG_PROFILE', p]);
-  }
+  const env: [string, string][] = [
+    ['TG_PROFILE', profile() ?? ''],
+    ['TG_MOCK', isMock() ? resolve(mockStatePath()) : ''],
+  ];
   // Only printable ASCII is quoted into a command: anything else (a line break, a look-alike quote,
   // a control or bidi character in a folder name) gives no command, and the human types it
   if ([...argv, ...env.map(([, v]) => v)].some(v => /[^\x20-\x7e]/.test(v))) return undefined;
   if (platform === 'win32') {
-    const set = env.map(([k, v]) => `$env:${k}='${psEscape(v)}'; `).join('');
-    const clear = env.length ? `; ${env.map(([k]) => `Remove-Item Env:${k}`).join('; ')}` : '';
-    return `${set}${[...bin.map(psArg), ...argv.map(psArg)].join(' ')}${clear}`;
+    // `telegram` may be a .cmd shim, which cmd.exe parses again: its metacharacters give no command
+    if (bin[0] === 'telegram' || bin[0] === 'npx') if (argv.some(v => /["%^&|<>!]/.test(v))) return undefined;
+    const save = env.map(([k], i) => `$tgSaved${i} = $env:${k}`).join('; ');
+    const set = env.map(([k, v]) => `$env:${k} = '${psEscape(v)}'`).join('; ');
+    const restore = env.map(([k], i) => `$env:${k} = $tgSaved${i}`).join('; ');
+    return `${save}; try { ${set}; ${[...bin.map(psArg), ...argv.map(psArg)].join(' ')} } finally { ${restore} }`;
   }
   return [...env.map(([k, v]) => `${k}=${posixQuote(v)}`), ...bin, ...argv.map(posixQuote)].join(' ');
 }

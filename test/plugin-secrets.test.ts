@@ -46,13 +46,16 @@ import { pluginCommand, pluginDeps } from '../src/commands/plugin.js';
 import { storeDeps, commitInstall, pendingSecrets, pluginHome, readLock, removeInstall } from '../src/plugins/store.js';
 import { readLocalSnapshot } from '../src/plugins/source.js';
 import {
-  deletePluginSecret, getPluginSecret, pluginSecretDeps, pluginSecretKey, secretStates, setPluginSecret, type PluginSecretStore,
+  deletePluginSecret, getPluginSecret, pluginSecretDeps, pluginSecretKey, secretStates, setPluginSecret, slotIn, type PluginSecretStore,
 } from '../src/plugins/secrets.js';
 import { networkBackend, type NetDeps } from '../src/plugins/http.js';
 import { memoryCursors, memoryStorage, runPluginCommand } from '../src/plugins/run.js';
 import type { Manifest } from '../src/plugins/manifest.js';
 
 const LAB = resolve('test/fixtures/plugins/net-lab');
+/** The fixture's declared secrets at their generations (the store keys the core builds). */
+const labManifest = readLocalSnapshot(LAB, '99.0.0').manifest as Manifest;
+const slot = (name: string) => slotIn(labManifest, name);
 afterAll(() => rmSync(env.root, { recursive: true, force: true }));
 
 // The registry key in memory: installing never touches a store either
@@ -119,10 +122,10 @@ afterEach(() => {
 describe('plugin secrets under VITEST never reach the real secret store', () => {
   it('get, set, delete and the states are refused without TG_MOCK or an injected store', () => {
     const id = '11111111-2222-4333-8444-555555555555';
-    expect(() => getPluginSecret(id, 'apikey')).toThrow(/tests never use the real secret store/);
-    expect(() => setPluginSecret(id, 'apikey', 'long-enough-value')).toThrow(/tests never use the real secret store/);
-    expect(() => deletePluginSecret(id, 'apikey')).toThrow(/tests never use the real secret store/);
-    expect(secretStates(id, ['apikey'])).toEqual({ apikey: 'unknown' });
+    expect(() => getPluginSecret(id, slot('apikey'))).toThrow(/tests never use the real secret store/);
+    expect(() => setPluginSecret(id, slot('apikey'), 'long-enough-value')).toThrow(/tests never use the real secret store/);
+    expect(() => deletePluginSecret(id, slot('apikey'))).toThrow(/tests never use the real secret store/);
+    expect(secretStates(id, labManifest.secrets!.slice(0, 1))).toEqual({ apikey: 'unknown' });
   });
 
   it('a run that needs a secret gets secret_store_unavailable, and nothing is sent', async () => {
@@ -134,7 +137,7 @@ describe('plugin secrets under VITEST never reach the real secret store', () => 
       manifest: m, command: m.commands!.find(c => c.name === 'fetch')!, code: new TextDecoder().decode(snap.files.get('code/net.js')), filename: 'code/net.js',
       input: { url: 'https://api.example.com/v1/x' }, client: async () => { throw new Error('no'); }, account: async () => '1', storage: async () => memoryStorage(m),
       cursors: memoryCursors(), installId: '11111111-2222-4333-8444-555555555555', mcp: false,
-      network: { backend: networkBackend(net), secret: n => getPluginSecret('11111111-2222-4333-8444-555555555555', n), setCommand: n => ['plugin', 'secret', 'set', 'net-lab', n] },
+      network: { backend: networkBackend(net), secret: n => getPluginSecret('11111111-2222-4333-8444-555555555555', slot(n)), setCommand: n => ['plugin', 'secret', 'set', 'net-lab', n] },
     });
     expect(out.envelope.data).toMatchObject({ ok: false, error: { code: 'secret_store_unavailable' } });
     expect(dials).toEqual([]);
@@ -195,8 +198,8 @@ describe('plugin secret set / rm / show with an injected store', () => {
     expect(JSON.parse(ok.out)).toEqual({ ok: true, action: 'plugin secret set', plugin: 'net-lab', secret: 'apikey' });
     expect(ok.err).toContain('Sent only to: https://api.example.com (only the paths /v1 and below them), as the header Authorization');
     expect(ok.out + ok.err).not.toContain('never-used-value');
-    expect([...store.items]).toEqual([[pluginSecretKey(entry.installId, 'apikey'), 'never-used-value']]);
-    expect(pluginSecretKey(entry.installId, 'apikey')).toBe(`plugin-secret-plugin-secrets-${entry.installId}-apikey`);
+    expect([...store.items]).toEqual([[pluginSecretKey(entry.installId, slot('apikey')), 'never-used-value']]);
+    expect(pluginSecretKey(entry.installId, slot('apikey'))).toBe(`plugin-secret-plugin-secrets-${entry.installId}-apikey-g${slot('apikey').gen}`);
     const show = await cli(['show', 'net-lab', '--json']);
     const o = JSON.parse(show.out);
     expect(o.secrets).toMatchObject([{ name: 'apikey', state: 'set' }, { name: 'other', state: 'not set', set: ['plugin', 'secret', 'set', 'net-lab', 'other'] }]);
@@ -208,7 +211,7 @@ describe('plugin secret set / rm / show with an injected store', () => {
     // rm, then remove takes the rest with it
     expect(JSON.parse((await cli(['secret', 'rm', 'net-lab', 'apikey', '--json'])).out)).toMatchObject({ ok: true, existed: true });
     expect(store.items.size).toBe(0);
-    store.set(pluginSecretKey(entry.installId, 'other'), 'other-value-123');
+    store.set(pluginSecretKey(entry.installId, slot('other')), 'other-value-123');
     pluginDeps.confirm = async () => true;
     try {
       expect((await cli(['remove', 'net-lab', '--json'])).code).toBe(0);
@@ -233,7 +236,7 @@ describe('plugin secret set / rm / show with an injected store', () => {
     expect(JSON.parse(r.out).error).toMatchObject({ code: 'plugin_changed' });
     expect(JSON.parse(r.out).error.message).toMatch(/the secret was not stored/);
     expect(store.items.size).toBe(0);
-    expect(store.get(pluginSecretKey(entry.installId, 'apikey'))).toBeNull();
+    expect(store.get(pluginSecretKey(entry.installId, slot('apikey')))).toBeNull();
     // A reinstall in between is refused the same way (another installId)
     installLab();
     pluginDeps.readSecret = async () => {
@@ -250,7 +253,7 @@ describe('plugin secret set / rm / show with an injected store', () => {
     let failures = 1;
     pluginSecretDeps.store = { ...store, delete: k => { if (failures > 0) { failures--; throw new Error('store busy'); } return store.delete(k); } };
     const entry = installLab();
-    store.set(pluginSecretKey(entry.installId, 'apikey'), 'stored-value-12345');
+    store.set(pluginSecretKey(entry.installId, slot('apikey')), 'stored-value-12345');
     pluginDeps.confirm = async () => true;
     try {
       const rm = await cli(['remove', 'net-lab', '--json']);
@@ -260,7 +263,7 @@ describe('plugin secret set / rm / show with an injected store', () => {
       delete pluginDeps.confirm;
     }
     expect(store.items.size).toBe(1);
-    expect(pendingSecrets()).toEqual([{ name: 'net-lab', installId: entry.installId, secrets: ['apikey'] }]);
+    expect(pendingSecrets()).toEqual([{ name: 'net-lab', installId: entry.installId, secrets: [`apikey:${slot('apikey').gen}`] }]);
     // Any next plugin command finishes it, silently
     const list = await cli(['list', '--json']);
     expect(list.code).toBe(0);
@@ -273,13 +276,13 @@ describe('plugin secret set / rm / show with an injected store', () => {
     const store = memoryStore();
     pluginSecretDeps.store = store;
     const entry = installLab();
-    store.set(pluginSecretKey(entry.installId, 'apikey'), 'live-value-123456');
+    store.set(pluginSecretKey(entry.installId, slot('apikey')), 'live-value-123456');
     // As if a remove recorded it and then failed before the lock changed
     mkdirSync(join(pluginHome(), 'plugin-state'), { recursive: true });
-    writeFileSync(join(pluginHome(), 'plugin-state', 'pending-secret-cleanup.json'), JSON.stringify([{ name: 'net-lab', installId: entry.installId, secrets: ['apikey'] }]));
+    writeFileSync(join(pluginHome(), 'plugin-state', 'pending-secret-cleanup.json'), JSON.stringify([{ name: 'net-lab', installId: entry.installId, secrets: [`apikey:${slot('apikey').gen}`] }]));
     expect(pendingSecrets()).toHaveLength(1);
     expect((await cli(['settings', 'get', 'net-lab', '--json'])).code).toBe(0);
-    expect(store.get(pluginSecretKey(entry.installId, 'apikey'))).toBe('live-value-123456');
+    expect(store.get(pluginSecretKey(entry.installId, slot('apikey')))).toBe('live-value-123456');
     expect(pendingSecrets()).toEqual([]);
   });
 
@@ -288,7 +291,7 @@ describe('plugin secret set / rm / show with an injected store', () => {
     let failures = 2; // the remove itself and the retry before `secret rm`
     pluginSecretDeps.store = { ...store, delete: k => { if (failures > 0) { failures--; throw new Error('store busy'); } return store.delete(k); } };
     const entry = installLab();
-    store.set(pluginSecretKey(entry.installId, 'apikey'), 'stored-value-12345');
+    store.set(pluginSecretKey(entry.installId, slot('apikey')), 'stored-value-12345');
     pluginDeps.confirm = async () => true;
     try {
       expect(JSON.parse((await cli(['remove', 'net-lab', '--json'])).out)).toMatchObject({ secretsNotRemoved: ['apikey'] });

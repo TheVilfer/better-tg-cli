@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { withLockFile } from './file-lock.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { platform } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -10,11 +11,13 @@ import { spawnAsync } from './spawn-async.js';
  * Windows secret store: every secret sits in one file (`secrets.dpapi` in the config dir),
  * encrypted with DPAPI for the current Windows user through the built-in PowerShell 5.1. Only this
  * user on this machine can decrypt it. PowerShell is slow to start (~0.3–0.6 s), so the file is
- * decrypted once per process and cached for reads. A change (set, delete) decrypts the file again
- * right before it, so a key another process changed since the cache was filled is not written back
- * from the stale copy, and replaces the file atomically (temp file in the same folder, then rename).
- * There is no cross-process lock: two changes that interleave between their read and their rename
- * still lose one of the two (last rename wins), but a value is never brought back from an old cache.
+ * decrypted once per process and cached for reads; a read that decides something another process
+ * may have changed meanwhile (a plugin secret before it is deleted, the plugin registry key before
+ * one is made) asks for a fresh copy. Every change (set, delete), whoever makes it (the session,
+ * write access, plugin secrets), holds the lock file `secrets.dpapi.lock` across its whole
+ * read-modify-replace: it decrypts the file again under the lock and replaces it atomically (temp
+ * file in the same folder, then rename), so two processes never write back each other's old copy
+ * (`write-access off` in one terminal is not undone by a plugin update in another).
  */
 
 const PS = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
@@ -69,9 +72,22 @@ const powershellCrypter: Crypter = {
   unprotectAsync: (b64, signal) => runPowerShellAsync(dpapiScript('Unprotect'), b64, signal),
 };
 
+/** How long a change waits for another process's change of the same file. */
+export const DPAPI_LOCK = { timeoutMs: 20_000, staleMs: 2 * 60_000 };
+
 /** The store itself, with the crypto passed in so tests run on any OS. */
 export function dpapiStore(file: () => string, crypter: Crypter = powershellCrypter) {
   const cache = new Map<string, Record<string, string>>();
+
+  /** One read-modify-replace of the file, under its lock (shared by every process and writer). */
+  function locked<T>(fn: () => T): T {
+    const path = file();
+    mkdirSync(dirname(path), { recursive: true });
+    return withLockFile(`${path}.lock`, {
+      ...DPAPI_LOCK,
+      busy: () => new Error(`Another telegram process is changing ${path} right now`),
+    }, fn);
+  }
 
   function load(fresh = false): Record<string, string> {
     const path = file();
@@ -125,10 +141,13 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
         return { ok: false, reason: 'Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed' };
       }
     },
-    /** Like get, but a file that cannot be decrypted or parsed is an error, not a missing key. */
-    getStrict(key: string): StrictRead {
+    /**
+     * Like get, but a file that cannot be decrypted or parsed is an error, not a missing key.
+     * `fresh`: decrypt the file again instead of this process's copy.
+     */
+    getStrict(key: string, fresh = false): StrictRead {
       try {
-        return { ok: true, value: load()[key] ?? null };
+        return { ok: true, value: load(fresh)[key] ?? null };
       } catch {
         // A fixed text: a JSON.parse message would quote the decrypted content, i.e. the secrets
         return { ok: false, reason: 'Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed' };
@@ -136,7 +155,7 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
     },
     set(key: string, value: string): boolean {
       try {
-        save({ ...load(true), [key]: value });
+        locked(() => save({ ...load(true), [key]: value }));
         return true;
       } catch {
         return false;
@@ -144,14 +163,16 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
     },
     delete(key: string): boolean {
       try {
-        const map = { ...load(true) };
-        if (!(key in map)) return true;
-        delete map[key];
-        if (Object.keys(map).length) save(map);
-        else {
-          rmSync(file(), { force: true });
-          cache.set(file(), {});
-        }
+        locked(() => {
+          const map = { ...load(true) };
+          if (!(key in map)) return;
+          delete map[key];
+          if (Object.keys(map).length) save(map);
+          else {
+            rmSync(file(), { force: true });
+            cache.set(file(), {});
+          }
+        });
         return true;
       } catch {
         return false;
@@ -160,16 +181,25 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
   };
 }
 
-const store = dpapiStore(() => configFile('secrets.dpapi'));
+const defaultStore = dpapiStore(() => configFile('secrets.dpapi'));
+
+/**
+ * Test seam: a store over a fake crypter and a temp file, standing in for PowerShell on any OS, so
+ * the functions below (what secrets.ts calls) are exercised as on Windows.
+ */
+export const dpapiDeps: { store?: ReturnType<typeof dpapiStore>; available?: boolean } = {};
+const store = () => dpapiDeps.store ?? defaultStore;
 
 export function isDpapiAvailable(): boolean {
+  if (dpapiDeps.available !== undefined) return dpapiDeps.available;
   return platform() === 'win32' && existsSync(PS);
 }
 
-export const dpapiGet = (key: string, fresh = false) => (isDpapiAvailable() ? store.get(key, fresh) : null);
-export const dpapiGetStrict = (key: string): StrictRead =>
-  (isDpapiAvailable() ? store.getStrict(key) : { ok: false, reason: 'Windows DPAPI is not available' });
+export const dpapiGet = (key: string, fresh = false) => (isDpapiAvailable() ? store().get(key, fresh) : null);
+/** `fresh`: bypass this process's decrypted copy (a value another process may have changed since). */
+export const dpapiGetStrict = (key: string, fresh = false): StrictRead =>
+  (isDpapiAvailable() ? store().getStrict(key, fresh) : { ok: false, reason: 'Windows DPAPI is not available' });
 export const dpapiGetStrictAsync = async (key: string, signal?: AbortSignal): Promise<StrictRead> =>
-  (isDpapiAvailable() ? store.getStrictAsync(key, signal) : { ok: false, reason: 'Windows DPAPI is not available' });
-export const dpapiSet = (key: string, value: string) => isDpapiAvailable() && store.set(key, value);
-export const dpapiDelete = (key: string) => isDpapiAvailable() && store.delete(key);
+  (isDpapiAvailable() ? store().getStrictAsync(key, signal) : { ok: false, reason: 'Windows DPAPI is not available' });
+export const dpapiSet = (key: string, value: string) => isDpapiAvailable() && store().set(key, value);
+export const dpapiDelete = (key: string) => isDpapiAvailable() && store().delete(key);
