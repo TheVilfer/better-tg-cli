@@ -686,7 +686,7 @@ export function messageText(msg: Api.Message): string {
   return maskForModel(text, isLoginServiceMessage(msg) ? 'service' : 'chat');
 }
 
-function plainMessageText(msg: Api.Message): string {
+export function plainMessageText(msg: Api.Message): string {
   if (msg.message) return msg.message;
   if (msg.richMessage) {
     try {
@@ -717,6 +717,26 @@ const isLoginServicePeer = (peer: unknown): boolean =>
 function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown }): boolean {
   const fwd = msg.fwdFrom as { fromId?: unknown } | null | undefined;
   return isLoginServicePeer(msg.peerId) || isLoginServicePeer(msg.fromId) || isLoginServicePeer(fwd?.fromId);
+}
+
+/**
+ * For plugins (src/plugins/host.ts): a message of a login-code service account as above, or one
+ * that quotes or replies to such a message in another chat (the reply header names its source).
+ */
+export function isServiceSource(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown; replyTo?: unknown }): boolean {
+  if (isLoginServiceMessage(msg) || fwdNamesService(msg.fwdFrom)) return true;
+  const reply = msg.replyTo as { replyFrom?: unknown; replyToPeerId?: unknown } | null | undefined;
+  return fwdNamesService(reply?.replyFrom) || isLoginServicePeer(reply?.replyToPeerId);
+}
+
+/**
+ * A forward (or quote) header that names a login-code service anywhere: as the author, or as the
+ * chat a message saved to Saved Messages came from (`savedFromPeer`, `savedFromId`), where the
+ * author may be someone else.
+ */
+function fwdNamesService(header: unknown): boolean {
+  const h = header as { fromId?: unknown; savedFromPeer?: unknown; savedFromId?: unknown } | null | undefined;
+  return isLoginServicePeer(h?.fromId) || isLoginServicePeer(h?.savedFromPeer) || isLoginServicePeer(h?.savedFromId);
 }
 
 export { LOGIN_CODE_HIDDEN };

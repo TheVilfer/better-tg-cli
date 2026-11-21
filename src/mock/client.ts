@@ -148,6 +148,9 @@ export class MockClient {
 
   async getMe(): Promise<Api.User> {
     mockFailure();
+    // TG_MOCK_SLOW_ME=<ms> (tests): a slow account lookup, as on a slow connection
+    const slow = Number(process.env.TG_MOCK_SLOW_ME ?? 0);
+    if (slow > 0) await new Promise(resolve => setTimeout(resolve, slow));
     return this.user(this.findUser(this.world.me)!);
   }
 
@@ -266,7 +269,16 @@ export class MockClient {
       noforwards: m.noforwards,
       peerId: this.peerOf(chat),
       fromId: from ? new Api.PeerUser({ userId: bigInt(from) }) : undefined,
-      replyTo: m.replyTo || m.thread
+      replyTo: m.quoteFrom
+        ? new Api.MessageReplyHeader(args({
+          replyFrom: new Api.MessageFwdHeader(args({
+            date: this.date(m),
+            fromId: m.savedFrom ? undefined : this.peerOf(this.chat(bigInt(m.quoteFrom))),
+            savedFromPeer: m.savedFrom ? this.peerOf(this.chat(bigInt(m.savedFrom))) : undefined,
+          })),
+          quote: true, quoteText: m.quoteText,
+        }))
+        : m.replyTo || m.thread
         ? new Api.MessageReplyHeader({ replyToMsgId: m.replyTo ?? m.thread, replyToTopId: m.thread, forumTopic: chat.forum && !!m.thread })
         : undefined,
       media: m.poll ? this.pollMedia(m.poll) : this.media(m),
@@ -281,7 +293,14 @@ export class MockClient {
       ttlPeriod: m.ttlPeriod,
       pinned: m.pinned,
       editDate: m.edited ? this.date(m) : undefined,
-      fwdFrom: m.forwardedFrom ? new Api.MessageFwdHeader({ date: this.date(m), fromId: this.peerOf(this.chat(bigInt(m.forwardedFrom))) }) : undefined,
+      fwdFrom: m.forwardedFrom || m.savedFrom && !m.quoteFrom
+        ? new Api.MessageFwdHeader(args({
+          date: this.date(m),
+          fromId: m.forwardedFrom ? this.peerOf(this.chat(bigInt(m.forwardedFrom))) : undefined,
+          savedFromPeer: m.savedFrom && !m.quoteFrom ? this.peerOf(this.chat(bigInt(m.savedFrom))) : undefined,
+          savedFromMsgId: m.savedFrom && !m.quoteFrom ? 1 : undefined,
+        }))
+        : undefined,
     }));
   }
 
@@ -309,6 +328,7 @@ export class MockClient {
         return m ? this.message(chat, m) : undefined;
       });
     }
+    mockHistoryFlood();
     let list = this.newest(chat);
     if (params.filter?.className === 'InputMessagesFilterPinned') list = list.filter(m => m.pinned);
     if (params.offsetId) list = list.filter(m => m.id < params.offsetId!);
@@ -1124,6 +1144,23 @@ export function createMockClient(path = mockStatePath()): TelegramClient {
  * TG_MOCK_FAIL rehearses a Telegram that cannot answer: `network` (no connection) or an RPC error
  * such as `FLOOD_WAIT_30`, thrown by getMe and getEntity the way teleproto throws them.
  */
+let historyCalls = 0;
+
+/** Tests: start counting history reads for TG_MOCK_FLOOD_HISTORY again. */
+export function resetMockHistoryFlood(): void {
+  historyCalls = 0;
+}
+
+/**
+ * TG_MOCK_FLOOD_HISTORY=<n>:<seconds> (tests): history reads after the first n in this process
+ * fail with FLOOD_WAIT_<seconds>, the way teleproto throws it with floodSleepThreshold 0.
+ */
+function mockHistoryFlood(): void {
+  const m = /^(\d+):(\d+)$/.exec(process.env.TG_MOCK_FLOOD_HISTORY ?? '');
+  if (!m || historyCalls++ < Number(m[1])) return;
+  throw Object.assign(new Error(`RPCError 420: FLOOD_WAIT_${m[2]}`), { errorMessage: 'FLOOD_WAIT', seconds: Number(m[2]) });
+}
+
 function mockFailure(): void {
   const fail = process.env.TG_MOCK_FAIL;
   if (!fail) return;

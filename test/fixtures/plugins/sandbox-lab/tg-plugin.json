@@ -1,0 +1,43 @@
+{
+  "$schema": "https://better-tg-cli.com/schemas/tg-plugin/2026-11-21.json",
+  "name": "sandbox-lab",
+  "version": "0.1.0",
+  "description": "Exercises the sandbox and the host API (tests only)",
+  "main": "code/lab.js",
+  "files": ["tg-plugin.json", "SKILL.md", "code/lab.js"],
+  "permissions": ["identity:read", "messages:read-own", "chats:read", "messages:read", "messages:read-target", "storage:read", "storage:write", "settings:read", "actions"],
+  "network": [],
+  "secrets": [],
+  "settings": { "tone": { "type": "string", "description": "Tone of the drafts", "default": "warm" } },
+  "storage": { "keys": ["notes"], "quotaBytes": 4096 },
+  "commands": [
+    {
+      "name": "probe",
+      "description": "Calls one host API (reads only)",
+      "effects": [],
+      "input": { "type": "object", "properties": { "op": { "type": "string" }, "args": { "type": "array" } }, "required": ["op"], "additionalProperties": false },
+      "output": { "type": "object" }
+    },
+    {
+      "name": "save",
+      "description": "Saves a note",
+      "effects": ["storage"],
+      "input": { "type": "object", "properties": { "value": { "type": "string" } }, "required": ["value"], "additionalProperties": false },
+      "output": { "type": "object", "properties": { "saved": { "type": "integer" } }, "required": ["saved"] }
+    },
+    {
+      "name": "propose",
+      "description": "Proposes the given actions",
+      "effects": ["actions"],
+      "input": { "type": "object", "properties": { "actions": { "type": "array" } }, "required": ["actions"], "additionalProperties": false },
+      "output": { "type": "object" }
+    },
+    {
+      "name": "strict",
+      "description": "Returns what it is told, against a strict output schema",
+      "effects": [],
+      "input": { "type": "object", "properties": { "value": {} }, "additionalProperties": false },
+      "output": { "type": "object", "properties": { "n": { "type": "integer" }, "next": { "type": ["string", "null"] } }, "required": ["n", "next"], "additionalProperties": false }
+    }
+  ]
+}

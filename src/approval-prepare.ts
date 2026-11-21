@@ -6,6 +6,7 @@ import { fileSnapshot, sealFileSnapshots, snapshotDigest } from './file-snapshot
 import { descriptorOf, oneLine, type ParsedAction } from './approval-action.js';
 import { expectInstall, loadPlugin } from './plugins/store.js';
 import { revisionLabel } from './plugins/human.js';
+import { readStdinOnce, stdinBody } from './text.js';
 
 /**
  * The parts of an action that only Telegram or the disk can tell, read before an approval is shown
@@ -105,6 +106,19 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     const { entry } = loadPlugin(arg(action, 'name') ?? '');
     prepared.bound.push(['plugin', entry.installId, entry.revision]);
     prepared.lines.push(`  Installation: ${entry.installId} (${revisionLabel(entry.source, entry.revision)})`);
+    prepared.onApproved = () => expectInstall(entry);
+  }
+  if (action.command === 'plugin run') {
+    // This installation and snapshot, this command with its effects, this input: an update in
+    // between (another snapshot) invalidates the approval
+    const { entry, manifest } = loadPlugin(arg(action, 'name') ?? '');
+    const command = (manifest.commands ?? []).find(c => c.name === arg(action, 'command'));
+    const input = action.options.find(([k]) => k === 'input')?.[1];
+    const inputText = input === '-' ? stdinBody(readStdinOnce()) : typeof input === 'string' ? input : '{}';
+    prepared.bound.push(['plugin', entry.installId, entry.revision, command?.effects ?? []]);
+    prepared.lines.push(`  Installation: ${entry.installId} (${revisionLabel(entry.source, entry.revision)})`);
+    prepared.lines.push(`  Effects: ${command?.effects.join(', ') || 'none'} (it can save this plugin's data${command?.effects.includes('actions') ? ' and propose Telegram actions you confirm separately' : ''})`);
+    prepared.lines.push(`  Input: ${oneLine(inputText)}`);
     prepared.onApproved = () => expectInstall(entry);
   }
   return prepared;

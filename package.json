@@ -75,11 +75,13 @@
     "typecheck:watch": "tsc --noEmit --watch --preserveWatchOutput"
   },
   "devDependencies": {
+    "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0",
     "@types/node": "^26.6.2",
     "@types/ws": "^8.18.2",
     "@typescript/native": "npm:typescript@^7.0.2",
     "big-integer": "^1.6.52",
     "commander": "^15.0.0",
+    "quickjs-emscripten-core": "0.32.0",
     "teleproto": "^1.229.0",
     "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2",

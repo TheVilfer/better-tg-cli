@@ -140,6 +140,8 @@ export function maybeNotifyUpdate(argv = process.argv.slice(2)): void {
   if (!process.stderr.isTTY || process.env.TG_NO_UPDATE_CHECK || process.env.CI) return;
   const cmd = argv[0];
   if (cmd === 'update' || cmd === BACKGROUND_CHECK_COMMAND || cmd === '--version' || cmd === '-V') return;
+  // `plugin dev` runs against the mock account in memory and touches no profile, not even this cache
+  if (cmd === 'plugin' && argv.slice(1).find(a => !a.startsWith('-')) === 'dev') return;
 
   const cache = readCache();
   if (cache?.latest && compareVersions(cache.latest, VERSION) > 0) {
