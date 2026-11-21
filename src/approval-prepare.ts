@@ -4,6 +4,8 @@ import {
 } from './client.js';
 import { fileSnapshot, sealFileSnapshots, snapshotDigest } from './file-snapshot.js';
 import { descriptorOf, oneLine, type ParsedAction } from './approval-action.js';
+import { expectInstall, loadPlugin } from './plugins/store.js';
+import { revisionLabel } from './plugins/human.js';
 
 /**
  * The parts of an action that only Telegram or the disk can tell, read before an approval is shown
@@ -96,6 +98,14 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
       prepared.lines.push(`  Pressing: ${describeButton(rawInfo)}`);
       prepared.onApproved = () => expectButton(fingerprint);
     }
+  }
+  if (action.command === 'plugin data set' || action.command === 'plugin data delete') {
+    // The approval covers this installation of the plugin: one installed under the same name later
+    // (another source, other code) does not inherit it
+    const { entry } = loadPlugin(arg(action, 'name') ?? '');
+    prepared.bound.push(['plugin', entry.installId, entry.revision]);
+    prepared.lines.push(`  Installation: ${entry.installId} (${revisionLabel(entry.source, entry.revision)})`);
+    prepared.onApproved = () => expectInstall(entry);
   }
   return prepared;
 }

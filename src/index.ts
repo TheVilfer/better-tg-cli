@@ -101,6 +101,7 @@ import {
   registerGeneratedCommands,
   buildHelpCommand,
   schemaCommand,
+  pluginCommand,
 } from './commands/index.js';
 import { generatedSummaryLines } from './commands/generated.js';
 
@@ -227,6 +228,7 @@ program.addCommand(syncCommand);
 program.addCommand(downloadCommand);
 program.addCommand(updateCommand);
 program.addCommand(skillCommand);
+program.addCommand(pluginCommand);
 program
   .command('mcp')
   .description('Run as an MCP server over stdio, or over HTTP with --http (tools: telegram_help, telegram_read, telegram_write)')

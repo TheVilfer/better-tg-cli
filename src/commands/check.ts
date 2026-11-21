@@ -8,6 +8,7 @@ import { getSecretBackendLabel, writesLine, writesOf, writeStatus, writesTextLin
 import { transportSetting } from '../transport.js';
 import { errorDetails, EXIT, fail } from '../errors.js';
 import { VERSION } from '../version.js';
+import { checkPlugins, checkPluginsLine } from '../plugins/catalog.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 
@@ -22,7 +23,9 @@ function sessionStorageLabel(config: TgConfig): string {
 /**
  * `check --json`: one object, also on failure (then with `error`, and the exit code of that error).
  * {configured, authenticated, account?, writeMode, writes, writeUntil?, writeModeProtected, secretStore,
- *  profile, transport, testServers, version, mock?, error?}
+ *  profile, transport, testServers, version, mock?, plugins, pluginsError?, error?}
+ * `plugins`: [{name, version, status, onboarding?}] from the local lock file (no network); the
+ * onboarding state only when the account is known.
  */
 export const checkCommand = new Command('check')
   .description('Verify session and credentials, and show the write mode')
@@ -39,6 +42,7 @@ export const checkCommand = new Command('check')
           configured: true, authenticated: true, mock: true,
           account: { id: me.id.toString(), ...(me.username ? { username: me.username } : {}) },
           writeMode: mode, writes: writesOf(mode), writeModeProtected: false, profile: profile() || null, version: VERSION,
+          ...pluginsJson(me.id?.toString()),
         }));
       } else {
         console.log(chalk.green('Mock mode: no Telegram session is used'));
@@ -47,6 +51,7 @@ export const checkCommand = new Command('check')
           : '(mock: writes only change the state file, no approval)'}`));
         console.log(`Logged in as: ${me.firstName || ''} ${me.lastName || ''} (@${me.username || 'no username'})`);
         console.log(`State file: ${mockStatePath()} (delete it to start over)`);
+        console.log(checkPluginsLine(me.id?.toString()));
       }
       await disconnectClient();
       return;
@@ -68,6 +73,7 @@ export const checkCommand = new Command('check')
     const write = writeStatus();
     const base = {
       ...write, profile: profile() || null, transport: transportLabel(config), testServers: !!config.testServers, version: VERSION,
+      ...pluginsJson(undefined),
     };
     if (!configured) {
       const p = profile();
@@ -100,7 +106,7 @@ export const checkCommand = new Command('check')
         console.log(JSON.stringify({
           configured: true, authenticated: true,
           account: { id: me.id.toString(), ...(me.username ? { username: me.username } : {}) },
-          ...base, sessionStore: sessionStorageLabel(config),
+          ...base, sessionStore: sessionStorageLabel(config), ...pluginsJson(me.id?.toString()),
         }));
       } else {
         spinner.succeed(chalk.green('Session valid'));
@@ -109,6 +115,7 @@ export const checkCommand = new Command('check')
         console.log(`Session stored in: ${sessionStorageLabel(config)}`);
         if (profile()) console.log(`Profile: ${profile()} (${configDir()})`);
         if (config.testServers) console.log('Servers: TEST (not production)');
+        console.log(checkPluginsLine(me.id?.toString()));
       }
 
       await disconnectClient();
@@ -144,6 +151,12 @@ export const checkCommand = new Command('check')
       process.exit(details.exitCode);
     }
   });
+
+/** `plugins` (and `pluginsError` for a damaged lock file) for check --json. */
+function pluginsJson(userId: string | undefined): { plugins: ReturnType<typeof checkPlugins>['plugins']; pluginsError?: string } {
+  const { plugins, error } = checkPlugins(userId);
+  return { plugins, ...(error ? { pluginsError: error } : {}) };
+}
 
 function transportLabel(config: TgConfig): string {
   try {

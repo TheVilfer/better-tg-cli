@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  NEVER_COMMANDS, PER_CALL_COMMANDS, READ_COMMANDS, WRITE_COMMANDS, WRITE_SUBCOMMANDS, classifyCall, commandPaths, handleMessage, isWriteCommand, planCall,
+  NEVER_COMMANDS, PER_CALL_COMMANDS, PLUGIN_PATHS, READ_COMMANDS, WRITE_COMMANDS, WRITE_SUBCOMMANDS, classifyCall, commandPaths, handleMessage, isWriteCommand, planCall,
   setKnownCommands, useWorkers,
 } from '../src/mcp.js';
 import { rootMethodClassName } from '../src/generated-registry.js';
@@ -57,9 +57,22 @@ describe('command classification', () => {
   it('the write subcommands are exactly the full leaf paths of every group MCP can run (a new one fails here)', () => {
     // Full paths, not two words: a child added under `topic create` makes `topic create …` a new
     // leaf here, so it cannot inherit the permission of `topic create`. Never groups (skill) are off.
-    const leaves = subcommandPaths().filter(p => !NEVER_COMMANDS.has(p.split(' ')[0]));
+    const leaves = subcommandPaths().filter(p => !NEVER_COMMANDS.has(p.split(' ')[0]) && p.split(' ')[0] !== 'plugin');
     expect(new Set(leaves)).toEqual(WRITE_SUBCOMMANDS);
     for (const p of WRITE_SUBCOMMANDS) expect(WRITE_COMMANDS, p).toContain(p.split(' ')[0]);
+  });
+
+  it('every plugin path is classified by its full path, and a new one is refused until it is listed', () => {
+    const leaves = subcommandPaths().filter(p => p.startsWith('plugin '));
+    // validate stays off MCP on purpose (it reads a folder the model would name)
+    expect(new Set(leaves)).toEqual(new Set([...Object.keys(PLUGIN_PATHS), 'plugin validate']));
+    setKnownCommands([...allPaths(), 'plugin run', 'plugin data export']);
+    try {
+      expect(classifyCall(['plugin', 'run', 'tone-of-voice', 'collect']).group).toBe('unknown');
+      expect(classifyCall(['plugin', 'data', 'export', 'x']).group).toBe('unknown');
+    } finally {
+      setKnownCommands(allPaths());
+    }
   });
 
   it('the parser of help-all sees nested paths', () => {

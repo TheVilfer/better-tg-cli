@@ -315,7 +315,10 @@ describe('the approval knows every write and every recipient in it (scan)', () =
         commands.set(cmd[1], current);
       } else if (current && /^ {2}-/.test(line)) current.options.push(...(line.match(/--[\w-]+/g) ?? []).slice(0, 1));
     }
-    const writes = [...WRITE_COMMANDS, ...WRITE_SUBCOMMANDS, 'transfer-owner'].filter(w => commands.has(w));
+    const { PLUGIN_PATHS } = await import('../src/mcp.js');
+    const pluginWrites = Object.entries(PLUGIN_PATHS).filter(([, k]) => k === 'write').map(([p]) => p);
+    expect(pluginWrites).toEqual(['plugin data set', 'plugin data delete']);
+    const writes = [...WRITE_COMMANDS, ...WRITE_SUBCOMMANDS, ...pluginWrites, 'transfer-owner'].filter(w => commands.has(w));
     expect(writes.length).toBeGreaterThan(45);
     const peerName = /^(chat|user|users|group|target|fromChat|toChat|peer|bot|channel|member|members)$/;
     const peerOption = /^--(chat|user|peer|to|from|as|send-as|channel|member|bot)$/;

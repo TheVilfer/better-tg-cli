@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { platform } from 'node:os';
+import { realpathSync } from 'node:fs';
+import { platform, userInfo } from 'node:os';
 import { secretPrefix } from './paths.js';
 
 const SECURITY_PATH = '/usr/bin/security';
@@ -11,10 +12,26 @@ export function isSecretKey(key: string): boolean {
   return SECRET_KEYS.has(key);
 }
 
+/**
+ * Why `security` must not run here, or null. `security` finds the login keychain through HOME: with
+ * a temporary HOME (tests, sandboxes) it cannot, and macOS answers with a "Keychain Not Found"
+ * dialog whose default button resets the user's login keychain. Tests never reach the real Keychain:
+ * vitest sets VITEST, and child processes inherit it.
+ */
+export function keychainBlocked(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.VITEST && env.TG_TEST_REAL_KEYCHAIN !== '1') return 'tests never use the real Keychain';
+  const home = env.HOME;
+  if (!home) return 'HOME is not set';
+  let real: string;
+  try { real = userInfo().homedir; } catch { return null; }
+  const canon = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  return canon(home) === canon(real) ? null : `HOME (${home}) is not the user's home folder, so the login keychain cannot be found`;
+}
+
 export function isKeychainAvailable(): boolean {
   if (keychainAvailableCache !== null) return keychainAvailableCache;
 
-  if (platform() !== 'darwin') {
+  if (platform() !== 'darwin' || keychainBlocked() !== null) {
     keychainAvailableCache = false;
     return false;
   }
