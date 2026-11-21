@@ -1,71 +1,106 @@
-import { TelegramClient, Api, Rich, utils } from 'teleproto';
-import { StringSession } from 'teleproto/sessions/index.js';
-import { clientParams } from './client-options.js';
-import { connectClient, transportSetting } from './transport.js';
-import { getInvocation, isStrictChatResolution } from './resolve-mode.js';
-import { CliError, EXIT, formatCandidates, SESSION_ERRORS, sessionEndedBy, shellCommand, usageError } from './errors.js';
-import type { ChatCandidate } from './errors.js';
-import { generateRandomLong } from 'teleproto/Helpers.js';
-import { computeCheck } from 'teleproto/Password.js';
-import { getCredentials, setSessionString, isConfigured, loadConfig, type TgConfig } from './config.js';
-import bigInt from 'big-integer';
-import { existsSync, lstatSync, mkdirSync } from 'fs';
-import { isMock } from './paths.js';
-import { join } from 'path';
-import { isTTY } from './spinner.js';
-import { approvedForAnotherSession, MOCK_ACCOUNT } from './approval.js';
-import { LOGIN_CODE_HIDDEN, maskForModel } from './mcp-output.js';
-import { loginHint } from './login-hint.js';
-import { fileSnapshot, uploadable } from './file-snapshot.js';
-import { apiMarker, INVITE_LINK } from './approval-action.js';
-import { accountKey, DIALOG_CACHE_TTL_MS, dialogCacheDisabled, logDialogCache, readDialogCache, writeDialogCache, type CachedChat } from './dialog-cache.js';
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+import bigInt from "big-integer";
+import { TelegramClient, Api, Rich, utils } from "teleproto";
+import { generateRandomLong } from "teleproto/Helpers.js";
+import { computeCheck } from "teleproto/Password.js";
+import { StringSession } from "teleproto/sessions/index.js";
+
+import { apiMarker, INVITE_LINK } from "./approval-action.js";
+import { approvedForAnotherSession, MOCK_ACCOUNT } from "./approval.js";
+import { clientParams } from "./client-options.js";
+import {
+  getCredentials,
+  setSessionString,
+  isConfigured,
+  loadConfig,
+} from "./config.js";
+import type { TgConfig } from "./config.js";
+import {
+  accountKey,
+  DIALOG_CACHE_TTL_MS,
+  dialogCacheDisabled,
+  logDialogCache,
+  readDialogCache,
+  writeDialogCache,
+} from "./dialog-cache.js";
+import type { CachedChat } from "./dialog-cache.js";
+import {
+  CliError,
+  EXIT,
+  formatCandidates,
+  SESSION_ERRORS,
+  sessionEndedBy,
+  shellCommand,
+  usageError,
+} from "./errors.js";
+import type { ChatCandidate } from "./errors.js";
+import { fileSnapshot, uploadable } from "./file-snapshot.js";
+import { loginHint } from "./login-hint.js";
+import { LOGIN_CODE_HIDDEN, maskForModel } from "./mcp-output.js";
+import { isMock } from "./paths.js";
+import { getInvocation, isStrictChatResolution } from "./resolve-mode.js";
+import { isTTY } from "./spinner.js";
+import { connectClient, transportSetting } from "./transport.js";
 
 /** First words of the error getClient() throws for a session Telegram no longer accepts (onboard looks for it). */
-export const SESSION_EXPIRED = 'Session expired or was revoked.';
+export const SESSION_EXPIRED = "Session expired or was revoked.";
 
 let clientInstance: TelegramClient | null = null;
-/** The session clientInstance was connected with */
 let clientSession: string | undefined;
 
-const ANOTHER_ACCOUNT_ERROR = 'Another account logged in after this write was approved. Nothing was sent; run the command again for a new approval.';
+const ANOTHER_ACCOUNT_ERROR =
+  "Another account logged in after this write was approved. Nothing was sent; run the command again for a new approval.";
 
 /** `snapshot`: a config the caller already loaded (`telegram check`), used instead of a new read. */
 export async function getClient(snapshot?: TgConfig): Promise<TelegramClient> {
   if (clientInstance?.connected) {
-    // The write guard may have connected (to look up the recipients) before it checked the approval
-    if (clientSession !== undefined && approvedForAnotherSession(clientSession)) throw new Error(ANOTHER_ACCOUNT_ERROR);
+    if (
+      clientSession !== undefined &&
+      approvedForAnotherSession(clientSession)
+    ) {
+      throw new Error(ANOTHER_ACCOUNT_ERROR);
+    }
     return clientInstance;
   }
 
   if (isMock()) {
-    if (approvedForAnotherSession(MOCK_ACCOUNT)) throw new Error(ANOTHER_ACCOUNT_ERROR);
-    // Imported on demand so a normal run never loads the mock
-    const { createMockClient } = await import('./mock/client.js');
+    if (approvedForAnotherSession(MOCK_ACCOUNT)) {
+      throw new Error(ANOTHER_ACCOUNT_ERROR);
+    }
+    const { createMockClient } = await import("./mock/client.js");
     clientInstance = createMockClient();
     clientSession = MOCK_ACCOUNT;
     return clientInstance;
   }
 
-  // One snapshot: credentials, session, transport and test-DC flag all come from the same store read
-  // (a second read after the 1 s cache could see something else or fail)
   const config = snapshot ?? loadConfig(() => {});
   if (!isConfigured(config)) {
-    throw new CliError('Not configured.', 'not_configured', EXIT.NOT_LOGGED_IN, { hint: loginHint() });
+    throw new CliError(
+      "Not configured.",
+      "not_configured",
+      EXIT.NOT_LOGGED_IN,
+      { hint: loginHint() }
+    );
   }
 
   const { apiId, apiHash } = getCredentials(config);
-  const sessionString = config.sessionString || '';
-  // A write approved in mode "ask" connects only as the account it was approved for
+  const sessionString = config.sessionString || "";
   if (approvedForAnotherSession(sessionString)) {
     throw new Error(ANOTHER_ACCOUNT_ERROR);
   }
 
-  // Logs go to stderr at ERROR unless TG_LOG_LEVEL says otherwise, so --json stays parseable.
-  // A fresh StringSession per attempt: a failed TCP try must not leave state behind for WSS.
   const testServers = !!config.testServers;
   clientInstance = await connectClient(
-    t => new TelegramClient(new StringSession(sessionString), apiId, apiHash, clientParams(testServers, t)),
-    { setting: transportSetting(undefined, config) },
+    (t) =>
+      new TelegramClient(
+        new StringSession(sessionString),
+        apiId,
+        apiHash,
+        clientParams(testServers, t)
+      ),
+    { setting: transportSetting(undefined, config) }
   );
   clientSession = sessionString;
 
@@ -94,17 +129,34 @@ export function isAuthError(e: unknown): boolean {
  * its own code. teleproto's isUserAuthorized() is not used: it answers false for any failure, a
  * dropped connection included.
  */
-export async function checkSession(client: Pick<TelegramClient, 'invoke'>): Promise<void> {
+export async function checkSession(
+  client: Pick<TelegramClient, "invoke">
+): Promise<void> {
   try {
     await client.invoke(new Api.updates.GetState());
   } catch (error) {
-    if (!isAuthError(error)) throw error;
-    throw new CliError(SESSION_EXPIRED, 'session_expired', EXIT.NOT_LOGGED_IN, { hint: loginHint() });
+    if (!isAuthError(error)) {
+      throw error;
+    }
+    throw new CliError(SESSION_EXPIRED, "session_expired", EXIT.NOT_LOGGED_IN, {
+      hint: loginHint(),
+    });
   }
 }
 
-export async function createClient(apiId: number, apiHash: string): Promise<TelegramClient> {
-  return connectClient(t => new TelegramClient(new StringSession(''), apiId, apiHash, clientParams(undefined, t)));
+export async function createClient(
+  apiId: number,
+  apiHash: string
+): Promise<TelegramClient> {
+  return connectClient(
+    (t) =>
+      new TelegramClient(
+        new StringSession(""),
+        apiId,
+        apiHash,
+        clientParams(undefined, t)
+      )
+  );
 }
 
 export async function saveSession(client: TelegramClient): Promise<void> {
@@ -115,12 +167,8 @@ export async function saveSession(client: TelegramClient): Promise<void> {
 export async function disconnectClient(): Promise<void> {
   if (clientInstance) {
     try {
-      // destroy() closes main connection AND any borrowed senders (e.g. file-download DC).
-      // disconnect() leaves the secondary download-loop alive, which then throws TIMEOUT.
       await clientInstance.destroy();
-    } catch {
-      // ignore teardown noise
-    }
+    } catch {}
     clientInstance = null;
   }
   clientSession = undefined;
@@ -131,20 +179,11 @@ export async function disconnectClient(): Promise<void> {
   allDialogsReadAt = 0;
 }
 
-// Cache resolved chat entities by identifier (normalized) to avoid re-fetching
-// getDialogs({limit: 500}) on every call, which triggers FLOOD_WAIT on messages.GetDialogs.
 const resolvedChatCache = new Map<string, ResolvedEntity>();
 
-// One dialogs snapshot per process: resolving many chats (e.g. sync over 100 chats)
-// must not refetch the full dialog list for every chat.
-let dialogsCache: ReturnType<TelegramClient['getDialogs']> | null = null;
-/** When dialogsCache / allDialogsCache were read (started): inbox and chats reuse only a fresh one. */
+let dialogsCache: ReturnType<TelegramClient["getDialogs"]> | null = null;
 let dialogsReadAt = 0;
 let allDialogsReadAt = 0;
-/**
- * How old a list read in this process may be for inbox and chats to show it instead of reading
- * again: seconds, so unread counters and last messages stay live (an MCP server lives for hours).
- */
 const DIALOGS_REUSE_MS = 10_000;
 
 /** One page of dialogs: enough for IDs and most accounts. */
@@ -152,123 +191,206 @@ export const DIALOG_PAGE = 500;
 /** How far a title lookup reads before it gives up proving a title unique. */
 export const DIALOG_MAX = 5000;
 
-function getDialogsCached(client: TelegramClient): ReturnType<TelegramClient['getDialogs']> {
+function getDialogsCached(
+  client: TelegramClient
+): ReturnType<TelegramClient["getDialogs"]> {
   if (!dialogsCache) {
-    dialogsCache = client.getDialogs({ limit: DIALOG_PAGE }).then(dialogs => {
-      // A cut first page never replaces a whole list that is still fresh
+    dialogsCache = client.getDialogs({ limit: DIALOG_PAGE }).then((dialogs) => {
       const account = dialogCacheAccount(client);
-      if (account && (dialogs.length < DIALOG_PAGE || !readDialogCache(account))) saveDialogList(account, dialogs, dialogs.length < DIALOG_PAGE);
+      if (
+        account &&
+        (dialogs.length < DIALOG_PAGE || !readDialogCache(account))
+      ) {
+        saveDialogList(account, dialogs, dialogs.length < DIALOG_PAGE);
+      }
       return dialogs;
     });
     dialogsReadAt = Date.now();
-    dialogsCache.catch(() => { dialogsCache = null; });
+    dialogsCache.catch(() => {
+      dialogsCache = null;
+    });
   }
   return dialogsCache;
 }
 
-/**
- * The account the dialog list on disk (src/dialog-cache.ts) belongs to: only for the client
- * getClient() built, named by a hash of its session. Any other client (a test's own) never
- * reads or writes the file.
- */
 function dialogCacheAccount(client: TelegramClient): string | undefined {
-  return client === clientInstance && clientSession !== undefined ? accountKey(clientSession) : undefined;
+  return client === clientInstance && clientSession !== undefined
+    ? accountKey(clientSession)
+    : undefined;
 }
 
-function saveDialogList(account: string, dialogs: Dialogs, complete: boolean): void {
+function saveDialogList(
+  account: string,
+  dialogs: Dialogs,
+  complete: boolean
+): void {
   const chats: CachedChat[] = [];
   for (const d of dialogs) {
     const e = d.entity;
-    if (d.id === undefined || !(e instanceof Api.User || e instanceof Api.Chat || e instanceof Api.Channel)) continue;
+    if (
+      d.id === undefined ||
+      !(
+        e instanceof Api.User ||
+        e instanceof Api.Chat ||
+        e instanceof Api.Channel
+      )
+    ) {
+      continue;
+    }
     const hash = e instanceof Api.Chat ? undefined : e.accessHash?.toString();
-    const username = e instanceof Api.Chat ? undefined : e.username ?? undefined;
-    chats.push({ id: d.id.toString(), title: d.title ?? '', ...(username ? { username } : {}), type: dialogKind(d) as CachedChat['type'], ...(hash ? { accessHash: hash } : {}) });
+    const username =
+      e instanceof Api.Chat ? undefined : (e.username ?? undefined);
+    chats.push({
+      id: d.id.toString(),
+      title: d.title ?? "",
+      ...(username ? { username } : {}),
+      type: dialogKind(d) as CachedChat["type"],
+      ...(hash ? { accessHash: hash } : {}),
+    });
   }
   writeDialogCache(account, complete, chats);
 }
 
-/** The title a dialog has for an entity (what the cached title was taken from). */
 function dialogTitle(entity: ResolvedEntity): string {
-  return entity instanceof Api.User ? [entity.firstName, entity.lastName].filter(Boolean).join(' ') : entity.title;
+  return entity instanceof Api.User
+    ? [entity.firstName, entity.lastName].filter(Boolean).join(" ")
+    : entity.title;
 }
 
 function inputPeerOf(c: CachedChat): Api.TypeInputPeer {
-  const hash = bigInt(c.accessHash ?? '0');
-  if (c.type === 'user' || c.type === 'bot') return new Api.InputPeerUser({ userId: bigInt(c.id), accessHash: hash });
-  if (c.type === 'group') return new Api.InputPeerChat({ chatId: bigInt(c.id.replace(/^-/, '')) });
-  return new Api.InputPeerChannel({ channelId: bigInt(c.id.replace(/^-100/, '')), accessHash: hash });
+  const hash = bigInt(c.accessHash ?? "0");
+  if (c.type === "user" || c.type === "bot") {
+    return new Api.InputPeerUser({ userId: bigInt(c.id), accessHash: hash });
+  }
+  if (c.type === "group") {
+    return new Api.InputPeerChat({ chatId: bigInt(c.id.replace(/^-/, "")) });
+  }
+  return new Api.InputPeerChannel({
+    channelId: bigInt(c.id.replace(/^-100/, "")),
+    accessHash: hash,
+  });
 }
 
-/** What the list on disk says about a name: the chat, an answer for the caller, or nothing. */
 type DiskLookup =
   | { entity: ResolvedEntity; listedAt: string }
   | { error: CliError; listedAt: string }
   | { miss: string };
 
-/**
- * The cheap way to a chat: the dialog list on disk names it, and one small call (users.GetUsers,
- * messages.GetChats or channels.GetChannels) fetches it, instead of reading the whole list. A hit
- * is an ID, a @username, or a title exactly one chat had in the whole list (or, failing that, the
- * one title containing it), which the chat still has now.
- *
- * A read that the whole, fresh list answers otherwise gets that answer from disk too: a title that
- * several chats share or contain is ambiguous_chat, a name no chat has is chat_not_found, with the
- * candidates and `listedAt`. Reading the list again on a big account is a minute of FLOOD_WAITs.
- * Writes never take a title from disk (another chat may have taken it since) and never get an answer
- * from it. Anything else, and any failure, is a miss: the caller reads the list as before.
- */
-async function fromDialogCache(client: TelegramClient, asGiven: string, identifier: string, username: string | undefined, isNumericId: boolean): Promise<DiskLookup> {
+async function fromDialogCache(
+  client: TelegramClient,
+  asGiven: string,
+  identifier: string,
+  username: string | undefined,
+  isNumericId: boolean
+): Promise<DiskLookup> {
   const account = dialogCacheAccount(client);
-  if (!account) return { miss: 'not the CLI client' };
-  if (dialogCacheDisabled()) return { miss: 'TG_NO_CACHE=1' };
+  if (!account) {
+    return { miss: "not the CLI client" };
+  }
+  if (dialogCacheDisabled()) {
+    return { miss: "TG_NO_CACHE=1" };
+  }
   const saved = readDialogCache(account);
-  if (!saved) return { miss: 'no fresh list on disk' };
+  if (!saved) {
+    return { miss: "no fresh list on disk" };
+  }
   const listedAt = new Date(saved.savedAt).toISOString();
   const strict = isStrictChatResolution();
-  const needle = (username ? username.replace(/^@/, '') : identifier).trim().toLowerCase();
+  const needle = (username ? username.replace(/^@/, "") : identifier)
+    .trim()
+    .toLowerCase();
   let hit: CachedChat | undefined;
   let exact: CachedChat[] = [];
   let partial: CachedChat[] = [];
   if (username) {
-    hit = saved.chats.find(c => c.username?.toLowerCase() === needle);
+    hit = saved.chats.find((c) => c.username?.toLowerCase() === needle);
   } else if (isNumericId) {
-    hit = saved.chats.find(c => c.id === identifier);
+    hit = saved.chats.find((c) => c.id === identifier);
   } else if (saved.complete && !strict) {
-    exact = saved.chats.filter(c => c.title.trim().toLowerCase() === needle);
-    partial = exact.length ? [] : saved.chats.filter(c => c.title.toLowerCase().includes(needle));
-    if (exact.length === 1) hit = exact[0];
-    else if (!exact.length && partial.length === 1) hit = partial[0];
+    exact = saved.chats.filter((c) => c.title.trim().toLowerCase() === needle);
+    partial = exact.length
+      ? []
+      : saved.chats.filter((c) => c.title.toLowerCase().includes(needle));
+    if (exact.length === 1) {
+      hit = exact[0];
+    } else if (!exact.length && partial.length === 1) {
+      hit = partial[0];
+    }
   }
   if (hit) {
-    const entity = await fetchCached(client, hit, needle, username, isNumericId, !exact.length && !username && !isNumericId);
-    // Renamed or gone since the list was saved: it is stale, so it answers nothing more
-    return entity ? { entity, listedAt } : { miss: 'the chat changed since the list was saved' };
+    const entity = await fetchCached(
+      client,
+      hit,
+      needle,
+      username,
+      isNumericId,
+      !exact.length && !username && !isNumericId
+    );
+    return entity
+      ? { entity, listedAt }
+      : { miss: "the chat changed since the list was saved" };
   }
-  if (username) return { miss: 'the @username is not in the list' };
-  // A chat newer than the list (a DM, a channel just joined) is named by the ID inbox or chats just
-  // printed, and a bare ID cannot be fetched without the access hash the first dialog page carries
-  if (isNumericId) return { miss: 'the ID is not in the list' };
-  if (strict) return { miss: 'writes read a fresh list' };
-  if (!saved.complete) return { miss: 'the list on disk is not the whole list' };
-  // A list this process already read is fresher than the file
-  if (dialogsCache || allDialogsCache) return { miss: 'the list was read in this process' };
+  if (username) {
+    return { miss: "the @username is not in the list" };
+  }
+  if (isNumericId) {
+    return { miss: "the ID is not in the list" };
+  }
+  if (strict) {
+    return { miss: "writes read a fresh list" };
+  }
+  if (!saved.complete) {
+    return { miss: "the list on disk is not the whole list" };
+  }
+  if (dialogsCache || allDialogsCache) {
+    return { miss: "the list was read in this process" };
+  }
   const from = { listedAt };
-  if (exact.length > 1) return { error: ambiguousChat(asGiven, exact, 'exact', from), listedAt };
-  if (partial.length > 1) return { error: ambiguousChat(asGiven, partial, 'partial', from), listedAt };
+  if (exact.length > 1) {
+    return { error: ambiguousChat(asGiven, exact, "exact", from), listedAt };
+  }
+  if (partial.length > 1) {
+    return {
+      error: ambiguousChat(asGiven, partial, "partial", from),
+      listedAt,
+    };
+  }
   return { error: chatNotFound(asGiven, saved.chats, from), listedAt };
 }
 
-/** Fetch the chat the list on disk named, and check it is still that chat. */
-async function fetchCached(client: TelegramClient, hit: CachedChat, needle: string, username: string | undefined, isNumericId: boolean, partial: boolean): Promise<ResolvedEntity | undefined> {
+async function fetchCached(
+  client: TelegramClient,
+  hit: CachedChat,
+  needle: string,
+  username: string | undefined,
+  isNumericId: boolean,
+  partial: boolean
+): Promise<ResolvedEntity | undefined> {
   try {
     const entity = await client.getEntity(inputPeerOf(hit));
-    if (!(entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel)) return undefined;
-    if (utils.getPeerId(entity).toString() !== hit.id) return undefined;
-    // Renamed, or the @username moved on: not the chat that was named
-    if (username && (entity instanceof Api.Chat || entity.username?.toLowerCase() !== needle)) return undefined;
+    if (
+      !(
+        entity instanceof Api.User ||
+        entity instanceof Api.Chat ||
+        entity instanceof Api.Channel
+      )
+    ) {
+      return undefined;
+    }
+    if (utils.getPeerId(entity).toString() !== hit.id) {
+      return undefined;
+    }
+    if (
+      username &&
+      (entity instanceof Api.Chat || entity.username?.toLowerCase() !== needle)
+    ) {
+      return undefined;
+    }
     if (!username && !isNumericId) {
       const title = dialogTitle(entity).trim().toLowerCase();
-      if (partial ? !title.includes(needle) : title !== needle) return undefined;
+      if (partial ? !title.includes(needle) : title !== needle) {
+        return undefined;
+      }
     }
     return entity;
   } catch {
@@ -276,25 +398,31 @@ async function fetchCached(client: TelegramClient, hit: CachedChat, needle: stri
   }
 }
 
-let allDialogsCache: Promise<{ dialogs: Dialogs; complete: boolean }> | null = null;
+let allDialogsCache: Promise<{ dialogs: Dialogs; complete: boolean }> | null =
+  null;
 
-/**
- * The dialog list a title is matched against, and whether it is the whole list. A full first page
- * may be cut: a chat with the same title can sit beyond it, so the list is read on (once per
- * process) up to DIALOG_MAX dialogs. Past that a title is never proven unique.
- */
-async function dialogsForTitles(client: TelegramClient): Promise<{ dialogs: Dialogs; complete: boolean }> {
+async function dialogsForTitles(
+  client: TelegramClient
+): Promise<{ dialogs: Dialogs; complete: boolean }> {
   const first = await getDialogsCached(client);
-  if (first.length < DIALOG_PAGE) return { dialogs: first, complete: true };
+  if (first.length < DIALOG_PAGE) {
+    return { dialogs: first, complete: true };
+  }
   if (!allDialogsCache) {
-    allDialogsCache = client.getDialogs({ limit: DIALOG_MAX }).then(dialogs => {
-      const complete = dialogs.length < DIALOG_MAX;
-      const account = dialogCacheAccount(client);
-      if (account) saveDialogList(account, dialogs, complete);
-      return { dialogs, complete };
-    });
+    allDialogsCache = client
+      .getDialogs({ limit: DIALOG_MAX })
+      .then((dialogs) => {
+        const complete = dialogs.length < DIALOG_MAX;
+        const account = dialogCacheAccount(client);
+        if (account) {
+          saveDialogList(account, dialogs, complete);
+        }
+        return { dialogs, complete };
+      });
     allDialogsReadAt = Date.now();
-    allDialogsCache.catch(() => { allDialogsCache = null; });
+    allDialogsCache.catch(() => {
+      allDialogsCache = null;
+    });
   }
   return allDialogsCache;
 }
@@ -303,12 +431,6 @@ function cacheKey(identifier: string): string {
   return identifier.trim().toLowerCase();
 }
 
-/**
- * Recipients the write guard resolved for an approval (or for its description), by the identifier
- * as given. The write takes exactly these objects: a second lookup (after a disconnect, with other
- * matching, or a @username that changed hands meanwhile) could name someone else than the
- * person approved. Unlike the cache above it survives disconnectClient().
- */
 const pinnedPeers = new Map<string, ResolvedEntity>();
 
 export function pinPeer(identifier: string, entity: ResolvedEntity): void {
@@ -318,24 +440,38 @@ export function pinPeer(identifier: string, entity: ResolvedEntity): void {
 export async function getMe(client: TelegramClient): Promise<Api.User> {
   const me = await client.getMe();
   if (!me || !(me instanceof Api.User)) {
-    throw new Error('Failed to get user info');
+    throw new Error("Failed to get user info");
   }
   return me;
 }
 
 /** Values of `--type` in chats and inbox: the chat types plus "bot" (users that are bots). */
-export const CHAT_TYPES = ['user', 'bot', 'group', 'supergroup', 'channel'] as const;
+export const CHAT_TYPES = [
+  "user",
+  "bot",
+  "group",
+  "supergroup",
+  "channel",
+] as const;
 
 /** Whether a chat passes `--type`: "user" keeps its old meaning (bots included), "bot" only bots. */
-export function matchesChatType(chat: Pick<ChatInfo, 'type' | 'bot'>, type: string): boolean {
-  return type === 'bot' ? chat.type === 'user' && !!chat.bot : chat.type === type;
+export function matchesChatType(
+  chat: Pick<ChatInfo, "type" | "bot">,
+  type: string
+): boolean {
+  return type === "bot"
+    ? chat.type === "user" && !!chat.bot
+    : chat.type === type;
 }
 
+/**
+ * - `bot`: A bot account (type stays "user"); `--type bot` lists only these.
+ * - `full`: Opt-in (`--full`): full stats of this chat's last message. Absent in default output.
+ */
 export interface ChatInfo {
   id: string;
   title: string;
-  type: 'user' | 'group' | 'supergroup' | 'channel';
-  /** A bot account (type stays "user"); `--type bot` lists only these. */
+  type: "user" | "group" | "supergroup" | "channel";
   bot?: boolean;
   username?: string;
   unreadCount: number;
@@ -343,42 +479,42 @@ export interface ChatInfo {
   lastMessageDate?: Date;
   muted?: boolean;
   archived?: boolean;
-  /** Opt-in (`--full`): full stats of this chat's last message. Absent in default output. */
   full?: MessageFull;
 }
 
-/**
- * The dialog list for inbox and chats (all folders), shared with chat lookup: a list this process
- * read seconds ago is shown again instead of a second messages.GetDialogs (a FLOOD_WAIT on a big
- * account), and a list read here becomes the one chat lookup uses, in memory and on disk (the
- * whole list, or a full first page when there is no fresh list; never a list cut at a small -n).
- * Counters and last messages always come from Telegram: the file keeps only what names a chat.
- */
-async function sharedDialogs(client: TelegramClient, limit: number): Promise<Dialogs[number][]> {
-  // Only the client getClient() built: another one (a test's own) shares nothing
-  if (client !== clientInstance) return client.getDialogs({ limit });
+async function sharedDialogs(
+  client: TelegramClient,
+  limit: number
+): Promise<Dialogs[number][]> {
+  if (client !== clientInstance) {
+    return client.getDialogs({ limit });
+  }
   const now = Date.now();
   if (allDialogsCache && now - allDialogsReadAt <= DIALOGS_REUSE_MS) {
     const all = await allDialogsCache.catch(() => undefined);
-    if (all && (all.complete || all.dialogs.length >= limit)) return all.dialogs.slice(0, limit);
+    if (all && (all.complete || all.dialogs.length >= limit)) {
+      return all.dialogs.slice(0, limit);
+    }
   }
   if (dialogsCache && now - dialogsReadAt <= DIALOGS_REUSE_MS) {
     const first = await dialogsCache.catch(() => undefined);
-    // A first page shorter than DIALOG_PAGE is the whole list
-    if (first && (first.length < DIALOG_PAGE || first.length >= limit)) return first.slice(0, limit);
+    if (first && (first.length < DIALOG_PAGE || first.length >= limit)) {
+      return first.slice(0, limit);
+    }
   }
   const dialogs = await client.getDialogs({ limit });
   const complete = dialogs.length < limit;
   if (complete || limit >= DIALOG_PAGE) {
     dialogsCache = Promise.resolve(dialogs);
     dialogsReadAt = now;
-    // As far as a title lookup would read: it need not read this list again
     if (dialogs.length >= DIALOG_PAGE && (complete || limit >= DIALOG_MAX)) {
       allDialogsCache = Promise.resolve({ dialogs, complete });
       allDialogsReadAt = now;
     }
     const account = dialogCacheAccount(client);
-    if (account && (complete || !readDialogCache(account))) saveDialogList(account, dialogs, complete);
+    if (account && (complete || !readDialogCache(account))) {
+      saveDialogList(account, dialogs, complete);
+    }
   }
   return dialogs;
 }
@@ -388,42 +524,54 @@ export async function getDialogs(
   limit = 100,
   options: { archived?: boolean; full?: boolean } = {}
 ): Promise<ChatInfo[]> {
-  const dialogs = options.archived === undefined ? await sharedDialogs(client, limit) : await client.getDialogs({ limit, archived: options.archived });
+  const dialogs =
+    options.archived === undefined
+      ? await sharedDialogs(client, limit)
+      : await client.getDialogs({ limit, archived: options.archived });
   const now = Math.floor(Date.now() / 1000);
   const chats: ChatInfo[] = [];
 
   for (const dialog of dialogs) {
-    let type: ChatInfo['type'] = 'user';
-    let title = dialog.title || 'Unknown';
+    let type: ChatInfo["type"] = "user";
+    let title = dialog.title || "Unknown";
     let username: string | undefined;
     let bot: boolean | undefined;
 
     if (dialog.isUser) {
-      type = 'user';
+      type = "user";
       const entity = dialog.entity as Api.User;
       username = entity.username ?? undefined;
       bot = entity.bot || undefined;
-      if (entity.self) title = SAVED_MESSAGES;
+      if (entity.self) {
+        title = SAVED_MESSAGES;
+      }
     } else if (dialog.entity instanceof Api.Channel) {
-      // Check Channel first: GramJS reports megagroups as isGroup too
-      type = dialog.entity.megagroup ? 'supergroup' : 'channel';
+      type = dialog.entity.megagroup ? "supergroup" : "channel";
       username = dialog.entity.username ?? undefined;
     } else if (dialog.isGroup) {
-      type = 'group';
+      type = "group";
     }
 
     chats.push({
-      id: dialog.id?.toString() || '',
+      id: dialog.id?.toString() || "",
       title,
       type,
       bot,
       username,
       unreadCount: dialog.unreadCount,
-      lastMessage: dialog.message instanceof Api.Message ? messageText(dialog.message) : undefined,
-      lastMessageDate: dialog.message?.date ? new Date(dialog.message.date * 1000) : undefined,
+      lastMessage:
+        dialog.message instanceof Api.Message
+          ? messageText(dialog.message)
+          : undefined,
+      lastMessageDate: dialog.message?.date
+        ? new Date(dialog.message.date * 1000)
+        : undefined,
       muted: (dialog.dialog?.notifySettings?.muteUntil ?? 0) > now || undefined,
       archived: dialog.archived || undefined,
-      full: options.full && dialog.message instanceof Api.Message ? buildMessageFull(dialog.message) : undefined,
+      full:
+        options.full && dialog.message instanceof Api.Message
+          ? buildMessageFull(dialog.message)
+          : undefined,
     });
   }
 
@@ -431,14 +579,14 @@ export async function getDialogs(
 }
 
 export type MediaKind =
-  | 'photo'
-  | 'document'
-  | 'video'
-  | 'audio'
-  | 'voice'
-  | 'video_note'
-  | 'sticker'
-  | 'gif';
+  | "photo"
+  | "document"
+  | "video"
+  | "audio"
+  | "voice"
+  | "video_note"
+  | "sticker"
+  | "gif";
 
 export interface MediaInfo {
   kind: MediaKind;
@@ -452,48 +600,58 @@ export interface MediaInfo {
 }
 
 export type ButtonType =
-  | 'callback'
-  | 'url'
-  | 'text'
-  | 'switch_inline'
-  | 'switch_inline_current'
-  | 'webview'
-  | 'url_auth'
-  | 'game'
-  | 'buy'
-  | 'copy'
-  | 'request_phone'
-  | 'request_geo'
-  | 'request_poll'
-  | 'request_peer'
-  | 'user_profile'
-  | 'unknown';
+  | "callback"
+  | "url"
+  | "text"
+  | "switch_inline"
+  | "switch_inline_current"
+  | "webview"
+  | "url_auth"
+  | "game"
+  | "buy"
+  | "copy"
+  | "request_phone"
+  | "request_geo"
+  | "request_poll"
+  | "request_peer"
+  | "user_profile"
+  | "unknown";
 
+/**
+ * - `index`: 1-based flat index across all rows (what the user passes to `telegram click`).
+ * - `url`: URL for url/webview/url_auth buttons.
+ * - `query`: Query string for switch_inline buttons.
+ * - `data`: base64 of the raw callback payload (display only — never round-tripped back for clicking).
+ * - `copyText`: Text a copy button places on the clipboard.
+ * - `requiresPassword`: Callback button that needs the account 2FA password to press.
+ */
 export interface ButtonInfo {
-  /** 1-based flat index across all rows (what the user passes to `telegram click`). */
   index: number;
   row: number;
   col: number;
   text: string;
   type: ButtonType;
-  /** URL for url/webview/url_auth buttons. */
   url?: string;
-  /** Query string for switch_inline buttons. */
   query?: string;
-  /** base64 of the raw callback payload (display only — never round-tripped back for clicking). */
   data?: string;
-  /** Text a copy button places on the clipboard. */
   copyText?: string;
-  /** Callback button that needs the account 2FA password to press. */
   requiresPassword?: boolean;
 }
 
+/**
+ * - `isInline`: true = inline keyboard attached under the message; false = custom reply keyboard.
+ */
 export interface ButtonLayout {
-  /** true = inline keyboard attached under the message; false = custom reply keyboard. */
   isInline: boolean;
   rows: ButtonInfo[][];
 }
 
+/**
+ * - `chatId`: Set on results that span several chats (global search).
+ * - `replies`: Comment/reply count for channel posts and thread roots.
+ * - `topicId`: Forum topic of the message (1 = General), set when a whole forum is read without --topic.
+ * - `full`: Opt-in (`--full`): every other useful field of the Message. Absent in default output.
+ */
 export interface MessageInfo {
   id: number;
   date: Date;
@@ -504,32 +662,40 @@ export interface MessageInfo {
   isOutgoing: boolean;
   media?: MediaInfo;
   buttons?: ButtonLayout;
-  /** Set on results that span several chats (global search). */
   chatId?: string;
   chatTitle?: string;
-  /** Comment/reply count for channel posts and thread roots. */
   replies?: number;
-  /** Forum topic of the message (1 = General), set when a whole forum is read without --topic. */
   topicId?: number;
-  /** Opt-in (`--full`): every other useful field of the Message. Absent in default output. */
   full?: MessageFull;
 }
 
-/** A single reaction on a message, with its count and whether the account chose it. */
+/**
+ * A single reaction on a message, with its count and whether the account chose it.
+ *
+ * - `emoji`: Standard emoji, if a normal reaction.
+ * - `customEmojiId`: Custom-emoji document id, if a custom reaction.
+ * - `paid`: Star/paid reaction.
+ * - `chosen`: The logged-in account reacted with this.
+ */
 export interface ReactionBreakdown {
-  /** Standard emoji, if a normal reaction. */
   emoji?: string;
-  /** Custom-emoji document id, if a custom reaction. */
   customEmojiId?: string;
-  /** Star/paid reaction. */
   paid?: boolean;
   count: number;
-  /** The logged-in account reacted with this. */
   chosen?: boolean;
   chosenOrder?: number;
 }
 
-/** Rich media detail for `--full`: a superset of MediaInfo covering polls, geo, contacts, etc. */
+/**
+ * Rich media detail for `--full`: a superset of MediaInfo covering polls, geo, contacts, etc.
+ *
+ * - `url`: webpage
+ * - `lat`: geo / venue
+ * - `phone`: contact
+ * - `emoticon`: dice
+ * - `currency`: invoice
+ * - `poll`: poll
+ */
 export interface FullMediaInfo {
   type: string;
   fileName?: string;
@@ -539,27 +705,21 @@ export interface FullMediaInfo {
   height?: number;
   duration?: number;
   hasSpoiler?: boolean;
-  /** webpage */
   url?: string;
   title?: string;
   siteName?: string;
   description?: string;
-  /** geo / venue */
   lat?: number;
   long?: number;
   address?: string;
-  /** contact */
   phone?: string;
   firstName?: string;
   lastName?: string;
   userId?: string;
-  /** dice */
   emoticon?: string;
   value?: number;
-  /** invoice */
   currency?: string;
   amount?: number;
-  /** poll */
   poll?: {
     question: string;
     closed?: boolean;
@@ -567,7 +727,12 @@ export interface FullMediaInfo {
     multiple?: boolean;
     publicVoters?: boolean;
     totalVoters?: number;
-    options: { text: string; voters?: number; chosen?: boolean; correct?: boolean }[];
+    options: {
+      text: string;
+      voters?: number;
+      chosen?: boolean;
+      correct?: boolean;
+    }[];
   };
 }
 
@@ -618,61 +783,80 @@ export interface MessageFull {
 
 type RawButton = Api.KeyboardButton | Api.KeyboardInlineButton;
 
-/**
- * Layer 229 (teleproto) models a button as `{ text, type }` where `type` is a
- * `ButtonType*` (reply keyboard) or `InlineButtonType*` (inline keyboard)
- * object, instead of one TL constructor per button kind as in GramJS layer 198.
- */
-function classifyButton(btn: RawButton, index: number, row: number, col: number): ButtonInfo {
-  const base = { index, row, col, text: btn.text || '' };
+function classifyButton(
+  btn: RawButton,
+  index: number,
+  row: number,
+  col: number
+): ButtonInfo {
+  const base = { index, row, col, text: btn.text || "" };
   const t: Api.TypeButtonType | Api.TypeInlineButtonType = btn.type;
 
   if (t instanceof Api.InlineButtonTypeCallback) {
-    return { ...base, type: 'callback', data: Buffer.from(t.data).toString('base64'), requiresPassword: t.requiresPassword || undefined };
+    return {
+      ...base,
+      type: "callback",
+      data: Buffer.from(t.data).toString("base64"),
+      requiresPassword: t.requiresPassword || undefined,
+    };
   }
   if (t instanceof Api.InlineButtonTypeUrl) {
-    return { ...base, type: 'url', url: t.url };
+    return { ...base, type: "url", url: t.url };
   }
-  if (t instanceof Api.InlineButtonTypeUrlAuth || t instanceof Api.InputInlineButtonTypeUrlAuth) {
-    return { ...base, type: 'url_auth', url: t.url };
+  if (
+    t instanceof Api.InlineButtonTypeUrlAuth ||
+    t instanceof Api.InputInlineButtonTypeUrlAuth
+  ) {
+    return { ...base, type: "url_auth", url: t.url };
   }
-  if (t instanceof Api.InlineButtonTypeWebView || t instanceof Api.ButtonTypeSimpleWebView) {
-    return { ...base, type: 'webview', url: t.url };
+  if (
+    t instanceof Api.InlineButtonTypeWebView ||
+    t instanceof Api.ButtonTypeSimpleWebView
+  ) {
+    return { ...base, type: "webview", url: t.url };
   }
   if (t instanceof Api.InlineButtonTypeSwitchInline) {
-    return { ...base, type: t.samePeer ? 'switch_inline_current' : 'switch_inline', query: t.query };
+    return {
+      ...base,
+      type: t.samePeer ? "switch_inline_current" : "switch_inline",
+      query: t.query,
+    };
   }
   if (t instanceof Api.InlineButtonTypeGame) {
-    return { ...base, type: 'game' };
+    return { ...base, type: "game" };
   }
   if (t instanceof Api.InlineButtonTypeBuy) {
-    return { ...base, type: 'buy' };
+    return { ...base, type: "buy" };
   }
   if (t instanceof Api.InlineButtonTypeCopy) {
-    return { ...base, type: 'copy', copyText: t.copyText };
+    return { ...base, type: "copy", copyText: t.copyText };
   }
   if (t instanceof Api.ButtonTypeRequestPhone) {
-    return { ...base, type: 'request_phone' };
+    return { ...base, type: "request_phone" };
   }
   if (t instanceof Api.ButtonTypeRequestGeoLocation) {
-    return { ...base, type: 'request_geo' };
+    return { ...base, type: "request_geo" };
   }
   if (t instanceof Api.ButtonTypeRequestPoll) {
-    return { ...base, type: 'request_poll' };
+    return { ...base, type: "request_poll" };
   }
-  if (t instanceof Api.ButtonTypeRequestPeer || t instanceof Api.InputButtonTypeRequestPeer) {
-    return { ...base, type: 'request_peer' };
+  if (
+    t instanceof Api.ButtonTypeRequestPeer ||
+    t instanceof Api.InputButtonTypeRequestPeer
+  ) {
+    return { ...base, type: "request_peer" };
   }
-  if (t instanceof Api.InlineButtonTypeUserProfile || t instanceof Api.InputInlineButtonTypeUserProfile) {
-    return { ...base, type: 'user_profile' };
+  if (
+    t instanceof Api.InlineButtonTypeUserProfile ||
+    t instanceof Api.InputInlineButtonTypeUserProfile
+  ) {
+    return { ...base, type: "user_profile" };
   }
   if (t instanceof Api.ButtonTypeDefault) {
-    // Plain reply-keyboard button: pressing it sends its text as a message.
-    return { ...base, type: 'text' };
+    return { ...base, type: "text" };
   }
-  return { ...base, type: 'unknown' };
+  return { ...base, type: "unknown" };
 }
-
 
 /**
  * Plain text of a message. Since layer 228 bots (and Telegram clients) can send
@@ -682,93 +866,115 @@ function classifyButton(btn: RawButton, index: number, row: number, col: number)
  */
 export function messageText(msg: Api.Message): string {
   const text = plainMessageText(msg);
-  if (!isOverMcp()) return text;
-  return maskForModel(text, isLoginServiceMessage(msg) ? 'service' : 'chat');
+  if (!isOverMcp()) {
+    return text;
+  }
+  return maskForModel(text, isLoginServiceMessage(msg) ? "service" : "chat");
 }
 
 export function plainMessageText(msg: Api.Message): string {
-  if (msg.message) return msg.message;
+  if (msg.message) {
+    return msg.message;
+  }
   if (msg.richMessage) {
     try {
       return Rich.toPlainText(msg.richMessage).trim();
     } catch {
-      return '';
+      return "";
     }
   }
-  return '';
+  return "";
 }
 
-/** The MCP server sets TG_MCP on every call and TG_READ_ONLY on the read tool. */
-const isOverMcp = (): boolean => !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
+const isOverMcp = (): boolean =>
+  !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
 
-/**
- * Service accounts whose messages carry login codes: 777000 (Telegram) delivers the codes of this
- * account, 489000 ("Verification Codes") the codes other services send through Telegram Gateway.
- */
-const LOGIN_SERVICE_USER_IDS = new Set(['777000', '489000']);
+const LOGIN_SERVICE_USER_IDS = new Set(["777000", "489000"]);
 
 const isLoginServicePeer = (peer: unknown): boolean =>
-  !!peer && typeof peer === 'object' && 'userId' in peer && LOGIN_SERVICE_USER_IDS.has(String((peer as { userId: unknown }).userId));
+  !!peer &&
+  typeof peer === "object" &&
+  "userId" in peer &&
+  LOGIN_SERVICE_USER_IDS.has(String((peer as { userId: unknown }).userId));
 
-/**
- * A message from (or in the chat with, or forwarded from) a login-code service account (777000 or
- * 489000). Works on a TL `Message` and on its JSON form.
- */
-function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown }): boolean {
+function isLoginServiceMessage(msg: {
+  peerId?: unknown;
+  fromId?: unknown;
+  fwdFrom?: unknown;
+}): boolean {
   const fwd = msg.fwdFrom as { fromId?: unknown } | null | undefined;
-  return isLoginServicePeer(msg.peerId) || isLoginServicePeer(msg.fromId) || isLoginServicePeer(fwd?.fromId);
+  return (
+    isLoginServicePeer(msg.peerId) ||
+    isLoginServicePeer(msg.fromId) ||
+    isLoginServicePeer(fwd?.fromId)
+  );
 }
 
 /**
  * For plugins (src/plugins/host.ts): a message of a login-code service account as above, or one
  * that quotes or replies to such a message in another chat (the reply header names its source).
  */
-export function isServiceSource(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown; replyTo?: unknown }): boolean {
-  if (isLoginServiceMessage(msg) || fwdNamesService(msg.fwdFrom)) return true;
-  const reply = msg.replyTo as { replyFrom?: unknown; replyToPeerId?: unknown } | null | undefined;
-  return fwdNamesService(reply?.replyFrom) || isLoginServicePeer(reply?.replyToPeerId);
+export function isServiceSource(msg: {
+  peerId?: unknown;
+  fromId?: unknown;
+  fwdFrom?: unknown;
+  replyTo?: unknown;
+}): boolean {
+  if (isLoginServiceMessage(msg) || fwdNamesService(msg.fwdFrom)) {
+    return true;
+  }
+  const reply = msg.replyTo as
+    | { replyFrom?: unknown; replyToPeerId?: unknown }
+    | null
+    | undefined;
+  return (
+    fwdNamesService(reply?.replyFrom) ||
+    isLoginServicePeer(reply?.replyToPeerId)
+  );
 }
 
-/**
- * A forward (or quote) header that names a login-code service anywhere: as the author, or as the
- * chat a message saved to Saved Messages came from (`savedFromPeer`, `savedFromId`), where the
- * author may be someone else.
- */
 function fwdNamesService(header: unknown): boolean {
-  const h = header as { fromId?: unknown; savedFromPeer?: unknown; savedFromId?: unknown } | null | undefined;
-  return isLoginServicePeer(h?.fromId) || isLoginServicePeer(h?.savedFromPeer) || isLoginServicePeer(h?.savedFromId);
+  const h = header as
+    | { fromId?: unknown; savedFromPeer?: unknown; savedFromId?: unknown }
+    | null
+    | undefined;
+  return (
+    isLoginServicePeer(h?.fromId) ||
+    isLoginServicePeer(h?.savedFromPeer) ||
+    isLoginServicePeer(h?.savedFromId)
+  );
 }
 
 export { LOGIN_CODE_HIDDEN };
 
-/** Keys whose strings are IDs, hashes, dates or type tags rather than message content. */
-const NOT_CONTENT_KEY = /^(className|_|type|kind|mimeType|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
+const NOT_CONTENT_KEY =
+  /^(className|_|type|kind|mimeType|accessHash|hash|date|editDate|recentReactors|recentRepliers|savedFromPeer)$|(^id|Id)s?$/;
 
-/**
- * Plain data with every gift-code link masked and, for a login-service message (`login`), every
- * piece of its content with codes hidden, at any depth: text, entity URLs, button texts, URLs and
- * queries, a quote, a link preview. Callback data (and any other bytes, already a string here) and
- * a copy button's text are hidden whole: in a service message they exist to carry the code.
- */
-function maskContent<T>(value: T, login: boolean, key = ''): T {
-  if (typeof value === 'string') {
-    if (!login || NOT_CONTENT_KEY.test(key)) return maskForModel(value, 'chat') as T;
-    if (key === 'data' || key === 'copyText') return (value ? LOGIN_CODE_HIDDEN : value) as T;
+function maskContent<T>(value: T, login: boolean, key = ""): T {
+  if (typeof value === "string") {
+    if (!login || NOT_CONTENT_KEY.test(key)) {
+      return maskForModel(value, "chat") as T;
+    }
+    if (key === "data" || key === "copyText") {
+      return (value ? LOGIN_CODE_HIDDEN : value) as T;
+    }
     return maskLoginCodes(value) as T;
   }
-  if (Array.isArray(value)) return value.map(v => maskContent(v, login, key)) as T;
-  if (value && typeof value === 'object' && !(value instanceof Date)) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskContent(v, login, k)])) as T;
+  if (Array.isArray(value)) {
+    return value.map((v) => maskContent(v, login, key)) as T;
+  }
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, maskContent(v, login, k)])
+    ) as T;
   }
   return value;
 }
 
-/**
- * Over MCP, `value` built from `msg` with gift links masked, and login codes hidden if `msg` is from
- * a login service; in a terminal as is.
- */
 function maskedForMcp<T>(msg: Api.Message, value: T): T {
-  return value !== undefined && isOverMcp() ? maskContent(value, isLoginServiceMessage(msg)) : value;
+  return value !== undefined && isOverMcp()
+    ? maskContent(value, isLoginServiceMessage(msg))
+    : value;
 }
 
 /**
@@ -778,62 +984,71 @@ function maskedForMcp<T>(msg: Api.Message, value: T): T {
  * with a digit in it, four characters or longer.
  */
 export function maskLoginCodes(text: string): string {
-  return maskForModel(text, 'service');
+  return maskForModel(text, "service");
 }
 
-/**
- * Sender name/id without an extra round-trip: teleproto attaches the entities
- * returned with the message, so `msg.sender` is usually already resolved. In a
- * private chat an incoming message has no `fromId` (the peer is the sender),
- * which the old `fromId`-only lookup reported as "Unknown".
- */
-/** The account's own user ID, asked once per client (undefined if Telegram would not say). */
 const selfIds = new WeakMap<object, Promise<string | undefined>>();
 function selfId(client: TelegramClient): Promise<string | undefined> {
   let id = selfIds.get(client);
   if (!id) {
-    id = Promise.resolve().then(() => client.getMe()).then(me => (me instanceof Api.User ? me.id.toString() : undefined), () => undefined);
+    id = Promise.resolve()
+      .then(() => client.getMe())
+      .then(
+        (me) => (me instanceof Api.User ? me.id.toString() : undefined),
+        () => undefined
+      );
     selfIds.set(client, id);
   }
   return id;
 }
 
-/**
- * Whether the account itself wrote a message. `out` alone misses some: a message saved into Saved
- * Messages, or one sent from another device into a group, can come with out=false. The sender is
- * fromId, or the chat itself in a private chat; it is ours when that is the account's own user.
- */
-async function isFromSelf(client: TelegramClient, msg: Api.Message): Promise<boolean> {
-  if (msg.out) return true;
+async function isFromSelf(
+  client: TelegramClient,
+  msg: Api.Message
+): Promise<boolean> {
+  if (msg.out) {
+    return true;
+  }
   const peer = msg.fromId ?? msg.peerId;
-  if (!(peer instanceof Api.PeerUser)) return false;
+  if (!(peer instanceof Api.PeerUser)) {
+    return false;
+  }
   const me = await selfId(client);
   return me !== undefined && peer.userId.toString() === me;
 }
 
 /** The title of a private chat, a group or a channel; the chat with yourself is "Saved Messages". */
-export const SAVED_MESSAGES = 'Saved Messages';
+export const SAVED_MESSAGES = "Saved Messages";
 
-async function resolveSender(client: TelegramClient, msg: Api.Message): Promise<{ sender: string; senderId?: string }> {
+async function resolveSender(
+  client: TelegramClient,
+  msg: Api.Message
+): Promise<{ sender: string; senderId?: string }> {
   let entity: unknown = msg.sender ?? undefined;
   if (!entity) {
-    // Channel posts have no fromId: the channel itself is the sender
-    const ref = msg.out ? undefined : (msg.fromId ?? (msg.peerId instanceof Api.PeerChat ? undefined : msg.peerId));
+    const ref = msg.out
+      ? undefined
+      : (msg.fromId ??
+        (msg.peerId instanceof Api.PeerChat ? undefined : msg.peerId));
     if (ref) {
       try {
         entity = await client.getEntity(ref);
-      } catch {
-        // Ignore entity resolution errors
-      }
+      } catch {}
     }
   }
   if (entity instanceof Api.User) {
-    return { sender: entity.firstName || entity.username || 'Unknown', senderId: entity.id.toString() };
+    return {
+      sender: entity.firstName || entity.username || "Unknown",
+      senderId: entity.id.toString(),
+    };
   }
   if (entity instanceof Api.Channel || entity instanceof Api.Chat) {
-    return { sender: entity.title || 'Unknown', senderId: entity.id.toString() };
+    return {
+      sender: entity.title || "Unknown",
+      senderId: entity.id.toString(),
+    };
   }
-  return { sender: msg.out ? 'You' : 'Unknown' };
+  return { sender: msg.out ? "You" : "Unknown" };
 }
 
 /** Build a display-friendly button layout from a message's reply markup (over MCP, masked). */
@@ -841,10 +1056,12 @@ export function extractButtons(msg: Api.Message): ButtonLayout | undefined {
   return maskedForMcp(msg, rawButtonLayout(msg));
 }
 
-/** The button layout exactly as the message carries it, never masked: what a press would send. */
 function rawButtonLayout(msg: Api.Message): ButtonLayout | undefined {
   const markup = msg.replyMarkup;
-  if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
+  if (
+    !(markup instanceof Api.ReplyInlineMarkup) &&
+    !(markup instanceof Api.ReplyKeyboardMarkup)
+  ) {
     return undefined;
   }
 
@@ -864,28 +1081,31 @@ function rawButtonLayout(msg: Api.Message): ButtonLayout | undefined {
   return { isInline, rows };
 }
 
-/** The media of a message as it is shown (over MCP, its file name masked as the message text is). */
 function shownMediaInfo(msg: Api.Message): MediaInfo | undefined {
   return maskedForMcp(msg, extractMediaInfo(msg));
 }
 
 function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
-  const media = msg.media;
-  if (!media) return undefined;
+  const { media } = msg;
+  if (!media) {
+    return undefined;
+  }
 
   if (media instanceof Api.MessageMediaPhoto) {
-    const info: MediaInfo = { kind: 'photo' };
-    if (media.spoiler) info.hasSpoiler = true;
+    const info: MediaInfo = { kind: "photo" };
+    if (media.spoiler) {
+      info.hasSpoiler = true;
+    }
     return info;
   }
 
   if (media instanceof Api.MessageMediaDocument) {
     const doc = media.document;
     if (!(doc instanceof Api.Document)) {
-      return { kind: 'document' };
+      return { kind: "document" };
     }
 
-    let kind: MediaKind = 'document';
+    let kind: MediaKind = "document";
     let fileName: string | undefined;
     let width: number | undefined;
     let height: number | undefined;
@@ -895,30 +1115,31 @@ function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
       if (attr instanceof Api.DocumentAttributeFilename) {
         fileName = attr.fileName;
       } else if (attr instanceof Api.DocumentAttributeVideo) {
-        kind = attr.roundMessage ? 'video_note' : 'video';
+        kind = attr.roundMessage ? "video_note" : "video";
         width = attr.w;
         height = attr.h;
         duration = Math.round(attr.duration);
       } else if (attr instanceof Api.DocumentAttributeAudio) {
-        kind = attr.voice ? 'voice' : 'audio';
+        kind = attr.voice ? "voice" : "audio";
         duration = attr.duration;
       } else if (attr instanceof Api.DocumentAttributeAnimated) {
-        kind = 'gif';
+        kind = "gif";
       } else if (attr instanceof Api.DocumentAttributeSticker) {
-        kind = 'sticker';
+        kind = "sticker";
       }
     }
 
-    // Document size is `long` (big-integer). Convert safely.
     let size: number | undefined;
     try {
-      const sizeNum = typeof (doc.size as unknown as { toJSNumber?: () => number }).toJSNumber === 'function'
-        ? (doc.size as unknown as { toJSNumber: () => number }).toJSNumber()
-        : Number(doc.size as unknown as number);
-      if (Number.isFinite(sizeNum)) size = sizeNum;
-    } catch {
-      // ignore
-    }
+      const sizeNum =
+        typeof (doc.size as unknown as { toJSNumber?: () => number })
+          .toJSNumber === "function"
+          ? (doc.size as unknown as { toJSNumber: () => number }).toJSNumber()
+          : Number(doc.size as unknown as number);
+      if (Number.isFinite(sizeNum)) {
+        size = sizeNum;
+      }
+    } catch {}
 
     return {
       kind,
@@ -935,10 +1156,14 @@ function extractMediaInfo(msg: Api.Message): MediaInfo | undefined {
   return undefined;
 }
 
-export { parseTimeOffset } from './time.js';
+export { parseTimeOffset } from "./time.js";
 
 /** Convert a raw message into the CLI's MessageInfo shape. Pass `full` to attach MessageFull. */
-export async function toMessageInfo(client: TelegramClient, msg: Api.Message, opts: { full?: boolean } = {}): Promise<MessageInfo> {
+export async function toMessageInfo(
+  client: TelegramClient,
+  msg: Api.Message,
+  opts: { full?: boolean } = {}
+): Promise<MessageInfo> {
   const { sender, senderId } = await resolveSender(client, msg);
   const info: MessageInfo = {
     id: msg.id,
@@ -952,12 +1177,16 @@ export async function toMessageInfo(client: TelegramClient, msg: Api.Message, op
     buttons: extractButtons(msg),
     replies: msg.replies?.replies || undefined,
   };
-  if (opts.full) info.full = buildMessageFull(msg);
+  if (opts.full) {
+    info.full = buildMessageFull(msg);
+  }
   return info;
 }
 
-const peerIdStr = (peer: Api.TypePeer): string => utils.getPeerId(peer).toString();
-const iso = (ts?: number): string | undefined => (ts ? new Date(ts * 1000).toISOString() : undefined);
+const peerIdStr = (peer: Api.TypePeer): string =>
+  utils.getPeerId(peer).toString();
+const iso = (ts?: number): string | undefined =>
+  ts ? new Date(ts * 1000).toISOString() : undefined;
 
 /** Every remaining useful field of a Message, for `--full` / data collection (no extra API calls). */
 export function buildMessageFull(msg: Api.Message): MessageFull {
@@ -979,16 +1208,25 @@ export function buildMessageFull(msg: Api.Message): MessageFull {
   };
 
   if (msg.reactions instanceof Api.MessageReactions) {
-    full.reactions = msg.reactions.results.map(r => {
+    full.reactions = msg.reactions.results.map((r) => {
       const b: ReactionBreakdown = { count: r.count };
-      if (r.reaction instanceof Api.ReactionEmoji) b.emoji = r.reaction.emoticon;
-      else if (r.reaction instanceof Api.ReactionCustomEmoji) b.customEmojiId = r.reaction.documentId.toString();
-      else if (r.reaction instanceof Api.ReactionPaid) b.paid = true;
-      if (r.chosenOrder !== undefined) { b.chosen = true; b.chosenOrder = r.chosenOrder; }
+      if (r.reaction instanceof Api.ReactionEmoji) {
+        b.emoji = r.reaction.emoticon;
+      } else if (r.reaction instanceof Api.ReactionCustomEmoji) {
+        b.customEmojiId = r.reaction.documentId.toString();
+      } else if (r.reaction instanceof Api.ReactionPaid) {
+        b.paid = true;
+      }
+      if (r.chosenOrder !== undefined) {
+        b.chosen = true;
+        b.chosenOrder = r.chosenOrder;
+      }
       return b;
     });
     if (msg.reactions.recentReactions?.length) {
-      full.recentReactors = msg.reactions.recentReactions.map(x => peerIdStr(x.peerId));
+      full.recentReactors = msg.reactions.recentReactions.map((x) =>
+        peerIdStr(x.peerId)
+      );
     }
   }
 
@@ -1000,7 +1238,9 @@ export function buildMessageFull(msg: Api.Message): MessageFull {
       channelId: r.channelId ? r.channelId.toString() : undefined,
       maxId: r.maxId ?? undefined,
       readMaxId: r.readMaxId ?? undefined,
-      recentRepliers: r.recentRepliers?.length ? r.recentRepliers.map(peerIdStr) : undefined,
+      recentRepliers: r.recentRepliers?.length
+        ? r.recentRepliers.map(peerIdStr)
+        : undefined,
     };
   }
 
@@ -1023,40 +1263,59 @@ export function buildMessageFull(msg: Api.Message): MessageFull {
       replyToMsgId: r.replyToMsgId ?? undefined,
       topMsgId: r.replyToTopId ?? undefined,
       forumTopic: r.forumTopic || undefined,
-      // A quote of a login-service message hides its codes too (the quoted peer is in the header)
-      quoteText: r.quoteText != null && isOverMcp() && isLoginServicePeer(r.replyToPeerId) ? maskLoginCodes(r.quoteText) : r.quoteText ?? undefined,
+      quoteText:
+        r.quoteText != null &&
+        isOverMcp() &&
+        isLoginServicePeer(r.replyToPeerId)
+          ? maskLoginCodes(r.quoteText)
+          : (r.quoteText ?? undefined),
       replyToPeerId: r.replyToPeerId ? peerIdStr(r.replyToPeerId) : undefined,
     };
   }
 
   const media = buildFullMedia(msg);
-  if (media) full.media = media;
+  if (media) {
+    full.media = media;
+  }
   return maskedForMcp(msg, full);
 }
 
 function docAttributes(doc: Api.Document): Partial<FullMediaInfo> {
   const out: Partial<FullMediaInfo> = {};
   for (const attr of doc.attributes) {
-    if (attr instanceof Api.DocumentAttributeFilename) out.fileName = attr.fileName;
-    else if (attr instanceof Api.DocumentAttributeVideo) { out.width = attr.w; out.height = attr.h; out.duration = Math.round(attr.duration); }
-    else if (attr instanceof Api.DocumentAttributeAudio) out.duration = attr.duration;
-    else if (attr instanceof Api.DocumentAttributeImageSize) { out.width = attr.w; out.height = attr.h; }
+    if (attr instanceof Api.DocumentAttributeFilename) {
+      out.fileName = attr.fileName;
+    } else if (attr instanceof Api.DocumentAttributeVideo) {
+      out.width = attr.w;
+      out.height = attr.h;
+      out.duration = Math.round(attr.duration);
+    } else if (attr instanceof Api.DocumentAttributeAudio) {
+      out.duration = attr.duration;
+    } else if (attr instanceof Api.DocumentAttributeImageSize) {
+      out.width = attr.w;
+      out.height = attr.h;
+    }
   }
   return out;
 }
 
 /** A plain, JSON-friendly description of any message media (poll, geo, contact, webpage, …). */
 export function buildFullMedia(msg: Api.Message): FullMediaInfo | undefined {
-  const media = msg.media;
-  if (!media) return undefined;
+  const { media } = msg;
+  if (!media) {
+    return undefined;
+  }
 
   if (media instanceof Api.MessageMediaPhoto) {
-    return { type: 'photo', hasSpoiler: media.spoiler || undefined };
+    return { type: "photo", hasSpoiler: media.spoiler || undefined };
   }
-  if (media instanceof Api.MessageMediaDocument && media.document instanceof Api.Document) {
+  if (
+    media instanceof Api.MessageMediaDocument &&
+    media.document instanceof Api.Document
+  ) {
     const base = extractMediaInfo(msg);
     return {
-      type: base?.kind ?? 'document',
+      type: base?.kind ?? "document",
       fileName: base?.fileName,
       mimeType: base?.mimeType,
       size: base?.size,
@@ -1068,71 +1327,111 @@ export function buildFullMedia(msg: Api.Message): FullMediaInfo | undefined {
     };
   }
   if (media instanceof Api.MessageMediaPoll) {
-    const poll = media.poll;
-    const results = media.results;
-    const byOption = new Map(results.results?.map(r => [r.option.toString('base64'), r]) ?? []);
+    const { poll } = media;
+    const { results } = media;
+    const byOption = new Map(
+      results.results?.map((r) => [r.option.toString("base64"), r])
+    );
     return {
-      type: 'poll',
+      type: "poll",
       poll: {
-        question: typeof poll.question === 'string' ? poll.question : poll.question.text,
+        question:
+          typeof poll.question === "string"
+            ? poll.question
+            : poll.question.text,
         closed: poll.closed || undefined,
         quiz: poll.quiz || undefined,
         multiple: poll.multipleChoice || undefined,
         publicVoters: poll.publicVoters || undefined,
         totalVoters: results.totalVoters ?? undefined,
-        options: poll.answers.filter((a): a is Api.PollAnswer => a instanceof Api.PollAnswer).map(a => {
-          const r = byOption.get(a.option.toString('base64'));
-          return {
-            text: typeof a.text === 'string' ? a.text : a.text.text,
-            voters: r?.voters ?? undefined,
-            chosen: r?.chosen || undefined,
-            correct: r?.correct || undefined,
-          };
-        }),
+        options: poll.answers
+          .filter((a): a is Api.PollAnswer => a instanceof Api.PollAnswer)
+          .map((a) => {
+            const r = byOption.get(a.option.toString("base64"));
+            return {
+              text: typeof a.text === "string" ? a.text : a.text.text,
+              voters: r?.voters ?? undefined,
+              chosen: r?.chosen || undefined,
+              correct: r?.correct || undefined,
+            };
+          }),
       },
     };
   }
-  if (media instanceof Api.MessageMediaGeo || media instanceof Api.MessageMediaGeoLive) {
-    const geo = media.geo;
-    return geo instanceof Api.GeoPoint ? { type: 'geo', lat: geo.lat, long: geo.long } : { type: 'geo' };
+  if (
+    media instanceof Api.MessageMediaGeo ||
+    media instanceof Api.MessageMediaGeoLive
+  ) {
+    const { geo } = media;
+    return geo instanceof Api.GeoPoint
+      ? { type: "geo", lat: geo.lat, long: geo.long }
+      : { type: "geo" };
   }
   if (media instanceof Api.MessageMediaVenue) {
-    const geo = media.geo;
-    return { type: 'venue', title: media.title, address: media.address, lat: geo instanceof Api.GeoPoint ? geo.lat : undefined, long: geo instanceof Api.GeoPoint ? geo.long : undefined };
+    const { geo } = media;
+    return {
+      type: "venue",
+      title: media.title,
+      address: media.address,
+      lat: geo instanceof Api.GeoPoint ? geo.lat : undefined,
+      long: geo instanceof Api.GeoPoint ? geo.long : undefined,
+    };
   }
   if (media instanceof Api.MessageMediaContact) {
-    return { type: 'contact', phone: media.phoneNumber, firstName: media.firstName, lastName: media.lastName || undefined, userId: media.userId ? media.userId.toString() : undefined };
+    return {
+      type: "contact",
+      phone: media.phoneNumber,
+      firstName: media.firstName,
+      lastName: media.lastName || undefined,
+      userId: media.userId ? media.userId.toString() : undefined,
+    };
   }
-  if (media instanceof Api.MessageMediaWebPage && media.webpage instanceof Api.WebPage) {
+  if (
+    media instanceof Api.MessageMediaWebPage &&
+    media.webpage instanceof Api.WebPage
+  ) {
     const w = media.webpage;
-    return { type: 'webpage', url: w.url, title: w.title ?? undefined, siteName: w.siteName ?? undefined, description: w.description ?? undefined };
+    return {
+      type: "webpage",
+      url: w.url,
+      title: w.title ?? undefined,
+      siteName: w.siteName ?? undefined,
+      description: w.description ?? undefined,
+    };
   }
   if (media instanceof Api.MessageMediaDice) {
-    return { type: 'dice', emoticon: media.emoticon, value: media.value };
+    return { type: "dice", emoticon: media.emoticon, value: media.value };
   }
   if (media instanceof Api.MessageMediaInvoice) {
-    return { type: 'invoice', title: media.title, currency: media.currency, amount: media.totalAmount ? media.totalAmount.toJSNumber() : undefined };
+    return {
+      type: "invoice",
+      title: media.title,
+      currency: media.currency,
+      amount: media.totalAmount ? media.totalAmount.toJSNumber() : undefined,
+    };
   }
-  return { type: (media as { className?: string }).className ?? 'unknown' };
+  return { type: (media as { className?: string }).className ?? "unknown" };
 }
 
+/**
+ * - `offsetId`: Only messages older than this ID (exclusive).
+ * - `minId`: Only messages newer than this ID (exclusive).
+ * - `from`: Only messages sent by this user (@username, ID, or "me").
+ * - `thread`: Read the replies thread of this message (channel post comments or a forum topic ID).
+ * - `topic`: `thread` is a forum topic: refuse a chat that is not a forum instead of reading an empty thread.
+ * - `full`: Attach MessageFull to each message (the `--full` flag).
+ * - `probe`: Look for one message past `limit`, so `hasMore` is known, never guessed from a full page.
+ */
 export interface GetMessagesOptions {
   limit?: number;
-  /** Only messages older than this ID (exclusive). */
   offsetId?: number;
-  /** Only messages newer than this ID (exclusive). */
   minId?: number;
   minDate?: Date;
   maxDate?: Date;
-  /** Only messages sent by this user (@username, ID, or "me"). */
   from?: string;
-  /** Read the replies thread of this message (channel post comments or a forum topic ID). */
   thread?: number;
-  /** `thread` is a forum topic: refuse a chat that is not a forum instead of reading an empty thread. */
   topic?: boolean;
-  /** Attach MessageFull to each message (the `--full` flag). */
   full?: boolean;
-  /** Look for one message past `limit`, so `hasMore` is known, never guessed from a full page. */
   probe?: boolean;
 }
 
@@ -1140,19 +1439,26 @@ export async function getMessages(
   client: TelegramClient,
   chatIdentifier: string,
   options: GetMessagesOptions = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; threadChatId?: string; forum?: boolean; hasMore?: boolean }> {
+): Promise<{
+  messages: MessageInfo[];
+  chatTitle: string;
+  chatId: string;
+  threadChatId?: string;
+  forum?: boolean;
+  hasMore?: boolean;
+}> {
   const { offsetId, minDate, maxDate, minId, from, thread, full } = options;
   const wanted = options.limit ?? 50;
-  // With probe: one more than asked; finding it proves there is a next page
   const limit = options.probe ? wanted + 1 : wanted;
   let threadChatId: string | undefined;
 
-  // Find the chat by name or username
   const entity = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(entity);
   const chatId = utils.getPeerId(entity).toString();
   const forum = hasTopics(entity);
-  if (options.topic && !forum) throw notAForum(entity);
+  if (options.topic && !forum) {
+    throw notAForum(entity);
+  }
   const fromUser = from ? await resolveChat(client, from) : undefined;
 
   const messages: MessageInfo[] = [];
@@ -1161,15 +1467,15 @@ export async function getMessages(
   let currentOffsetId = offsetId;
   let firstBatch = true;
 
-  // Page backwards (newest first) until we have `limit` messages, cross minDate,
-  // or run out of history.
   while (messages.length < limit) {
     const batchLimit = Math.min(BATCH_SIZE, limit - messages.length + 50);
-    const offsetDate = !currentOffsetId && firstBatch && maxDate ? Math.floor(maxDate.getTime() / 1000) : undefined;
+    const offsetDate =
+      !currentOffsetId && firstBatch && maxDate
+        ? Math.floor(maxDate.getTime() / 1000)
+        : undefined;
 
     let batch: Api.TypeMessage[];
     if (thread) {
-      // teleproto's iterMessages has no replyTo, so page messages.GetReplies directly
       const res = await client.invoke(
         new Api.messages.GetReplies({
           peer: entity,
@@ -1183,52 +1489,87 @@ export async function getMessages(
           hash: bigInt(0),
         })
       );
-      batch = 'messages' in res ? res.messages : [];
-      // Channel comments live in the linked discussion group: report its ID so
-      // callers can reply there
-      const first = batch.find((m): m is Api.Message => m instanceof Api.Message);
+      batch = "messages" in res ? res.messages : [];
+      const first = batch.find(
+        (m): m is Api.Message => m instanceof Api.Message
+      );
       if (first && !threadChatId) {
         const peerId = utils.getPeerId(first.peerId).toString();
-        if (peerId !== utils.getPeerId(entity).toString()) threadChatId = peerId;
+        if (peerId !== utils.getPeerId(entity).toString()) {
+          threadChatId = peerId;
+        }
       }
     } else {
-      const params: { limit: number; offsetId?: number; offsetDate?: number; minId?: number; fromUser?: ResolvedEntity } = { limit: batchLimit };
-      if (currentOffsetId) params.offsetId = currentOffsetId;
-      else if (offsetDate) params.offsetDate = offsetDate;
-      if (minId) params.minId = minId;
-      if (fromUser) params.fromUser = fromUser;
+      const params: {
+        limit: number;
+        offsetId?: number;
+        offsetDate?: number;
+        minId?: number;
+        fromUser?: ResolvedEntity;
+      } = { limit: batchLimit };
+      if (currentOffsetId) {
+        params.offsetId = currentOffsetId;
+      } else if (offsetDate) {
+        params.offsetDate = offsetDate;
+      }
+      if (minId) {
+        params.minId = minId;
+      }
+      if (fromUser) {
+        params.fromUser = fromUser;
+      }
       batch = await client.getMessages(entity, params);
     }
     firstBatch = false;
-    if (batch.length === 0) break;
+    if (batch.length === 0) {
+      break;
+    }
 
     let reachedMinDate = false;
 
     for (const msg of batch) {
-      if (!(msg instanceof Api.Message)) continue;
-      // GetReplies has no sender filter, so apply --from client-side for threads
-      if (thread && fromUser && !(msg.fromId instanceof Api.PeerUser && msg.fromId.userId.equals(fromUser.id))) continue;
+      if (!(msg instanceof Api.Message)) {
+        continue;
+      }
+      if (
+        thread &&
+        fromUser &&
+        !(
+          msg.fromId instanceof Api.PeerUser &&
+          msg.fromId.userId.equals(fromUser.id)
+        )
+      ) {
+        continue;
+      }
 
       const msgDate = new Date(msg.date * 1000);
-      if (maxDate && msgDate > maxDate) continue;
+      if (maxDate && msgDate > maxDate) {
+        continue;
+      }
       if (minDate && msgDate < minDate) {
         reachedMinDate = true;
         break;
       }
-      if (messages.length >= limit) break;
+      if (messages.length >= limit) {
+        break;
+      }
 
       const info = await toMessageInfo(client, msg, { full });
-      // A whole forum mixes its topics: label each message with its own
-      if (forum && !thread) info.topicId = msg.replyTo?.forumTopic ? (msg.replyTo.replyToTopId ?? msg.replyTo.replyToMsgId ?? 1) : 1;
+      if (forum && !thread) {
+        info.topicId = msg.replyTo?.forumTopic
+          ? (msg.replyTo.replyToTopId ?? msg.replyTo.replyToMsgId ?? 1)
+          : 1;
+      }
       messages.push(info);
     }
 
-    if (reachedMinDate) break;
-    if (messages.length >= limit) break;
+    if (reachedMinDate) {
+      break;
+    }
+    if (messages.length >= limit) {
+      break;
+    }
 
-    // Page by the oldest Api.Message in the batch: Telegram mixes MessageService /
-    // MessageEmpty items into raw batches, and paging by batch[batch.length - 1]
-    // silently stops as soon as the oldest raw item is a service message.
     let oldestMessageInBatch: Api.Message | null = null;
     for (let i = batch.length - 1; i >= 0; i--) {
       const candidate = batch[i];
@@ -1237,17 +1578,31 @@ export async function getMessages(
         break;
       }
     }
-    if (!oldestMessageInBatch) break; // batch was all service messages
-    if (currentOffsetId === oldestMessageInBatch.id) break; // no progress
+    if (!oldestMessageInBatch) {
+      break;
+    }
+    if (currentOffsetId === oldestMessageInBatch.id) {
+      break;
+    }
     currentOffsetId = oldestMessageInBatch.id;
 
-    // If batch was smaller than requested, no more messages
-    if (batch.length < batchLimit) break;
+    if (batch.length < batchLimit) {
+      break;
+    }
   }
 
   const hasMore = messages.length > wanted;
-  if (hasMore) messages.length = wanted;
-  return { messages, chatTitle, chatId, threadChatId, ...(forum ? { forum } : {}), ...(options.probe ? { hasMore } : {}) };
+  if (hasMore) {
+    messages.length = wanted;
+  }
+  return {
+    messages,
+    chatTitle,
+    chatId,
+    threadChatId,
+    ...(forum ? { forum } : {}),
+    ...(options.probe ? { hasMore } : {}),
+  };
 }
 
 /** Fetch specific messages by ID (missing/deleted IDs are skipped). */
@@ -1256,7 +1611,12 @@ export async function getMessagesByIds(
   chatIdentifier: string,
   ids: number[],
   options: { full?: boolean } = {}
-): Promise<{ messages: MessageInfo[]; chatTitle: string; chatId: string; missing: number[] }> {
+): Promise<{
+  messages: MessageInfo[];
+  chatTitle: string;
+  chatId: string;
+  missing: number[];
+}> {
   const entity = await resolveChat(client, chatIdentifier);
   const raw = await client.getMessages(entity, { ids });
   const messages: MessageInfo[] = [];
@@ -1267,7 +1627,12 @@ export async function getMessagesByIds(
       found.add(msg.id);
     }
   }
-  return { messages, chatTitle: getChatTitle(entity), chatId: utils.getPeerId(entity).toString(), missing: ids.filter(id => !found.has(id)) };
+  return {
+    messages,
+    chatTitle: getChatTitle(entity),
+    chatId: utils.getPeerId(entity).toString(),
+    missing: ids.filter((id) => !found.has(id)),
+  };
 }
 
 export async function downloadMessageMedia(
@@ -1275,8 +1640,7 @@ export async function downloadMessageMedia(
   chatIdentifier: string,
   messageId: number,
   outputDir: string,
-  /** Called with the target file before the folder is created or anything is written; may throw. */
-  checkPath?: (filePath: string) => void,
+  checkPath?: (filePath: string) => void
 ): Promise<{ filePath: string; media: MediaInfo } | null> {
   const entity = await resolveChat(client, chatIdentifier);
 
@@ -1288,7 +1652,9 @@ export async function downloadMessageMedia(
   }
 
   const mediaInfo = extractMediaInfo(msg);
-  if (!mediaInfo) return null;
+  if (!mediaInfo) {
+    return null;
+  }
 
   const fileName = buildMediaFilename(mediaInfo, msg.id);
   const filePath = join(outputDir, fileName);
@@ -1300,8 +1666,7 @@ export async function downloadMessageMedia(
   }
 
   const result = await client.downloadMedia(msg, { outputFile: filePath });
-  // downloadMedia returns the path/Buffer; when outputFile is a string, file is written there.
-  const savedPath = typeof result === 'string' ? result : filePath;
+  const savedPath = typeof result === "string" ? result : filePath;
 
   return { filePath: savedPath, media: mediaInfo };
 }
@@ -1316,17 +1681,29 @@ export function assertDownloadTarget(filePath: string): void {
   let st;
   try {
     st = lstatSync(filePath);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw e;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
   }
-  if (st.isSymbolicLink()) throw new Error(`Refusing to download through a symbolic link: ${filePath}`);
-  if (!st.isFile()) throw new Error(`Refusing to download: ${filePath} exists and is not a regular file`);
+  if (st.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to download through a symbolic link: ${filePath}`
+    );
+  }
+  if (!st.isFile()) {
+    throw new Error(
+      `Refusing to download: ${filePath} exists and is not a regular file`
+    );
+  }
 }
 
-export function buildMediaFilename(media: MediaInfo, messageId: number): string {
+export function buildMediaFilename(
+  media: MediaInfo,
+  messageId: number
+): string {
   if (media.fileName) {
-    // Prefix with message ID to guarantee uniqueness across chat.
     return `${messageId}_${sanitizeFilename(media.fileName)}`;
   }
 
@@ -1335,42 +1712,61 @@ export function buildMediaFilename(media: MediaInfo, messageId: number): string 
 }
 
 function sanitizeFilename(name: string): string {
-  return name.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '_');
+  return name.replaceAll(/[/\\?%*:|"<>\u0000-\u001F]/g, "_");
 }
 
 function guessExtension(media: MediaInfo): string {
   if (media.mimeType) {
     const map: Record<string, string> = {
-      'image/jpeg': '.jpg',
-      'image/png': '.png',
-      'image/webp': '.webp',
-      'image/gif': '.gif',
-      'video/mp4': '.mp4',
-      'video/quicktime': '.mov',
-      'video/webm': '.webm',
-      'audio/mpeg': '.mp3',
-      'audio/ogg': '.ogg',
-      'audio/mp4': '.m4a',
-      'application/pdf': '.pdf',
-      'application/zip': '.zip',
+      "image/jpeg": ".jpg",
+      "image/png": ".png",
+      "image/webp": ".webp",
+      "image/gif": ".gif",
+      "video/mp4": ".mp4",
+      "video/quicktime": ".mov",
+      "video/webm": ".webm",
+      "audio/mpeg": ".mp3",
+      "audio/ogg": ".ogg",
+      "audio/mp4": ".m4a",
+      "application/pdf": ".pdf",
+      "application/zip": ".zip",
     };
-    if (map[media.mimeType]) return map[media.mimeType];
+    if (map[media.mimeType]) {
+      return map[media.mimeType];
+    }
     const match = media.mimeType.match(/\/([a-zA-Z0-9.+-]+)$/);
-    if (match) return `.${match[1].replace(/\+.*$/, '')}`;
+    if (match) {
+      return `.${match[1].replace(/\+.*$/, "")}`;
+    }
   }
-  if (media.kind === 'photo') return '.jpg';
-  if (media.kind === 'voice') return '.ogg';
-  if (media.kind === 'video' || media.kind === 'video_note' || media.kind === 'gif') return '.mp4';
-  if (media.kind === 'audio') return '.mp3';
-  if (media.kind === 'sticker') return '.webp';
-  return '.bin';
+  if (media.kind === "photo") {
+    return ".jpg";
+  }
+  if (media.kind === "voice") {
+    return ".ogg";
+  }
+  if (
+    media.kind === "video" ||
+    media.kind === "video_note" ||
+    media.kind === "gif"
+  ) {
+    return ".mp4";
+  }
+  if (media.kind === "audio") {
+    return ".mp3";
+  }
+  if (media.kind === "sticker") {
+    return ".webp";
+  }
+  return ".bin";
 }
 
 /**
  * The parse mode a send or edit passes to teleproto. Its client parses Markdown when a call leaves
  * parseMode undefined (`__init__` would go out as italic "init"), so plain text says `false`.
  */
-export const parseModeOf = (mode?: 'html' | 'md'): 'html' | 'md' | false => mode ?? false;
+export const parseModeOf = (mode?: "html" | "md"): "html" | "md" | false =>
+  mode ?? false;
 
 export async function sendFileMessage(
   client: TelegramClient,
@@ -1380,7 +1776,7 @@ export async function sendFileMessage(
     caption?: string;
     asDocument?: boolean;
     replyToMsgId?: number;
-    parseMode?: 'html' | 'md';
+    parseMode?: "html" | "md";
     silent?: boolean;
     topic?: number;
   } = {}
@@ -1388,10 +1784,12 @@ export async function sendFileMessage(
   const entity = await resolveChat(client, chatIdentifier);
 
   const replyTo = options.topic
-    ? new Api.InputReplyToMessage({ replyToMsgId: options.replyToMsgId ?? options.topic, topMsgId: options.topic })
+    ? new Api.InputReplyToMessage({
+        replyToMsgId: options.replyToMsgId ?? options.topic,
+        topMsgId: options.topic,
+      })
     : options.replyToMsgId;
 
-  // The bytes the approval was checked against (read once per process), never the path again
   const result = await client.sendFile(entity, {
     file: uploadable(fileSnapshot(filePath)),
     caption: options.caption,
@@ -1422,28 +1820,47 @@ const SEARCH_FILTERS: Record<string, () => Api.TypeMessagesFilter> = {
 
 export const SEARCH_TYPES = Object.keys(SEARCH_FILTERS);
 
+/**
+ * - `from`: Sender filter (@username, ID or "me"); requires `chat`.
+ * - `type`: One of SEARCH_TYPES.
+ * - `full`: Attach MessageFull to each result (the `--full` flag).
+ */
 export interface SearchOptions {
   chat?: string;
   limit?: number;
   minDate?: Date;
   maxDate?: Date;
-  /** Sender filter (@username, ID or "me"); requires `chat`. */
   from?: string;
-  /** One of SEARCH_TYPES. */
   type?: string;
-  /** Attach MessageFull to each result (the `--full` flag). */
   full?: boolean;
 }
 
-function peerTitle(peer: Api.TypePeer, chats: Api.TypeChat[], users: Api.TypeUser[]): string | undefined {
+function peerTitle(
+  peer: Api.TypePeer,
+  chats: Api.TypeChat[],
+  users: Api.TypeUser[]
+): string | undefined {
   if (peer instanceof Api.PeerUser) {
-    const u = users.find((x): x is Api.User => x instanceof Api.User && x.id.equals(peer.userId));
-    if (u?.self) return SAVED_MESSAGES;
-    return u ? [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || undefined : undefined;
+    const u = users.find(
+      (x): x is Api.User => x instanceof Api.User && x.id.equals(peer.userId)
+    );
+    if (u?.self) {
+      return SAVED_MESSAGES;
+    }
+    return u
+      ? [u.firstName, u.lastName].filter(Boolean).join(" ") ||
+          u.username ||
+          undefined
+      : undefined;
   }
-  const id = peer instanceof Api.PeerChat ? peer.chatId : peer instanceof Api.PeerChannel ? peer.channelId : undefined;
-  const c = id ? chats.find(x => 'id' in x && x.id.equals(id)) : undefined;
-  return c && 'title' in c ? c.title : undefined;
+  const id =
+    peer instanceof Api.PeerChat
+      ? peer.chatId
+      : peer instanceof Api.PeerChannel
+        ? peer.channelId
+        : undefined;
+  const c = id ? chats.find((x) => "id" in x && x.id.equals(id)) : undefined;
+  return c && "title" in c ? c.title : undefined;
 }
 
 /**
@@ -1465,12 +1882,18 @@ export async function searchMessages(
 ): Promise<SearchResult> {
   const { chat, limit = 50, minDate, maxDate, from, type, full } = options;
   if (type && !SEARCH_FILTERS[type]) {
-    throw usageError(`Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(', ')}`);
+    throw usageError(
+      `Unknown --type "${type}". Use one of: ${SEARCH_TYPES.join(", ")}`
+    );
   }
   if (from && !chat) {
-    throw usageError('--from needs --chat (Telegram global search cannot filter by sender)');
+    throw usageError(
+      "--from needs --chat (Telegram global search cannot filter by sender)"
+    );
   }
-  const filter = type ? SEARCH_FILTERS[type]() : new Api.InputMessagesFilterEmpty();
+  const filter = type
+    ? SEARCH_FILTERS[type]()
+    : new Api.InputMessagesFilterEmpty();
   const minTs = minDate ? Math.floor(minDate.getTime() / 1000) : 0;
   const maxTs = maxDate ? Math.floor(maxDate.getTime() / 1000) : 0;
 
@@ -1496,17 +1919,26 @@ export async function searchMessages(
     );
 
     const messages: MessageInfo[] = [];
-    // Every result carries its chat ID, as in global search, so a reply needs no second lookup
     const chatId = utils.getPeerId(entity).toString();
-    if ('messages' in res) {
+    if ("messages" in res) {
       for (const msg of res.messages.slice(0, limit)) {
-        if (msg instanceof Api.Message) messages.push({ ...(await toMessageInfo(client, msg, { full })), chatId });
+        if (msg instanceof Api.Message) {
+          messages.push({
+            ...(await toMessageInfo(client, msg, { full })),
+            chatId,
+          });
+        }
       }
     }
-    return { query, chatTitle: getChatTitle(entity), chatId, messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) };
+    return {
+      query,
+      chatTitle: getChatTitle(entity),
+      chatId,
+      messages,
+      ...(searchHasMore(res, limit) ? { hasMore: true } : {}),
+    };
   }
 
-  // Global search: results span chats, so tag each message with its chat
   const res = await client.invoke(
     new Api.messages.SearchGlobal({
       q: query,
@@ -1521,27 +1953,31 @@ export async function searchMessages(
   );
 
   const messages: MessageInfo[] = [];
-  if ('messages' in res) {
+  if ("messages" in res) {
     for (const msg of res.messages.slice(0, limit)) {
-      if (!(msg instanceof Api.Message)) continue;
+      if (!(msg instanceof Api.Message)) {
+        continue;
+      }
       const info = await toMessageInfo(client, msg, { full });
       info.chatId = utils.getPeerId(msg.peerId).toString();
       info.chatTitle = peerTitle(msg.peerId, res.chats, res.users);
       messages.push(info);
     }
   }
-  return { query, messages, ...(searchHasMore(res, limit) ? { hasMore: true } : {}) };
+  return {
+    query,
+    messages,
+    ...(searchHasMore(res, limit) ? { hasMore: true } : {}),
+  };
 }
 
-/**
- * Whether a search has results past the first `limit`: the extra one asked for came back, or the
- * exact total says so (the server may cap a page below limit + 1). A full page alone proves nothing.
- */
 function searchHasMore(res: object, limit: number): boolean {
   const r = res as { messages?: unknown[]; count?: unknown; inexact?: unknown };
   const got = r.messages?.length ?? 0;
-  if (got > limit) return true;
-  return typeof r.count === 'number' && !r.inexact && r.count > got;
+  if (got > limit) {
+    return true;
+  }
+  return typeof r.count === "number" && !r.inexact && r.count > got;
 }
 
 export async function sendMessage(
@@ -1549,13 +1985,23 @@ export async function sendMessage(
   chatIdentifier: string | ResolvedEntity,
   text: string,
   replyToMsgId?: number,
-  options: { parseMode?: 'html' | 'md'; schedule?: number; silent?: boolean; topic?: number } = {}
+  options: {
+    parseMode?: "html" | "md";
+    schedule?: number;
+    silent?: boolean;
+    topic?: number;
+  } = {}
 ): Promise<Api.Message> {
-  const entity = typeof chatIdentifier === 'string' ? await resolveChat(client, chatIdentifier) : chatIdentifier;
+  const entity =
+    typeof chatIdentifier === "string"
+      ? await resolveChat(client, chatIdentifier)
+      : chatIdentifier;
 
-  // Forum topics: the topic's root message is the thread; replies inside it keep topMsgId
   const replyTo = options.topic
-    ? new Api.InputReplyToMessage({ replyToMsgId: replyToMsgId ?? options.topic, topMsgId: options.topic })
+    ? new Api.InputReplyToMessage({
+        replyToMsgId: replyToMsgId ?? options.topic,
+        topMsgId: options.topic,
+      })
     : replyToMsgId;
 
   const result = await client.sendMessage(entity, {
@@ -1585,7 +2031,7 @@ export async function getContactInfo(
   const entity = await client.getEntity(identifier);
 
   if (!(entity instanceof Api.User)) {
-    throw new Error('Not a user');
+    throw new Error("Not a user");
   }
 
   let bio: string | undefined;
@@ -1594,9 +2040,7 @@ export async function getContactInfo(
       new Api.users.GetFullUser({ id: entity })
     );
     bio = fullUser.fullUser.about ?? undefined;
-  } catch {
-    // Ignore
-  }
+  } catch {}
 
   return {
     id: entity.id.toString(),
@@ -1614,20 +2058,32 @@ export async function getChatMembers(
   client: TelegramClient,
   chatIdentifier: string,
   options: { adminsOnly?: boolean; limit?: number; query?: string } = {}
-): Promise<{ id: string; name: string; username?: string; isAdmin: boolean }[]> {
+): Promise<
+  { id: string; name: string; username?: string; isAdmin: boolean }[]
+> {
   const { adminsOnly = false, limit = 200, query } = options;
-  const all = await getChatMembersUnfiltered(client, chatIdentifier, { adminsOnly, limit, query });
-  if (!query) return all;
-  // Server-side search only covers supergroups; basic groups are filtered here
+  const all = await getChatMembersUnfiltered(client, chatIdentifier, {
+    adminsOnly,
+    limit,
+    query,
+  });
+  if (!query) {
+    return all;
+  }
   const q = query.toLowerCase();
-  return all.filter(m => m.name.toLowerCase().includes(q) || m.username?.toLowerCase().includes(q));
+  return all.filter(
+    (m) =>
+      m.name.toLowerCase().includes(q) || m.username?.toLowerCase().includes(q)
+  );
 }
 
 async function getChatMembersUnfiltered(
   client: TelegramClient,
   chatIdentifier: string,
   options: { adminsOnly: boolean; limit: number; query?: string }
-): Promise<{ id: string; name: string; username?: string; isAdmin: boolean }[]> {
+): Promise<
+  { id: string; name: string; username?: string; isAdmin: boolean }[]
+> {
   const { adminsOnly, limit, query } = options;
   const entity = await resolveChat(client, chatIdentifier);
 
@@ -1652,23 +2108,34 @@ async function getChatMembersUnfiltered(
       return [];
     }
 
-    const members: { id: string; name: string; username?: string; isAdmin: boolean }[] = [];
+    const members: {
+      id: string;
+      name: string;
+      username?: string;
+      isAdmin: boolean;
+    }[] = [];
 
     for (const participant of result.participants) {
-      const userId = 'userId' in participant ? participant.userId : null;
-      if (!userId) continue;
+      const userId = "userId" in participant ? participant.userId : null;
+      if (!userId) {
+        continue;
+      }
 
       const user = result.users.find(
         (u): u is Api.User => u instanceof Api.User && u.id.equals(userId)
       );
 
       if (user) {
-        const isAdmin = participant instanceof Api.ChannelParticipantAdmin ||
-                       participant instanceof Api.ChannelParticipantCreator;
+        const isAdmin =
+          participant instanceof Api.ChannelParticipantAdmin ||
+          participant instanceof Api.ChannelParticipantCreator;
 
         members.push({
           id: user.id.toString(),
-          name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Unknown',
+          name:
+            [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+            user.username ||
+            "Unknown",
           username: user.username ?? undefined,
           isAdmin,
         });
@@ -1681,27 +2148,39 @@ async function getChatMembersUnfiltered(
       new Api.messages.GetFullChat({ chatId: entity.id })
     );
 
-    if (!('fullChat' in fullChat) || !(fullChat.fullChat instanceof Api.ChatFull)) {
+    if (
+      !("fullChat" in fullChat) ||
+      !(fullChat.fullChat instanceof Api.ChatFull)
+    ) {
       return [];
     }
 
-    const members: { id: string; name: string; username?: string; isAdmin: boolean }[] = [];
+    const members: {
+      id: string;
+      name: string;
+      username?: string;
+      isAdmin: boolean;
+    }[] = [];
 
     if (fullChat.fullChat.participants instanceof Api.ChatParticipants) {
       for (const participant of fullChat.fullChat.participants.participants) {
-        const userId = participant.userId;
+        const { userId } = participant;
         const user = fullChat.users.find(
           (u): u is Api.User => u instanceof Api.User && u.id.equals(userId)
         );
 
         if (user) {
-          const isAdmin = participant instanceof Api.ChatParticipantAdmin ||
-                         participant instanceof Api.ChatParticipantCreator;
+          const isAdmin =
+            participant instanceof Api.ChatParticipantAdmin ||
+            participant instanceof Api.ChatParticipantCreator;
 
           if (!adminsOnly || isAdmin) {
             members.push({
               id: user.id.toString(),
-              name: [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Unknown',
+              name:
+                [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+                user.username ||
+                "Unknown",
               username: user.username ?? undefined,
               isAdmin,
             });
@@ -1713,56 +2192,60 @@ async function getChatMembersUnfiltered(
     return members;
   }
 
-  throw new Error('Not a group chat');
+  throw new Error("Not a group chat");
 }
 
-export async function getAdminGroups(client: TelegramClient): Promise<ChatInfo[]> {
+export async function getAdminGroups(
+  client: TelegramClient
+): Promise<ChatInfo[]> {
   const dialogs = await getDialogsCached(client);
   const adminGroups: ChatInfo[] = [];
 
   for (const dialog of dialogs) {
     if (dialog.isGroup || dialog.isChannel) {
-      const entity = dialog.entity;
+      const { entity } = dialog;
 
       if (entity instanceof Api.Channel) {
         if (entity.adminRights || entity.creator) {
           adminGroups.push({
-            id: dialog.id?.toString() || '',
-            title: dialog.title || 'Unknown',
-            type: entity.megagroup ? 'supergroup' : 'channel',
+            id: dialog.id?.toString() || "",
+            title: dialog.title || "Unknown",
+            type: entity.megagroup ? "supergroup" : "channel",
             username: entity.username ?? undefined,
             unreadCount: dialog.unreadCount,
           });
         }
       } else if (entity instanceof Api.Chat) {
-        // For regular groups, we need to check participants
         try {
           const fullChat = await client.invoke(
             new Api.messages.GetFullChat({ chatId: entity.id })
           );
 
-          const me = await client.getMe() as Api.User;
+          const me = (await client.getMe()) as Api.User;
 
-          if ('fullChat' in fullChat && fullChat.fullChat instanceof Api.ChatFull) {
-            if (fullChat.fullChat.participants instanceof Api.ChatParticipants) {
-              const myParticipant = fullChat.fullChat.participants.participants.find(
-                p => p.userId.equals(me.id)
+          if (
+            "fullChat" in fullChat &&
+            fullChat.fullChat instanceof Api.ChatFull &&
+            fullChat.fullChat.participants instanceof Api.ChatParticipants
+          ) {
+            const myParticipant =
+              fullChat.fullChat.participants.participants.find((p) =>
+                p.userId.equals(me.id)
               );
 
-              if (myParticipant instanceof Api.ChatParticipantAdmin ||
-                  myParticipant instanceof Api.ChatParticipantCreator) {
-                adminGroups.push({
-                  id: dialog.id?.toString() || '',
-                  title: dialog.title || 'Unknown',
-                  type: 'group',
-                  unreadCount: dialog.unreadCount,
-                });
-              }
+            if (
+              myParticipant instanceof Api.ChatParticipantAdmin ||
+              myParticipant instanceof Api.ChatParticipantCreator
+            ) {
+              adminGroups.push({
+                id: dialog.id?.toString() || "",
+                title: dialog.title || "Unknown",
+                type: "group",
+                unreadCount: dialog.unreadCount,
+              });
             }
           }
-        } catch {
-          // Skip if we can't get chat info
-        }
+        } catch {}
       }
     }
   }
@@ -1777,111 +2260,172 @@ export type ResolvedEntity = Api.User | Api.Chat | Api.Channel;
  * its chats as topics (botForumView); the topic methods take either peer.
  */
 export function hasTopics(entity: ResolvedEntity): boolean {
-  if (entity instanceof Api.Channel) return !!entity.forum;
+  if (entity instanceof Api.Channel) {
+    return !!entity.forum;
+  }
   return entity instanceof Api.User && !!entity.bot && !!entity.botForumView;
 }
 
-export async function resolveChat(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
+export async function resolveChat(
+  client: TelegramClient,
+  identifier: string
+): Promise<ResolvedEntity> {
   const pinned = pinnedPeers.get(identifier);
-  if (pinned) return pinned;
-  const key = `${isStrictChatResolution() ? 'strict:' : ''}${cacheKey(identifier)}`;
+  if (pinned) {
+    return pinned;
+  }
+  const key = `${isStrictChatResolution() ? "strict:" : ""}${cacheKey(identifier)}`;
   const cached = resolvedChatCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    return cached;
+  }
 
   const entity = await resolveChatUncached(client, identifier);
   resolvedChatCache.set(key, entity);
   return entity;
 }
 
-const SELF_ALIASES = new Set(['me', 'self', 'saved', 'saved messages', 'избранное']);
+const SELF_ALIASES = new Set([
+  "me",
+  "self",
+  "saved",
+  "saved messages",
+  "избранное",
+]);
 
-async function resolveChatUncached(client: TelegramClient, identifier: string): Promise<ResolvedEntity> {
-  // The name as the caller wrote it: what a candidate's command replaces
+async function resolveChatUncached(
+  client: TelegramClient,
+  identifier: string
+): Promise<ResolvedEntity> {
   const asGiven = identifier;
-  // Saved Messages: resolve to our own user before any title matching, otherwise
-  // "me" substring-matches arbitrary chat titles ("Game", "Meetup", ...).
   if (SELF_ALIASES.has(identifier.trim().toLowerCase())) {
     return await client.getMe();
   }
 
-  // A t.me link names its chat exactly: never a title search ("Team https://t.me/x" titles)
   const link = parseChatLink(identifier);
   if (link?.invite) {
-    throw usageError(`${identifier} is an invite link; it does not name a chat you can read or write`,
-      'Join it first (telegram join <link>), then use the chat ID from telegram chats.');
+    throw usageError(
+      `${identifier} is an invite link; it does not name a chat you can read or write`,
+      "Join it first (telegram join <link>), then use the chat ID from telegram chats."
+    );
   }
-  if (link?.id) identifier = link.id;
+  if (link?.id) {
+    identifier = link.id;
+  }
 
-  // Check if it's a username (starts with @)
-  const username = link?.username ? `@${link.username}` : identifier.startsWith('@') ? identifier : undefined;
+  const username = link?.username
+    ? `@${link.username}`
+    : identifier.startsWith("@")
+      ? identifier
+      : undefined;
   const isNumericId = /^-?\d+$/.test(identifier);
-  // The dialog list on disk: a chat, or (for a read) the answer to a miss, with no list read at all
-  const disk = await fromDialogCache(client, asGiven, identifier, username, isNumericId);
-  if ('entity' in disk) {
-    logDialogCache(`hit "${asGiven}" -> ${utils.getPeerId(disk.entity).toString()} (list from ${disk.listedAt})`);
+  const disk = await fromDialogCache(
+    client,
+    asGiven,
+    identifier,
+    username,
+    isNumericId
+  );
+  if ("entity" in disk) {
+    logDialogCache(
+      `hit "${asGiven}" -> ${utils.getPeerId(disk.entity).toString()} (list from ${disk.listedAt})`
+    );
     return disk.entity;
   }
-  if ('error' in disk) {
-    logDialogCache(`hit "${asGiven}" -> ${disk.error.code} (list from ${disk.listedAt})`);
+  if ("error" in disk) {
+    logDialogCache(
+      `hit "${asGiven}" -> ${disk.error.code} (list from ${disk.listedAt})`
+    );
     throw disk.error;
   }
   const reads = !username && !dialogsCache;
-  logDialogCache(`${reads ? 'refresh' : 'miss'} "${asGiven}": ${disk.miss}${reads ? '; reading the dialog list from Telegram' : ''}`);
+  logDialogCache(
+    `${reads ? "refresh" : "miss"} "${asGiven}": ${disk.miss}${reads ? "; reading the dialog list from Telegram" : ""}`
+  );
   if (username) {
     const entity = await client.getEntity(username);
-    if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
+    if (
+      entity instanceof Api.User ||
+      entity instanceof Api.Chat ||
+      entity instanceof Api.Channel
+    ) {
       return entity;
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
   }
 
-  // IDs are matched in the first page (then asked of Telegram); titles need the whole list
-  const { dialogs, complete } = isNumericId ? { dialogs: await getDialogsCached(client), complete: true } : await dialogsForTitles(client);
+  const { dialogs, complete } = isNumericId
+    ? { dialogs: await getDialogsCached(client), complete: true }
+    : await dialogsForTitles(client);
 
   let dialog;
   if (isNumericId) {
-    // Numeric IDs are matched against dialog peer IDs, never against titles
-    dialog = dialogs.find(d => d.id?.toString() === identifier);
+    dialog = dialogs.find((d) => d.id?.toString() === identifier);
   } else {
     const needle = identifier.trim().toLowerCase();
-    const exact = dialogs.filter(d => d.title?.trim().toLowerCase() === needle);
-    // Never a silent pick between several chats: the caller would act on (or report) the wrong one
-    if (exact.length > 1) throw ambiguousChat(asGiven, exact.map(named), 'exact');
+    const exact = dialogs.filter(
+      (d) => d.title?.trim().toLowerCase() === needle
+    );
+    if (exact.length > 1) {
+      throw ambiguousChat(asGiven, exact.map(named), "exact");
+    }
     dialog = exact[0];
     if (!dialog) {
-      const partial = dialogs.filter(d => d.title?.toLowerCase().includes(needle));
+      const partial = dialogs.filter((d) =>
+        d.title?.toLowerCase().includes(needle)
+      );
       if (isStrictChatResolution() && partial.length) {
-        // Writes: exactly one exact title, or refuse with the candidates
-        throw new CliError(`No chat is titled exactly "${identifier}"; writes need an ID, @username or the exact title`, 'chat_not_exact', EXIT.USAGE, {
-          candidates: chatCandidates(partial.map(named)), hint: 'Run the command again with one of these IDs.',
-          text: `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial.map(named))}`,
-        });
+        throw new CliError(
+          `No chat is titled exactly "${identifier}"; writes need an ID, @username or the exact title`,
+          "chat_not_exact",
+          EXIT.USAGE,
+          {
+            candidates: chatCandidates(partial.map(named)),
+            hint: "Run the command again with one of these IDs.",
+            text: `No chat is titled exactly "${identifier}". Writes need an ID, @username or the exact title. Did you mean:\n${describeCandidates(partial.map(named))}`,
+          }
+        );
       }
-      // Reads: one partial match is fine, several are a question for the caller
-      if (partial.length > 1) throw ambiguousChat(asGiven, partial.map(named), 'partial');
+      if (partial.length > 1) {
+        throw ambiguousChat(asGiven, partial.map(named), "partial");
+      }
       dialog = partial[0];
     }
-    // One match in a cut list proves nothing: another chat beyond the cut may have the same title
     if (dialog && !complete) {
       const matched = exact.length ? exact : [dialog];
-      throw new CliError(`"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title; use an ID or @username`, 'ambiguous_or_unverified', EXIT.USAGE, {
-        candidates: chatCandidates(matched.map(named)), hint: 'Run the command again with this ID, or with the chat\'s @username.',
-        text: `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title. Use an ID or @username:\n${describeCandidates(matched.map(named))}`,
-      });
+      throw new CliError(
+        `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title; use an ID or @username`,
+        "ambiguous_or_unverified",
+        EXIT.USAGE,
+        {
+          candidates: chatCandidates(matched.map(named)),
+          hint: "Run the command again with this ID, or with the chat's @username.",
+          text: `"${identifier}" matches a chat among the first ${dialogs.length} dialogs, but the list goes on, so another chat may have the same title. Use an ID or @username:\n${describeCandidates(matched.map(named))}`,
+        }
+      );
     }
   }
 
   if (dialog && dialog.entity) {
-    const entity = dialog.entity;
-    if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
+    const { entity } = dialog;
+    if (
+      entity instanceof Api.User ||
+      entity instanceof Api.Chat ||
+      entity instanceof Api.Channel
+    ) {
       return entity;
     }
   }
 
-  // Try as a direct entity identifier
   try {
-    const entity = await client.getEntity(isNumericId ? bigInt(identifier) : identifier);
-    if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
+    const entity = await client.getEntity(
+      isNumericId ? bigInt(identifier) : identifier
+    );
+    if (
+      entity instanceof Api.User ||
+      entity instanceof Api.Chat ||
+      entity instanceof Api.Channel
+    ) {
       return entity;
     }
     throw new Error(`Invalid entity type for: ${identifier}`);
@@ -1890,11 +2434,17 @@ async function resolveChatUncached(client: TelegramClient, identifier: string): 
   }
 }
 
-type Dialogs = Awaited<ReturnType<TelegramClient['getDialogs']>>;
+type Dialogs = Awaited<ReturnType<TelegramClient["getDialogs"]>>;
 
 function dialogKind(d: Dialogs[number]): string {
-  if (d.isUser) return (d.entity as Api.User | undefined)?.bot ? 'bot' : 'user';
-  return d.isChannel ? ((d.entity as Api.Channel)?.megagroup ? 'supergroup' : 'channel') : 'group';
+  if (d.isUser) {
+    return (d.entity as Api.User | undefined)?.bot ? "bot" : "user";
+  }
+  return d.isChannel
+    ? (d.entity as Api.Channel)?.megagroup
+      ? "supergroup"
+      : "channel"
+    : "group";
 }
 
 /**
@@ -1902,61 +2452,96 @@ function dialogKind(d: Dialogs[number]): string {
  * `--json` when the caller's command had it, so an agent gets JSON back from it too.
  */
 export function chatsQueryCommand(name: string): string[] {
-  return ['chats', '-q', name, '--preview', '0', ...(getInvocation()?.includes('--json') ? ['--json'] : [])];
+  return [
+    "chats",
+    "-q",
+    name,
+    "--preview",
+    "0",
+    ...(getInvocation()?.includes("--json") ? ["--json"] : []),
+  ];
 }
 
-/** A chat as a candidate names it: from a dialog read now, or from the list on disk. */
-type NamedChat = { id: string; title: string; type: string };
+interface NamedChat {
+  id: string;
+  title: string;
+  type: string;
+}
 
 function named(d: Dialogs[number]): NamedChat {
-  return { id: String(d.id), title: d.title ?? '', type: dialogKind(d) };
+  return { id: String(d.id), title: d.title ?? "", type: dialogKind(d) };
 }
 
-/**
- * The caller's command again with `id` in place of the chat name: only when the name stands in it
- * exactly once (as an argument or `--option=name`), so the swap cannot hit another argument.
- */
 function rerunWith(asGiven: string, id: string): string[] | undefined {
   const invocation = getInvocation();
-  if (!invocation || !asGiven) return undefined;
-  const at = invocation.flatMap((a, i) => a === asGiven || (a.startsWith('--') && a.endsWith(`=${asGiven}`) && a.indexOf('=') === a.length - asGiven.length - 1) ? [i] : []);
-  if (at.length !== 1) return undefined;
+  if (!invocation || !asGiven) {
+    return undefined;
+  }
+  const at = invocation.flatMap((a, i) =>
+    a === asGiven ||
+    (a.startsWith("--") &&
+      a.endsWith(`=${asGiven}`) &&
+      a.indexOf("=") === a.length - asGiven.length - 1)
+      ? [i]
+      : []
+  );
+  if (at.length !== 1) {
+    return undefined;
+  }
   const command = [...invocation];
   const arg = command[at[0]];
-  command[at[0]] = arg === asGiven ? id : `${arg.slice(0, arg.indexOf('='))}=${id}`;
+  command[at[0]] =
+    arg === asGiven ? id : `${arg.slice(0, arg.indexOf("="))}=${id}`;
   return command;
 }
 
-/**
- * Candidates show only what tells chats apart: ID, title, type (never a @username), and, for a
- * read, the caller's command re-run with that ID.
- */
-function chatCandidates(chats: NamedChat[], asGiven?: string, max = 5): ChatCandidate[] {
-  return chats.slice(0, max).map(c => {
-    // Never for a write: a ready "send <guessed chat> …" invites sending to a chat nobody chose
-    const command = asGiven === undefined || isStrictChatResolution() ? undefined : rerunWith(asGiven, c.id);
-    return { id: c.id, title: c.title, type: c.type, ...(command ? { command } : {}) };
+function chatCandidates(
+  chats: NamedChat[],
+  asGiven?: string,
+  max = 5
+): ChatCandidate[] {
+  return chats.slice(0, max).map((c) => {
+    const command =
+      asGiven === undefined || isStrictChatResolution()
+        ? undefined
+        : rerunWith(asGiven, c.id);
+    return {
+      id: c.id,
+      title: c.title,
+      type: c.type,
+      ...(command ? { command } : {}),
+    };
   });
 }
 
-/** Where the candidates came from, when it was the list on disk: said in the hint and as `listedAt`. */
-type FromDisk = { listedAt: string };
+interface FromDisk {
+  listedAt: string;
+}
 
 function diskNote(from?: FromDisk): string {
-  if (!from) return '';
+  if (!from) {
+    return "";
+  }
   return ` This list is from ${from.listedAt} (up to ${DIALOG_CACHE_TTL_MS / 60_000} minutes old); for a chat that is new or renamed since, run the command with TG_NO_CACHE=1 to read the list from Telegram again.`;
 }
 
-/** Several chats have (or contain) this title: never a silent pick, the caller chooses by ID. */
-function ambiguousChat(asGiven: string, chats: NamedChat[], match: 'exact' | 'partial', from?: FromDisk): CliError {
-  const summary = match === 'exact'
-    ? `"${asGiven}" matches ${chats.length} chats; use an ID`
-    : `"${asGiven}" is part of ${chats.length} chat titles; use an ID or the exact title`;
+function ambiguousChat(
+  asGiven: string,
+  chats: NamedChat[],
+  match: "exact" | "partial",
+  from?: FromDisk
+): CliError {
+  const summary =
+    match === "exact"
+      ? `"${asGiven}" matches ${chats.length} chats; use an ID`
+      : `"${asGiven}" is part of ${chats.length} chat titles; use an ID or the exact title`;
   const candidates = chatCandidates(chats, asGiven);
-  const hint = `Run the command again with one of these IDs${candidates.some(c => c.command) ? ' (each candidate has its command)' : ''}.${diskNote(from)}`;
-  return new CliError(summary, 'ambiguous_chat', EXIT.USAGE, {
-    candidates, hint, ...(from ? { listedAt: from.listedAt } : {}),
-    text: `${summary}:\n${describeCandidates(chats)}${from ? `\n${diskNote(from).trim()}` : ''}`,
+  const hint = `Run the command again with one of these IDs${candidates.some((c) => c.command) ? " (each candidate has its command)" : ""}.${diskNote(from)}`;
+  return new CliError(summary, "ambiguous_chat", EXIT.USAGE, {
+    candidates,
+    hint,
+    ...(from ? { listedAt: from.listedAt } : {}),
+    text: `${summary}:\n${describeCandidates(chats)}${from ? `\n${diskNote(from).trim()}` : ""}`,
   });
 }
 
@@ -1964,16 +2549,27 @@ function ambiguousChat(asGiven: string, chats: NamedChat[], match: 'exact' | 'pa
  * What a t.me link (or tg://resolve) names: a public @username, a private channel by its ID
  * (t.me/c/<id>/…), or an invite. Anything that is not a link is undefined.
  */
-export function parseChatLink(text: string): { username?: string; id?: string; invite?: boolean } | undefined {
+export function parseChatLink(
+  text: string
+): { username?: string; id?: string; invite?: boolean } | undefined {
   const value = text.trim();
   const tg = /^tg:\/\/resolve\?(?:.*&)?domain=([A-Za-z0-9_]{4,})/i.exec(value);
-  if (tg) return { username: tg[1] };
-  const m = /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/(.+)$/i.exec(value);
-  if (!m) return undefined;
-  const path = m[1].split(/[?#]/)[0].replace(/\/+$/, '');
-  if (/^(\+|joinchat\/)/i.test(path)) return { invite: true };
+  if (tg) {
+    return { username: tg[1] };
+  }
+  const m =
+    /^(?:https?:\/\/)?(?:www\.)?(?:t|telegram)\.(?:me|dog)\/(.+)$/i.exec(value);
+  if (!m) {
+    return undefined;
+  }
+  const path = m[1].split(/[?#]/)[0].replace(/\/+$/, "");
+  if (/^(\+|joinchat\/)/i.test(path)) {
+    return { invite: true };
+  }
   const priv = /^c\/(\d+)(?:\/\d+)*$/i.exec(path);
-  if (priv) return { id: `-100${priv[1]}` };
+  if (priv) {
+    return { id: `-100${priv[1]}` };
+  }
   const user = /^(?:s\/)?([A-Za-z][A-Za-z0-9_]{3,})(?:\/\d+)*$/.exec(path);
   return user ? { username: user[1] } : undefined;
 }
@@ -1982,7 +2578,6 @@ function describeCandidates(chats: NamedChat[]): string {
   return formatCandidates(chatCandidates(chats), chats.length);
 }
 
-/** Edit distance, for "did you mean" (titles are short, so the quadratic table is fine). */
 function editDistance(a: string, b: string): number {
   const row = Array.from({ length: b.length + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
@@ -1990,98 +2585,162 @@ function editDistance(a: string, b: string): number {
     row[0] = i;
     for (let j = 1; j <= b.length; j++) {
       const cur = row[j];
-      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      row[j] = Math.min(
+        row[j] + 1,
+        row[j - 1] + 1,
+        prev + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
       prev = cur;
     }
   }
   return row[b.length];
 }
 
-/** "Chat not found" with the closest titles (by the whole title or one of its words) and the next command. */
-function chatNotFound(identifier: string, chats: NamedChat[], from?: FromDisk): CliError {
-  const needle = identifier.trim().replace(/^@/, '').toLowerCase();
+function chatNotFound(
+  identifier: string,
+  chats: NamedChat[],
+  from?: FromDisk
+): CliError {
+  const needle = identifier.trim().replace(/^@/, "").toLowerCase();
   const limit = Math.max(1, Math.floor(needle.length / 3));
   const scored = chats
-    .map(d => {
+    .map((d) => {
       const title = d.title.toLowerCase();
       const words = [title, ...title.split(/\s+/)].filter(Boolean);
-      return { d, score: Math.min(...words.map(w => editDistance(needle, w))) };
+      return {
+        d,
+        score: Math.min(...words.map((w) => editDistance(needle, w))),
+      };
     })
-    .filter(x => needle && x.score <= limit)
+    .filter((x) => needle && x.score <= limit)
     .sort((a, b) => a.score - b.score);
-  const candidates = chatCandidates(scored.map(x => x.d), identifier);
-  // The command as an argv too: the text came from the caller. --preview 0: titles, no message text
+  const candidates = chatCandidates(
+    scored.map((x) => x.d),
+    identifier
+  );
   const command = chatsQueryCommand(identifier);
-  const hint = `${diskNote(from).trim()}${from ? ' ' : ''}List matching chats: ${shellCommand(command)}`;
-  return new CliError(`Chat not found: ${identifier}`, 'chat_not_found', EXIT.ERROR, {
-    candidates, hint, command, ...(from ? { listedAt: from.listedAt } : {}),
-    text: [`Chat not found: ${identifier}`, candidates.length ? `Closest titles:\n${formatCandidates(candidates)}` : '', hint].filter(Boolean).join('\n'),
-  });
+  const hint = `${diskNote(from).trim()}${from ? " " : ""}List matching chats: ${shellCommand(command)}`;
+  return new CliError(
+    `Chat not found: ${identifier}`,
+    "chat_not_found",
+    EXIT.ERROR,
+    {
+      candidates,
+      hint,
+      command,
+      ...(from ? { listedAt: from.listedAt } : {}),
+      text: [
+        `Chat not found: ${identifier}`,
+        candidates.length
+          ? `Closest titles:\n${formatCandidates(candidates)}`
+          : "",
+        hint,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    }
+  );
 }
 
 /**
  * The chat an identifier resolves to (cached after the command's own call): its ID and title.
  * `topic`: the caller reads a forum topic, so a chat without topics is refused as getMessages does.
  */
-export async function chatRef(client: TelegramClient, identifier: string, options: { topic?: boolean } = {}): Promise<{ chatId: string; chatTitle: string }> {
+export async function chatRef(
+  client: TelegramClient,
+  identifier: string,
+  options: { topic?: boolean } = {}
+): Promise<{ chatId: string; chatTitle: string }> {
   const entity = await resolveChat(client, identifier);
-  if (options.topic && !hasTopics(entity)) throw notAForum(entity);
-  return { chatId: utils.getPeerId(entity).toString(), chatTitle: getChatTitle(entity) };
+  if (options.topic && !hasTopics(entity)) {
+    throw notAForum(entity);
+  }
+  return {
+    chatId: utils.getPeerId(entity).toString(),
+    chatTitle: getChatTitle(entity),
+  };
 }
 
 function notAForum(entity: ResolvedEntity): CliError {
-  return new CliError(`${getChatTitle(entity)} (${utils.getPeerId(entity)}) is not a forum, so it has no topics`, 'not_a_forum', EXIT.USAGE, {
-    hint: 'Read it without --topic; for the comments of one message use --thread <id>.',
-  });
+  return new CliError(
+    `${getChatTitle(entity)} (${utils.getPeerId(entity)}) is not a forum, so it has no topics`,
+    "not_a_forum",
+    EXIT.USAGE,
+    {
+      hint: "Read it without --topic; for the comments of one message use --thread <id>.",
+    }
+  );
 }
 
 function getChatTitle(entity: ResolvedEntity): string {
   if (entity instanceof Api.User) {
-    if (entity.self) return SAVED_MESSAGES;
-    return entity.firstName || entity.username || 'Unknown';
+    if (entity.self) {
+      return SAVED_MESSAGES;
+    }
+    return entity.firstName || entity.username || "Unknown";
   }
   if (entity instanceof Api.Chat || entity instanceof Api.Channel) {
     return entity.title;
   }
-  return 'Unknown';
+  return "Unknown";
 }
 
-// --- Mute/Unmute Functions ---
+const MAX_INT32 = 2_147_483_647;
 
-const MAX_INT32 = 2147483647;
-
-export function parseDuration(duration: string): { seconds: number; isForever: boolean } {
-  if (duration === 'forever') {
+export function parseDuration(duration: string): {
+  seconds: number;
+  isForever: boolean;
+} {
+  if (duration === "forever") {
     return { seconds: 0, isForever: true };
   }
 
   const match = duration.match(/^(\d+)(m|h|d|w)$/);
   if (!match) {
-    throw new Error(`Invalid duration format: ${duration}. Use formats like 1h, 8h, 1d, 1w, or "forever"`);
+    throw new Error(
+      `Invalid duration format: ${duration}. Use formats like 1h, 8h, 1d, 1w, or "forever"`
+    );
   }
 
-  const value = parseInt(match[1], 10);
+  const value = Number.parseInt(match[1], 10);
   const unit = match[2];
 
   let seconds: number;
   switch (unit) {
-    case 'm': seconds = value * 60; break;
-    case 'h': seconds = value * 3600; break;
-    case 'd': seconds = value * 86400; break;
-    case 'w': seconds = value * 604800; break;
-    default: throw new Error(`Unknown duration unit: ${unit}`);
+    case "m": {
+      seconds = value * 60;
+      break;
+    }
+    case "h": {
+      seconds = value * 3600;
+      break;
+    }
+    case "d": {
+      seconds = value * 86_400;
+      break;
+    }
+    case "w": {
+      seconds = value * 604_800;
+      break;
+    }
+    default: {
+      throw new Error(`Unknown duration unit: ${unit}`);
+    }
   }
 
-  // Telegram takes the end as an int of Unix seconds: a longer one would wrap to some other date
-  if (!Number.isSafeInteger(seconds) || Math.floor(Date.now() / 1000) + seconds > MAX_INT32) {
-    throw new Error(`Duration ${duration} is too long; use "forever" for no end`);
+  if (
+    !Number.isSafeInteger(seconds) ||
+    Math.floor(Date.now() / 1000) + seconds > MAX_INT32
+  ) {
+    throw new Error(
+      `Duration ${duration} is too long; use "forever" for no end`
+    );
   }
   return { seconds, isForever: false };
 }
 
-// Keep for backward compatibility
 export function parseDurationToSeconds(duration: string): number {
-  if (duration === 'forever') {
+  if (duration === "forever") {
     return MAX_INT32;
   }
   return parseDuration(duration).seconds;
@@ -2090,7 +2749,7 @@ export function parseDurationToSeconds(duration: string): number {
 export async function muteChat(
   client: TelegramClient,
   chatIdentifier: string,
-  duration: string = 'forever'
+  duration = "forever"
 ): Promise<{ success: boolean; message: string }> {
   const chat = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(chat);
@@ -2098,30 +2757,34 @@ export async function muteChat(
   let inputPeer: Api.TypeInputNotifyPeer;
   if (chat instanceof Api.User) {
     inputPeer = new Api.InputNotifyPeer({
-      peer: new Api.InputPeerUser({ userId: chat.id, accessHash: chat.accessHash || bigInt(0) })
+      peer: new Api.InputPeerUser({
+        userId: chat.id,
+        accessHash: chat.accessHash || bigInt(0),
+      }),
     });
   } else if (chat instanceof Api.Chat) {
     inputPeer = new Api.InputNotifyPeer({
-      peer: new Api.InputPeerChat({ chatId: chat.id })
+      peer: new Api.InputPeerChat({ chatId: chat.id }),
     });
   } else if (chat instanceof Api.Channel) {
     inputPeer = new Api.InputNotifyPeer({
-      peer: new Api.InputPeerChannel({ channelId: chat.id, accessHash: chat.accessHash || bigInt(0) })
+      peer: new Api.InputPeerChannel({
+        channelId: chat.id,
+        accessHash: chat.accessHash || bigInt(0),
+      }),
     });
   } else {
-    return { success: false, message: 'Unknown chat type' };
+    return { success: false, message: "Unknown chat type" };
   }
 
   try {
     const parsed = parseDuration(duration);
-    // For "forever", use MAX_INT32 directly; otherwise add seconds to current time
     const muteUntil = parsed.isForever
       ? MAX_INT32
       : Math.floor(Date.now() / 1000) + parsed.seconds;
 
     await client.invoke(
       new Api.account.UpdateNotifySettings({
-        // teleproto types this as EntityLike; its resolver passes a ready InputNotifyPeer through unchanged.
         peer: inputPeer as unknown as Api.TypeEntityLike,
         settings: new Api.InputPeerNotifySettings({
           muteUntil,
@@ -2129,10 +2792,10 @@ export async function muteChat(
       })
     );
 
-    const durationText = duration === 'forever' ? 'forever' : `for ${duration}`;
+    const durationText = duration === "forever" ? "forever" : `for ${duration}`;
     return { success: true, message: `Muted "${chatTitle}" ${durationText}` };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
     return { success: false, message: msg };
   }
 }
@@ -2147,24 +2810,29 @@ export async function unmuteChat(
   let inputPeer: Api.TypeInputNotifyPeer;
   if (chat instanceof Api.User) {
     inputPeer = new Api.InputNotifyPeer({
-      peer: new Api.InputPeerUser({ userId: chat.id, accessHash: chat.accessHash || bigInt(0) })
+      peer: new Api.InputPeerUser({
+        userId: chat.id,
+        accessHash: chat.accessHash || bigInt(0),
+      }),
     });
   } else if (chat instanceof Api.Chat) {
     inputPeer = new Api.InputNotifyPeer({
-      peer: new Api.InputPeerChat({ chatId: chat.id })
+      peer: new Api.InputPeerChat({ chatId: chat.id }),
     });
   } else if (chat instanceof Api.Channel) {
     inputPeer = new Api.InputNotifyPeer({
-      peer: new Api.InputPeerChannel({ channelId: chat.id, accessHash: chat.accessHash || bigInt(0) })
+      peer: new Api.InputPeerChannel({
+        channelId: chat.id,
+        accessHash: chat.accessHash || bigInt(0),
+      }),
     });
   } else {
-    return { success: false, message: 'Unknown chat type' };
+    return { success: false, message: "Unknown chat type" };
   }
 
   try {
     await client.invoke(
       new Api.account.UpdateNotifySettings({
-        // teleproto types this as EntityLike; its resolver passes a ready InputNotifyPeer through unchanged.
         peer: inputPeer as unknown as Api.TypeEntityLike,
         settings: new Api.InputPeerNotifySettings({
           muteUntil: 0,
@@ -2173,13 +2841,11 @@ export async function unmuteChat(
     );
 
     return { success: true, message: `Unmuted "${chatTitle}"` };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
     return { success: false, message: msg };
   }
 }
-
-// --- Folder Functions ---
 
 export interface FolderInfo {
   id: number;
@@ -2189,7 +2855,9 @@ export interface FolderInfo {
   emoticon?: string;
 }
 
-export async function getFolders(client: TelegramClient): Promise<FolderInfo[]> {
+export async function getFolders(
+  client: TelegramClient
+): Promise<FolderInfo[]> {
   const result = await client.invoke(new Api.messages.GetDialogFilters());
 
   const folders: FolderInfo[] = [];
@@ -2199,40 +2867,44 @@ export async function getFolders(client: TelegramClient): Promise<FolderInfo[]> 
       const includedChats: { id: string; title: string; type: string }[] = [];
       const excludedChats: { id: string; title: string; type: string }[] = [];
 
-      // Resolve included peers
       for (const peer of filter.includePeers) {
         try {
           const entity = await client.getEntity(peer);
-          if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
+          if (
+            entity instanceof Api.User ||
+            entity instanceof Api.Chat ||
+            entity instanceof Api.Channel
+          ) {
             includedChats.push({
               id: entity.id.toString(),
               title: getChatTitleFromEntity(entity),
               type: getEntityType(entity),
             });
           }
-        } catch {
-          // Skip unresolvable peers
-        }
+        } catch {}
       }
 
-      // Resolve excluded peers
       for (const peer of filter.excludePeers) {
         try {
           const entity = await client.getEntity(peer);
-          if (entity instanceof Api.User || entity instanceof Api.Chat || entity instanceof Api.Channel) {
+          if (
+            entity instanceof Api.User ||
+            entity instanceof Api.Chat ||
+            entity instanceof Api.Channel
+          ) {
             excludedChats.push({
               id: entity.id.toString(),
               title: getChatTitleFromEntity(entity),
               type: getEntityType(entity),
             });
           }
-        } catch {
-          // Skip unresolvable peers
-        }
+        } catch {}
       }
 
-      // Handle title which can be string or TextWithEntities
-      const titleStr = typeof filter.title === 'string' ? filter.title : (filter.title?.text ?? 'Untitled');
+      const titleStr =
+        typeof filter.title === "string"
+          ? filter.title
+          : (filter.title?.text ?? "Untitled");
 
       folders.push({
         id: filter.id,
@@ -2252,7 +2924,10 @@ export async function getFolder(
   folderName: string
 ): Promise<FolderInfo | null> {
   const folders = await getFolders(client);
-  return folders.find(f => f.title.toLowerCase() === folderName.toLowerCase()) || null;
+  return (
+    folders.find((f) => f.title.toLowerCase() === folderName.toLowerCase()) ||
+    null
+  );
 }
 
 export async function addChatToFolder(
@@ -2265,7 +2940,10 @@ export async function addChatToFolder(
   let targetFilter: Api.DialogFilter | null = null;
   for (const filter of result.filters) {
     if (filter instanceof Api.DialogFilter) {
-      const filterTitle = typeof filter.title === 'string' ? filter.title : (filter.title?.text ?? '');
+      const filterTitle =
+        typeof filter.title === "string"
+          ? filter.title
+          : (filter.title?.text ?? "");
       if (filterTitle.toLowerCase() === folderName.toLowerCase()) {
         targetFilter = filter;
         break;
@@ -2279,33 +2957,40 @@ export async function addChatToFolder(
 
   const chat = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(chat);
-  const folderTitle = typeof targetFilter.title === 'string' ? targetFilter.title : (targetFilter.title?.text ?? 'Untitled');
+  const folderTitle =
+    typeof targetFilter.title === "string"
+      ? targetFilter.title
+      : (targetFilter.title?.text ?? "Untitled");
 
-  // Create the input peer for the chat
   let inputPeer: Api.TypeInputPeer;
   if (chat instanceof Api.User) {
-    inputPeer = new Api.InputPeerUser({ userId: chat.id, accessHash: chat.accessHash || bigInt(0) });
+    inputPeer = new Api.InputPeerUser({
+      userId: chat.id,
+      accessHash: chat.accessHash || bigInt(0),
+    });
   } else if (chat instanceof Api.Chat) {
     inputPeer = new Api.InputPeerChat({ chatId: chat.id });
   } else if (chat instanceof Api.Channel) {
-    inputPeer = new Api.InputPeerChannel({ channelId: chat.id, accessHash: chat.accessHash || bigInt(0) });
+    inputPeer = new Api.InputPeerChannel({
+      channelId: chat.id,
+      accessHash: chat.accessHash || bigInt(0),
+    });
   } else {
-    return { success: false, message: 'Unknown chat type' };
+    return { success: false, message: "Unknown chat type" };
   }
 
-  // Check if already included
   for (const peer of targetFilter.includePeers) {
     try {
       const entity = await client.getEntity(peer);
       if (entity.id.equals(chat.id)) {
-        return { success: false, message: `"${chatTitle}" is already in folder "${folderTitle}"` };
+        return {
+          success: false,
+          message: `"${chatTitle}" is already in folder "${folderTitle}"`,
+        };
       }
-    } catch {
-      // Skip
-    }
+    } catch {}
   }
 
-  // Add to includePeers
   const newIncludePeers = [...targetFilter.includePeers, inputPeer];
 
   try {
@@ -2331,9 +3016,12 @@ export async function addChatToFolder(
       })
     );
 
-    return { success: true, message: `Added "${chatTitle}" to folder "${folderTitle}"` };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      success: true,
+      message: `Added "${chatTitle}" to folder "${folderTitle}"`,
+    };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
     return { success: false, message: msg };
   }
 }
@@ -2348,7 +3036,10 @@ export async function removeChatFromFolder(
   let targetFilter: Api.DialogFilter | null = null;
   for (const filter of result.filters) {
     if (filter instanceof Api.DialogFilter) {
-      const filterTitle = typeof filter.title === 'string' ? filter.title : (filter.title?.text ?? '');
+      const filterTitle =
+        typeof filter.title === "string"
+          ? filter.title
+          : (filter.title?.text ?? "");
       if (filterTitle.toLowerCase() === folderName.toLowerCase()) {
         targetFilter = filter;
         break;
@@ -2362,9 +3053,11 @@ export async function removeChatFromFolder(
 
   const chat = await resolveChat(client, chatIdentifier);
   const chatTitle = getChatTitle(chat);
-  const folderTitle = typeof targetFilter.title === 'string' ? targetFilter.title : (targetFilter.title?.text ?? 'Untitled');
+  const folderTitle =
+    typeof targetFilter.title === "string"
+      ? targetFilter.title
+      : (targetFilter.title?.text ?? "Untitled");
 
-  // Find and remove from includePeers
   let found = false;
   const newIncludePeers: Api.TypeInputPeer[] = [];
 
@@ -2373,16 +3066,17 @@ export async function removeChatFromFolder(
       const entity = await client.getEntity(peer);
       if (entity.id.equals(chat.id)) {
         found = true;
-        continue; // Skip this peer (remove it)
+        continue;
       }
-    } catch {
-      // Keep unresolvable peers
-    }
+    } catch {}
     newIncludePeers.push(peer);
   }
 
   if (!found) {
-    return { success: false, message: `"${chatTitle}" is not in folder "${folderTitle}"` };
+    return {
+      success: false,
+      message: `"${chatTitle}" is not in folder "${folderTitle}"`,
+    };
   }
 
   try {
@@ -2408,35 +3102,61 @@ export async function removeChatFromFolder(
       })
     );
 
-    return { success: true, message: `Removed "${chatTitle}" from folder "${folderTitle}"` };
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      success: true,
+      message: `Removed "${chatTitle}" from folder "${folderTitle}"`,
+    };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
     return { success: false, message: msg };
   }
 }
 
-function getChatTitleFromEntity(entity: Api.User | Api.Chat | Api.Channel | Api.ChatForbidden | Api.ChannelForbidden): string {
+function getChatTitleFromEntity(
+  entity:
+    | Api.User
+    | Api.Chat
+    | Api.Channel
+    | Api.ChatForbidden
+    | Api.ChannelForbidden
+): string {
   if (entity instanceof Api.User) {
-    if (entity.self) return SAVED_MESSAGES;
-    return entity.firstName || entity.username || 'Unknown User';
+    if (entity.self) {
+      return SAVED_MESSAGES;
+    }
+    return entity.firstName || entity.username || "Unknown User";
   }
   if (entity instanceof Api.Chat || entity instanceof Api.Channel) {
     return entity.title;
   }
-  if (entity instanceof Api.ChatForbidden || entity instanceof Api.ChannelForbidden) {
+  if (
+    entity instanceof Api.ChatForbidden ||
+    entity instanceof Api.ChannelForbidden
+  ) {
     return entity.title;
   }
-  return 'Unknown';
+  return "Unknown";
 }
 
-function getEntityType(entity: Api.User | Api.Chat | Api.Channel | Api.ChatForbidden | Api.ChannelForbidden): string {
-  if (entity instanceof Api.User) return 'user';
-  if (entity instanceof Api.Chat) return 'group';
-  if (entity instanceof Api.Channel) return entity.megagroup ? 'supergroup' : 'channel';
-  return 'unknown';
+function getEntityType(
+  entity:
+    | Api.User
+    | Api.Chat
+    | Api.Channel
+    | Api.ChatForbidden
+    | Api.ChannelForbidden
+): string {
+  if (entity instanceof Api.User) {
+    return "user";
+  }
+  if (entity instanceof Api.Chat) {
+    return "group";
+  }
+  if (entity instanceof Api.Channel) {
+    return entity.megagroup ? "supergroup" : "channel";
+  }
+  return "unknown";
 }
-
-// --- Kick Function ---
 
 export async function kickUser(
   client: TelegramClient,
@@ -2445,24 +3165,28 @@ export async function kickUser(
 ): Promise<{ success: boolean; message: string }> {
   const chat = await resolveChat(client, chatIdentifier);
 
-  // The same lookup the write guard used for the approval (and the very object, when it did)
   let user: Api.User;
   try {
     user = await resolveUser(client, userIdentifier);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { success: false, message: msg === 'Target is not a user' ? msg : `User not found: ${userIdentifier}` };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      message:
+        msg === "Target is not a user"
+          ? msg
+          : `User not found: ${userIdentifier}`,
+    };
   }
 
   if (chat instanceof Api.Channel) {
-    // For channels/supergroups, use EditBanned
     try {
       await client.invoke(
         new Api.channels.EditBanned({
           channel: chat,
           participant: user,
           bannedRights: new Api.ChatBannedRights({
-            untilDate: 0, // Permanent
+            untilDate: 0,
             viewMessages: true,
             sendMessages: true,
             sendMedia: true,
@@ -2474,19 +3198,21 @@ export async function kickUser(
           }),
         })
       );
-      return { success: true, message: `Kicked ${user.username || user.firstName} from ${chat.title}` };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('ADMIN') || msg.includes('RIGHT')) {
-        return { success: false, message: 'Not admin or insufficient rights' };
+      return {
+        success: true,
+        message: `Kicked ${user.username || user.firstName} from ${chat.title}`,
+      };
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("ADMIN") || msg.includes("RIGHT")) {
+        return { success: false, message: "Not admin or insufficient rights" };
       }
-      if (msg.includes('USER_NOT_PARTICIPANT')) {
-        return { success: false, message: 'User is not a member' };
+      if (msg.includes("USER_NOT_PARTICIPANT")) {
+        return { success: false, message: "User is not a member" };
       }
       return { success: false, message: msg };
     }
   } else if (chat instanceof Api.Chat) {
-    // For regular groups, use DeleteChatUser
     try {
       await client.invoke(
         new Api.messages.DeleteChatUser({
@@ -2495,23 +3221,24 @@ export async function kickUser(
           revokeHistory: false,
         })
       );
-      return { success: true, message: `Kicked ${user.username || user.firstName} from ${chat.title}` };
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('ADMIN') || msg.includes('RIGHT')) {
-        return { success: false, message: 'Not admin or insufficient rights' };
+      return {
+        success: true,
+        message: `Kicked ${user.username || user.firstName} from ${chat.title}`,
+      };
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("ADMIN") || msg.includes("RIGHT")) {
+        return { success: false, message: "Not admin or insufficient rights" };
       }
-      if (msg.includes('USER_NOT_PARTICIPANT')) {
-        return { success: false, message: 'User is not a member' };
+      if (msg.includes("USER_NOT_PARTICIPANT")) {
+        return { success: false, message: "User is not a member" };
       }
       return { success: false, message: msg };
     }
   }
 
-  return { success: false, message: 'Not a group chat' };
+  return { success: false, message: "Not a group chat" };
 }
-
-// --- Reactions ---
 
 export async function reactToMessage(
   client: TelegramClient,
@@ -2540,41 +3267,43 @@ export async function reactToMessage(
   return { chatTitle, emoji: removed ? undefined : emoji, removed };
 }
 
-// --- Forward ---
-
 export async function forwardMessages(
   client: TelegramClient,
   fromChat: string,
   msgIds: number[],
   toChat: string,
   options: { silent?: boolean; dropAuthor?: boolean } = {}
-): Promise<{ count: number; fromTitle: string; toTitle: string; forwardedIds: number[] }> {
+): Promise<{
+  count: number;
+  fromTitle: string;
+  toTitle: string;
+  forwardedIds: number[];
+}> {
   const from = await resolveChat(client, fromChat);
   const to = await resolveChat(client, toChat);
 
-  // Over MCP: Telegram copies the source media, so a contact card or a location the model never
-  // saw (MCP hides them when reading) would reach the recipient. Check the sources first.
-  // A message that could not be fetched is refused too: it cannot be checked.
   if (isOverMcp()) {
     const sources = await client.getMessages(from, { ids: msgIds });
     for (const [i, id] of msgIds.entries()) {
       const m = sources[i];
       if (!(m instanceof Api.Message) || m.id !== id) {
-        throw new Error(`Refused over MCP: message ${id} was not found or cannot be checked before forwarding. Forward it in a terminal.`);
+        throw new Error(
+          `Refused over MCP: message ${id} was not found or cannot be checked before forwarding. Forward it in a terminal.`
+        );
       }
       if (isSharedLocationOrContact(m.media) || hasRichLocation(m)) {
-        throw new Error(`Refused over MCP: message ${id} holds a contact card or a location; forwarding it would share them. Forward it in a terminal.`);
+        throw new Error(
+          `Refused over MCP: message ${id} holds a contact card or a location; forwarding it would share them. Forward it in a terminal.`
+        );
       }
       if (isLoginServiceMessage(m)) {
-        throw new Error(`Refused over MCP: message ${id} is from a login-code service account (777000 or 489000) and may hold a login code.`);
+        throw new Error(
+          `Refused over MCP: message ${id} is from a login-code service account (777000 or 489000) and may hold a login code.`
+        );
       }
     }
   }
 
-  // forwardMessages throws if the forward fails; on success every requested id
-  // was forwarded. The returned array under-reports (a GramJS quirk), so the
-  // count is the requested one; forwardedIds are only the copies Telegram's
-  // answer confirms (their IDs in the destination chat).
   const sent = await client.forwardMessages(to, {
     messages: msgIds,
     fromPeer: from,
@@ -2586,24 +3315,32 @@ export async function forwardMessages(
     count: msgIds.length,
     fromTitle: getChatTitle(from),
     toTitle: getChatTitle(to),
-    forwardedIds: (sent ?? []).filter((m): m is Api.Message => m instanceof Api.Message).map(m => m.id),
+    forwardedIds: (sent ?? [])
+      .filter((m): m is Api.Message => m instanceof Api.Message)
+      .map((m) => m.id),
   };
 }
 
-/** Media that carries a phone number or a place: a contact card, a geo point, live location or a venue. */
-function isSharedLocationOrContact(media: Api.TypeMessageMedia | undefined): boolean {
-  return media instanceof Api.MessageMediaContact || media instanceof Api.MessageMediaGeo
-    || media instanceof Api.MessageMediaGeoLive || media instanceof Api.MessageMediaVenue;
+function isSharedLocationOrContact(
+  media: Api.TypeMessageMedia | undefined
+): boolean {
+  return (
+    media instanceof Api.MessageMediaContact ||
+    media instanceof Api.MessageMediaGeo ||
+    media instanceof Api.MessageMediaGeoLive ||
+    media instanceof Api.MessageMediaVenue
+  );
 }
 
-/** A map block (or any geo or venue object) inside a rich message. */
 function hasRichLocation(msg: Api.Message): boolean {
   const rich = (msg as { richMessage?: unknown }).richMessage;
-  if (rich == null) return false;
-  return /"(?:className|_)":"[^"]*(geo|venue|pageBlockMap)/i.test(JSON.stringify(rich, (_k, v) => plainJsonValue(v)));
+  if (rich == null) {
+    return false;
+  }
+  return /"(?:className|_)":"[^"]*(geo|venue|pageBlockMap)/i.test(
+    JSON.stringify(rich, (_k, v) => plainJsonValue(v))
+  );
 }
-
-// --- Pin / Unpin ---
 
 export async function pinChatMessage(
   client: TelegramClient,
@@ -2632,8 +3369,6 @@ export async function unpinChatMessage(
   }
   return { chatTitle: getChatTitle(entity), all: msgId == null };
 }
-
-// --- Button functions ---
 
 async function fetchRawMessage(
   client: TelegramClient,
@@ -2672,25 +3407,39 @@ export async function getMessageButtons(
 }
 
 export interface ClickSelector {
-  index?: number;       // 1-based flat index
-  text?: string;        // match by button label
-  dataBase64?: string;  // match a callback button by exact payload
+  index?: number;
+  text?: string;
+  dataBase64?: string;
 }
 
+/**
+ * - `edited`: The clicked message after the bot edited it (if it changed).
+ * - `newMessages`: New messages the bot sent in response, newer than the clicked one.
+ */
 export interface ClickOutcome {
   button: ButtonInfo;
-  action: 'callback' | 'game' | 'sent_text' | 'url' | 'copy' | 'info' | 'refused';
-  answerText?: string;   // toast / alert text returned by the bot
-  isAlert?: boolean;     // true = shown as a blocking alert, false = transient toast
+  action:
+    | "callback"
+    | "game"
+    | "sent_text"
+    | "url"
+    | "copy"
+    | "info"
+    | "refused";
+  answerText?: string;
+  isAlert?: boolean;
   url?: string;
   query?: string;
   copyText?: string;
   sentMessageId?: number;
   note?: string;
-  /** The clicked message after the bot edited it (if it changed). */
   edited?: { id: number; text: string; layout?: ButtonLayout };
-  /** New messages the bot sent in response, newer than the clicked one. */
-  newMessages?: { id: number; sender: string; text: string; layout?: ButtonLayout }[];
+  newMessages?: {
+    id: number;
+    sender: string;
+    text: string;
+    layout?: ButtonLayout;
+  }[];
 }
 
 function findRawButton(
@@ -2700,7 +3449,11 @@ function findRawButton(
   selector: ClickSelector
 ): { raw: RawButton; info: ButtonInfo; rawInfo: ButtonInfo } | null {
   const flatRaw: RawButton[] = [];
-  for (const row of markup.rows) for (const b of row.buttons) flatRaw.push(b);
+  for (const row of markup.rows) {
+    for (const b of row.buttons) {
+      flatRaw.push(b);
+    }
+  }
   const flatInfo = layout.rows.flat();
   const flatRawInfo = rawLayout.rows.flat();
 
@@ -2708,31 +3461,51 @@ function findRawButton(
   if (selector.index != null) {
     pos = selector.index - 1;
   } else if (selector.dataBase64 != null) {
-    // Only the payload as shown: over MCP a hidden payload (a login code) must not be guessable
-    // through "found" vs "not found". The raw bytes serve only the fingerprint.
-    pos = flatInfo.findIndex((b) => b.type === 'callback' && b.data === selector.dataBase64);
+    pos = flatInfo.findIndex(
+      (b) => b.type === "callback" && b.data === selector.dataBase64
+    );
   } else if (selector.text != null) {
     const needle = selector.text.trim().toLowerCase();
     pos = flatInfo.findIndex((b) => b.text.trim().toLowerCase() === needle);
-    if (pos < 0) pos = flatInfo.findIndex((b) => b.text.trim().toLowerCase().includes(needle));
+    if (pos < 0) {
+      pos = flatInfo.findIndex((b) =>
+        b.text.trim().toLowerCase().includes(needle)
+      );
+    }
   }
 
-  if (pos < 0 || pos >= flatRaw.length) return null;
+  if (pos < 0 || pos >= flatRaw.length) {
+    return null;
+  }
   return { raw: flatRaw[pos], info: flatInfo[pos], rawInfo: flatRawInfo[pos] };
 }
 
 function buttonSignature(layout?: ButtonLayout): string {
-  if (!layout) return '';
-  return layout.rows.flat().map((b) => `${b.type}:${b.text}:${b.data ?? b.url ?? ''}`).join('|');
+  if (!layout) {
+    return "";
+  }
+  return layout.rows
+    .flat()
+    .map((b) => `${b.type}:${b.text}:${b.data ?? b.url ?? ""}`)
+    .join("|");
 }
 
 /** What pressing a button does, as the person approved it: kind, label and what it sends. */
 export function buttonFingerprint(info: ButtonInfo): string {
-  const { index, type, text, data, url, query, copyText, requiresPassword } = info;
-  return JSON.stringify({ index, type, text, data: data ?? null, url: url ?? null, query: query ?? null, copyText: copyText ?? null, requiresPassword: !!requiresPassword });
+  const { index, type, text, data, url, query, copyText, requiresPassword } =
+    info;
+  return JSON.stringify({
+    index,
+    type,
+    text,
+    data: data ?? null,
+    url: url ?? null,
+    query: query ?? null,
+    copyText: copyText ?? null,
+    requiresPassword: !!requiresPassword,
+  });
 }
 
-/** The button the write guard showed for an approved click; set only after the approval held. */
 let approvedButton: string | undefined;
 
 export function expectButton(fingerprint: string | undefined): void {
@@ -2744,29 +3517,51 @@ export async function findButton(
   client: TelegramClient,
   chatIdentifier: string,
   msgId: number,
-  selector: ClickSelector,
+  selector: ClickSelector
 ): Promise<FoundButton> {
   const entity = await resolveChat(client, chatIdentifier);
   const msg = await fetchRawMessage(client, entity, msgId);
-  if (!msg) throw new Error(`Message #${msgId} not found`);
+  if (!msg) {
+    throw new Error(`Message #${msgId} not found`);
+  }
 
   const markup = msg.replyMarkup;
-  if (!(markup instanceof Api.ReplyInlineMarkup) && !(markup instanceof Api.ReplyKeyboardMarkup)) {
+  if (
+    !(markup instanceof Api.ReplyInlineMarkup) &&
+    !(markup instanceof Api.ReplyKeyboardMarkup)
+  ) {
     throw new Error(`Message #${msgId} has no buttons`);
   }
   const rawLayout = rawButtonLayout(msg)!;
   const layout = maskedForMcp(msg, rawLayout);
   const match = findRawButton(markup, layout, rawLayout, selector);
   if (!match) {
-    const label = selector.index != null ? `#${selector.index}` : selector.dataBase64 != null ? `data ${selector.dataBase64}` : `"${selector.text}"`;
-    const available = layout.rows.flat().map(b => `[${b.index}] ${b.text || '(no label)'}`).join(', ');
-    throw new CliError(`Button ${label} not found on message #${msgId}`, 'button_not_found', EXIT.ERROR, {
-      hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
-    });
+    const label =
+      selector.index == null
+        ? selector.dataBase64 == null
+          ? `"${selector.text}"`
+          : `data ${selector.dataBase64}`
+        : `#${selector.index}`;
+    const available = layout.rows
+      .flat()
+      .map((b) => `[${b.index}] ${b.text || "(no label)"}`)
+      .join(", ");
+    throw new CliError(
+      `Button ${label} not found on message #${msgId}`,
+      "button_not_found",
+      EXIT.ERROR,
+      {
+        hint: `Available: ${available}. Press by label: the indexes follow the current menu, which changes after each press.`,
+      }
+    );
   }
-  // The approval binds to the button as the message carries it: over MCP two versions of a button can
-  // look the same once masked (a hidden payload, a masked gift link) while they send different bytes
-  return { entity, msg, layout, ...match, fingerprint: buttonFingerprint(match.rawInfo) };
+  return {
+    entity,
+    msg,
+    layout,
+    ...match,
+    fingerprint: buttonFingerprint(match.rawInfo),
+  };
 }
 
 /**
@@ -2798,8 +3593,10 @@ export async function clickButton(
   options: { password?: string; waitMs?: number } = {}
 ): Promise<ClickOutcome> {
   const found = await findButton(client, chatIdentifier, msgId, selector);
-  // Over MCP the outcome hides login codes (of a service message) and gift links too (URL, copy text, notes)
-  return maskedForMcp(found.msg, await pressButton(client, msgId, found, options));
+  return maskedForMcp(
+    found.msg,
+    await pressButton(client, msgId, found, options)
+  );
 }
 
 async function pressButton(
@@ -2810,57 +3607,126 @@ async function pressButton(
 ): Promise<ClickOutcome> {
   const { waitMs = 1500 } = options;
   const { entity, msg, layout, raw, info, fingerprint } = found;
-  // The bot may have changed the keyboard since the person approved this click: never press
-  // another button (or send other bytes) than the one they saw
   if (approvedButton !== undefined && fingerprint !== approvedButton) {
-    throw new Error(`The buttons of message #${msgId} changed after the approval; nothing was pressed. Run the command again to approve the button as it is now.`);
+    throw new Error(
+      `The buttons of message #${msgId} changed after the approval; nothing was pressed. Run the command again to approve the button as it is now.`
+    );
   }
   const beforeText = messageText(msg);
   const beforeSig = buttonSignature(layout);
 
-  // Non-server-side / non-clickable button types: report and stop.
   const kind: Api.TypeButtonType | Api.TypeInlineButtonType = raw.type;
-  if (kind instanceof Api.InlineButtonTypeUrl || kind instanceof Api.InlineButtonTypeUrlAuth || kind instanceof Api.InputInlineButtonTypeUrlAuth) {
-    return { button: info, action: 'url', url: kind.url, note: 'URL button — opening links is left to you (not opened automatically).' };
+  if (
+    kind instanceof Api.InlineButtonTypeUrl ||
+    kind instanceof Api.InlineButtonTypeUrlAuth ||
+    kind instanceof Api.InputInlineButtonTypeUrlAuth
+  ) {
+    return {
+      button: info,
+      action: "url",
+      url: kind.url,
+      note: "URL button — opening links is left to you (not opened automatically).",
+    };
   }
-  if (kind instanceof Api.InlineButtonTypeWebView || kind instanceof Api.ButtonTypeSimpleWebView) {
-    return { button: info, action: 'url', url: kind.url, note: 'Web-app button — open this URL in a browser to interact.' };
+  if (
+    kind instanceof Api.InlineButtonTypeWebView ||
+    kind instanceof Api.ButtonTypeSimpleWebView
+  ) {
+    return {
+      button: info,
+      action: "url",
+      url: kind.url,
+      note: "Web-app button — open this URL in a browser to interact.",
+    };
   }
   if (kind instanceof Api.InlineButtonTypeCopy) {
-    return { button: info, action: 'copy', copyText: kind.copyText, note: 'Copy button — no server call; this is the text it copies.' };
+    return {
+      button: info,
+      action: "copy",
+      copyText: kind.copyText,
+      note: "Copy button — no server call; this is the text it copies.",
+    };
   }
   if (kind instanceof Api.InlineButtonTypeSwitchInline) {
-    return { button: info, action: 'info', query: kind.query, note: `Switch-inline button — composes an inline query "${kind.query}" (not auto-sent).` };
+    return {
+      button: info,
+      action: "info",
+      query: kind.query,
+      note: `Switch-inline button — composes an inline query "${kind.query}" (not auto-sent).`,
+    };
   }
-  if (kind instanceof Api.ButtonTypeRequestPhone || kind instanceof Api.ButtonTypeRequestGeoLocation || kind instanceof Api.ButtonTypeRequestPoll || kind instanceof Api.ButtonTypeRequestPeer || kind instanceof Api.InputButtonTypeRequestPeer) {
-    return { button: info, action: 'refused', note: 'This button shares your phone / location / poll / a peer. Refused automatically — do this manually in a Telegram client if you intend to.' };
+  if (
+    kind instanceof Api.ButtonTypeRequestPhone ||
+    kind instanceof Api.ButtonTypeRequestGeoLocation ||
+    kind instanceof Api.ButtonTypeRequestPoll ||
+    kind instanceof Api.ButtonTypeRequestPeer ||
+    kind instanceof Api.InputButtonTypeRequestPeer
+  ) {
+    return {
+      button: info,
+      action: "refused",
+      note: "This button shares your phone / location / poll / a peer. Refused automatically — do this manually in a Telegram client if you intend to.",
+    };
   }
   if (kind instanceof Api.InlineButtonTypeBuy) {
-    return { button: info, action: 'refused', note: 'Payment button — opens a checkout flow that cannot be automated safely.' };
+    return {
+      button: info,
+      action: "refused",
+      note: "Payment button — opens a checkout flow that cannot be automated safely.",
+    };
   }
-  if (kind instanceof Api.InlineButtonTypeUserProfile || kind instanceof Api.InputInlineButtonTypeUserProfile) {
-    return { button: info, action: 'info', note: `Opens a user profile (user id ${kind.userId.toString()}).` };
+  if (
+    kind instanceof Api.InlineButtonTypeUserProfile ||
+    kind instanceof Api.InputInlineButtonTypeUserProfile
+  ) {
+    return {
+      button: info,
+      action: "info",
+      note: `Opens a user profile (user id ${kind.userId.toString()}).`,
+    };
   }
   if (kind instanceof Api.InlineButtonTypeDisabled) {
-    return { button: info, action: 'refused', note: 'This button is disabled by the bot.' };
+    return {
+      button: info,
+      action: "refused",
+      note: "This button is disabled by the bot.",
+    };
   }
 
-  // Plain reply-keyboard button: pressing it just sends its label as a message.
   if (kind instanceof Api.ButtonTypeDefault) {
     const sent = await sendMessage(client, entity, raw.text);
-    const outcome: ClickOutcome = { button: info, action: 'sent_text', sentMessageId: sent.id, note: `Reply-keyboard button — sent "${raw.text}" as a message.` };
-    await collectBotResponse(client, entity, msgId, beforeText, beforeSig, waitMs, outcome);
+    const outcome: ClickOutcome = {
+      button: info,
+      action: "sent_text",
+      sentMessageId: sent.id,
+      note: `Reply-keyboard button — sent "${raw.text}" as a message.`,
+    };
+    await collectBotResponse(
+      client,
+      entity,
+      msgId,
+      beforeText,
+      beforeSig,
+      waitMs,
+      outcome
+    );
     return outcome;
   }
 
-  // Callback / game buttons: the real "press a bot button" path.
   const isGame = kind instanceof Api.InlineButtonTypeGame;
-  const callback = kind instanceof Api.InlineButtonTypeCallback ? kind : undefined;
+  const callback =
+    kind instanceof Api.InlineButtonTypeCallback ? kind : undefined;
   if (!isGame && !callback) {
-    return { button: info, action: 'refused', note: `Unsupported button type ${kind.className} — nothing was sent.` };
+    return {
+      button: info,
+      action: "refused",
+      note: `Unsupported button type ${kind.className} — nothing was sent.`,
+    };
   }
   if (callback?.requiresPassword && !options.password) {
-    throw new Error('This button requires your 2FA password. Re-run with --password <pw>.');
+    throw new Error(
+      "This button requires your 2FA password. Re-run with --password <pw>."
+    );
   }
 
   const peer = await client.getInputEntity(entity);
@@ -2869,24 +3735,30 @@ async function pressButton(
       peer,
       msgId,
       game: isGame,
-      // Raw callback bytes straight from the live message — no string round-trip.
       data: callback ? Buffer.from(callback.data) : undefined,
     })
   );
 
   const outcome: ClickOutcome = {
     button: info,
-    action: isGame ? 'game' : 'callback',
+    action: isGame ? "game" : "callback",
     answerText: answer.message || undefined,
     isAlert: answer.message ? answer.alert : undefined,
     url: answer.url || undefined,
   };
 
-  await collectBotResponse(client, entity, msgId, beforeText, beforeSig, waitMs, outcome);
+  await collectBotResponse(
+    client,
+    entity,
+    msgId,
+    beforeText,
+    beforeSig,
+    waitMs,
+    outcome
+  );
   return outcome;
 }
 
-/** After a click, re-read the message (for edits) and pick up any new bot replies. */
 async function collectBotResponse(
   client: TelegramClient,
   entity: ResolvedEntity,
@@ -2896,29 +3768,37 @@ async function collectBotResponse(
   waitMs: number,
   outcome: ClickOutcome
 ): Promise<void> {
-  if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+  if (waitMs > 0) {
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
 
-  // 1) Did the bot edit the message in place?
   try {
     const after = await fetchRawMessage(client, entity, msgId);
     if (after) {
       const afterLayout = extractButtons(after);
-      const changed = messageText(after) !== beforeText || buttonSignature(afterLayout) !== beforeSig;
+      const changed =
+        messageText(after) !== beforeText ||
+        buttonSignature(afterLayout) !== beforeSig;
       if (changed) {
-        outcome.edited = { id: msgId, text: messageText(after), layout: afterLayout };
+        outcome.edited = {
+          id: msgId,
+          text: messageText(after),
+          layout: afterLayout,
+        };
       }
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // 2) Did the bot send new messages after the clicked one?
   try {
     const newer = await client.getMessages(entity, { minId: msgId, limit: 5 });
-    const collected: NonNullable<ClickOutcome['newMessages']> = [];
+    const collected: NonNullable<ClickOutcome["newMessages"]> = [];
     for (const m of newer) {
-      if (!(m instanceof Api.Message)) continue;
-      if (m.id <= msgId || m.out) continue;
+      if (!(m instanceof Api.Message)) {
+        continue;
+      }
+      if (m.id <= msgId || m.out) {
+        continue;
+      }
       collected.push({
         id: m.id,
         sender: getChatTitle(entity),
@@ -2930,19 +3810,15 @@ async function collectBotResponse(
       collected.sort((a, b) => a.id - b.id);
       outcome.newMessages = collected;
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
-
-// --- Extended message operations ---
 
 export async function editMessageText(
   client: TelegramClient,
   chatIdentifier: string,
   msgId: number,
   text: string,
-  options: { parseMode?: 'html' | 'md' } = {}
+  options: { parseMode?: "html" | "md" } = {}
 ): Promise<{ chatTitle: string; id: number }> {
   const entity = await resolveChat(client, chatIdentifier);
   const result = await client.editMessage(entity, {
@@ -2962,13 +3838,19 @@ export async function deleteChatMessages(
   const entity = await resolveChat(client, chatIdentifier);
   await assertMessagesInChat(client, entity, msgIds);
   await client.deleteMessages(entity, msgIds, { revoke });
-  // What Telegram did, not what was asked: a channel or supergroup ignores "just for me"
-  return { chatTitle: getChatTitle(entity), count: msgIds.length, forEveryone: revoke || deletesForEveryone(entity) };
+  return {
+    chatTitle: getChatTitle(entity),
+    count: msgIds.length,
+    forEveryone: revoke || deletesForEveryone(entity),
+  };
 }
 
 /** The message IDs of `delete` (`123` or `123,124`), as the command parses them. */
 export function parseIdList(text: string): number[] {
-  return text.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n));
+  return text
+    .split(",")
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n));
 }
 
 /** Where Telegram deletes for everyone whatever `--just-me` says: channels and supergroups. */
@@ -2981,15 +3863,26 @@ export function deletesForEveryone(entity: ResolvedEntity): boolean {
  * Telegram deletes by message ID alone (messages.DeleteMessages carries no chat), so an ID from
  * another chat would delete there, under a "yes" to this one. Refuses the whole operation.
  */
-export async function assertMessagesInChat(client: TelegramClient, entity: ResolvedEntity, msgIds: number[]): Promise<void> {
+export async function assertMessagesInChat(
+  client: TelegramClient,
+  entity: ResolvedEntity,
+  msgIds: number[]
+): Promise<void> {
   const want = utils.getPeerId(entity).toString();
   const found = await client.getMessages(entity, { ids: msgIds });
   const bad = msgIds.filter((id, i) => {
     const m = found[i] as unknown;
-    return !(m instanceof Api.Message || m instanceof Api.MessageService) || m.id !== id || !m.peerId || utils.getPeerId(m.peerId).toString() !== want;
+    return (
+      !(m instanceof Api.Message || m instanceof Api.MessageService) ||
+      m.id !== id ||
+      !m.peerId ||
+      utils.getPeerId(m.peerId).toString() !== want
+    );
   });
   if (bad.length) {
-    throw new Error(`Message${bad.length > 1 ? 's' : ''} ${bad.map(id => `#${id}`).join(', ')} not found in ${getChatTitle(entity)} (id ${want}); nothing was deleted. Check the IDs with \`telegram read\`.`);
+    throw new Error(
+      `Message${bad.length > 1 ? "s" : ""} ${bad.map((id) => `#${id}`).join(", ")} not found in ${getChatTitle(entity)} (id ${want}); nothing was deleted. Check the IDs with \`telegram read\`.`
+    );
   }
 }
 
@@ -3008,7 +3901,10 @@ export async function getPinnedMessages(
   limit = 20
 ): Promise<{ chatTitle: string; messages: MessageInfo[] }> {
   const entity = await resolveChat(client, chatIdentifier);
-  const result = await client.getMessages(entity, { limit, filter: new Api.InputMessagesFilterPinned() });
+  const result = await client.getMessages(entity, {
+    limit,
+    filter: new Api.InputMessagesFilterPinned(),
+  });
   const messages: MessageInfo[] = [];
   for (const msg of result) {
     if (msg instanceof Api.Message) {
@@ -3026,23 +3922,26 @@ export async function getPinnedMessages(
   return { chatTitle: getChatTitle(entity), messages };
 }
 
-// --- Polls ---
-
 export async function sendPoll(
   client: TelegramClient,
   chatIdentifier: string,
   question: string,
   answers: string[],
-  options: { multiple?: boolean; quiz?: boolean; correct?: number; anonymous?: boolean } = {}
+  options: {
+    multiple?: boolean;
+    quiz?: boolean;
+    correct?: number;
+    anonymous?: boolean;
+  } = {}
 ): Promise<{ chatTitle: string; id: number }> {
   const entity = await resolveChat(client, chatIdentifier);
   const peer = await client.getInputEntity(entity);
 
-  // Layer 229: outgoing answers carry no option bytes — the server assigns them.
-  const pollAnswers = answers.map((a) =>
-    new Api.InputPollAnswer({
-      text: new Api.TextWithEntities({ text: a, entities: [] }),
-    })
+  const pollAnswers = answers.map(
+    (a) =>
+      new Api.InputPollAnswer({
+        text: new Api.TextWithEntities({ text: a, entities: [] }),
+      })
   );
 
   const poll = new Api.Poll({
@@ -3057,15 +3956,15 @@ export async function sendPoll(
 
   const media = new Api.InputMediaPoll({
     poll,
-    // Layer 229: correct answers are 0-based answer indexes, not option bytes.
-    correctAnswers: options.quiz && options.correct != null ? [options.correct] : undefined,
+    correctAnswers:
+      options.quiz && options.correct != null ? [options.correct] : undefined,
   });
 
   const result = await client.invoke(
     new Api.messages.SendMedia({
       peer,
       media,
-      message: '',
+      message: "",
       randomId: generateRandomLong(),
     })
   );
@@ -3073,7 +3972,9 @@ export async function sendPoll(
   let id = 0;
   if (result instanceof Api.Updates) {
     for (const u of result.updates) {
-      if (u instanceof Api.UpdateMessageID) id = u.id;
+      if (u instanceof Api.UpdateMessageID) {
+        id = u.id;
+      }
     }
   }
   return { chatTitle: getChatTitle(entity), id };
@@ -3096,22 +3997,27 @@ export async function votePoll(
   const chosen: Buffer[] = [];
   for (const idx of optionIndexes) {
     const ans = pollAnswers[idx];
-    if (!ans || !(ans instanceof Api.PollAnswer)) throw new Error(`Poll has no option #${idx + 1}`);
+    if (!ans || !(ans instanceof Api.PollAnswer)) {
+      throw new Error(`Poll has no option #${idx + 1}`);
+    }
     chosen.push(Buffer.from(ans.option));
   }
 
-  await client.invoke(new Api.messages.SendVote({ peer, msgId, options: chosen }));
+  await client.invoke(
+    new Api.messages.SendVote({ peer, msgId, options: chosen })
+  );
   return { chatTitle: getChatTitle(entity) };
 }
-
-// --- Reaction list (who reacted) ---
 
 export async function getReactionsList(
   client: TelegramClient,
   chatIdentifier: string,
   msgId: number,
   limit = 50
-): Promise<{ chatTitle: string; reactions: { user: string; emoji: string }[] }> {
+): Promise<{
+  chatTitle: string;
+  reactions: { user: string; emoji: string }[];
+}> {
   const entity = await resolveChat(client, chatIdentifier);
   const peer = await client.getInputEntity(entity);
   const result = await client.invoke(
@@ -3120,20 +4026,27 @@ export async function getReactionsList(
 
   const reactions: { user: string; emoji: string }[] = [];
   for (const r of result.reactions) {
-    let emoji = '?';
-    if (r.reaction instanceof Api.ReactionEmoji) emoji = r.reaction.emoticon;
-    else if (r.reaction instanceof Api.ReactionCustomEmoji) emoji = `[custom:${r.reaction.documentId.toString()}]`;
-    let user = 'Unknown';
+    let emoji = "?";
+    if (r.reaction instanceof Api.ReactionEmoji) {
+      emoji = r.reaction.emoticon;
+    } else if (r.reaction instanceof Api.ReactionCustomEmoji) {
+      emoji = `[custom:${r.reaction.documentId.toString()}]`;
+    }
+    let user = "Unknown";
     if (r.peerId instanceof Api.PeerUser) {
-      const u = result.users.find((x): x is Api.User => x instanceof Api.User && x.id.equals((r.peerId as Api.PeerUser).userId));
-      if (u) user = u.firstName || u.username || u.id.toString();
+      const u = result.users.find(
+        (x): x is Api.User =>
+          x instanceof Api.User &&
+          x.id.equals((r.peerId as Api.PeerUser).userId)
+      );
+      if (u) {
+        user = u.firstName || u.username || u.id.toString();
+      }
     }
     reactions.push({ user, emoji });
   }
   return { chatTitle: getChatTitle(entity), reactions };
 }
-
-// --- Block / contacts ---
 
 export async function setBlocked(
   client: TelegramClient,
@@ -3142,8 +4055,11 @@ export async function setBlocked(
 ): Promise<{ name: string }> {
   const entity = await resolveChat(client, userIdentifier);
   const peer = await client.getInputEntity(entity);
-  if (blocked) await client.invoke(new Api.contacts.Block({ id: peer }));
-  else await client.invoke(new Api.contacts.Unblock({ id: peer }));
+  if (blocked) {
+    await client.invoke(new Api.contacts.Block({ id: peer }));
+  } else {
+    await client.invoke(new Api.contacts.Unblock({ id: peer }));
+  }
   return { name: getChatTitle(entity) };
 }
 
@@ -3151,20 +4067,22 @@ export async function addContact(
   client: TelegramClient,
   userIdentifier: string,
   firstName: string,
-  lastName = ''
+  lastName = ""
 ): Promise<{ name: string }> {
   const entity = await resolveChat(client, userIdentifier);
-  if (!(entity instanceof Api.User)) throw new Error('Not a user');
+  if (!(entity instanceof Api.User)) {
+    throw new Error("Not a user");
+  }
   await client.invoke(
     new Api.contacts.AddContact({
       id: entity,
       firstName,
       lastName,
-      phone: entity.phone || '',
+      phone: entity.phone || "",
       addPhonePrivacyException: false,
     })
   );
-  return { name: [firstName, lastName].filter(Boolean).join(' ') };
+  return { name: [firstName, lastName].filter(Boolean).join(" ") };
 }
 
 export async function deleteContact(
@@ -3172,30 +4090,38 @@ export async function deleteContact(
   userIdentifier: string
 ): Promise<{ name: string }> {
   const entity = await resolveChat(client, userIdentifier);
-  if (!(entity instanceof Api.User)) throw new Error('Not a user');
+  if (!(entity instanceof Api.User)) {
+    throw new Error("Not a user");
+  }
   await client.invoke(new Api.contacts.DeleteContacts({ id: [entity] }));
   return { name: getChatTitle(entity) };
 }
-
-// --- Chat membership / management ---
 
 export async function joinChat(
   client: TelegramClient,
   target: string
 ): Promise<{ title: string }> {
-  // Invite link (t.me/+hash or t.me/joinchat/hash) → ImportChatInvite; otherwise JoinChannel.
   const inviteMatch = target.match(INVITE_LINK);
   if (inviteMatch) {
-    const res = await client.invoke(new Api.messages.ImportChatInvite({ hash: inviteMatch[1] }));
-    let title = 'chat';
-    if (res instanceof Api.messages.ChatInviteJoinResultOk && res.updates instanceof Api.Updates) {
+    const res = await client.invoke(
+      new Api.messages.ImportChatInvite({ hash: inviteMatch[1] })
+    );
+    let title = "chat";
+    if (
+      res instanceof Api.messages.ChatInviteJoinResultOk &&
+      res.updates instanceof Api.Updates
+    ) {
       const chat = res.updates.chats[0];
-      if (chat instanceof Api.Channel || chat instanceof Api.Chat) title = chat.title;
+      if (chat instanceof Api.Channel || chat instanceof Api.Chat) {
+        title = chat.title;
+      }
     }
     return { title };
   }
   const entity = await resolveChat(client, target);
-  if (!(entity instanceof Api.Channel)) throw new Error('Can only join channels/supergroups by username');
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error("Can only join channels/supergroups by username");
+  }
   await client.invoke(new Api.channels.JoinChannel({ channel: entity }));
   return { title: getChatTitle(entity) };
 }
@@ -3210,9 +4136,15 @@ export async function leaveChat(
     await client.invoke(new Api.channels.LeaveChannel({ channel: entity }));
   } else if (entity instanceof Api.Chat) {
     const me = await getMe(client);
-    await client.invoke(new Api.messages.DeleteChatUser({ chatId: entity.id, userId: me, revokeHistory: false }));
+    await client.invoke(
+      new Api.messages.DeleteChatUser({
+        chatId: entity.id,
+        userId: me,
+        revokeHistory: false,
+      })
+    );
   } else {
-    throw new Error('Not a group or channel');
+    throw new Error("Not a group or channel");
   }
   return { title };
 }
@@ -3224,7 +4156,7 @@ export async function exportInviteLink(
   const entity = await resolveChat(client, chatIdentifier);
   const peer = await client.getInputEntity(entity);
   const res = await client.invoke(new Api.messages.ExportChatInvite({ peer }));
-  const link = res instanceof Api.ChatInviteExported ? res.link : '';
+  const link = res instanceof Api.ChatInviteExported ? res.link : "";
   return { title: getChatTitle(entity), link };
 }
 
@@ -3237,7 +4169,9 @@ export async function setArchived(
   const peer = await client.getInputEntity(entity);
   await client.invoke(
     new Api.folders.EditPeerFolders({
-      folderPeers: [new Api.InputFolderPeer({ peer, folderId: archived ? 1 : 0 })],
+      folderPeers: [
+        new Api.InputFolderPeer({ peer, folderId: archived ? 1 : 0 }),
+      ],
     })
   );
   return { title: getChatTitle(entity) };
@@ -3251,16 +4185,26 @@ export async function createGroup(
   const users: Api.TypeInputUser[] = [];
   for (const u of userIdentifiers) {
     const entity = await resolveChat(client, u);
-    // Every member the person approved, or no group: dropping one silently changes what was approved
-    if (!(entity instanceof Api.User)) throw new Error(`${u} is not a user; a group's members are users`);
-    users.push(new Api.InputUser({ userId: entity.id, accessHash: entity.accessHash || bigInt(0) }));
+    if (!(entity instanceof Api.User)) {
+      throw new Error(`${u} is not a user; a group's members are users`);
+    }
+    users.push(
+      new Api.InputUser({
+        userId: entity.id,
+        accessHash: entity.accessHash || bigInt(0),
+      })
+    );
   }
-  const res = await client.invoke(new Api.messages.CreateChat({ users, title }));
-  let id = '';
+  const res = await client.invoke(
+    new Api.messages.CreateChat({ users, title })
+  );
+  let id = "";
   const updates = (res as { updates?: Api.Updates }).updates ?? res;
   if (updates instanceof Api.Updates) {
     const chat = updates.chats[0];
-    if (chat) id = chat.id.toString();
+    if (chat) {
+      id = chat.id.toString();
+    }
   }
   return { title, id };
 }
@@ -3279,20 +4223,26 @@ export async function createChannel(
       megagroup: options.broadcast ? undefined : true,
     })
   );
-  let id = '';
+  let id = "";
   if (res instanceof Api.Updates) {
     const chat = res.chats[0];
-    if (chat) id = chat.id.toString();
+    if (chat) {
+      id = chat.id.toString();
+    }
   }
   return { title, id };
 }
 
-// --- Presence / typing ---
-
 export async function sendTyping(
   client: TelegramClient,
   chatIdentifier: string,
-  action: 'typing' | 'photo' | 'video' | 'audio' | 'document' | 'cancel' = 'typing'
+  action:
+    | "typing"
+    | "photo"
+    | "video"
+    | "audio"
+    | "document"
+    | "cancel" = "typing"
 ): Promise<{ title: string }> {
   const entity = await resolveChat(client, chatIdentifier);
   const peer = await client.getInputEntity(entity);
@@ -3304,11 +4254,11 @@ export async function sendTyping(
     document: new Api.SendMessageUploadDocumentAction({ progress: 0 }),
     cancel: new Api.SendMessageCancelAction(),
   };
-  await client.invoke(new Api.messages.SetTyping({ peer, action: actionMap[action] }));
+  await client.invoke(
+    new Api.messages.SetTyping({ peer, action: actionMap[action] })
+  );
   return { title: getChatTitle(entity) };
 }
-
-// --- Own profile ---
 
 export async function updateProfile(
   client: TelegramClient,
@@ -3317,7 +4267,10 @@ export async function updateProfile(
   await client.invoke(new Api.account.UpdateProfile(fields));
 }
 
-export async function updateUsername(client: TelegramClient, username: string): Promise<void> {
+export async function updateUsername(
+  client: TelegramClient,
+  username: string
+): Promise<void> {
   await client.invoke(new Api.account.UpdateUsername({ username }));
 }
 
@@ -3325,8 +4278,10 @@ export async function setProfilePhoto(
   client: TelegramClient,
   filePath: string
 ): Promise<void> {
-  // The bytes the approval was checked against (read once per process), never the path again
-  const file = await client.uploadFile({ file: uploadable(fileSnapshot(filePath)), workers: 1 });
+  const file = await client.uploadFile({
+    file: uploadable(fileSnapshot(filePath)),
+    workers: 1,
+  });
   await client.invoke(new Api.photos.UploadProfilePhoto({ file }));
 }
 
@@ -3337,42 +4292,61 @@ export async function downloadAvatar(
 ): Promise<{ filePath: string | null; title: string }> {
   const entity = await resolveChat(client, chatIdentifier);
   const title = getChatTitle(entity);
-  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  if (!existsSync(outputDir)) {
+    mkdirSync(outputDir, { recursive: true });
+  }
   const fileName = `avatar_${entity.id.toString()}.jpg`;
   const filePath = join(outputDir, fileName);
   assertDownloadTarget(filePath);
-  const result = await client.downloadProfilePhoto(entity, { outputFile: filePath });
-  if (!result) return { filePath: null, title };
-  return { filePath: typeof result === 'string' ? result : filePath, title };
+  const result = await client.downloadProfilePhoto(entity, {
+    outputFile: filePath,
+  });
+  if (!result) {
+    return { filePath: null, title };
+  }
+  return { filePath: typeof result === "string" ? result : filePath, title };
 }
-
-// --- Inline bot queries ---
 
 export async function queryInlineBot(
   client: TelegramClient,
   botIdentifier: string,
   query: string,
   limit = 20
-): Promise<{ results: { type: string; title: string; description?: string; id: string }[] }> {
+): Promise<{
+  results: { type: string; title: string; description?: string; id: string }[];
+}> {
   const bot = await resolveChat(client, botIdentifier);
-  if (!(bot instanceof Api.User)) throw new Error('Inline queries can only target bots');
-  const inputBot = new Api.InputUser({ userId: bot.id, accessHash: bot.accessHash || bigInt(0) });
+  if (!(bot instanceof Api.User)) {
+    throw new Error("Inline queries can only target bots");
+  }
+  const inputBot = new Api.InputUser({
+    userId: bot.id,
+    accessHash: bot.accessHash || bigInt(0),
+  });
 
   const res = await client.invoke(
     new Api.messages.GetInlineBotResults({
       bot: inputBot,
       peer: new Api.InputPeerSelf(),
       query,
-      offset: '',
+      offset: "",
     })
   );
 
-  const results: { type: string; title: string; description?: string; id: string }[] = [];
+  const results: {
+    type: string;
+    title: string;
+    description?: string;
+    id: string;
+  }[] = [];
   for (const raw of res.results.slice(0, limit)) {
-    if (raw instanceof Api.BotInlineResult || raw instanceof Api.BotInlineMediaResult) {
+    if (
+      raw instanceof Api.BotInlineResult ||
+      raw instanceof Api.BotInlineMediaResult
+    ) {
       results.push({
         type: raw.type,
-        title: raw.title || '',
+        title: raw.title || "",
         description: raw.description || undefined,
         id: raw.id,
       });
@@ -3381,96 +4355,112 @@ export async function queryInlineBot(
   return { results };
 }
 
-// --- Stories ---
-
 export async function getUserStories(
   client: TelegramClient,
   userIdentifier: string
-): Promise<{ name: string; stories: { id: number; date: Date; caption: string }[] }> {
+): Promise<{
+  name: string;
+  stories: { id: number; date: Date; caption: string }[];
+}> {
   const entity = await resolveChat(client, userIdentifier);
   const peer = await client.getInputEntity(entity);
   const res = await client.invoke(new Api.stories.GetPeerStories({ peer }));
   const stories: { id: number; date: Date; caption: string }[] = [];
   for (const s of res.stories.stories) {
     if (s instanceof Api.StoryItem) {
-      stories.push({ id: s.id, date: new Date(s.date * 1000), caption: s.caption || '' });
+      stories.push({
+        id: s.id,
+        date: new Date(s.date * 1000),
+        caption: s.caption || "",
+      });
     }
   }
   return { name: getChatTitle(entity), stories };
 }
 
-// --- Admin Management Functions ---
-
-/** A user argument, found like every other recipient (resolveChat), so the approval and the write agree. */
-async function resolveUser(client: TelegramClient, userIdentifier: string): Promise<Api.User> {
+async function resolveUser(
+  client: TelegramClient,
+  userIdentifier: string
+): Promise<Api.User> {
   const entity = await resolveChat(client, userIdentifier);
   if (!(entity instanceof Api.User)) {
-    throw new Error('Target is not a user');
+    throw new Error("Target is not a user");
   }
   return entity;
 }
 
 function userLabel(user: Api.User): string {
-  return user.username ? `@${user.username}` : (user.firstName || user.id.toString());
+  return user.username
+    ? `@${user.username}`
+    : user.firstName || user.id.toString();
 }
 
 function friendlyAdminError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
-  if (msg.includes('USER_NOT_PARTICIPANT') || msg.includes('USER_NOT_MUTUAL_CONTACT')) {
-    return 'The target must be a member of the group first.';
+  if (
+    msg.includes("USER_NOT_PARTICIPANT") ||
+    msg.includes("USER_NOT_MUTUAL_CONTACT")
+  ) {
+    return "The target must be a member of the group first.";
   }
-  if (msg.includes('CHAT_ADMIN_REQUIRED') || msg.includes('ADMIN_RIGHT')) {
-    return 'You lack the rights to add admins in this group.';
+  if (msg.includes("CHAT_ADMIN_REQUIRED") || msg.includes("ADMIN_RIGHT")) {
+    return "You lack the rights to add admins in this group.";
   }
-  if (msg.includes('USER_PRIVACY_RESTRICTED')) {
+  if (msg.includes("USER_PRIVACY_RESTRICTED")) {
     return "The target's privacy settings prevent this action.";
   }
-  if (msg.includes('USER_CREATOR')) {
-    return 'That user is the group creator and cannot be changed this way.';
+  if (msg.includes("USER_CREATOR")) {
+    return "That user is the group creator and cannot be changed this way.";
   }
-  if (msg.includes('USER_ADMIN_INVALID')) {
+  if (msg.includes("USER_ADMIN_INVALID")) {
     return "You can't edit this user's admin status (they may have been promoted by someone else).";
   }
-  if (msg.includes('RIGHT_FORBIDDEN')) {
-    return 'One of the requested admin rights is not allowed in this group.';
+  if (msg.includes("RIGHT_FORBIDDEN")) {
+    return "One of the requested admin rights is not allowed in this group.";
   }
-  if (msg.includes('ADMINS_TOO_MUCH')) {
-    return 'This group already has the maximum number of admins.';
+  if (msg.includes("ADMINS_TOO_MUCH")) {
+    return "This group already has the maximum number of admins.";
   }
   return msg;
 }
 
 function friendlyTransferError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
-  if (msg.includes('PASSWORD_HASH_INVALID')) {
-    return 'Incorrect 2FA password.';
+  if (msg.includes("PASSWORD_HASH_INVALID")) {
+    return "Incorrect 2FA password.";
   }
-  if (msg.includes('PASSWORD_MISSING')) {
-    return 'No 2FA password is set on your account. Enable two-step verification first.';
+  if (msg.includes("PASSWORD_MISSING")) {
+    return "No 2FA password is set on your account. Enable two-step verification first.";
   }
-  if (msg.includes('SRP_PASSWORD_CHANGED') || msg.includes('SRP_ID_INVALID')) {
-    return 'Your 2FA password state changed mid-request. Please try again.';
+  if (msg.includes("SRP_PASSWORD_CHANGED") || msg.includes("SRP_ID_INVALID")) {
+    return "Your 2FA password state changed mid-request. Please try again.";
   }
-  if (msg.includes('PASSWORD_TOO_FRESH')) {
-    return 'Your 2FA password was set too recently. Telegram blocks ownership transfer for ~7 days after enabling or changing it.';
+  if (msg.includes("PASSWORD_TOO_FRESH")) {
+    return "Your 2FA password was set too recently. Telegram blocks ownership transfer for ~7 days after enabling or changing it.";
   }
-  if (msg.includes('SESSION_TOO_FRESH') || msg.includes('FRESH_CHANGE_ADMINS_FORBIDDEN')) {
-    return 'This login session is too new. Telegram blocks ownership transfer for ~24h after a new login.';
+  if (
+    msg.includes("SESSION_TOO_FRESH") ||
+    msg.includes("FRESH_CHANGE_ADMINS_FORBIDDEN")
+  ) {
+    return "This login session is too new. Telegram blocks ownership transfer for ~24h after a new login.";
   }
-  if (msg.includes('CHAT_ADMIN_REQUIRED') || msg.includes('CHANNEL_PRIVATE')) {
-    return 'You must be the creator of this group to transfer ownership.';
+  if (msg.includes("CHAT_ADMIN_REQUIRED") || msg.includes("CHANNEL_PRIVATE")) {
+    return "You must be the creator of this group to transfer ownership.";
   }
-  if (msg.includes('USER_NOT_PARTICIPANT') || msg.includes('USER_NOT_MUTUAL_CONTACT')) {
-    return 'The target must be a member of the group first.';
+  if (
+    msg.includes("USER_NOT_PARTICIPANT") ||
+    msg.includes("USER_NOT_MUTUAL_CONTACT")
+  ) {
+    return "The target must be a member of the group first.";
   }
-  if (msg.includes('USER_PRIVACY_RESTRICTED')) {
+  if (msg.includes("USER_PRIVACY_RESTRICTED")) {
     return "The target's privacy settings prevent the transfer. Ask them to adjust their privacy settings or add you as a contact.";
   }
-  if (msg.includes('USER_CHANNELS_TOO_MUCH')) {
-    return 'The target is in too many groups/channels and cannot receive ownership right now.';
+  if (msg.includes("USER_CHANNELS_TOO_MUCH")) {
+    return "The target is in too many groups/channels and cannot receive ownership right now.";
   }
-  if (msg.includes('CHANNELS_ADMIN_PUBLIC_TOO_MUCH')) {
-    return 'The target already owns too many public groups/channels.';
+  if (msg.includes("CHANNELS_ADMIN_PUBLIC_TOO_MUCH")) {
+    return "The target already owns too many public groups/channels.";
   }
   return msg;
 }
@@ -3486,9 +4476,9 @@ export async function promoteAdmin(
   let user: Api.User;
   try {
     user = await resolveUser(client, userIdentifier);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg === 'Target is not a user') {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg === "Target is not a user") {
       return { success: false, message: msg };
     }
     return { success: false, message: `User not found: ${userIdentifier}` };
@@ -3512,15 +4502,17 @@ export async function promoteAdmin(
             other: true,
             addAdmins: options.canAddAdmins ?? false,
           }),
-          rank: options.rank ?? '',
+          rank: options.rank ?? "",
         })
       );
-      return { success: true, message: `Promoted ${userLabel(user)} to admin in "${chat.title}"` };
-    } catch (e: unknown) {
-      return { success: false, message: friendlyAdminError(e) };
+      return {
+        success: true,
+        message: `Promoted ${userLabel(user)} to admin in "${chat.title}"`,
+      };
+    } catch (error: unknown) {
+      return { success: false, message: friendlyAdminError(error) };
     }
   } else if (chat instanceof Api.Chat) {
-    // Basic groups only support a single all-or-nothing admin toggle.
     try {
       await client.invoke(
         new Api.messages.EditChatAdmin({
@@ -3529,16 +4521,20 @@ export async function promoteAdmin(
           isAdmin: true,
         })
       );
-      const ignoredNote = (options.rank || options.canAddAdmins)
-        ? ' (basic groups grant full admin rights; --rank/--add-admins ignored)'
-        : '';
-      return { success: true, message: `Promoted ${userLabel(user)} to admin in "${chat.title}"${ignoredNote}` };
-    } catch (e: unknown) {
-      return { success: false, message: friendlyAdminError(e) };
+      const ignoredNote =
+        options.rank || options.canAddAdmins
+          ? " (basic groups grant full admin rights; --rank/--add-admins ignored)"
+          : "";
+      return {
+        success: true,
+        message: `Promoted ${userLabel(user)} to admin in "${chat.title}"${ignoredNote}`,
+      };
+    } catch (error: unknown) {
+      return { success: false, message: friendlyAdminError(error) };
     }
   }
 
-  return { success: false, message: 'Not a group chat' };
+  return { success: false, message: "Not a group chat" };
 }
 
 export async function transferOwnership(
@@ -3552,16 +4548,17 @@ export async function transferOwnership(
   if (!(chat instanceof Api.Channel)) {
     return {
       success: false,
-      message: 'Ownership transfer is only supported for supergroups and channels. Convert a basic group to a supergroup first.',
+      message:
+        "Ownership transfer is only supported for supergroups and channels. Convert a basic group to a supergroup first.",
     };
   }
 
   let user: Api.User;
   try {
     user = await resolveUser(client, userIdentifier);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg === 'Target is not a user') {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg === "Target is not a user") {
       return { success: false, message: msg };
     }
     return { success: false, message: `User not found: ${userIdentifier}` };
@@ -3570,38 +4567,42 @@ export async function transferOwnership(
   let passwordInfo: Api.account.Password;
   try {
     passwordInfo = await client.invoke(new Api.account.GetPassword());
-  } catch (e: unknown) {
-    return { success: false, message: e instanceof Error ? e.message : String(e) };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 
   if (!passwordInfo.hasPassword) {
     return {
       success: false,
-      message: 'Ownership transfer requires two-step verification (a cloud password) on your account. Enable it in Telegram > Settings > Privacy and Security first.',
+      message:
+        "Ownership transfer requires two-step verification (a cloud password) on your account. Enable it in Telegram > Settings > Privacy and Security first.",
     };
   }
 
   try {
     const srpCheck = await computeCheck(passwordInfo, password);
     await client.invoke(
-      // Layer 229 replaced channels.editCreator with messages.editChatCreator
       new Api.messages.EditChatCreator({
         peer: chat,
         userId: user,
         password: srpCheck,
       })
     );
-    return { success: true, message: `Transferred ownership of "${chat.title}" to ${userLabel(user)}` };
-  } catch (e: unknown) {
-    return { success: false, message: friendlyTransferError(e) };
+    return {
+      success: true,
+      message: `Transferred ownership of "${chat.title}" to ${userLabel(user)}`,
+    };
+  } catch (error: unknown) {
+    return { success: false, message: friendlyTransferError(error) };
   }
 }
 
-// --- Chat info, forum topics, message links ---
-
 export interface ChatDetails {
   id: string;
-  type: 'user' | 'bot' | 'group' | 'supergroup' | 'channel';
+  type: "user" | "bot" | "group" | "supergroup" | "channel";
   title: string;
   username?: string;
   about?: string;
@@ -3620,7 +4621,10 @@ export interface ChatDetails {
 }
 
 /** Everything useful about a chat, user or channel in one call. */
-export async function getChatInfo(client: TelegramClient, chatIdentifier: string): Promise<ChatDetails> {
+export async function getChatInfo(
+  client: TelegramClient,
+  chatIdentifier: string
+): Promise<ChatDetails> {
   const entity = await resolveChat(client, chatIdentifier);
   const id = utils.getPeerId(entity).toString();
 
@@ -3628,8 +4632,11 @@ export async function getChatInfo(client: TelegramClient, chatIdentifier: string
     const full = await client.invoke(new Api.users.GetFullUser({ id: entity }));
     return {
       id,
-      type: entity.bot ? 'bot' : 'user',
-      title: [entity.firstName, entity.lastName].filter(Boolean).join(' ') || entity.username || id,
+      type: entity.bot ? "bot" : "user",
+      title:
+        [entity.firstName, entity.lastName].filter(Boolean).join(" ") ||
+        entity.username ||
+        id,
       username: entity.username ?? undefined,
       about: full.fullUser.about ?? undefined,
       phone: entity.phone ?? undefined,
@@ -3640,12 +4647,18 @@ export async function getChatInfo(client: TelegramClient, chatIdentifier: string
   }
 
   if (entity instanceof Api.Channel) {
-    const res = await client.invoke(new Api.channels.GetFullChannel({ channel: entity }));
+    const res = await client.invoke(
+      new Api.channels.GetFullChannel({ channel: entity })
+    );
     const full = res.fullChat as Api.ChannelFull;
-    const linked = full.linkedChatId ? utils.getPeerId(new Api.PeerChannel({ channelId: full.linkedChatId })).toString() : undefined;
+    const linked = full.linkedChatId
+      ? utils
+          .getPeerId(new Api.PeerChannel({ channelId: full.linkedChatId }))
+          .toString()
+      : undefined;
     return {
       id,
-      type: entity.megagroup ? 'supergroup' : 'channel',
+      type: entity.megagroup ? "supergroup" : "channel",
       title: entity.title,
       username: entity.username ?? undefined,
       about: full.about || undefined,
@@ -3656,19 +4669,27 @@ export async function getChatInfo(client: TelegramClient, chatIdentifier: string
       linkedChatId: linked,
       forum: entity.forum || undefined,
       slowmodeSeconds: full.slowmodeSeconds || undefined,
-      inviteLink: full.exportedInvite instanceof Api.ChatInviteExported ? full.exportedInvite.link : undefined,
+      inviteLink:
+        full.exportedInvite instanceof Api.ChatInviteExported
+          ? full.exportedInvite.link
+          : undefined,
     };
   }
 
-  const res = await client.invoke(new Api.messages.GetFullChat({ chatId: entity.id }));
+  const res = await client.invoke(
+    new Api.messages.GetFullChat({ chatId: entity.id })
+  );
   const full = res.fullChat as Api.ChatFull;
   return {
     id,
-    type: 'group',
+    type: "group",
     title: entity.title,
     about: full.about || undefined,
     members: entity.participantsCount ?? undefined,
-    inviteLink: full.exportedInvite instanceof Api.ChatInviteExported ? full.exportedInvite.link : undefined,
+    inviteLink:
+      full.exportedInvite instanceof Api.ChatInviteExported
+        ? full.exportedInvite.link
+        : undefined,
   };
 }
 
@@ -3688,7 +4709,11 @@ export async function getForumTopics(
 ): Promise<{ chatTitle: string; topics: ForumTopicInfo[] }> {
   const entity = await resolveChat(client, chatIdentifier);
   if (!hasTopics(entity)) {
-    throw new CliError(`"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups and bots with topics)`, 'not_a_forum', EXIT.USAGE);
+    throw new CliError(
+      `"${getChatTitle(entity)}" is not a forum (topics are only in forum supergroups and bots with topics)`,
+      "not_a_forum",
+      EXIT.USAGE
+    );
   }
   const res = await client.invoke(
     new Api.messages.GetForumTopics({
@@ -3725,10 +4750,14 @@ export async function getMessageLink(
 ): Promise<string> {
   const entity = await resolveChat(client, chatIdentifier);
   if (!(entity instanceof Api.Channel)) {
-    throw new Error('Message links exist only for channels and supergroups');
+    throw new Error("Message links exist only for channels and supergroups");
   }
   const res = await client.invoke(
-    new Api.channels.ExportMessageLink({ channel: entity, id: messageId, thread: options.thread })
+    new Api.channels.ExportMessageLink({
+      channel: entity,
+      id: messageId,
+      thread: options.thread,
+    })
   );
   return res.link;
 }
@@ -3740,11 +4769,18 @@ export async function getReadState(
 ): Promise<{ readInboxMaxId: number; unreadCount: number }> {
   const entity = await resolveChat(client, chatIdentifier);
   const peerId = utils.getPeerId(entity).toString();
-  const dialog = (await getDialogsCached(client)).find(d => d.id?.toString() === peerId);
+  const dialog = (await getDialogsCached(client)).find(
+    (d) => d.id?.toString() === peerId
+  );
   if (!dialog || !(dialog.dialog instanceof Api.Dialog)) {
-    throw new Error(`No dialog for "${chatIdentifier}" in your chat list, so its unread state is unknown`);
+    throw new Error(
+      `No dialog for "${chatIdentifier}" in your chat list, so its unread state is unknown`
+    );
   }
-  return { readInboxMaxId: dialog.dialog.readInboxMaxId, unreadCount: dialog.unreadCount };
+  return {
+    readInboxMaxId: dialog.dialog.readInboxMaxId,
+    unreadCount: dialog.unreadCount,
+  };
 }
 
 export interface ContactInfoRow {
@@ -3755,21 +4791,46 @@ export interface ContactInfoRow {
   mutual?: boolean;
 }
 
-export async function listContacts(client: TelegramClient, query?: string): Promise<ContactInfoRow[]> {
-  const res = await client.invoke(new Api.contacts.GetContacts({ hash: bigInt(0) }));
-  if (!(res instanceof Api.contacts.Contacts)) return [];
+export async function listContacts(
+  client: TelegramClient,
+  query?: string
+): Promise<ContactInfoRow[]> {
+  const res = await client.invoke(
+    new Api.contacts.GetContacts({ hash: bigInt(0) })
+  );
+  if (!(res instanceof Api.contacts.Contacts)) {
+    return [];
+  }
   const q = query?.toLowerCase();
   const rows: ContactInfoRow[] = [];
   for (const u of res.users) {
-    if (!(u instanceof Api.User)) continue;
-    const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.id.toString();
-    if (q && !(name.toLowerCase().includes(q) || u.username?.toLowerCase().includes(q) || u.phone?.includes(q))) continue;
-    rows.push({ id: u.id.toString(), name, username: u.username ?? undefined, phone: u.phone ?? undefined, mutual: u.mutualContact || undefined });
+    if (!(u instanceof Api.User)) {
+      continue;
+    }
+    const name =
+      [u.firstName, u.lastName].filter(Boolean).join(" ") ||
+      u.username ||
+      u.id.toString();
+    if (
+      q &&
+      !(
+        name.toLowerCase().includes(q) ||
+        u.username?.toLowerCase().includes(q) ||
+        u.phone?.includes(q)
+      )
+    ) {
+      continue;
+    }
+    rows.push({
+      id: u.id.toString(),
+      name,
+      username: u.username ?? undefined,
+      phone: u.phone ?? undefined,
+      mutual: u.mutualContact || undefined,
+    });
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
 }
-
-// --- Generic `api` command -------------------------------------------------------------------
 
 /**
  * Build any TL request from the schema and invoke it (issue #47 "reachability"). Peer/file fields
@@ -3781,133 +4842,196 @@ export async function listContacts(client: TelegramClient, query?: string): Prom
 export async function invokeApi(
   client: TelegramClient,
   methodName: string,
-  rawParams: Record<string, unknown> = {},
+  rawParams: Record<string, unknown> = {}
 ): Promise<unknown> {
-  const { resolveApiMethod, mcpPaidStarsRefusal, mcpParamRefusal, geoParamRefusal } = await import('./api-methods.js');
-  const { mcpApiAllowlistRefusal } = await import('./mcp-api-allowlist.js');
+  const {
+    resolveApiMethod,
+    mcpPaidStarsRefusal,
+    mcpParamRefusal,
+    geoParamRefusal,
+  } = await import("./api-methods.js");
+  const { mcpApiAllowlistRefusal } = await import("./mcp-api-allowlist.js");
   const { ctor, className } = resolveApiMethod(methodName);
   const notAllowed = mcpApiAllowlistRefusal(className);
-  if (notAllowed) throw new Error(notAllowed);
-  const params = (await materializeApiParams(client, rawParams)) as Record<string, unknown>;
-  const request = new (ctor as unknown as new (a: Record<string, unknown>) => Api.AnyRequest)(params);
-  // Checked again on the fields the request really carries (Stars, stakes, coordinates over MCP)
+  if (notAllowed) {
+    throw new Error(notAllowed);
+  }
+  const params = (await materializeApiParams(client, rawParams)) as Record<
+    string,
+    unknown
+  >;
+  const request = new (ctor as unknown as new (
+    a: Record<string, unknown>
+  ) => Api.AnyRequest)(params);
   const fields = { ...request } as Record<string, unknown>;
-  const refusal = geoParamRefusal(className, fields) ?? mcpPaidStarsRefusal(className, fields) ?? mcpParamRefusal(className, fields);
-  if (refusal) throw new Error(refusal);
+  const refusal =
+    geoParamRefusal(className, fields) ??
+    mcpPaidStarsRefusal(className, fields) ??
+    mcpParamRefusal(className, fields);
+  if (refusal) {
+    throw new Error(refusal);
+  }
   return client.invoke(request);
 }
 
-async function materializeApiParams(client: TelegramClient, value: unknown): Promise<unknown> {
+async function materializeApiParams(
+  client: TelegramClient,
+  value: unknown
+): Promise<unknown> {
   if (Array.isArray(value)) {
-    return Promise.all(value.map(v => materializeApiParams(client, v)));
+    return Promise.all(value.map((v) => materializeApiParams(client, v)));
   }
-  if (value && typeof value === 'object') {
+  if (value && typeof value === "object") {
     const obj = value as Record<string, unknown>;
-    // The same rule the approval used to find the chats in these params (apiChatRefs)
     switch (apiMarker(obj)) {
-      case 'chat': return resolveChat(client, obj._chat as string);
-      case 'base64': return Buffer.from(obj._base64 as string, 'base64');
-      case 'hex': return Buffer.from(obj._hex as string, 'hex');
-      case 'bigint': return bigInt(String(obj._bigint));
+      case "chat": {
+        return resolveChat(client, obj._chat as string);
+      }
+      case "base64": {
+        return Buffer.from(obj._base64 as string, "base64");
+      }
+      case "hex": {
+        return Buffer.from(obj._hex as string, "hex");
+      }
+      case "bigint": {
+        return bigInt(String(obj._bigint));
+      }
     }
-    // Prototype-free, so no field (allowPaidStars) is inherited after the checks in runApiMethod
     const out = Object.create(null) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(obj)) out[k] = await materializeApiParams(client, v);
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = await materializeApiParams(client, v);
+    }
     return out;
   }
   return value;
 }
 
-/**
- * Keys a raw result over MCP shows as "[redacted]", at any depth: phone numbers (a `User`, a contact
- * card and its vCard), birthdays, the private note about a contact, and every location field
- * (geo points, a business or geo-group location, a venue address).
- */
-const MCP_REDACTED_KEY = /^(phone|phoneNumber|vcard|birthday|businessLocation|note|location|address)$|geo/i;
+const MCP_REDACTED_KEY =
+  /^(phone|phoneNumber|vcard|birthday|businessLocation|note|location|address)$|geo/i;
 
-/**
- * Keys redacted over MCP only on some constructors (lowercase name → keys): the place ID and its
- * directory (Foursquare, Google Places) of a venue, which find the hidden address again, and the
- * slug of a Premium gift code, which is the redeem link itself.
- */
 const MCP_REDACTED_BY_TYPE: [RegExp, Set<string>][] = [
-  [/venue/, new Set(['venueId', 'provider'])],
-  [/^messageactiongiftcode$/, new Set(['slug'])],
-  // A giveaway's result and a boost carry the slug of the gift code they hand out
-  [/./, new Set(['giftCodeSlug', 'usedGiftSlug'])],
+  [/venue/, new Set(["venueId", "provider"])],
+  [/^messageactiongiftcode$/, new Set(["slug"])],
+  [/./, new Set(["giftCodeSlug", "usedGiftSlug"])],
 ];
 
-/** The constructor name of a value in a raw result: `className` (TL `toJSON`) or the JSON `_`. */
 function tlTypeName(val: unknown): string | undefined {
-  if (!val || typeof val !== 'object' || Array.isArray(val)) return undefined;
+  if (!val || typeof val !== "object" || Array.isArray(val)) {
+    return undefined;
+  }
   const v = val as { className?: unknown; _?: unknown };
-  const name = typeof v.className === 'string' ? v.className : typeof v._ === 'string' ? v._ : undefined;
+  const name =
+    typeof v.className === "string"
+      ? v.className
+      : typeof v._ === "string"
+        ? v._
+        : undefined;
   return name?.toLowerCase();
 }
 
-/** Big integers as strings and bytes as base64, the plain part of the result replacer. */
 function plainJsonValue(val: unknown): unknown {
-  if (typeof val === 'bigint') return val.toString();
-  if (bigInt.isInstance(val)) return val.toString();
-  if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
+  if (typeof val === "bigint") {
+    return val.toString();
+  }
+  if (bigInt.isInstance(val)) {
+    return val.toString();
+  }
+  if (val instanceof Uint8Array) {
+    return Buffer.from(val).toString("base64");
+  }
   return val;
 }
 
-/**
- * A message of a login service with its codes hidden in all its content: `message`, `richMessage`,
- * entity URLs, reply markup (texts, URLs, copy texts; bytes such as callback data hidden whole), a
- * quote and a link preview.
- */
-function maskLoginServiceJson(val: Record<string, unknown>): Record<string, unknown> {
-  // An array's strings are read under the key that holds the array (recentReactors: […])
+function maskLoginServiceJson(
+  val: Record<string, unknown>
+): Record<string, unknown> {
   const arrayKey = new WeakMap<object, string>();
-  return JSON.parse(JSON.stringify(val, function (this: Record<string, unknown>, k: string, v: unknown) {
-    const orig = this[k];
-    if (orig instanceof Uint8Array) return LOGIN_CODE_HIDDEN;
-    // A big integer (an ID, a size; its toJSON already made it a string) is a number, not content
-    if (typeof orig === 'bigint' || bigInt.isInstance(orig)) return plainJsonValue(orig);
-    const plain = plainJsonValue(v);
-    if (plain !== v) return plain;
-    if (typeof v === 'string') return maskContent(v, true, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
-    if (Array.isArray(v)) arrayKey.set(v, Array.isArray(this) ? arrayKey.get(this) ?? k : k);
-    return v;
-  })) as Record<string, unknown>;
+  return JSON.parse(
+    JSON.stringify(
+      val,
+      function (this: Record<string, unknown>, k: string, v: unknown) {
+        const orig = this[k];
+        if (orig instanceof Uint8Array) {
+          return LOGIN_CODE_HIDDEN;
+        }
+        if (typeof orig === "bigint" || bigInt.isInstance(orig)) {
+          return plainJsonValue(orig);
+        }
+        const plain = plainJsonValue(v);
+        if (plain !== v) {
+          return plain;
+        }
+        if (typeof v === "string") {
+          return maskContent(
+            v,
+            true,
+            Array.isArray(this) ? (arrayKey.get(this) ?? k) : k
+          );
+        }
+        if (Array.isArray(v)) {
+          arrayKey.set(v, Array.isArray(this) ? (arrayKey.get(this) ?? k) : k);
+        }
+        return v;
+      }
+    )
+  ) as Record<string, unknown>;
 }
 
 /** Compact JSON of a raw TL result: big integers as strings, bytes as base64, pretty on a TTY. */
 export function serializeApiResult(result: unknown): string {
   const overMcp = isOverMcp();
-  const pretty = isTTY || process.env.TG_JSON_PRETTY === '1';
-  const replacer = function (this: unknown, _key: string, val: unknown): unknown {
+  const pretty = isTTY || process.env.TG_JSON_PRETTY === "1";
+  const replacer = function replacer(
+    this: unknown,
+    _key: string,
+    val: unknown
+  ): unknown {
     const plain = plainJsonValue(val);
-    if (plain !== val) return plain;
-    // help.GetConfig may carry a token that logs into Telegram's web pages as this account
-    if (_key === 'autologinToken' && val) return '[redacted]';
-    if (!overMcp) return val;
-    // Over MCP: phone numbers, birthdays, private notes and locations stay out of the model's context
-    if (val != null && MCP_REDACTED_KEY.test(_key)) return '[redacted]';
+    if (plain !== val) {
+      return plain;
+    }
+    if (_key === "autologinToken" && val) {
+      return "[redacted]";
+    }
+    if (!overMcp) {
+      return val;
+    }
+    if (val != null && MCP_REDACTED_KEY.test(_key)) {
+      return "[redacted]";
+    }
     const holder = tlTypeName(this);
-    if (val != null && holder && MCP_REDACTED_BY_TYPE.some(([type, keys]) => type.test(holder) && keys.has(_key))) return '[redacted]';
-    // A gift-code link redeems the gift for whoever opens it, wherever it appears
-    if (typeof val === 'string') return maskForModel(val, 'chat');
-    // Login codes from the service accounts 777000 and 489000 (history, search, dialogs, a short update)
+    if (
+      val != null &&
+      holder &&
+      MCP_REDACTED_BY_TYPE.some(
+        ([type, keys]) => type.test(holder) && keys.has(_key)
+      )
+    ) {
+      return "[redacted]";
+    }
+    if (typeof val === "string") {
+      return maskForModel(val, "chat");
+    }
     const type = tlTypeName(val);
     const obj = val as Record<string, unknown>;
-    if ((type === 'message' && isLoginServiceMessage(obj))
-      || (type === 'updateshortmessage' && LOGIN_SERVICE_USER_IDS.has(String(obj.userId)))) {
+    if (
+      (type === "message" && isLoginServiceMessage(obj)) ||
+      (type === "updateshortmessage" &&
+        LOGIN_SERVICE_USER_IDS.has(String(obj.userId)))
+    ) {
       return maskLoginServiceJson(obj);
     }
-    // A quote of a login-service message, in a message of another chat: its text and entities
-    if (type === 'messagereplyheader' && isLoginServicePeer(obj.replyToPeerId)) {
+    if (
+      type === "messagereplyheader" &&
+      isLoginServicePeer(obj.replyToPeerId)
+    ) {
       return maskLoginServiceJson(obj);
     }
     return val;
   };
   const json = JSON.stringify(result, replacer, pretty ? 2 : undefined);
-  return json === undefined ? 'null' : json;
+  return json === undefined ? "null" : json;
 }
-
-// --- Curated coverage: drafts, admin log, profile photos, dialog state -----------------------
 
 export interface DraftInfo {
   chatId: string;
@@ -3923,14 +5047,28 @@ export async function getDrafts(client: TelegramClient): Promise<DraftInfo[]> {
   const drafts: DraftInfo[] = [];
   if (res instanceof Api.Updates || res instanceof Api.UpdatesCombined) {
     for (const update of res.updates) {
-      if (!(update instanceof Api.UpdateDraftMessage) || !(update.draft instanceof Api.DraftMessage)) continue;
-      if (!update.draft.message) continue;
+      if (
+        !(update instanceof Api.UpdateDraftMessage) ||
+        !(update.draft instanceof Api.DraftMessage)
+      ) {
+        continue;
+      }
+      if (!update.draft.message) {
+        continue;
+      }
       drafts.push({
         chatId: utils.getPeerId(update.peer).toString(),
-        chatTitle: peerTitle(update.peer, res.chats, res.users) ?? utils.getPeerId(update.peer).toString(),
+        chatTitle:
+          peerTitle(update.peer, res.chats, res.users) ??
+          utils.getPeerId(update.peer).toString(),
         text: update.draft.message,
-        date: update.draft.date ? new Date(update.draft.date * 1000) : undefined,
-        replyToMsgId: update.draft.replyTo instanceof Api.InputReplyToMessage ? update.draft.replyTo.replyToMsgId : undefined,
+        date: update.draft.date
+          ? new Date(update.draft.date * 1000)
+          : undefined,
+        replyToMsgId:
+          update.draft.replyTo instanceof Api.InputReplyToMessage
+            ? update.draft.replyTo.replyToMsgId
+            : undefined,
       });
     }
   }
@@ -3945,12 +5083,30 @@ export interface AdminLogEntry {
   detail?: string;
 }
 
-function describeAdminAction(action: Api.TypeChannelAdminLogEventAction): string | undefined {
-  if (action instanceof Api.ChannelAdminLogEventActionChangeTitle) return `"${action.prevValue}" → "${action.newValue}"`;
-  if (action instanceof Api.ChannelAdminLogEventActionChangeAbout) return `about: "${action.prevValue}" → "${action.newValue}"`;
-  if (action instanceof Api.ChannelAdminLogEventActionDeleteMessage && action.message instanceof Api.Message) return messageText(action.message);
-  if (action instanceof Api.ChannelAdminLogEventActionEditMessage && action.newMessage instanceof Api.Message) return messageText(action.newMessage);
-  if (action instanceof Api.ChannelAdminLogEventActionChangeUsername) return `@${action.prevValue || '∅'} → @${action.newValue || '∅'}`;
+function describeAdminAction(
+  action: Api.TypeChannelAdminLogEventAction
+): string | undefined {
+  if (action instanceof Api.ChannelAdminLogEventActionChangeTitle) {
+    return `"${action.prevValue}" → "${action.newValue}"`;
+  }
+  if (action instanceof Api.ChannelAdminLogEventActionChangeAbout) {
+    return `about: "${action.prevValue}" → "${action.newValue}"`;
+  }
+  if (
+    action instanceof Api.ChannelAdminLogEventActionDeleteMessage &&
+    action.message instanceof Api.Message
+  ) {
+    return messageText(action.message);
+  }
+  if (
+    action instanceof Api.ChannelAdminLogEventActionEditMessage &&
+    action.newMessage instanceof Api.Message
+  ) {
+    return messageText(action.newMessage);
+  }
+  if (action instanceof Api.ChannelAdminLogEventActionChangeUsername) {
+    return `@${action.prevValue || "∅"} → @${action.newValue || "∅"}`;
+  }
   return undefined;
 }
 
@@ -3958,26 +5114,36 @@ function describeAdminAction(action: Api.TypeChannelAdminLogEventAction): string
 export async function getAdminLog(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { limit?: number; query?: string } = {},
+  options: { limit?: number; query?: string } = {}
 ): Promise<{ chatTitle: string; entries: AdminLogEntry[] }> {
   const entity = await resolveChat(client, chatIdentifier);
   if (!(entity instanceof Api.Channel)) {
-    throw new Error('The admin log is only available for supergroups and channels.');
+    throw new Error(
+      "The admin log is only available for supergroups and channels."
+    );
   }
-  const res = await client.invoke(new Api.channels.GetAdminLog({
-    channel: entity,
-    q: options.query ?? '',
-    maxId: bigInt(0),
-    minId: bigInt(0),
-    limit: options.limit ?? 50,
-  }));
-  const entries: AdminLogEntry[] = res.events.map(event => {
-    const user = res.users.find((u): u is Api.User => u instanceof Api.User && u.id.equals(event.userId));
+  const res = await client.invoke(
+    new Api.channels.GetAdminLog({
+      channel: entity,
+      q: options.query ?? "",
+      maxId: bigInt(0),
+      minId: bigInt(0),
+      limit: options.limit ?? 50,
+    })
+  );
+  const entries: AdminLogEntry[] = res.events.map((event) => {
+    const user = res.users.find(
+      (u): u is Api.User => u instanceof Api.User && u.id.equals(event.userId)
+    );
     return {
       id: event.id.toString(),
       date: new Date(event.date * 1000),
-      user: user ? ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.id.toString()) : event.userId.toString(),
-      action: event.action.className.replace(/^ChannelAdminLogEventAction/, ''),
+      user: user
+        ? [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+          user.username ||
+          user.id.toString()
+        : event.userId.toString(),
+      action: event.action.className.replace(/^ChannelAdminLogEventAction/, ""),
       detail: describeAdminAction(event.action),
     };
   });
@@ -3994,22 +5160,31 @@ export interface ProfilePhotoInfo {
 export async function getProfilePhotos(
   client: TelegramClient,
   identifier: string,
-  options: { limit?: number } = {},
+  options: { limit?: number } = {}
 ): Promise<{ title: string; count: number; photos: ProfilePhotoInfo[] }> {
   const entity = await resolveChat(client, identifier);
   if (!(entity instanceof Api.User)) {
-    throw new Error('profile-photos lists a user\'s photos; for a chat or channel photo use `avatar`.');
+    throw new Error(
+      "profile-photos lists a user's photos; for a chat or channel photo use `avatar`."
+    );
   }
-  const res = await client.invoke(new Api.photos.GetUserPhotos({
-    userId: entity,
-    offset: 0,
-    maxId: bigInt(0),
-    limit: options.limit ?? 50,
-  }));
+  const res = await client.invoke(
+    new Api.photos.GetUserPhotos({
+      userId: entity,
+      offset: 0,
+      maxId: bigInt(0),
+      limit: options.limit ?? 50,
+    })
+  );
   const photos: ProfilePhotoInfo[] = res.photos
     .filter((p): p is Api.Photo => p instanceof Api.Photo)
-    .map(p => ({ id: p.id.toString(), date: new Date(p.date * 1000), dcId: p.dcId }));
-  const count = res instanceof Api.photos.PhotosSlice ? res.count : photos.length;
+    .map((p) => ({
+      id: p.id.toString(),
+      date: new Date(p.date * 1000),
+      dcId: p.dcId,
+    }));
+  const count =
+    res instanceof Api.photos.PhotosSlice ? res.count : photos.length;
   return { title: getChatTitle(entity), count, photos };
 }
 
@@ -4017,14 +5192,17 @@ export async function getProfilePhotos(
 export async function toggleDialogPin(
   client: TelegramClient,
   chatIdentifier: string,
-  pinned: boolean,
+  pinned: boolean
 ): Promise<{ title: string }> {
   const entity = await resolveChat(client, chatIdentifier);
-  await client.invoke(new Api.messages.ToggleDialogPin({
-    pinned: pinned || undefined,
-    // ToggleDialogPin takes an InputDialogPeer; teleproto types the field as EntityLike.
-    peer: new Api.InputDialogPeer({ peer: utils.getInputPeer(entity) }) as unknown as Api.TypeEntityLike,
-  }));
+  await client.invoke(
+    new Api.messages.ToggleDialogPin({
+      pinned: pinned || undefined,
+      peer: new Api.InputDialogPeer({
+        peer: utils.getInputPeer(entity),
+      }) as unknown as Api.TypeEntityLike,
+    })
+  );
   return { title: getChatTitle(entity) };
 }
 
@@ -4032,13 +5210,17 @@ export async function toggleDialogPin(
 export async function markDialogUnread(
   client: TelegramClient,
   chatIdentifier: string,
-  unread: boolean,
+  unread: boolean
 ): Promise<{ title: string }> {
   const entity = await resolveChat(client, chatIdentifier);
-  await client.invoke(new Api.messages.MarkDialogUnread({
-    unread: unread || undefined,
-    peer: new Api.InputDialogPeer({ peer: utils.getInputPeer(entity) }) as unknown as Api.TypeEntityLike,
-  }));
+  await client.invoke(
+    new Api.messages.MarkDialogUnread({
+      unread: unread || undefined,
+      peer: new Api.InputDialogPeer({
+        peer: utils.getInputPeer(entity),
+      }) as unknown as Api.TypeEntityLike,
+    })
+  );
   return { title: getChatTitle(entity) };
 }
 
@@ -4050,7 +5232,7 @@ export async function markDialogUnread(
 export async function deleteDialog(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { revoke?: boolean } = {},
+  options: { revoke?: boolean } = {}
 ): Promise<{ title: string; left: boolean }> {
   const entity = await resolveChat(client, chatIdentifier);
   const title = getChatTitle(entity);
@@ -4060,36 +5242,41 @@ export async function deleteDialog(
   }
   if (entity instanceof Api.Chat) {
     const me = await getMe(client);
-    await client.invoke(new Api.messages.DeleteChatUser({ chatId: entity.id, userId: me }));
+    await client.invoke(
+      new Api.messages.DeleteChatUser({ chatId: entity.id, userId: me })
+    );
     return { title, left: true };
   }
-  await client.invoke(new Api.messages.DeleteHistory({
-    peer: utils.getInputPeer(entity),
-    maxId: 0,
-    revoke: options.revoke || undefined,
-  }));
+  await client.invoke(
+    new Api.messages.DeleteHistory({
+      peer: utils.getInputPeer(entity),
+      maxId: 0,
+      revoke: options.revoke || undefined,
+    })
+  );
   return { title, left: false };
 }
 
-// --- Permissions (get_permissions) -----------------------------------------------------------
-
+/**
+ * - `user`: Present when a specific user was asked about.
+ * - `status`: 'creator' | 'admin' | 'member' | 'restricted' | 'banned' | 'left' | 'default'.
+ * - `adminRights`: Admin powers granted (for creator/admin).
+ * - `restrictions`: Actions the user (or everyone, for 'default') is NOT allowed to do.
+ */
 export interface PermissionInfo {
   chatTitle: string;
-  /** Present when a specific user was asked about. */
   user?: string;
-  /** 'creator' | 'admin' | 'member' | 'restricted' | 'banned' | 'left' | 'default'. */
   status: string;
-  /** Admin powers granted (for creator/admin). */
   adminRights?: string[];
-  /** Actions the user (or everyone, for 'default') is NOT allowed to do. */
   restrictions?: string[];
 }
 
-/** Boolean flags set to true on a ChatBannedRights/ChatAdminRights object, in schema order. */
 function trueFlags(rights: { [k: string]: unknown } | undefined): string[] {
-  if (!rights) return [];
+  if (!rights) {
+    return [];
+  }
   return Object.entries(rights)
-    .filter(([k, v]) => v === true && k !== 'className')
+    .filter(([k, v]) => v === true && k !== "className")
     .map(([k]) => k);
 }
 
@@ -4100,51 +5287,105 @@ function trueFlags(rights: { [k: string]: unknown } | undefined): string[] {
 export async function getPermissions(
   client: TelegramClient,
   chatIdentifier: string,
-  userIdentifier?: string,
+  userIdentifier?: string
 ): Promise<PermissionInfo> {
   const entity = await resolveChat(client, chatIdentifier);
   if (!(entity instanceof Api.Channel)) {
-    throw new Error('Permissions apply to supergroups and channels; basic groups have no per-user rights model.');
+    throw new Error(
+      "Permissions apply to supergroups and channels; basic groups have no per-user rights model."
+    );
   }
   const chatTitle = getChatTitle(entity);
   if (!userIdentifier) {
-    return { chatTitle, status: 'default', restrictions: trueFlags(entity.defaultBannedRights as never) };
+    return {
+      chatTitle,
+      status: "default",
+      restrictions: trueFlags(entity.defaultBannedRights as never),
+    };
   }
   const who = await resolveChat(client, userIdentifier);
-  const res = await client.invoke(new Api.channels.GetParticipant({ channel: entity, participant: who }));
+  const res = await client.invoke(
+    new Api.channels.GetParticipant({ channel: entity, participant: who })
+  );
   const p = res.participant;
   const user = res.users.find((u): u is Api.User => u instanceof Api.User);
-  const name = user ? ([user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.id.toString()) : userIdentifier;
+  const name = user
+    ? [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+      user.username ||
+      user.id.toString()
+    : userIdentifier;
 
   if (p instanceof Api.ChannelParticipantCreator) {
-    return { chatTitle, user: name, status: 'creator', adminRights: trueFlags(p.adminRights as never) };
+    return {
+      chatTitle,
+      user: name,
+      status: "creator",
+      adminRights: trueFlags(p.adminRights as never),
+    };
   }
   if (p instanceof Api.ChannelParticipantAdmin) {
-    return { chatTitle, user: name, status: 'admin', adminRights: trueFlags(p.adminRights as never) };
+    return {
+      chatTitle,
+      user: name,
+      status: "admin",
+      adminRights: trueFlags(p.adminRights as never),
+    };
   }
   if (p instanceof Api.ChannelParticipantBanned) {
     const banned = p.bannedRights;
-    return { chatTitle, user: name, status: banned.viewMessages ? 'banned' : 'restricted', restrictions: trueFlags(banned as never) };
+    return {
+      chatTitle,
+      user: name,
+      status: banned.viewMessages ? "banned" : "restricted",
+      restrictions: trueFlags(banned as never),
+    };
   }
   if (p instanceof Api.ChannelParticipantLeft) {
-    return { chatTitle, user: name, status: 'left' };
+    return { chatTitle, user: name, status: "left" };
   }
-  return { chatTitle, user: name, status: 'member' };
+  return { chatTitle, user: name, status: "member" };
 }
 
-// --- Channel / chat / message statistics (get_stats) -----------------------------------------
-
 /** A stats metric as current + previous value (so growth is visible). */
-export interface StatValue { current: number; previous?: number; }
-export interface TopPoster { userId: string; name: string; username?: string; messages: number; avgChars: number; }
-export interface TopAdmin { userId: string; name: string; deleted: number; kicked: number; banned: number; }
-export interface TopInviter { userId: string; name: string; invitations: number; }
-export interface PostInteraction { msgId?: number; storyId?: number; views: number; forwards: number; reactions: number; }
+export interface StatValue {
+  current: number;
+  previous?: number;
+}
+export interface TopPoster {
+  userId: string;
+  name: string;
+  username?: string;
+  messages: number;
+  avgChars: number;
+}
+export interface TopAdmin {
+  userId: string;
+  name: string;
+  deleted: number;
+  kicked: number;
+  banned: number;
+}
+export interface TopInviter {
+  userId: string;
+  name: string;
+  invitations: number;
+}
+export interface PostInteraction {
+  msgId?: number;
+  storyId?: number;
+  views: number;
+  forwards: number;
+  reactions: number;
+}
 /** A parsed graph series (opt-in `--graphs`), or an error for that one graph. */
-export interface GraphSeries { name: string; data?: unknown; error?: string; }
+export interface GraphSeries {
+  name: string;
+  data?: unknown;
+  error?: string;
+}
 
 export interface BroadcastActivity {
-  kind: 'broadcast';
+  kind: "broadcast";
   period?: { minDate: string; maxDate: string };
   followers?: StatValue;
   viewsPerPost?: StatValue;
@@ -4158,7 +5399,7 @@ export interface BroadcastActivity {
   graphs?: GraphSeries[];
 }
 export interface MegagroupActivity {
-  kind: 'megagroup';
+  kind: "megagroup";
   period?: { minDate: string; maxDate: string };
   members?: StatValue;
   messages?: StatValue;
@@ -4169,12 +5410,18 @@ export interface MegagroupActivity {
   topInviters?: TopInviter[];
   graphs?: GraphSeries[];
 }
-export type ChatActivity = BroadcastActivity | MegagroupActivity | { error: string };
+export type ChatActivity =
+  | BroadcastActivity
+  | MegagroupActivity
+  | { error: string };
 
+/**
+ * - `activity`: Aggregate activity when the account may see it, otherwise `{ error }`.
+ */
 export interface ChatStats {
   id: string;
   title: string;
-  type: 'user' | 'group' | 'supergroup' | 'channel';
+  type: "user" | "group" | "supergroup" | "channel";
   username?: string;
   about?: string;
   created?: string;
@@ -4190,73 +5437,126 @@ export interface ChatStats {
   bannedCount?: number;
   linkedChatId?: string;
   slowModeSeconds?: number;
-  /** Aggregate activity when the account may see it, otherwise `{ error }`. */
   activity?: ChatActivity;
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 const avp = (v: unknown): StatValue | undefined =>
-  v instanceof Api.StatsAbsValueAndPrev ? { current: round2(v.current), previous: round2(v.previous) } : undefined;
+  v instanceof Api.StatsAbsValueAndPrev
+    ? { current: round2(v.current), previous: round2(v.previous) }
+    : undefined;
 const pct = (v: unknown): number | undefined =>
-  v instanceof Api.StatsPercentValue && v.total ? round2((v.part / v.total) * 100) : undefined;
+  v instanceof Api.StatsPercentValue && v.total
+    ? round2((v.part / v.total) * 100)
+    : undefined;
 const period = (v: unknown): { minDate: string; maxDate: string } | undefined =>
-  v instanceof Api.StatsDateRangeDays ? { minDate: new Date(v.minDate * 1000).toISOString(), maxDate: new Date(v.maxDate * 1000).toISOString() } : undefined;
+  v instanceof Api.StatsDateRangeDays
+    ? {
+        minDate: new Date(v.minDate * 1000).toISOString(),
+        maxDate: new Date(v.maxDate * 1000).toISOString(),
+      }
+    : undefined;
 
-/** Invoke a stats.* request, following a STATS_MIGRATE_<dc> redirect to the stats DC if needed. */
-async function invokeStats<R extends Api.AnyRequest>(client: TelegramClient, req: R): Promise<R['__response']> {
+async function invokeStats<R extends Api.AnyRequest>(
+  client: TelegramClient,
+  req: R
+): Promise<R["__response"]> {
   try {
     return await client.invoke(req);
-  } catch (e) {
-    const m = (e instanceof Error ? e.message : String(e)).match(/STATS_MIGRATE_(\d+)/);
-    if (m) return await client.invoke(req, Number(m[1]));
-    throw e;
+  } catch (error) {
+    const m = (error instanceof Error ? error.message : String(error)).match(
+      /STATS_MIGRATE_(\d+)/
+    );
+    if (m) {
+      return await client.invoke(req, Number(m[1]));
+    }
+    throw error;
   }
 }
 
-function restrictionReasons(entity: Api.Channel | Api.User): string[] | undefined {
+function restrictionReasons(
+  entity: Api.Channel | Api.User
+): string[] | undefined {
   const reasons = entity.restrictionReason;
-  if (!reasons?.length) return undefined;
-  return reasons.map(r => `${r.platform}: ${r.reason}${r.text ? ` (${r.text})` : ''}`);
+  if (!reasons?.length) {
+    return undefined;
+  }
+  return reasons.map(
+    (r) => `${r.platform}: ${r.reason}${r.text ? ` (${r.text})` : ""}`
+  );
 }
 
-function userName(users: Map<string, Api.User>, id: bigInt.BigInteger): { name: string; username?: string } {
+function userName(
+  users: Map<string, Api.User>,
+  id: bigInt.BigInteger
+): { name: string; username?: string } {
   const u = users.get(id.toString());
-  if (!u) return { name: id.toString() };
-  return { name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || id.toString(), username: u.username ?? undefined };
+  if (!u) {
+    return { name: id.toString() };
+  }
+  return {
+    name:
+      [u.firstName, u.lastName].filter(Boolean).join(" ") ||
+      u.username ||
+      id.toString(),
+    username: u.username ?? undefined,
+  };
 }
 
-/**
- * Resolve each graph in `named` to a parsed JSON series. A StatsGraph is parsed inline; a
- * StatsGraphAsync is loaded via stats.LoadAsyncGraph; a StatsGraphError is reported per-graph.
- */
-async function collectGraphs(client: TelegramClient, named: Record<string, unknown>): Promise<GraphSeries[]> {
+async function collectGraphs(
+  client: TelegramClient,
+  named: Record<string, unknown>
+): Promise<GraphSeries[]> {
   const out: GraphSeries[] = [];
   for (const [name, graph] of Object.entries(named)) {
     try {
       let g = graph;
       if (g instanceof Api.StatsGraphAsync) {
-        g = await invokeStats(client, new Api.stats.LoadAsyncGraph({ token: g.token }));
+        g = await invokeStats(
+          client,
+          new Api.stats.LoadAsyncGraph({ token: g.token })
+        );
       }
-      if (g instanceof Api.StatsGraphError) out.push({ name, error: g.error });
-      else if (g instanceof Api.StatsGraph) {
-        const raw = g.json instanceof Api.DataJSON ? g.json.data : '';
+      if (g instanceof Api.StatsGraphError) {
+        out.push({ name, error: g.error });
+      } else if (g instanceof Api.StatsGraph) {
+        const raw = g.json instanceof Api.DataJSON ? g.json.data : "";
         out.push({ name, data: raw ? JSON.parse(raw) : undefined });
       }
-    } catch (e) {
-      out.push({ name, error: e instanceof Error ? e.message : String(e) });
+    } catch (error) {
+      out.push({
+        name,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
   return out;
 }
 
 function postInteraction(c: Api.TypePostInteractionCounters): PostInteraction {
-  if (c instanceof Api.PostInteractionCountersStory) return { storyId: c.storyId, views: c.views, forwards: c.forwards, reactions: c.reactions };
+  if (c instanceof Api.PostInteractionCountersStory) {
+    return {
+      storyId: c.storyId,
+      views: c.views,
+      forwards: c.forwards,
+      reactions: c.reactions,
+    };
+  }
   const m = c as Api.PostInteractionCountersMessage;
-  return { msgId: m.msgId, views: m.views, forwards: m.forwards, reactions: m.reactions };
+  return {
+    msgId: m.msgId,
+    views: m.views,
+    forwards: m.forwards,
+    reactions: m.reactions,
+  };
 }
 
 /** Full statistics for a channel / supergroup / group (Telethon get_stats). Read-only. */
-export async function getChatStats(client: TelegramClient, chatIdentifier: string, options: { graphs?: boolean } = {}): Promise<ChatStats> {
+export async function getChatStats(
+  client: TelegramClient,
+  chatIdentifier: string,
+  options: { graphs?: boolean } = {}
+): Promise<ChatStats> {
   const entity = await resolveChat(client, chatIdentifier);
 
   if (entity instanceof Api.Channel) {
@@ -4264,7 +5564,7 @@ export async function getChatStats(client: TelegramClient, chatIdentifier: strin
     const stats: ChatStats = {
       id: entity.id.toString(),
       title: entity.title,
-      type: megagroup ? 'supergroup' : 'channel',
+      type: megagroup ? "supergroup" : "channel",
       username: entity.username ?? undefined,
       created: iso(entity.date),
       verified: entity.verified || undefined,
@@ -4274,7 +5574,9 @@ export async function getChatStats(client: TelegramClient, chatIdentifier: strin
       restrictionReasons: restrictionReasons(entity),
     };
     try {
-      const full = await client.invoke(new Api.channels.GetFullChannel({ channel: entity }));
+      const full = await client.invoke(
+        new Api.channels.GetFullChannel({ channel: entity })
+      );
       if (full.fullChat instanceof Api.ChannelFull) {
         const f = full.fullChat;
         stats.about = f.about || undefined;
@@ -4283,92 +5585,177 @@ export async function getChatStats(client: TelegramClient, chatIdentifier: strin
         stats.adminsCount = f.adminsCount ?? undefined;
         stats.kickedCount = f.kickedCount ?? undefined;
         stats.bannedCount = f.bannedCount ?? undefined;
-        stats.linkedChatId = f.linkedChatId ? f.linkedChatId.toString() : undefined;
+        stats.linkedChatId = f.linkedChatId
+          ? f.linkedChatId.toString()
+          : undefined;
         stats.slowModeSeconds = f.slowmodeSeconds ?? undefined;
       }
-    } catch {
-      // Keep the entity-level fields even if the full channel can't be fetched.
-    }
-    stats.activity = await activityStats(client, entity, megagroup, options.graphs ?? false);
+    } catch {}
+    stats.activity = await activityStats(
+      client,
+      entity,
+      megagroup,
+      options.graphs ?? false
+    );
     return stats;
   }
 
   if (entity instanceof Api.Chat) {
-    const stats: ChatStats = { id: entity.id.toString(), title: entity.title, type: 'group', participantsCount: entity.participantsCount ?? undefined, created: iso(entity.date) };
+    const stats: ChatStats = {
+      id: entity.id.toString(),
+      title: entity.title,
+      type: "group",
+      participantsCount: entity.participantsCount ?? undefined,
+      created: iso(entity.date),
+    };
     try {
-      const full = await client.invoke(new Api.messages.GetFullChat({ chatId: entity.id }));
-      if ('fullChat' in full && full.fullChat instanceof Api.ChatFull) stats.about = full.fullChat.about || undefined;
-    } catch { /* ignore */ }
-    stats.activity = { error: 'Aggregate statistics are only available for channels and supergroups.' };
+      const full = await client.invoke(
+        new Api.messages.GetFullChat({ chatId: entity.id })
+      );
+      if ("fullChat" in full && full.fullChat instanceof Api.ChatFull) {
+        stats.about = full.fullChat.about || undefined;
+      }
+    } catch {}
+    stats.activity = {
+      error:
+        "Aggregate statistics are only available for channels and supergroups.",
+    };
     return stats;
   }
 
-  // A user (incl. bots)
-  const stats: ChatStats = { id: entity.id.toString(), title: getChatTitle(entity), type: 'user', username: entity.username ?? undefined, verified: entity.verified || undefined, scam: entity.scam || undefined, fake: entity.fake || undefined, restricted: entity.restricted || undefined, restrictionReasons: restrictionReasons(entity) };
+  const stats: ChatStats = {
+    id: entity.id.toString(),
+    title: getChatTitle(entity),
+    type: "user",
+    username: entity.username ?? undefined,
+    verified: entity.verified || undefined,
+    scam: entity.scam || undefined,
+    fake: entity.fake || undefined,
+    restricted: entity.restricted || undefined,
+    restrictionReasons: restrictionReasons(entity),
+  };
   try {
     const full = await client.invoke(new Api.users.GetFullUser({ id: entity }));
     stats.about = full.fullUser.about ?? undefined;
-  } catch { /* ignore */ }
+  } catch {}
   return stats;
 }
 
-async function activityStats(client: TelegramClient, entity: Api.Channel, megagroup: boolean, graphs: boolean): Promise<ChatActivity> {
+async function activityStats(
+  client: TelegramClient,
+  entity: Api.Channel,
+  megagroup: boolean,
+  graphs: boolean
+): Promise<ChatActivity> {
   try {
     if (megagroup) {
-      const s = await invokeStats(client, new Api.stats.GetMegagroupStats({ channel: entity }));
-      const users = new Map(s.users.filter((u): u is Api.User => u instanceof Api.User).map(u => [u.id.toString(), u]));
+      const s = await invokeStats(
+        client,
+        new Api.stats.GetMegagroupStats({ channel: entity })
+      );
+      const users = new Map(
+        s.users
+          .filter((u): u is Api.User => u instanceof Api.User)
+          .map((u) => [u.id.toString(), u])
+      );
       const act: MegagroupActivity = {
-        kind: 'megagroup',
+        kind: "megagroup",
         period: period(s.period),
-        members: avp(s.members), messages: avp(s.messages), viewers: avp(s.viewers), posters: avp(s.posters),
-        topPosters: s.topPosters.map(p => ({ userId: p.userId.toString(), ...userName(users, p.userId), messages: p.messages, avgChars: p.avgChars })),
-        topAdmins: s.topAdmins.map(a => ({ userId: a.userId.toString(), name: userName(users, a.userId).name, deleted: a.deleted, kicked: a.kicked, banned: a.banned })),
-        topInviters: s.topInviters.map(i => ({ userId: i.userId.toString(), name: userName(users, i.userId).name, invitations: i.invitations })),
+        members: avp(s.members),
+        messages: avp(s.messages),
+        viewers: avp(s.viewers),
+        posters: avp(s.posters),
+        topPosters: s.topPosters.map((p) => ({
+          userId: p.userId.toString(),
+          ...userName(users, p.userId),
+          messages: p.messages,
+          avgChars: p.avgChars,
+        })),
+        topAdmins: s.topAdmins.map((a) => ({
+          userId: a.userId.toString(),
+          name: userName(users, a.userId).name,
+          deleted: a.deleted,
+          kicked: a.kicked,
+          banned: a.banned,
+        })),
+        topInviters: s.topInviters.map((i) => ({
+          userId: i.userId.toString(),
+          name: userName(users, i.userId).name,
+          invitations: i.invitations,
+        })),
       };
       if (graphs) {
         act.graphs = await collectGraphs(client, {
-          growth: s.growthGraph, members: s.membersGraph, newMembersBySource: s.newMembersBySourceGraph,
-          languages: s.languagesGraph, messages: s.messagesGraph, actions: s.actionsGraph,
-          topHours: s.topHoursGraph, weekdays: s.weekdaysGraph,
+          growth: s.growthGraph,
+          members: s.membersGraph,
+          newMembersBySource: s.newMembersBySourceGraph,
+          languages: s.languagesGraph,
+          messages: s.messagesGraph,
+          actions: s.actionsGraph,
+          topHours: s.topHoursGraph,
+          weekdays: s.weekdaysGraph,
         });
       }
       return act;
     }
-    const s = await invokeStats(client, new Api.stats.GetBroadcastStats({ channel: entity }));
+    const s = await invokeStats(
+      client,
+      new Api.stats.GetBroadcastStats({ channel: entity })
+    );
     const act: BroadcastActivity = {
-      kind: 'broadcast',
+      kind: "broadcast",
       period: period(s.period),
       followers: avp(s.followers),
-      viewsPerPost: avp(s.viewsPerPost), sharesPerPost: avp(s.sharesPerPost), reactionsPerPost: avp(s.reactionsPerPost),
-      viewsPerStory: avp(s.viewsPerStory), sharesPerStory: avp(s.sharesPerStory), reactionsPerStory: avp(s.reactionsPerStory),
+      viewsPerPost: avp(s.viewsPerPost),
+      sharesPerPost: avp(s.sharesPerPost),
+      reactionsPerPost: avp(s.reactionsPerPost),
+      viewsPerStory: avp(s.viewsPerStory),
+      sharesPerStory: avp(s.sharesPerStory),
+      reactionsPerStory: avp(s.reactionsPerStory),
       enabledNotificationsPct: pct(s.enabledNotifications),
       recentPosts: s.recentPostsInteractions.map(postInteraction),
     };
     if (graphs) {
       act.graphs = await collectGraphs(client, {
-        growth: s.growthGraph, followers: s.followersGraph, mute: s.muteGraph, topHours: s.topHoursGraph,
-        interactions: s.interactionsGraph, ivInteractions: s.ivInteractionsGraph, viewsBySource: s.viewsBySourceGraph,
-        newFollowersBySource: s.newFollowersBySourceGraph, languages: s.languagesGraph, reactionsByEmotion: s.reactionsByEmotionGraph,
-        storyInteractions: s.storyInteractionsGraph, storyReactionsByEmotion: s.storyReactionsByEmotionGraph,
+        growth: s.growthGraph,
+        followers: s.followersGraph,
+        mute: s.muteGraph,
+        topHours: s.topHoursGraph,
+        interactions: s.interactionsGraph,
+        ivInteractions: s.ivInteractionsGraph,
+        viewsBySource: s.viewsBySourceGraph,
+        newFollowersBySource: s.newFollowersBySourceGraph,
+        languages: s.languagesGraph,
+        reactionsByEmotion: s.reactionsByEmotionGraph,
+        storyInteractions: s.storyInteractionsGraph,
+        storyReactionsByEmotion: s.storyReactionsByEmotionGraph,
       });
     }
     return act;
-  } catch (e) {
-    return { error: statsError(e) };
+  } catch (error) {
+    return { error: statsError(error) };
   }
 }
 
 function statsError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
-  if (/CHAT_ADMIN_REQUIRED/.test(msg)) return 'Admin rights are required to view these statistics.';
-  if (/BROADCAST_REQUIRED/.test(msg)) return 'These statistics are only available for channels.';
-  if (/MEGAGROUP_REQUIRED/.test(msg)) return 'These statistics are only available for supergroups.';
-  if (/not.*enough.*participant|STATS/i.test(msg)) return 'Statistics are not available for this chat yet (it may be too small).';
+  if (/CHAT_ADMIN_REQUIRED/.test(msg)) {
+    return "Admin rights are required to view these statistics.";
+  }
+  if (/BROADCAST_REQUIRED/.test(msg)) {
+    return "These statistics are only available for channels.";
+  }
+  if (/MEGAGROUP_REQUIRED/.test(msg)) {
+    return "These statistics are only available for supergroups.";
+  }
+  if (/not.*enough.*participant|STATS/i.test(msg)) {
+    return "Statistics are not available for this chat yet (it may be too small).";
+  }
   return msg;
 }
 
 export interface PublicForwardRef {
-  kind: 'message' | 'story';
+  kind: "message" | "story";
   chatId?: string;
   chatTitle?: string;
   msgId?: number;
@@ -4377,6 +5764,11 @@ export interface PublicForwardRef {
   date?: string;
 }
 
+/**
+ * - `publicForwardsCount`: Number of public channels/groups that forwarded this, if available.
+ * - `publicForwards`: The public forwards themselves, up to the requested limit.
+ * - `note`: Set when detailed stats are unavailable (rights / not a channel).
+ */
 export interface MessageStats {
   chatTitle: string;
   messageId?: number;
@@ -4384,24 +5776,39 @@ export interface MessageStats {
   views?: number;
   forwards?: number;
   reactions?: ReactionBreakdown[];
-  /** Number of public channels/groups that forwarded this, if available. */
   publicForwardsCount?: number;
-  /** The public forwards themselves, up to the requested limit. */
   publicForwards?: PublicForwardRef[];
   graphs?: GraphSeries[];
-  /** Set when detailed stats are unavailable (rights / not a channel). */
   note?: string;
 }
 
 function publicForwardsList(pf: Api.stats.PublicForwards): PublicForwardRef[] {
-  const chats = new Map(pf.chats.filter((c): c is Api.Channel | Api.Chat => 'title' in c).map(c => [c.id.toString(), c.title]));
+  const chats = new Map(
+    pf.chats
+      .filter((c): c is Api.Channel | Api.Chat => "title" in c)
+      .map((c) => [c.id.toString(), c.title])
+  );
   const refs: PublicForwardRef[] = [];
   for (const f of pf.forwards) {
-    if (f instanceof Api.PublicForwardMessage && f.message instanceof Api.Message) {
+    if (
+      f instanceof Api.PublicForwardMessage &&
+      f.message instanceof Api.Message
+    ) {
       const chatId = utils.getPeerId(f.message.peerId).toString();
-      refs.push({ kind: 'message', chatId, chatTitle: chats.get(chatId.replace(/^-100/, '')), msgId: f.message.id, views: f.message.views ?? undefined, date: iso(f.message.date) });
+      refs.push({
+        kind: "message",
+        chatId,
+        chatTitle: chats.get(chatId.replace(/^-100/, "")),
+        msgId: f.message.id,
+        views: f.message.views ?? undefined,
+        date: iso(f.message.date),
+      });
     } else if (f instanceof Api.PublicForwardStory) {
-      refs.push({ kind: 'story', chatId: utils.getPeerId(f.peer).toString(), storyId: f.story instanceof Api.StoryItem ? f.story.id : undefined });
+      refs.push({
+        kind: "story",
+        chatId: utils.getPeerId(f.peer).toString(),
+        storyId: f.story instanceof Api.StoryItem ? f.story.id : undefined,
+      });
     }
   }
   return refs;
@@ -4412,11 +5819,13 @@ export async function getMessageStats(
   client: TelegramClient,
   chatIdentifier: string,
   messageId: number,
-  options: { graphs?: boolean; limit?: number } = {},
+  options: { graphs?: boolean; limit?: number } = {}
 ): Promise<MessageStats> {
   const entity = await resolveChat(client, chatIdentifier);
   if (!(entity instanceof Api.Channel)) {
-    throw new Error('Per-message statistics are only available for channels and supergroups.');
+    throw new Error(
+      "Per-message statistics are only available for channels and supergroups."
+    );
   }
   const out: MessageStats = { chatTitle: getChatTitle(entity), messageId };
 
@@ -4430,17 +5839,31 @@ export async function getMessageStats(
   }
 
   try {
-    const pf = await invokeStats(client, new Api.stats.GetMessagePublicForwards({ channel: entity, msgId: messageId, offset: '', limit: options.limit ?? 100 }));
+    const pf = await invokeStats(
+      client,
+      new Api.stats.GetMessagePublicForwards({
+        channel: entity,
+        msgId: messageId,
+        offset: "",
+        limit: options.limit ?? 100,
+      })
+    );
     if (pf instanceof Api.stats.PublicForwards) {
       out.publicForwardsCount = pf.count;
       out.publicForwards = publicForwardsList(pf);
     }
     if (options.graphs) {
-      const ms = await invokeStats(client, new Api.stats.GetMessageStats({ channel: entity, msgId: messageId }));
-      out.graphs = await collectGraphs(client, { views: ms.viewsGraph, reactionsByEmotion: ms.reactionsByEmotionGraph });
+      const ms = await invokeStats(
+        client,
+        new Api.stats.GetMessageStats({ channel: entity, msgId: messageId })
+      );
+      out.graphs = await collectGraphs(client, {
+        views: ms.viewsGraph,
+        reactionsByEmotion: ms.reactionsByEmotionGraph,
+      });
     }
-  } catch (e) {
-    out.note = statsError(e);
+  } catch (error) {
+    out.note = statsError(error);
   }
   return out;
 }
@@ -4450,49 +5873,65 @@ export async function getStoryStats(
   client: TelegramClient,
   chatIdentifier: string,
   storyId: number,
-  options: { graphs?: boolean; limit?: number } = {},
+  options: { graphs?: boolean; limit?: number } = {}
 ): Promise<MessageStats> {
   const entity = await resolveChat(client, chatIdentifier);
   if (!(entity instanceof Api.Channel)) {
-    throw new Error('Per-story statistics are only available for channels and supergroups.');
+    throw new Error(
+      "Per-story statistics are only available for channels and supergroups."
+    );
   }
   const out: MessageStats = { chatTitle: getChatTitle(entity), storyId };
   try {
-    const pf = await invokeStats(client, new Api.stats.GetStoryPublicForwards({ peer: entity, id: storyId, offset: '', limit: options.limit ?? 100 }));
+    const pf = await invokeStats(
+      client,
+      new Api.stats.GetStoryPublicForwards({
+        peer: entity,
+        id: storyId,
+        offset: "",
+        limit: options.limit ?? 100,
+      })
+    );
     if (pf instanceof Api.stats.PublicForwards) {
       out.publicForwardsCount = pf.count;
       out.publicForwards = publicForwardsList(pf);
     }
     if (options.graphs) {
-      const ss = await invokeStats(client, new Api.stats.GetStoryStats({ peer: entity, id: storyId }));
-      out.graphs = await collectGraphs(client, { views: ss.viewsGraph, reactionsByEmotion: ss.reactionsByEmotionGraph });
+      const ss = await invokeStats(
+        client,
+        new Api.stats.GetStoryStats({ peer: entity, id: storyId })
+      );
+      out.graphs = await collectGraphs(client, {
+        views: ss.viewsGraph,
+        reactionsByEmotion: ss.reactionsByEmotionGraph,
+      });
     }
-  } catch (e) {
-    out.note = statsError(e);
+  } catch (error) {
+    out.note = statsError(error);
   }
   return out;
 }
-
-// --- Scheduled messages (messages.GetScheduledHistory) ---------------------------------------
 
 /** Messages queued to send later (the issue's top messages gap). Create them with `send --schedule`. */
 export async function getScheduledMessages(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { full?: boolean } = {},
+  options: { full?: boolean } = {}
 ): Promise<{ chatTitle: string; messages: MessageInfo[] }> {
   const entity = await resolveChat(client, chatIdentifier);
-  const res = await client.invoke(new Api.messages.GetScheduledHistory({ peer: entity, hash: bigInt(0) }));
+  const res = await client.invoke(
+    new Api.messages.GetScheduledHistory({ peer: entity, hash: bigInt(0) })
+  );
   const messages: MessageInfo[] = [];
-  if ('messages' in res) {
+  if ("messages" in res) {
     for (const msg of res.messages) {
-      if (msg instanceof Api.Message) messages.push(await toMessageInfo(client, msg, { full: options.full }));
+      if (msg instanceof Api.Message) {
+        messages.push(await toMessageInfo(client, msg, { full: options.full }));
+      }
     }
   }
   return { chatTitle: getChatTitle(entity), messages };
 }
-
-// --- Active sessions, Stars, invite links (read-only curated coverage) ------------------------
 
 export interface SessionInfo {
   hash: string;
@@ -4510,11 +5949,13 @@ export interface SessionInfo {
 }
 
 /** Active login sessions (Telethon has no direct equiv; account.GetAuthorizations). Read-only. */
-export async function getSessions(client: TelegramClient): Promise<{ ttlDays: number; sessions: SessionInfo[] }> {
+export async function getSessions(
+  client: TelegramClient
+): Promise<{ ttlDays: number; sessions: SessionInfo[] }> {
   const res = await client.invoke(new Api.account.GetAuthorizations());
   return {
     ttlDays: res.authorizationTtlDays,
-    sessions: res.authorizations.map(a => ({
+    sessions: res.authorizations.map((a) => ({
       hash: a.hash.toString(),
       current: a.current || undefined,
       official: a.officialApp || undefined,
@@ -4531,25 +5972,48 @@ export async function getSessions(client: TelegramClient): Promise<{ ttlDays: nu
   };
 }
 
-export interface StarsTransaction { id: string; stars: number; date?: string; title?: string; refund?: boolean; pending?: boolean; }
-export interface StarsBalance { balance: number; transactions: StarsTransaction[]; }
+export interface StarsTransaction {
+  id: string;
+  stars: number;
+  date?: string;
+  title?: string;
+  refund?: boolean;
+  pending?: boolean;
+}
+export interface StarsBalance {
+  balance: number;
+  transactions: StarsTransaction[];
+}
 
 const starsAmount = (a: unknown): number =>
-  a instanceof Api.StarsAmount ? a.amount.toJSNumber() + (a.nanos || 0) / 1e9 : 0;
+  a instanceof Api.StarsAmount
+    ? a.amount.toJSNumber() + (a.nanos || 0) / 1e9
+    : 0;
 
 /** Telegram Stars balance and recent transactions (read-only). */
-export async function getStars(client: TelegramClient, options: { limit?: number } = {}): Promise<StarsBalance> {
-  const status = await client.invoke(new Api.payments.GetStarsStatus({ peer: new Api.InputPeerSelf() }));
+export async function getStars(
+  client: TelegramClient,
+  options: { limit?: number } = {}
+): Promise<StarsBalance> {
+  const status = await client.invoke(
+    new Api.payments.GetStarsStatus({ peer: new Api.InputPeerSelf() })
+  );
   let history = status.history ?? [];
   if (!history.length) {
     try {
-      const tx = await client.invoke(new Api.payments.GetStarsTransactions({ peer: new Api.InputPeerSelf(), offset: '', limit: options.limit ?? 20 }));
+      const tx = await client.invoke(
+        new Api.payments.GetStarsTransactions({
+          peer: new Api.InputPeerSelf(),
+          offset: "",
+          limit: options.limit ?? 20,
+        })
+      );
       history = tx.history ?? [];
-    } catch { /* transactions may be unavailable */ }
+    } catch {}
   }
   return {
     balance: starsAmount(status.balance),
-    transactions: history.slice(0, options.limit ?? 20).map(t => ({
+    transactions: history.slice(0, options.limit ?? 20).map((t) => ({
       id: t.id,
       stars: starsAmount(t.amount),
       date: iso(t.date),
@@ -4576,16 +6040,23 @@ export interface InviteLink {
 export async function getInviteLinks(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { revoked?: boolean; limit?: number } = {},
+  options: { revoked?: boolean; limit?: number } = {}
 ): Promise<{ chatTitle: string; count: number; invites: InviteLink[] }> {
   const entity = await resolveChat(client, chatIdentifier);
   const me = await getMe(client);
-  const res = await client.invoke(new Api.messages.GetExportedChatInvites({
-    peer: entity, adminId: me, revoked: options.revoked || undefined, limit: options.limit ?? 50,
-  }));
+  const res = await client.invoke(
+    new Api.messages.GetExportedChatInvites({
+      peer: entity,
+      adminId: me,
+      revoked: options.revoked || undefined,
+      limit: options.limit ?? 50,
+    })
+  );
   const invites = res.invites
-    .filter((i): i is Api.ChatInviteExported => i instanceof Api.ChatInviteExported)
-    .map(i => ({
+    .filter(
+      (i): i is Api.ChatInviteExported => i instanceof Api.ChatInviteExported
+    )
+    .map((i) => ({
       link: i.link,
       permanent: i.permanent || undefined,
       revoked: i.revoked || undefined,
@@ -4599,24 +6070,44 @@ export async function getInviteLinks(
   return { chatTitle: getChatTitle(entity), count: res.count, invites };
 }
 
-export interface JoinRequest { userId: string; name: string; date?: string; about?: string; }
+export interface JoinRequest {
+  userId: string;
+  name: string;
+  date?: string;
+  about?: string;
+}
 
 /** Pending join requests for a chat (messages.GetChatInviteImporters, requested). Read-only. */
 export async function getJoinRequests(
   client: TelegramClient,
   chatIdentifier: string,
-  options: { limit?: number } = {},
+  options: { limit?: number } = {}
 ): Promise<{ chatTitle: string; count: number; requests: JoinRequest[] }> {
   const entity = await resolveChat(client, chatIdentifier);
-  const res = await client.invoke(new Api.messages.GetChatInviteImporters({
-    peer: entity, requested: true, q: '', offsetDate: 0, offsetUser: new Api.InputUserEmpty(), limit: options.limit ?? 50,
-  }));
-  const users = new Map(res.users.filter((u): u is Api.User => u instanceof Api.User).map(u => [u.id.toString(), u]));
-  const requests = res.importers.map(i => {
+  const res = await client.invoke(
+    new Api.messages.GetChatInviteImporters({
+      peer: entity,
+      requested: true,
+      q: "",
+      offsetDate: 0,
+      offsetUser: new Api.InputUserEmpty(),
+      limit: options.limit ?? 50,
+    })
+  );
+  const users = new Map(
+    res.users
+      .filter((u): u is Api.User => u instanceof Api.User)
+      .map((u) => [u.id.toString(), u])
+  );
+  const requests = res.importers.map((i) => {
     const u = users.get(i.userId.toString());
     return {
       userId: i.userId.toString(),
-      name: u ? ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || i.userId.toString()) : i.userId.toString(),
+      name: u
+        ? [u.firstName, u.lastName].filter(Boolean).join(" ") ||
+          u.username ||
+          i.userId.toString()
+        : i.userId.toString(),
       date: iso(i.date),
       about: i.about ?? undefined,
     };
@@ -4624,31 +6115,69 @@ export async function getJoinRequests(
   return { chatTitle: getChatTitle(entity), count: res.count, requests };
 }
 
-// --- edit_permissions: default & per-user restrictions (write) --------------------------------
-
 /** The ChatBannedRights flags a restriction can set, in a friendly order. */
 export const BANNED_RIGHTS = [
-  'viewMessages', 'sendMessages', 'sendMedia', 'sendStickers', 'sendGifs', 'sendGames', 'sendInline',
-  'embedLinks', 'sendPolls', 'changeInfo', 'inviteUsers', 'pinMessages', 'manageTopics',
-  'sendPhotos', 'sendVideos', 'sendRoundvideos', 'sendAudios', 'sendVoices', 'sendDocs', 'sendPlain',
-  'sendReactions',
+  "viewMessages",
+  "sendMessages",
+  "sendMedia",
+  "sendStickers",
+  "sendGifs",
+  "sendGames",
+  "sendInline",
+  "embedLinks",
+  "sendPolls",
+  "changeInfo",
+  "inviteUsers",
+  "pinMessages",
+  "manageTopics",
+  "sendPhotos",
+  "sendVideos",
+  "sendRoundvideos",
+  "sendAudios",
+  "sendVoices",
+  "sendDocs",
+  "sendPlain",
+  "sendReactions",
 ] as const;
-export type BannedRight = typeof BANNED_RIGHTS[number];
+export type BannedRight = (typeof BANNED_RIGHTS)[number];
 
-/** Everything a muted (read-only) member may not do. */
 const MUTE_RIGHTS: BannedRight[] = [
-  'sendMessages', 'sendMedia', 'sendStickers', 'sendGifs', 'sendGames', 'sendInline', 'embedLinks',
-  'sendPolls', 'sendPhotos', 'sendVideos', 'sendRoundvideos', 'sendAudios', 'sendVoices', 'sendDocs',
-  'sendPlain',
+  "sendMessages",
+  "sendMedia",
+  "sendStickers",
+  "sendGifs",
+  "sendGames",
+  "sendInline",
+  "embedLinks",
+  "sendPolls",
+  "sendPhotos",
+  "sendVideos",
+  "sendRoundvideos",
+  "sendAudios",
+  "sendVoices",
+  "sendDocs",
+  "sendPlain",
 ];
 
-export function buildBannedRights(denied: BannedRight[], untilDate = 0): Api.ChatBannedRights {
-  const args = { untilDate } as ConstructorParameters<typeof Api.ChatBannedRights>[0];
-  for (const key of denied) (args as Record<string, unknown>)[key] = true;
+export function buildBannedRights(
+  denied: BannedRight[],
+  untilDate = 0
+): Api.ChatBannedRights {
+  const args = { untilDate } as ConstructorParameters<
+    typeof Api.ChatBannedRights
+  >[0];
+  for (const key of denied) {
+    (args as Record<string, unknown>)[key] = true;
+  }
   return new Api.ChatBannedRights(args);
 }
 
-export interface PermissionChange { chatTitle: string; target: string; denied: BannedRight[]; until?: string; }
+export interface PermissionChange {
+  chatTitle: string;
+  target: string;
+  denied: BannedRight[];
+  until?: string;
+}
 
 /**
  * Set a chat's default permissions (no `userIdentifier`) or restrict one member
@@ -4659,30 +6188,64 @@ export async function setChatPermissions(
   chatIdentifier: string,
   userIdentifier: string | undefined,
   denied: BannedRight[],
-  untilDate = 0,
+  untilDate = 0
 ): Promise<PermissionChange> {
   const entity = await resolveChat(client, chatIdentifier);
   const rights = buildBannedRights(denied, untilDate);
 
   if (!userIdentifier) {
-    if (!(entity instanceof Api.Channel || entity instanceof Api.Chat)) throw new Error('Default permissions apply to groups and channels.');
-    await client.invoke(new Api.messages.EditChatDefaultBannedRights({ peer: entity, bannedRights: rights }));
-    return { chatTitle: getChatTitle(entity), target: 'default', denied, until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined };
+    if (!(entity instanceof Api.Channel || entity instanceof Api.Chat)) {
+      throw new Error("Default permissions apply to groups and channels.");
+    }
+    await client.invoke(
+      new Api.messages.EditChatDefaultBannedRights({
+        peer: entity,
+        bannedRights: rights,
+      })
+    );
+    return {
+      chatTitle: getChatTitle(entity),
+      target: "default",
+      denied,
+      until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined,
+    };
   }
 
-  if (!(entity instanceof Api.Channel)) throw new Error('Per-user restrictions need a supergroup or channel (basic groups only support kicking).');
+  if (!(entity instanceof Api.Channel)) {
+    throw new Error(
+      "Per-user restrictions need a supergroup or channel (basic groups only support kicking)."
+    );
+  }
   const user = await resolveChat(client, userIdentifier);
-  await client.invoke(new Api.channels.EditBanned({ channel: entity, participant: user, bannedRights: rights }));
-  return { chatTitle: getChatTitle(entity), target: getChatTitle(user), denied, until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined };
+  await client.invoke(
+    new Api.channels.EditBanned({
+      channel: entity,
+      participant: user,
+      bannedRights: rights,
+    })
+  );
+  return {
+    chatTitle: getChatTitle(entity),
+    target: getChatTitle(user),
+    denied,
+    until: untilDate ? new Date(untilDate * 1000).toISOString() : undefined,
+  };
 }
 
 export const permissionPresets = { MUTE_RIGHTS };
 
-// --- Forum topics: create / edit / close / reopen / pin (write) -------------------------------
-
-async function forumChannel(client: TelegramClient, chatIdentifier: string): Promise<ResolvedEntity> {
+async function forumChannel(
+  client: TelegramClient,
+  chatIdentifier: string
+): Promise<ResolvedEntity> {
   const entity = await resolveChat(client, chatIdentifier);
-  if (!hasTopics(entity)) throw new CliError(`"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`, 'not_a_forum', EXIT.USAGE);
+  if (!hasTopics(entity)) {
+    throw new CliError(
+      `"${getChatTitle(entity)}" is not a forum (enable Topics in the group first).`,
+      "not_a_forum",
+      EXIT.USAGE
+    );
+  }
   return entity;
 }
 
@@ -4690,16 +6253,20 @@ export async function createForumTopic(
   client: TelegramClient,
   chatIdentifier: string,
   title: string,
-  options: { iconColor?: number; iconEmojiId?: string } = {},
+  options: { iconColor?: number; iconEmojiId?: string } = {}
 ): Promise<{ chatTitle: string; title: string }> {
   const entity = await forumChannel(client, chatIdentifier);
-  await client.invoke(new Api.messages.CreateForumTopic({
-    peer: entity,
-    title,
-    iconColor: options.iconColor,
-    iconEmojiId: options.iconEmojiId ? bigInt(options.iconEmojiId) : undefined,
-    randomId: generateRandomLong(),
-  }));
+  await client.invoke(
+    new Api.messages.CreateForumTopic({
+      peer: entity,
+      title,
+      iconColor: options.iconColor,
+      iconEmojiId: options.iconEmojiId
+        ? bigInt(options.iconEmojiId)
+        : undefined,
+      randomId: generateRandomLong(),
+    })
+  );
   return { chatTitle: getChatTitle(entity), title };
 }
 
@@ -4707,17 +6274,26 @@ export async function editForumTopic(
   client: TelegramClient,
   chatIdentifier: string,
   topicId: number,
-  changes: { title?: string; iconEmojiId?: string; closed?: boolean; hidden?: boolean },
+  changes: {
+    title?: string;
+    iconEmojiId?: string;
+    closed?: boolean;
+    hidden?: boolean;
+  }
 ): Promise<{ chatTitle: string; topicId: number }> {
   const entity = await forumChannel(client, chatIdentifier);
-  await client.invoke(new Api.messages.EditForumTopic({
-    peer: entity,
-    topicId,
-    title: changes.title,
-    iconEmojiId: changes.iconEmojiId ? bigInt(changes.iconEmojiId) : undefined,
-    closed: changes.closed,
-    hidden: changes.hidden,
-  }));
+  await client.invoke(
+    new Api.messages.EditForumTopic({
+      peer: entity,
+      topicId,
+      title: changes.title,
+      iconEmojiId: changes.iconEmojiId
+        ? bigInt(changes.iconEmojiId)
+        : undefined,
+      closed: changes.closed,
+      hidden: changes.hidden,
+    })
+  );
   return { chatTitle: getChatTitle(entity), topicId };
 }
 
@@ -4725,9 +6301,11 @@ export async function pinForumTopic(
   client: TelegramClient,
   chatIdentifier: string,
   topicId: number,
-  pinned: boolean,
+  pinned: boolean
 ): Promise<{ chatTitle: string; topicId: number }> {
   const entity = await forumChannel(client, chatIdentifier);
-  await client.invoke(new Api.messages.UpdatePinnedForumTopic({ peer: entity, topicId, pinned }));
+  await client.invoke(
+    new Api.messages.UpdatePinnedForumTopic({ peer: entity, topicId, pinned })
+  );
   return { chatTitle: getChatTitle(entity), topicId };
 }

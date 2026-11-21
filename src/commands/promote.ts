@@ -1,16 +1,17 @@
-import { Command } from 'commander';
-import { getClient, promoteAdmin, disconnectClient } from '../client.js';
-import { auditLog } from '../audit.js';
-import { assertWriteEnabled } from '../guard.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-export const promoteCommand = new Command('promote')
-  .description('Promote a group member to admin')
-  .argument('<group>', 'Group name or @username')
-  .argument('<user>', 'Username to promote (e.g., @username)')
-  .option('--rank <title>', 'Custom admin title/badge (supergroups only)')
-  .option('--add-admins', 'Also allow the new admin to add other admins')
+import { auditLog } from "../audit.js";
+import { getClient, promoteAdmin, disconnectClient } from "../client.js";
+import { fail } from "../errors.js";
+import { assertWriteEnabled } from "../guard.js";
+import ora from "../spinner.js";
+
+export const promoteCommand = new Command("promote")
+  .description("Promote a group member to admin")
+  .argument("<group>", "Group name or @username")
+  .argument("<user>", "Username to promote (e.g., @username)")
+  .option("--rank <title>", "Custom admin title/badge (supergroups only)")
+  .option("--add-admins", "Also allow the new admin to add other admins")
   .action(async (group, user, options) => {
     await assertWriteEnabled();
     const spinner = ora(`Promoting ${user} in "${group}"...`).start();
@@ -21,7 +22,16 @@ export const promoteCommand = new Command('promote')
         rank: options.rank,
         canAddAdmins: options.addAdmins,
       });
-      auditLog({ timestamp: new Date().toISOString(), command: 'promote', target: group, targetUser: user, result: { success: result.success, error: result.success ? undefined : result.message } });
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "promote",
+        target: group,
+        targetUser: user,
+        result: {
+          success: result.success,
+          error: result.success ? undefined : result.message,
+        },
+      });
 
       if (result.success) {
         spinner.succeed(result.message);
@@ -32,7 +42,16 @@ export const promoteCommand = new Command('promote')
 
       await disconnectClient();
     } catch (error) {
-      auditLog({ timestamp: new Date().toISOString(), command: 'promote', target: group, targetUser: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      fail(error, spinner, 'Failed to promote user');
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "promote",
+        target: group,
+        targetUser: user,
+        result: {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      fail(error, spinner, "Failed to promote user");
     }
   });

@@ -12,15 +12,15 @@ through the CLI, reads their text as data, and stores what the model wrote.
 
 Plugin support lands in steps. Parts marked **(coming)** are specified here but not implemented yet:
 
-| Step | What | Status |
-|---|---|---|
-| P1 | Manifest, install by snapshot, `list`, `show`, `data`, `remove`, `validate`, human confirmation | **available** |
-| P2 | Sandboxed plugin code (QuickJS-WASM), host API, `plugin run`, `plugin dev --mock` ([#153](https://github.com/TheVilfer/better-tg-cli/issues/153)) | **available** |
-| P3 | Network access and secrets the plugin never sees ([#154](https://github.com/TheVilfer/better-tg-cli/issues/154)) | **available** |
-| P4 | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155)) | coming |
-| P5 | SDK and template repository ([#156](https://github.com/TheVilfer/better-tg-cli/issues/156)) | coming |
-| P6 | The official Tone of Voice plugin ([#157](https://github.com/TheVilfer/better-tg-cli/issues/157)) | coming |
-| P7 | Live checks in Claude Code, Grok Bot and Aside ([#158](https://github.com/TheVilfer/better-tg-cli/issues/158)) | coming |
+| Step | What                                                                                                                                              | Status        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| P1   | Manifest, install by snapshot, `list`, `show`, `data`, `remove`, `validate`, human confirmation                                                   | **available** |
+| P2   | Sandboxed plugin code (QuickJS-WASM), host API, `plugin run`, `plugin dev --mock` ([#153](https://github.com/TheVilfer/better-tg-cli/issues/153)) | **available** |
+| P3   | Network access and secrets the plugin never sees ([#154](https://github.com/TheVilfer/better-tg-cli/issues/154))                                  | **available** |
+| P4   | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155))                            | coming        |
+| P5   | SDK and template repository ([#156](https://github.com/TheVilfer/better-tg-cli/issues/156))                                                       | coming        |
+| P6   | The official Tone of Voice plugin ([#157](https://github.com/TheVilfer/better-tg-cli/issues/157))                                                 | coming        |
+| P7   | Live checks in Claude Code, Grok Bot and Aside ([#158](https://github.com/TheVilfer/better-tg-cli/issues/158))                                    | coming        |
 
 ## 1. Principles
 
@@ -66,6 +66,7 @@ dist/plugin.js        optional code: one ES2023 module without imports, run in t
 ```
 
 **Path rules.** `files` is the complete list; nothing else is installed or read. Each path is:
+
 - relative, `/`-separated, made only of `[A-Za-z0-9._/-]`;
 - canonical: no `.` or `..` segments, no empty segments, no names Windows reserves (`CON`, `PRN`,
   `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, with any extension), no segment ending in a dot, at most
@@ -90,27 +91,67 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
   "name": "tone-of-voice",
   "version": "1.0.0",
   "description": "Writes messages in the user's own voice when no exact text is given",
-  "author": { "name": "Better-TG-CLI team", "url": "https://github.com/TheVilfer" },
+  "author": {
+    "name": "Better-TG-CLI team",
+    "url": "https://github.com/TheVilfer"
+  },
   "license": "MIT",
   "engines": { "better-tg-cli": ">=0.41.0" },
   "main": "dist/plugin.js",
-  "files": ["tg-plugin.json", "SKILL.md", "onboarding.md", "templates/style.md", "dist/plugin.js"],
+  "files": [
+    "tg-plugin.json",
+    "SKILL.md",
+    "onboarding.md",
+    "templates/style.md",
+    "dist/plugin.js"
+  ],
   "permissions": ["messages:read-own", "storage:read"],
   "network": [],
   "secrets": [],
   "settings": {},
-  "resources": { "compose": "SKILL.md#compose", "onboarding": "onboarding.md", "template": "templates/style.md" },
+  "resources": {
+    "compose": "SKILL.md#compose",
+    "onboarding": "onboarding.md",
+    "template": "templates/style.md"
+  },
   "storage": { "keys": ["style"], "quotaBytes": 262144 },
   "commands": [
     {
       "name": "collect",
       "description": "Collect the user's own messages for style analysis",
       "effects": [],
-      "input":  { "type": "object", "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 2000 }, "types": { "type": "array", "items": { "enum": ["private", "group"] } }, "cursor": { "type": "string" } }, "required": ["limit"], "additionalProperties": false },
-      "output": { "type": "object", "properties": { "messages": { "type": "array" }, "cursor": { "type": ["string", "null"] }, "remaining": { "type": "integer" }, "done": { "type": "boolean" } }, "required": ["messages", "cursor", "remaining", "done"] }
+      "input": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 2000 },
+          "types": {
+            "type": "array",
+            "items": { "enum": ["private", "group"] }
+          },
+          "cursor": { "type": "string" }
+        },
+        "required": ["limit"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "messages": { "type": "array" },
+          "cursor": { "type": ["string", "null"] },
+          "remaining": { "type": "integer" },
+          "done": { "type": "boolean" }
+        },
+        "required": ["messages", "cursor", "remaining", "done"]
+      }
     }
   ],
-  "triggers": [ { "id": "compose", "when": "The user asks to write or reply to someone but gives no exact text", "resource": "compose" } ],
+  "triggers": [
+    {
+      "id": "compose",
+      "when": "The user asks to write or reply to someone but gives no exact text",
+      "resource": "compose"
+    }
+  ],
   "onboarding": { "resource": "onboarding", "doneWhen": { "storage": "style" } }
 }
 ```
@@ -203,28 +244,33 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
 
 ```js
 export const commands = {
-  async collect({ limit, types = ['private'], cursor }, host) {
-    const page = await host.messages.mine({ limit, types, cursor });   // the host caps the page by size
-    return { messages: page.messages, cursor: page.cursor, remaining: limit - page.count, done: page.done };
+  async collect({ limit, types = ["private"], cursor }, host) {
+    const page = await host.messages.mine({ limit, types, cursor }); // the host caps the page by size
+    return {
+      messages: page.messages,
+      cursor: page.cursor,
+      remaining: limit - page.count,
+      done: page.done,
+    };
   },
 };
 ```
 
 ## 5. Host API and permissions
 
-| Permission | API | What it gives |
-|---|---|---|
-| — | `host.now()`, `host.random()`, `host.input` | time, random numbers, the checked input |
-| `identity:read` | `host.me()` | the owner's ID and name |
-| `messages:read-own` | `host.messages.mine({limit, types, since, cursor})` | only the owner's own text (below) |
-| `chats:read` | `host.chats.list({limit, types, unreadOnly})` | ID, title, type, `muted`, `unreadCount`; no previews |
-| `messages:read` | `host.messages.read(chat, {limit, before, topic, thread})`, `host.messages.search(query, {chat, topic})` | other people's messages; a separate warning at install |
-| `messages:read-target` | `host.target.message()` or `host.target.thread({limit, before})` | only what the agent passed to this run: `--target <chat>:<msgId>` (one message), `--target <chat>:<msgId> --thread` or `--target <chat>@<topic>` (a thread or topic) |
-| `storage:read` | `host.storage.get(key)`, `host.storage.list()` | this installation's data for the current owner |
-| `storage:write` (effect `storage`) | `host.storage.set(key, value)`, `host.storage.delete(key)` | atomic writes within the total `quotaBytes` |
-| `network` (effect `network`) | `host.http.fetch(url, {method, headers, body \| bodyBase64, responseType})` | `{status, headers, body \| bodyBase64}`, only to the origins in `network` (section 6) |
-| `settings:read` | `host.settings.get(key)` | the value `plugin settings set` stored, else the setting's `default` (else `null`) |
-| `actions` (effect `actions`) | `host.actions.propose(action)` | a typed proposal (section 7) |
+| Permission                         | API                                                                                                      | What it gives                                                                                                                                                        |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| —                                  | `host.now()`, `host.random()`, `host.input`                                                              | time, random numbers, the checked input                                                                                                                              |
+| `identity:read`                    | `host.me()`                                                                                              | the owner's ID and name                                                                                                                                              |
+| `messages:read-own`                | `host.messages.mine({limit, types, since, cursor})`                                                      | only the owner's own text (below)                                                                                                                                    |
+| `chats:read`                       | `host.chats.list({limit, types, unreadOnly})`                                                            | ID, title, type, `muted`, `unreadCount`; no previews                                                                                                                 |
+| `messages:read`                    | `host.messages.read(chat, {limit, before, topic, thread})`, `host.messages.search(query, {chat, topic})` | other people's messages; a separate warning at install                                                                                                               |
+| `messages:read-target`             | `host.target.message()` or `host.target.thread({limit, before})`                                         | only what the agent passed to this run: `--target <chat>:<msgId>` (one message), `--target <chat>:<msgId> --thread` or `--target <chat>@<topic>` (a thread or topic) |
+| `storage:read`                     | `host.storage.get(key)`, `host.storage.list()`                                                           | this installation's data for the current owner                                                                                                                       |
+| `storage:write` (effect `storage`) | `host.storage.set(key, value)`, `host.storage.delete(key)`                                               | atomic writes within the total `quotaBytes`                                                                                                                          |
+| `network` (effect `network`)       | `host.http.fetch(url, {method, headers, body \| bodyBase64, responseType})`                              | `{status, headers, body \| bodyBase64}`, only to the origins in `network` (section 6)                                                                                |
+| `settings:read`                    | `host.settings.get(key)`                                                                                 | the value `plugin settings set` stored, else the setting's `default` (else `null`)                                                                                   |
+| `actions` (effect `actions`)       | `host.actions.propose(action)`                                                                           | a typed proposal (section 7)                                                                                                                                         |
 
 **What a command gets** is its manifest's permissions and its own effects together: a command with
 `effects: []` has no `storage.set`/`storage.delete` and no `actions.propose`, even when the plugin
@@ -284,11 +330,11 @@ reverse), `not_found`, `invalid_proposal`. An error the command does not catch e
 A command with the effect `network` (and the permission) gets `host.http.fetch(url, options)`:
 
 ```js
-const r = await host.http.fetch('https://api.example.com/v1/chat', {
-  method: 'POST',                      // GET (default), HEAD, POST, PUT, PATCH, DELETE, OPTIONS
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ text }),      // or bodyBase64; only POST, PUT, PATCH, DELETE
-  responseType: 'text',                // or 'base64'
+const r = await host.http.fetch("https://api.example.com/v1/chat", {
+  method: "POST", // GET (default), HEAD, POST, PUT, PATCH, DELETE, OPTIONS
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ text }), // or bodyBase64; only POST, PUT, PATCH, DELETE
+  responseType: "text", // or 'base64'
 });
 // r = { status: 200, headers: { 'content-type': 'application/json', … }, body: '…' }  (or bodyBase64)
 ```
@@ -412,11 +458,11 @@ sees it`) and how to set them. The secret's description is shown under the plugi
 A plugin never writes. With the `actions` permission and effect it returns typed proposals; the
 host checks them and builds the command:
 
-| `type` | Fields | Command the host builds |
-|---|---|---|
-| `send` | `chat`, `text`, `topic?` | `send <chat> - [--topic N]` |
-| `reply` | `chat`, `msgId`, `text`, `topic?` | `reply <chat> <msgId> -` |
-| `react` | `chat`, `msgId`, `emoji` | `react <chat> <msgId> <emoji>` |
+| `type`  | Fields                            | Command the host builds        |
+| ------- | --------------------------------- | ------------------------------ |
+| `send`  | `chat`, `text`, `topic?`          | `send <chat> - [--topic N]`    |
+| `reply` | `chat`, `msgId`, `text`, `topic?` | `reply <chat> <msgId> -`       |
+| `react` | `chat`, `msgId`, `emoji`          | `react <chat> <msgId> <emoji>` |
 
 The result holds `proposals: [{id, type, summary, argv, stdin, confirm: true}]` (`react` has no
 `stdin`), all built by the host from the same checked fields, so a plugin cannot describe one action
@@ -431,23 +477,23 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 
 ## 8. CLI commands and the read/write path
 
-| Command | Class | Who | Status |
-|---|---|---|---|
-| `plugin list [--json]` | read | anyone | available |
-| `plugin show <name> [--trigger <id> \| --onboarding \| --resource <key>] [--json]` | read | anyone | available (no flag: network, secrets set or not, settings) |
-| `plugin data get\|list <name> [key] [--json]` | read | anyone | available |
-| `plugin data set <name> <key> [-]`, `plugin data delete <name> <key>` | local write | anyone | available |
-| `plugin install <github:owner/repo[@ref] \| ./dir [--expect sha256-…]>` | management | human | available |
-| `plugin remove <name> [--keep-data]` | management | human | available |
-| `plugin validate <dir> [--json]` | for authors | anyone (not over MCP) | available |
-| `plugin run <name> <cmd> [--input <json> \| -] [--target <ref> [--thread]] [--json]`, command with `effects: []` | read | anyone | available |
-| `plugin run <name> <cmd> …`, effect `storage` and/or `actions` | local write | anyone | available |
-| `plugin run <name> <cmd>`, effect `network` | **sends data out**: a write in every transport, the shell too | anyone | available |
-| `plugin settings get <name> [key] [--json]` | read | anyone | available |
-| `plugin settings set <name> <key> <json>` | local write | anyone | available |
-| `plugin secret set <plugin> <secret>`, `plugin secret rm <plugin> <secret>` | human's terminal only (hidden input) | human | available |
-| `plugin update [name]` | management | human | coming, P4 |
-| `plugin dev <dir> <cmd> --mock [--input …] [--target …] [--json]` | for authors | anyone (not over MCP) | available |
+| Command                                                                                                          | Class                                                         | Who                   | Status                                                     |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------- | ---------------------------------------------------------- |
+| `plugin list [--json]`                                                                                           | read                                                          | anyone                | available                                                  |
+| `plugin show <name> [--trigger <id> \| --onboarding \| --resource <key>] [--json]`                               | read                                                          | anyone                | available (no flag: network, secrets set or not, settings) |
+| `plugin data get\|list <name> [key] [--json]`                                                                    | read                                                          | anyone                | available                                                  |
+| `plugin data set <name> <key> [-]`, `plugin data delete <name> <key>`                                            | local write                                                   | anyone                | available                                                  |
+| `plugin install <github:owner/repo[@ref] \| ./dir [--expect sha256-…]>`                                          | management                                                    | human                 | available                                                  |
+| `plugin remove <name> [--keep-data]`                                                                             | management                                                    | human                 | available                                                  |
+| `plugin validate <dir> [--json]`                                                                                 | for authors                                                   | anyone (not over MCP) | available                                                  |
+| `plugin run <name> <cmd> [--input <json> \| -] [--target <ref> [--thread]] [--json]`, command with `effects: []` | read                                                          | anyone                | available                                                  |
+| `plugin run <name> <cmd> …`, effect `storage` and/or `actions`                                                   | local write                                                   | anyone                | available                                                  |
+| `plugin run <name> <cmd>`, effect `network`                                                                      | **sends data out**: a write in every transport, the shell too | anyone                | available                                                  |
+| `plugin settings get <name> [key] [--json]`                                                                      | read                                                          | anyone                | available                                                  |
+| `plugin settings set <name> <key> <json>`                                                                        | local write                                                   | anyone                | available                                                  |
+| `plugin secret set <plugin> <secret>`, `plugin secret rm <plugin> <secret>`                                      | human's terminal only (hidden input)                          | human                 | available                                                  |
+| `plugin update [name]`                                                                                           | management                                                    | human                 | coming, P4                                                 |
+| `plugin dev <dir> <cmd> --mock [--input …] [--target …] [--json]`                                                | for authors                                                   | anyone (not over MCP) | available                                                  |
 
 - **`plugin run`** loads the installed snapshot once (checked against the lock) and runs those
   bytes. `--input` is the command's input as a JSON object (`-` reads it from stdin; absent: `{}`).

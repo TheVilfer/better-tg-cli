@@ -1,57 +1,94 @@
-import { Command } from 'commander';
-import { readStdinOnce } from '../text.js';
-import { resolveApiMethod } from '../api-methods.js';
-import { runApiMethod } from '../api-run.js';
-import { CliError, EXIT, fail, usageError } from '../errors.js';
+import { Command } from "commander";
 
-export const apiCommand = new Command('api')
-  .description('Call any raw Telegram TL method (full API reachability; output is JSON)')
-  .argument('<method>', 'TL method, e.g. "messages.GetHistory", "help.GetConfig" (case-insensitive)')
-  .option('-p, --params <json>', 'Request parameters as a JSON object; "-" reads JSON from stdin', '{}')
-  .option('--write', 'Acknowledge this is a write (optional; writes still need write access)')
-  .addHelpText('after', [
-    '',
-    'Peer/byte fields:',
-    '  {"_chat": "<id|@user|title|me>"}  resolve a chat as other commands do',
-    '  {"_base64": "…"} / {"_hex": "…"}  raw bytes',
-    'A peer/user/channel field also takes a bare "@username" or ID: it is resolved like {"_chat"}',
-    'before the write is approved, and the request goes to the chat that was approved.',
-    '',
-    'Read methods (Get*/Check*/Search*/Resolve*) run without write access; everything else is a',
-    'write: in mode "ask" each call waits for the user\'s approval, in mode "on" it runs. Writes',
-    'despite the name: messages.GetBotCallbackAnswer, ephemeral.GetCallbackAnswer,',
-    'messages.GetInlineBotResults, and messages.GetMessagesViews with increment.',
-    'Paying, account deletion, session termination,',
-    '2FA changes and sharing your location are always refused.',
-    '',
-    'Every method also has a typed top-level command: `telegram <namespace> <method>` (e.g.',
-    '`telegram messages get-all-drafts`). Use `api` for scripted JSON params, the typed command',
-    'for a command line. Run `telegram <namespace> --help` to list a namespace.',
-    '',
-    'Examples:',
-    '  telegram api help.GetConfig',
-    '  telegram api messages.GetAllDrafts',
-    '  telegram api channels.GetAdminLog --params \'{"channel":{"_chat":"My Group"},"limit":20,"q":""}\'',
-  ].join('\n'))
-  .action(async (method: string, options: { params: string; write?: boolean }) => {
-    let parsed: Record<string, unknown>;
-    let canonical: string;
-    try {
-      const resolved = resolveApiMethod(method);
-      canonical = resolved.className;
-    } catch (error) {
-      fail(new CliError(error instanceof Error ? error.message : String(error), 'unknown_method', EXIT.USAGE, { hint: 'List the methods: telegram schema' }));
-    }
+import { resolveApiMethod } from "../api-methods.js";
+import { runApiMethod } from "../api-run.js";
+import { CliError, EXIT, fail, usageError } from "../errors.js";
+import { readStdinOnce } from "../text.js";
 
-    const raw = options.params === '-' ? readStdinOnce() : options.params;
-    try {
-      parsed = raw.trim() ? JSON.parse(raw) : {};
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        throw new Error('params must be a JSON object');
+export const apiCommand = new Command("api")
+  .description(
+    "Call any raw Telegram TL method (full API reachability; output is JSON)"
+  )
+  .argument(
+    "<method>",
+    'TL method, e.g. "messages.GetHistory", "help.GetConfig" (case-insensitive)'
+  )
+  .option(
+    "-p, --params <json>",
+    'Request parameters as a JSON object; "-" reads JSON from stdin',
+    "{}"
+  )
+  .option(
+    "--write",
+    "Acknowledge this is a write (optional; writes still need write access)"
+  )
+  .addHelpText(
+    "after",
+    [
+      "",
+      "Peer/byte fields:",
+      '  {"_chat": "<id|@user|title|me>"}  resolve a chat as other commands do',
+      '  {"_base64": "…"} / {"_hex": "…"}  raw bytes',
+      'A peer/user/channel field also takes a bare "@username" or ID: it is resolved like {"_chat"}',
+      "before the write is approved, and the request goes to the chat that was approved.",
+      "",
+      "Read methods (Get*/Check*/Search*/Resolve*) run without write access; everything else is a",
+      'write: in mode "ask" each call waits for the user\'s approval, in mode "on" it runs. Writes',
+      "despite the name: messages.GetBotCallbackAnswer, ephemeral.GetCallbackAnswer,",
+      "messages.GetInlineBotResults, and messages.GetMessagesViews with increment.",
+      "Paying, account deletion, session termination,",
+      "2FA changes and sharing your location are always refused.",
+      "",
+      "Every method also has a typed top-level command: `telegram <namespace> <method>` (e.g.",
+      "`telegram messages get-all-drafts`). Use `api` for scripted JSON params, the typed command",
+      "for a command line. Run `telegram <namespace> --help` to list a namespace.",
+      "",
+      "Examples:",
+      "  telegram api help.GetConfig",
+      "  telegram api messages.GetAllDrafts",
+      '  telegram api channels.GetAdminLog --params \'{"channel":{"_chat":"My Group"},"limit":20,"q":""}\'',
+    ].join("\n")
+  )
+  .action(
+    async (method: string, options: { params: string; write?: boolean }) => {
+      let parsed: Record<string, unknown>;
+      let canonical: string;
+      try {
+        const resolved = resolveApiMethod(method);
+        canonical = resolved.className;
+      } catch (error) {
+        fail(
+          new CliError(
+            error instanceof Error ? error.message : String(error),
+            "unknown_method",
+            EXIT.USAGE,
+            { hint: "List the methods: telegram schema" }
+          )
+        );
       }
-    } catch (error) {
-      fail(usageError(`Invalid --params JSON: ${error instanceof Error ? error.message : String(error)}`, 'Pass a JSON object, e.g. --params \'{"limit":10}\'.'));
-    }
 
-    await runApiMethod(canonical, parsed, { auditCommand: 'api', paramsFromStdin: options.params === '-' });
-  });
+      const raw = options.params === "-" ? readStdinOnce() : options.params;
+      try {
+        parsed = raw.trim() ? JSON.parse(raw) : {};
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          Array.isArray(parsed)
+        ) {
+          throw new Error("params must be a JSON object");
+        }
+      } catch (error) {
+        fail(
+          usageError(
+            `Invalid --params JSON: ${error instanceof Error ? error.message : String(error)}`,
+            "Pass a JSON object, e.g. --params '{\"limit\":10}'."
+          )
+        );
+      }
+
+      await runApiMethod(canonical, parsed, {
+        auditCommand: "api",
+        paramsFromStdin: options.params === "-",
+      });
+    }
+  );

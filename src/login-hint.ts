@@ -6,7 +6,7 @@
  */
 export function loginHint(env: NodeJS.ProcessEnv = process.env): string {
   if (env.TG_MCP) {
-    return 'Ask the user to log in: call telegram_setup and give them the page it returns (they log in there; you never see a code or password).';
+    return "Ask the user to log in: call telegram_setup and give them the page it returns (they log in there; you never see a code or password).";
   }
   return 'Log in with "telegram onboard" (a guided page in the browser; a dead session is replaced). A person at their own terminal can use "telegram auth --qr" instead.';
 }

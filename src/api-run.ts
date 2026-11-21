@@ -1,11 +1,22 @@
-import { getClient, invokeApi, serializeApiResult, disconnectClient } from './client.js';
-import { isApiReadCall, apiRefusalReason, mcpPaidStarsRefusal, mcpParamRefusal, plainParams } from './api-methods.js';
-import { mcpApiAllowlistRefusal } from './mcp-api-allowlist.js';
-import { assertWriteEnabled } from './guard.js';
-import { bindStringPeers } from './api-peers.js';
-import { auditLog } from './audit.js';
-import ora from './spinner.js';
-import { CliError, EXIT, fail } from './errors.js';
+import {
+  isApiReadCall,
+  apiRefusalReason,
+  mcpPaidStarsRefusal,
+  mcpParamRefusal,
+  plainParams,
+} from "./api-methods.js";
+import { bindStringPeers } from "./api-peers.js";
+import { auditLog } from "./audit.js";
+import {
+  getClient,
+  invokeApi,
+  serializeApiResult,
+  disconnectClient,
+} from "./client.js";
+import { CliError, EXIT, fail } from "./errors.js";
+import { assertWriteEnabled } from "./guard.js";
+import { mcpApiAllowlistRefusal } from "./mcp-api-allowlist.js";
+import ora from "./spinner.js";
 
 /**
  * One execution path for every raw TL call, shared by the generic `api` command and the generated
@@ -18,26 +29,28 @@ import { CliError, EXIT, fail } from './errors.js';
 export async function runApiMethod(
   canonical: string,
   params: Record<string, unknown>,
-  options: { auditCommand?: string; paramsFromStdin?: boolean } = {},
+  options: { auditCommand?: string; paramsFromStdin?: boolean } = {}
 ): Promise<void> {
-  const auditCommand = options.auditCommand ?? 'api';
+  const auditCommand = options.auditCommand ?? "api";
 
-  // Prototype-free, so every check below sees exactly the fields the request gets. Refuse after
-  // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid call
-  // over MCP) apply.
   params = plainParams(params);
-  // Over MCP only allowlisted methods run (src/mcp-api-allowlist.ts); the denylist reason wins
-  // when there is one, since such a method is refused in a terminal too.
-  const refusal = apiRefusalReason(canonical, params) ?? mcpApiAllowlistRefusal(canonical) ?? mcpPaidStarsRefusal(canonical, params)
-    ?? mcpParamRefusal(canonical, params);
-  if (refusal) fail(new CliError(refusal, 'refused', EXIT.ERROR));
-  // A bare "@name" in a peer field becomes {_chat}: approved as the ID it resolves to now, and the
-  // request is built from that same resolved chat (never resolved again by teleproto on invoke)
+  const refusal =
+    apiRefusalReason(canonical, params) ??
+    mcpApiAllowlistRefusal(canonical) ??
+    mcpPaidStarsRefusal(canonical, params) ??
+    mcpParamRefusal(canonical, params);
+  if (refusal) {
+    fail(new CliError(refusal, "refused", EXIT.ERROR));
+  }
   bindStringPeers(canonical, params);
 
-  // A read that may spend Stars (allowPaidStars) or add a view (increment) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
-  if (isWrite) await assertWriteEnabled(undefined, { readsStdin: options.paramsFromStdin === true, apiParams: params });
+  if (isWrite) {
+    await assertWriteEnabled(undefined, {
+      readsStdin: options.paramsFromStdin === true,
+      apiParams: params,
+    });
+  }
 
   const spinner = ora(`Calling ${canonical}...`).start();
   try {
@@ -46,13 +59,26 @@ export async function runApiMethod(
     spinner.stop();
 
     if (isWrite) {
-      auditLog({ timestamp: new Date().toISOString(), command: auditCommand, target: canonical, result: { success: true } });
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: auditCommand,
+        target: canonical,
+        result: { success: true },
+      });
     }
     console.log(serializeApiResult(result));
     await disconnectClient();
   } catch (error) {
     if (isWrite) {
-      auditLog({ timestamp: new Date().toISOString(), command: auditCommand, target: canonical, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: auditCommand,
+        target: canonical,
+        result: {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
     fail(error, spinner, `${canonical} failed`);
   }

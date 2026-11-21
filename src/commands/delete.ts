@@ -1,19 +1,32 @@
-import { Command } from 'commander';
-import { getClient, deleteChatMessages, disconnectClient, chatRef } from '../client.js';
-import { formatJson } from '../formatters/json.js';
-import { auditLog } from '../audit.js';
-import { assertWriteEnabled } from '../guard.js';
-import chalk from '../colors.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
-import { messageIdList } from '../args.js';
+import { Command } from "commander";
 
-export const deleteCommand = new Command('delete')
-  .description('Delete one or more messages')
-  .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageIds>', 'Message ID, or comma-separated IDs (e.g. 123 or 123,124)', messageIdList)
-  .option('--just-me', 'Delete only for you, in private chats and basic groups (channels and supergroups always delete for everyone)')
-  .option('--json', 'Output as JSON')
+import { messageIdList } from "../args.js";
+import { auditLog } from "../audit.js";
+import {
+  getClient,
+  deleteChatMessages,
+  disconnectClient,
+  chatRef,
+} from "../client.js";
+import chalk from "../colors.js";
+import { fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import { assertWriteEnabled } from "../guard.js";
+import ora from "../spinner.js";
+
+export const deleteCommand = new Command("delete")
+  .description("Delete one or more messages")
+  .argument("<chat>", "Chat name, username (@user), or ID")
+  .argument(
+    "<messageIds>",
+    "Message ID, or comma-separated IDs (e.g. 123 or 123,124)",
+    messageIdList
+  )
+  .option(
+    "--just-me",
+    "Delete only for you, in private chats and basic groups (channels and supergroups always delete for everyone)"
+  )
+  .option("--json", "Output as JSON")
   .action(async (chat, messageIds, options) => {
     await assertWriteEnabled();
     const ids: number[] = messageIds;
@@ -22,14 +35,45 @@ export const deleteCommand = new Command('delete')
     try {
       const client = await getClient();
       const result = await deleteChatMessages(client, chat, ids, revoke);
-      auditLog({ timestamp: new Date().toISOString(), command: 'delete', target: chat, message: `[${ids.join(',')}] revoke=${revoke}`, result: { success: true } });
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "delete",
+        target: chat,
+        message: `[${ids.join(",")}] revoke=${revoke}`,
+        result: { success: true },
+      });
       spinner.stop();
-      // `revoke` says what Telegram did (a channel or supergroup always deletes for everyone)
-      if (options.json) console.log(formatJson({ ok: true, action: 'delete', ...await chatRef(client, chat), chat: result.chatTitle, messageIds: ids, deleted: ids, revoke: result.forEveryone }));
-      else console.log(chalk.green(`✓ Deleted ${result.count} message(s) in "${result.chatTitle}"${result.forEveryone ? ' (for everyone)' : ' (just for you)'}`));
+      if (options.json) {
+        console.log(
+          formatJson({
+            ok: true,
+            action: "delete",
+            ...(await chatRef(client, chat)),
+            chat: result.chatTitle,
+            messageIds: ids,
+            deleted: ids,
+            revoke: result.forEveryone,
+          })
+        );
+      } else {
+        console.log(
+          chalk.green(
+            `✓ Deleted ${result.count} message(s) in "${result.chatTitle}"${result.forEveryone ? " (for everyone)" : " (just for you)"}`
+          )
+        );
+      }
       await disconnectClient();
     } catch (error) {
-      auditLog({ timestamp: new Date().toISOString(), command: 'delete', target: chat, message: `[${ids.join(',')}]`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      fail(error, spinner, 'Failed to delete');
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "delete",
+        target: chat,
+        message: `[${ids.join(",")}]`,
+        result: {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      fail(error, spinner, "Failed to delete");
     }
   });

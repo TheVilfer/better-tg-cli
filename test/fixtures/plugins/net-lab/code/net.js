@@ -1,4 +1,3 @@
-// Test plugin: every call to host.http.fetch, with what the host lets through.
 export const commands = {
   async fetch(input, host) {
     const out = [];

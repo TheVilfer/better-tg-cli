@@ -5,11 +5,11 @@ there are no servers of ours in the path. Nobody but you sees your messages or y
 
 ## Network connections
 
-| To | When | What is sent |
-|---|---|---|
-| Telegram (MTProto data centers) | Every command | Everything a Telegram client sends, directly to Telegram |
-| `registry.npmjs.org` | Once a day, only when run in a terminal (never for agents or pipes) | A request for the latest version number. Turn it off with `TG_NO_UPDATE_CHECK=1` |
-| The login service (`tg-cli-broker…workers.dev`, same service as `better-tg-cli.com`) | Only when you log in with a login key (`telegram auth --login-key` or `telegram onboard`) | Your login key, once, to receive the app's API keys |
+| To                                                                                   | When                                                                                      | What is sent                                                                     |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Telegram (MTProto data centers)                                                      | Every command                                                                             | Everything a Telegram client sends, directly to Telegram                         |
+| `registry.npmjs.org`                                                                 | Once a day, only when run in a terminal (never for agents or pipes)                       | A request for the latest version number. Turn it off with `TG_NO_UPDATE_CHECK=1` |
+| The login service (`tg-cli-broker…workers.dev`, same service as `better-tg-cli.com`) | Only when you log in with a login key (`telegram auth --login-key` or `telegram onboard`) | Your login key, once, to receive the app's API keys                              |
 
 The login service stores login keys by their SHA-256 hash with a use counter and never stores the
 keys themselves. Its request logging is off. It never sees your phone number, login code, session or

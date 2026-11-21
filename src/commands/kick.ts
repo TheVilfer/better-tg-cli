@@ -1,16 +1,17 @@
-import { Command } from 'commander';
-import { getClient, kickUser, disconnectClient } from '../client.js';
-import { auditLog } from '../audit.js';
-import { assertWriteEnabled } from '../guard.js';
-import ora from '../spinner.js';
-import { formatJson } from '../formatters/json.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-export const kickCommand = new Command('kick')
-  .description('Kick/remove a user from a group')
-  .argument('<group>', 'Group name or username')
-  .argument('<user>', 'Username to kick (e.g., @username)')
-  .option('--json', 'Output as JSON')
+import { auditLog } from "../audit.js";
+import { getClient, kickUser, disconnectClient } from "../client.js";
+import { fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import { assertWriteEnabled } from "../guard.js";
+import ora from "../spinner.js";
+
+export const kickCommand = new Command("kick")
+  .description("Kick/remove a user from a group")
+  .argument("<group>", "Group name or username")
+  .argument("<user>", "Username to kick (e.g., @username)")
+  .option("--json", "Output as JSON")
   .action(async (group, user, options) => {
     await assertWriteEnabled();
     const spinner = ora(`Kicking ${user} from "${group}"...`).start();
@@ -18,7 +19,13 @@ export const kickCommand = new Command('kick')
     try {
       const client = await getClient();
       const result = await kickUser(client, group, user);
-      auditLog({ timestamp: new Date().toISOString(), command: 'kick', target: group, kickedUser: user, result: { success: result.success } });
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "kick",
+        target: group,
+        kickedUser: user,
+        result: { success: result.success },
+      });
 
       if (result.success) {
         if (options.json) {
@@ -39,7 +46,16 @@ export const kickCommand = new Command('kick')
 
       await disconnectClient();
     } catch (error) {
-      auditLog({ timestamp: new Date().toISOString(), command: 'kick', target: group, kickedUser: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      fail(error, spinner, 'Failed to kick user');
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "kick",
+        target: group,
+        kickedUser: user,
+        result: {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      fail(error, spinner, "Failed to kick user");
     }
   });

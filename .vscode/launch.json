@@ -23,7 +23,11 @@
       "program": "${workspaceFolder}/src/index.ts",
       "args": "${input:cliArgs}",
       "console": "integratedTerminal",
-      "env": { "TG_PROFILE": "dev", "TG_NO_UPDATE_CHECK": "1", "TG_LOG_LEVEL": "debug" },
+      "env": {
+        "TG_PROFILE": "dev",
+        "TG_NO_UPDATE_CHECK": "1",
+        "TG_LOG_LEVEL": "debug"
+      },
       "skipFiles": ["<node_internals>/**"]
     },
     {
@@ -44,6 +48,11 @@
     }
   ],
   "inputs": [
-    { "id": "cliArgs", "type": "promptString", "description": "telegram arguments", "default": "check" }
+    {
+      "id": "cliArgs",
+      "type": "promptString",
+      "description": "telegram arguments",
+      "default": "check"
+    }
   ]
 }

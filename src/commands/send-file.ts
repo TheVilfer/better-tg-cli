@@ -1,36 +1,50 @@
-import { Command } from 'commander';
-import { existsSync, statSync } from 'fs';
-import { resolve } from 'path';
-import { getClient, sendFileMessage, disconnectClient, chatRef } from '../client.js';
-import { formatJson } from '../formatters/json.js';
-import { auditLog } from '../audit.js';
-import { assertWriteEnabled } from '../guard.js';
-import chalk from '../colors.js';
-import ora from '../spinner.js';
-import { readTextArg } from '../text.js';
-import { fail, usageError } from '../errors.js';
-import { positiveInt } from '../args.js';
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 
-export const sendFileCommand = new Command('send-file')
-  .description('Send a photo or document to a chat')
-  .argument('<target>', 'Chat name, username (@user), or ID')
-  .argument('<path>', 'Path to file to send')
-  .option('-c, --caption <text>', 'Optional caption ("-" reads it from stdin)')
-  .option('--html', 'Parse the caption as HTML')
-  .option('--markdown', 'Parse the caption as Markdown')
-  .option('--silent', 'Send without a notification sound')
-  .option('--topic <id>', 'Post into this forum topic', positiveInt)
-  .option('--as-document', 'Send images as uncompressed documents')
-  .option('--reply-to <id>', 'Reply to a specific message ID', positiveInt)
-  .option('--json', 'Output as JSON')
+import { Command } from "commander";
+
+import { positiveInt } from "../args.js";
+import { auditLog } from "../audit.js";
+import {
+  getClient,
+  sendFileMessage,
+  disconnectClient,
+  chatRef,
+} from "../client.js";
+import chalk from "../colors.js";
+import { fail, usageError } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import { assertWriteEnabled } from "../guard.js";
+import ora from "../spinner.js";
+import { readTextArg } from "../text.js";
+
+export const sendFileCommand = new Command("send-file")
+  .description("Send a photo or document to a chat")
+  .argument("<target>", "Chat name, username (@user), or ID")
+  .argument("<path>", "Path to file to send")
+  .option("-c, --caption <text>", 'Optional caption ("-" reads it from stdin)')
+  .option("--html", "Parse the caption as HTML")
+  .option("--markdown", "Parse the caption as Markdown")
+  .option("--silent", "Send without a notification sound")
+  .option("--topic <id>", "Post into this forum topic", positiveInt)
+  .option("--as-document", "Send images as uncompressed documents")
+  .option("--reply-to <id>", "Reply to a specific message ID", positiveInt)
+  .option("--json", "Output as JSON")
   .action(async (target, filePath, options) => {
-    // The file is checked before the guard: a missing one never costs an approval
     const absPath = resolve(filePath);
-    if (!existsSync(absPath)) fail(usageError(`File not found: ${absPath}`));
-    if (!statSync(absPath).isFile()) fail(usageError(`Not a regular file: ${absPath}`));
+    if (!existsSync(absPath)) {
+      fail(usageError(`File not found: ${absPath}`));
+    }
+    if (!statSync(absPath).isFile()) {
+      fail(usageError(`Not a regular file: ${absPath}`));
+    }
 
-    await assertWriteEnabled(undefined, { readsStdin: options.caption === '-' });
-    if (options.caption) options.caption = readTextArg(options.caption);
+    await assertWriteEnabled(undefined, {
+      readsStdin: options.caption === "-",
+    });
+    if (options.caption) {
+      options.caption = readTextArg(options.caption);
+    }
 
     const spinner = ora(`Uploading "${absPath}" to "${target}"...`).start();
 
@@ -40,35 +54,43 @@ export const sendFileCommand = new Command('send-file')
         caption: options.caption,
         asDocument: options.asDocument,
         replyToMsgId: options.replyTo,
-        parseMode: options.html ? 'html' : options.markdown ? 'md' : undefined,
+        parseMode: options.html ? "html" : options.markdown ? "md" : undefined,
         silent: options.silent,
         topic: options.topic,
       });
 
       auditLog({
         timestamp: new Date().toISOString(),
-        command: 'send-file',
+        command: "send-file",
         target,
-        message: `file:${absPath}${options.caption ? ` caption:${options.caption}` : ''}`,
+        message: `file:${absPath}${options.caption ? ` caption:${options.caption}` : ""}`,
         result: { success: true, messageId: result.id },
       });
 
       const ref = await chatRef(client, target);
-      spinner.succeed(chalk.green('File sent'));
+      spinner.succeed(chalk.green("File sent"));
 
       if (options.json) {
-        console.log(formatJson({
-          ok: true,
-          action: 'send-file',
-          ...ref,
-          messageId: result.id,
-          id: result.id,
-          date: result.date ? new Date(result.date * 1000).toISOString() : null,
-          file: absPath,
-          caption: options.caption ?? null,
-        }));
+        console.log(
+          formatJson({
+            ok: true,
+            action: "send-file",
+            ...ref,
+            messageId: result.id,
+            id: result.id,
+            date: result.date
+              ? new Date(result.date * 1000).toISOString()
+              : null,
+            file: absPath,
+            caption: options.caption ?? null,
+          })
+        );
       } else {
-        console.log(chalk.gray(`Message ID: ${result.id} in ${ref.chatTitle} (${ref.chatId})`));
+        console.log(
+          chalk.gray(
+            `Message ID: ${result.id} in ${ref.chatTitle} (${ref.chatId})`
+          )
+        );
       }
 
       await disconnectClient();
@@ -76,11 +98,14 @@ export const sendFileCommand = new Command('send-file')
     } catch (error) {
       auditLog({
         timestamp: new Date().toISOString(),
-        command: 'send-file',
+        command: "send-file",
         target,
         message: `file:${absPath}`,
-        result: { success: false, error: error instanceof Error ? error.message : String(error) },
+        result: {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
       });
-      fail(error, spinner, 'Failed to send file');
+      fail(error, spinner, "Failed to send file");
     }
   });

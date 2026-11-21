@@ -1,38 +1,77 @@
-import { Command } from 'commander';
-import { getClient, editMessageText, disconnectClient, chatRef } from '../client.js';
-import { formatJson } from '../formatters/json.js';
-import { auditLog } from '../audit.js';
-import { assertWriteEnabled } from '../guard.js';
-import chalk from '../colors.js';
-import ora from '../spinner.js';
-import { readTextArg } from '../text.js';
-import { fail } from '../errors.js';
-import { positiveInt } from '../args.js';
+import { Command } from "commander";
 
-export const editCommand = new Command('edit')
-  .description('Edit one of your own messages')
-  .argument('<chat>', 'Chat name, username (@user), or ID')
-  .argument('<messageId>', 'Message ID to edit', positiveInt)
-  .argument('<text>', 'New message text, or "-" to read it from stdin')
-  .option('--markdown', 'Parse the new text as Markdown')
-  .option('--html', 'Parse the new text as HTML')
-  .option('--json', 'Output as JSON')
+import { positiveInt } from "../args.js";
+import { auditLog } from "../audit.js";
+import {
+  getClient,
+  editMessageText,
+  disconnectClient,
+  chatRef,
+} from "../client.js";
+import chalk from "../colors.js";
+import { fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import { assertWriteEnabled } from "../guard.js";
+import ora from "../spinner.js";
+import { readTextArg } from "../text.js";
+
+export const editCommand = new Command("edit")
+  .description("Edit one of your own messages")
+  .argument("<chat>", "Chat name, username (@user), or ID")
+  .argument("<messageId>", "Message ID to edit", positiveInt)
+  .argument("<text>", 'New message text, or "-" to read it from stdin')
+  .option("--markdown", "Parse the new text as Markdown")
+  .option("--html", "Parse the new text as HTML")
+  .option("--json", "Output as JSON")
   .action(async (chat, messageId, textArg, options) => {
     await assertWriteEnabled();
     const text = readTextArg(textArg);
     const id: number = messageId;
-    const parseMode = options.html ? 'html' : options.markdown ? 'md' : undefined;
+    const parseMode = options.html
+      ? "html"
+      : options.markdown
+        ? "md"
+        : undefined;
     const spinner = ora(`Editing #${id}...`).start();
     try {
       const client = await getClient();
-      const result = await editMessageText(client, chat, id, text, { parseMode });
-      auditLog({ timestamp: new Date().toISOString(), command: 'edit', target: chat, message: `#${id}`, result: { success: true, messageId: id } });
+      const result = await editMessageText(client, chat, id, text, {
+        parseMode,
+      });
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "edit",
+        target: chat,
+        message: `#${id}`,
+        result: { success: true, messageId: id },
+      });
       spinner.stop();
-      if (options.json) console.log(formatJson({ ok: true, action: 'edit', ...await chatRef(client, chat), chat: result.chatTitle, messageId: result.id, edited: true }));
-      else console.log(chalk.green(`✓ Edited #${id} in "${result.chatTitle}"`));
+      if (options.json) {
+        console.log(
+          formatJson({
+            ok: true,
+            action: "edit",
+            ...(await chatRef(client, chat)),
+            chat: result.chatTitle,
+            messageId: result.id,
+            edited: true,
+          })
+        );
+      } else {
+        console.log(chalk.green(`✓ Edited #${id} in "${result.chatTitle}"`));
+      }
       await disconnectClient();
     } catch (error) {
-      auditLog({ timestamp: new Date().toISOString(), command: 'edit', target: chat, message: `#${id}`, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
-      fail(error, spinner, 'Failed to edit');
+      auditLog({
+        timestamp: new Date().toISOString(),
+        command: "edit",
+        target: chat,
+        message: `#${id}`,
+        result: {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      fail(error, spinner, "Failed to edit");
     }
   });

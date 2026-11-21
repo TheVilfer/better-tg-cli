@@ -1,18 +1,19 @@
-// Re-encode teleproto's generated TL schema (tl/generated/api-definitions.js, ~1.8 MB of
-// verbose JSON) into a compact module that rebuilds the identical array at load time.
-// Used by scripts/bundle.mjs; test/tl-compact.test.ts checks the round trip is exact.
-import { createRequire } from 'node:module';
+import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 
-// Arg flag bits
-const IS_VECTOR = 1, IS_FLAG = 2, SKIP_CID = 4, FLAG_INDICATOR = 8, UVI_SET = 16, UVI_TRUE = 32;
-const FLAG_NAMES = [null, 'flags', 'flags2'];
+const FLAG_INDICATOR = 8;
+const IS_FLAG = 2;
+const IS_VECTOR = 1;
+const SKIP_CID = 4;
+const UVI_SET = 16;
+const UVI_TRUE = 32;
+const FLAG_NAMES = [null, "flags", "flags2"];
 
 export function encodeDefinitions(defs) {
   const strings = [];
   const index = new Map();
-  const s = v => {
+  const s = (v) => {
     if (!index.has(v)) {
       index.set(v, strings.length);
       strings.push(v);
@@ -20,34 +21,54 @@ export function encodeDefinitions(defs) {
     return index.get(v);
   };
 
-  const rows = defs.map(d => {
-    const keys = Object.keys(d).join(',');
-    if (keys !== 'name,constructorId,argsConfig,subclassOfId,result,isFunction' &&
-        keys !== 'name,constructorId,argsConfig,subclassOfId,result,isFunction,namespace') {
+  const rows = defs.map((d) => {
+    const keys = Object.keys(d).join(",");
+    if (
+      keys !== "name,constructorId,argsConfig,subclassOfId,result,isFunction" &&
+      keys !==
+        "name,constructorId,argsConfig,subclassOfId,result,isFunction,namespace"
+    ) {
       throw new Error(`Unexpected definition keys: ${keys}`);
     }
     const args = [];
     for (const [name, a] of Object.entries(d.argsConfig)) {
-      if (Object.keys(a).join(',') !== 'isVector,isFlag,skipConstructorId,flagName,flagIndex,flagIndicator,type,useVectorId') {
+      if (
+        Object.keys(a).join(",") !==
+        "isVector,isFlag,skipConstructorId,flagName,flagIndex,flagIndicator,type,useVectorId"
+      ) {
         throw new Error(`Unexpected arg keys in ${d.name}.${name}`);
       }
       const fn = FLAG_NAMES.indexOf(a.flagName);
-      if (fn < 0) throw new Error(`Unexpected flagName ${a.flagName}`);
+      if (fn === -1) {
+        throw new Error(`Unexpected flagName ${a.flagName}`);
+      }
       const bits =
-        (a.isVector ? IS_VECTOR : 0) | (a.isFlag ? IS_FLAG : 0) | (a.skipConstructorId ? SKIP_CID : 0) |
-        (a.flagIndicator ? FLAG_INDICATOR : 0) | (a.useVectorId !== null ? UVI_SET : 0) | (a.useVectorId === true ? UVI_TRUE : 0) |
+        (a.isVector ? IS_VECTOR : 0) |
+        (a.isFlag ? IS_FLAG : 0) |
+        (a.skipConstructorId ? SKIP_CID : 0) |
+        (a.flagIndicator ? FLAG_INDICATOR : 0) |
+        (a.useVectorId === null ? 0 : UVI_SET) |
+        (a.useVectorId === true ? UVI_TRUE : 0) |
         (fn << 6);
       args.push(s(name), a.type === null ? -1 : s(a.type), bits, a.flagIndex);
     }
-    const row = [s(d.name), d.constructorId, d.subclassOfId, s(d.result), d.isFunction ? 1 : 0, args];
-    if ('namespace' in d) row.push(d.namespace === undefined ? -2 : s(d.namespace));
+    const row = [
+      s(d.name),
+      d.constructorId,
+      d.subclassOfId,
+      s(d.result),
+      d.isFunction ? 1 : 0,
+      args,
+    ];
+    if ("namespace" in d) {
+      row.push(d.namespace === undefined ? -2 : s(d.namespace));
+    }
     return row;
   });
 
   return { strings, rows };
 }
 
-// Decoder source, shared by the generated module and the test
 export const DECODER = `function decodeDefinitions(S, R) {
   var F = [null, "flags", "flags2"];
   return R.map(function (r) {
@@ -72,5 +93,5 @@ export function compactModuleSource(defs) {
 }
 
 export function loadOriginalDefinitions() {
-  return require('teleproto/tl/generated/api-definitions.js');
+  return require("teleproto/tl/generated/api-definitions.js");
 }

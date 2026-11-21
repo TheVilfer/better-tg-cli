@@ -1,79 +1,155 @@
-import chalk from '../colors.js';
-import { isTTY } from '../spinner.js';
-import type { ChatInfo, MessageInfo, MessageFull, FolderInfo, MediaInfo, ButtonInfo, ButtonLayout, ClickOutcome } from '../client.js';
+import type {
+  ChatInfo,
+  MessageInfo,
+  MessageFull,
+  FolderInfo,
+  MediaInfo,
+  ButtonInfo,
+  ButtonLayout,
+  ClickOutcome,
+} from "../client.js";
+import chalk from "../colors.js";
+import { isTTY } from "../spinner.js";
 
 function abbreviate(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  if (n < 1000) {
+    return String(n);
+  }
+  if (n < 1_000_000) {
+    return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  }
   return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
 }
 
 /** Short, readable stats segment appended in `--full` mode, e.g. ` 👁1.2k ↪34 ❤️12 🧩3 ⭐5 ✎ 📌`. */
 export function formatStatsSuffix(full: MessageFull): string {
   const parts: string[] = [];
-  if (full.views) parts.push(`👁${abbreviate(full.views)}`);
-  if (full.forwards) parts.push(`↪${full.forwards}`);
+  if (full.views) {
+    parts.push(`👁${abbreviate(full.views)}`);
+  }
+  if (full.forwards) {
+    parts.push(`↪${full.forwards}`);
+  }
   for (const r of (full.reactions ?? []).slice(0, 6)) {
-    const label = r.emoji ?? (r.paid ? '⭐' : '🧩');
+    const label = r.emoji ?? (r.paid ? "⭐" : "🧩");
     parts.push(`${label}${abbreviate(r.count)}`);
   }
-  if (full.editDate) parts.push('✎');
-  if (full.pinned) parts.push('📌');
-  if (full.silent) parts.push('🔕');
-  return parts.length ? ` ${parts.join(' ')}` : '';
+  if (full.editDate) {
+    parts.push("✎");
+  }
+  if (full.pinned) {
+    parts.push("📌");
+  }
+  if (full.silent) {
+    parts.push("🔕");
+  }
+  return parts.length ? ` ${parts.join(" ")}` : "";
 }
 
 function buttonTypeHint(b: ButtonInfo): string {
   switch (b.type) {
-    case 'callback': return b.requiresPassword ? 'callback 🔒' : 'callback';
-    case 'url': return `url → ${b.url}`;
-    case 'url_auth': return `url-auth → ${b.url}`;
-    case 'webview': return `webapp → ${b.url}`;
-    case 'switch_inline': return `switch-inline "${b.query ?? ''}"`;
-    case 'switch_inline_current': return `switch-inline (here) "${b.query ?? ''}"`;
-    case 'copy': return `copy "${b.copyText ?? ''}"`;
-    case 'text': return 'sends text';
-    case 'game': return 'game';
-    case 'buy': return 'buy';
-    case 'request_phone': return 'shares phone';
-    case 'request_geo': return 'shares location';
-    case 'request_poll': return 'creates poll';
-    case 'request_peer': return 'shares a peer';
-    case 'user_profile': return 'user profile';
-    default: return b.type;
+    case "callback": {
+      return b.requiresPassword ? "callback 🔒" : "callback";
+    }
+    case "url": {
+      return `url → ${b.url}`;
+    }
+    case "url_auth": {
+      return `url-auth → ${b.url}`;
+    }
+    case "webview": {
+      return `webapp → ${b.url}`;
+    }
+    case "switch_inline": {
+      return `switch-inline "${b.query ?? ""}"`;
+    }
+    case "switch_inline_current": {
+      return `switch-inline (here) "${b.query ?? ""}"`;
+    }
+    case "copy": {
+      return `copy "${b.copyText ?? ""}"`;
+    }
+    case "text": {
+      return "sends text";
+    }
+    case "game": {
+      return "game";
+    }
+    case "buy": {
+      return "buy";
+    }
+    case "request_phone": {
+      return "shares phone";
+    }
+    case "request_geo": {
+      return "shares location";
+    }
+    case "request_poll": {
+      return "creates poll";
+    }
+    case "request_peer": {
+      return "shares a peer";
+    }
+    case "user_profile": {
+      return "user profile";
+    }
+    default: {
+      return b.type;
+    }
   }
 }
 
-export function formatButtonLayout(layout: ButtonLayout, indent = '  '): string {
-  const kind = layout.isInline ? 'inline keyboard' : 'reply keyboard';
+export function formatButtonLayout(
+  layout: ButtonLayout,
+  indent = "  "
+): string {
+  const kind = layout.isInline ? "inline keyboard" : "reply keyboard";
   const lines: string[] = [`${indent}${chalk.yellow(`⌨ ${kind}:`)}`];
   for (const row of layout.rows) {
     for (const b of row) {
       const idx = chalk.bold(`[${b.index}]`);
-      const label = chalk.cyan(b.text || '(no label)');
+      const label = chalk.cyan(b.text || "(no label)");
       const hint = chalk.gray(`— ${buttonTypeHint(b)}`);
       lines.push(`${indent}  ${idx} ${label} ${hint}`);
     }
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-function mediaIcon(kind: MediaInfo['kind']): string {
+function mediaIcon(kind: MediaInfo["kind"]): string {
   switch (kind) {
-    case 'photo': return '📷';
-    case 'video': return '🎬';
-    case 'video_note': return '⭕';
-    case 'voice': return '🎤';
-    case 'audio': return '🎵';
-    case 'sticker': return '🎨';
-    case 'gif': return '🎞';
-    default: return '📎';
+    case "photo": {
+      return "📷";
+    }
+    case "video": {
+      return "🎬";
+    }
+    case "video_note": {
+      return "⭕";
+    }
+    case "voice": {
+      return "🎤";
+    }
+    case "audio": {
+      return "🎵";
+    }
+    case "sticker": {
+      return "🎨";
+    }
+    case "gif": {
+      return "🎞";
+    }
+    default: {
+      return "📎";
+    }
   }
 }
 
 function formatBytes(size?: number): string {
-  if (!size || !Number.isFinite(size)) return '';
-  const units = ['B', 'KB', 'MB', 'GB'];
+  if (!size || !Number.isFinite(size)) {
+    return "";
+  }
+  const units = ["B", "KB", "MB", "GB"];
   let value = size;
   let unit = 0;
   while (value >= 1024 && unit < units.length - 1) {
@@ -84,124 +160,176 @@ function formatBytes(size?: number): string {
 }
 
 function formatDuration(seconds?: number): string {
-  if (!seconds || !Number.isFinite(seconds)) return '';
+  if (!seconds || !Number.isFinite(seconds)) {
+    return "";
+  }
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 export function formatMediaLabel(media: MediaInfo): string {
   const icon = mediaIcon(media.kind);
   const parts: string[] = [media.kind];
-  if (media.fileName) parts.push(media.fileName);
+  if (media.fileName) {
+    parts.push(media.fileName);
+  }
   const meta: string[] = [];
-  if (media.mimeType && !media.fileName) meta.push(media.mimeType);
-  if (media.size) meta.push(formatBytes(media.size));
-  if (media.duration) meta.push(formatDuration(media.duration));
-  if (media.width && media.height) meta.push(`${media.width}×${media.height}`);
-  const metaStr = meta.length ? ` · ${meta.join(' · ')}` : '';
-  return `${icon} ${parts.join(' ')}${metaStr}`;
+  if (media.mimeType && !media.fileName) {
+    meta.push(media.mimeType);
+  }
+  if (media.size) {
+    meta.push(formatBytes(media.size));
+  }
+  if (media.duration) {
+    meta.push(formatDuration(media.duration));
+  }
+  if (media.width && media.height) {
+    meta.push(`${media.width}×${media.height}`);
+  }
+  const metaStr = meta.length ? ` · ${meta.join(" · ")}` : "";
+  return `${icon} ${parts.join(" ")}${metaStr}`;
 }
-
-
-// --- Compact (non-TTY) output: one line per item, IDs first, for agents and pipes ---
 
 /** The local time zone the plain output uses, once per header: "Europe/Moscow, UTC+3". */
 export function timeZoneLabel(now = new Date()): string {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
   const offset = -now.getTimezoneOffset();
   const abs = Math.abs(offset);
-  const minutes = abs % 60 ? `:${String(abs % 60).padStart(2, '0')}` : '';
-  return `${zone}, UTC${offset < 0 ? '-' : '+'}${Math.floor(abs / 60)}${minutes}`;
+  const minutes = abs % 60 ? `:${String(abs % 60).padStart(2, "0")}` : "";
+  return `${zone}, UTC${offset < 0 ? "-" : "+"}${Math.floor(abs / 60)}${minutes}`;
 }
 
 function isoMinute(date: Date): string {
-  const p = (n: number) => n.toString().padStart(2, '0');
+  const p = (n: number) => n.toString().padStart(2, "0");
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`;
 }
 
 export function truncate(text: string, max?: number): string {
-  if (!max || text.length <= max) return text;
-  // Slice by code points so emoji surrogate pairs are never split (invalid JSON otherwise)
-  const chars = Array.from(text);
-  return chars.length <= max ? text : chars.slice(0, max).join('') + '…';
+  if (!max || text.length <= max) {
+    return text;
+  }
+  const chars = [...text];
+  return chars.length <= max ? text : `${chars.slice(0, max).join("")}…`;
 }
 
 function oneLine(text: string, max: number): string {
-  return truncate(text.replace(/\s+/g, ' ').trim(), max);
+  return truncate(text.replaceAll(/\s+/g, " ").trim(), max);
 }
 
 function compactButtons(layout: ButtonLayout): string {
-  const rows = layout.rows.map(row => row.map(b => `[${b.index}] ${b.text || '(no label)'} (${b.type}${b.url ? ' ' + b.url : ''})`).join('  '));
-  return `  ${layout.isInline ? 'inline' : 'reply'} keyboard: ${rows.join(' | ')}`;
+  const rows = layout.rows.map((row) =>
+    row
+      .map(
+        (b) =>
+          `[${b.index}] ${b.text || "(no label)"} (${b.type}${b.url ? ` ${b.url}` : ""})`
+      )
+      .join("  ")
+  );
+  return `  ${layout.isInline ? "inline" : "reply"} keyboard: ${rows.join(" | ")}`;
 }
 
-function compactMessage(msg: MessageInfo, maxText?: number, chatTitle?: string): string {
-  // Channel posts: the sender is the channel itself, so don't repeat its name
-  const rawSender = msg.isOutgoing ? 'You' : msg.sender;
-  const sender = rawSender === (msg.chatTitle ?? chatTitle) ? '' : ` ${rawSender}`;
-  const reply = msg.replyToMsgId ? ` ↩${msg.replyToMsgId}` : '';
-  const where = msg.chatTitle ? ` [${msg.chatTitle}${msg.chatId ? ' ' + msg.chatId : ''}]` : '';
-  const topic = msg.topicId ? ` [topic ${msg.topicId}]` : '';
-  const media = msg.media ? `[${formatMediaLabel(msg.media)}] ` : '';
-  // Collapse blank lines and indent continuation lines under the header
-  const text = truncate(msg.text, maxText).replace(/\n\s*\n/g, '\n').trim().replace(/\n/g, '\n  ');
-  const comments = msg.replies ? ` 💬${msg.replies}` : '';
-  const stats = msg.full ? formatStatsSuffix(msg.full) : '';
-  const lines = [`#${msg.id} ${isoMinute(msg.date)}${where}${topic}${sender}${reply}${comments}${stats}: ${media}${text || (media ? '' : '(no text)')}`.trimEnd()];
-  if (msg.buttons) lines.push(compactButtons(msg.buttons));
-  return lines.join('\n');
+function compactMessage(
+  msg: MessageInfo,
+  maxText?: number,
+  chatTitle?: string
+): string {
+  const rawSender = msg.isOutgoing ? "You" : msg.sender;
+  const sender =
+    rawSender === (msg.chatTitle ?? chatTitle) ? "" : ` ${rawSender}`;
+  const reply = msg.replyToMsgId ? ` ↩${msg.replyToMsgId}` : "";
+  const where = msg.chatTitle
+    ? ` [${msg.chatTitle}${msg.chatId ? ` ${msg.chatId}` : ""}]`
+    : "";
+  const topic = msg.topicId ? ` [topic ${msg.topicId}]` : "";
+  const media = msg.media ? `[${formatMediaLabel(msg.media)}] ` : "";
+  const text = truncate(msg.text, maxText)
+    .replaceAll(/\n\s*\n/g, "\n")
+    .trim()
+    .replaceAll("\n", "\n  ");
+  const comments = msg.replies ? ` 💬${msg.replies}` : "";
+  const stats = msg.full ? formatStatsSuffix(msg.full) : "";
+  const lines = [
+    `#${msg.id} ${isoMinute(msg.date)}${where}${topic}${sender}${reply}${comments}${stats}: ${media}${text || (media ? "" : "(no text)")}`.trimEnd(),
+  ];
+  if (msg.buttons) {
+    lines.push(compactButtons(msg.buttons));
+  }
+  return lines.join("\n");
 }
 
 function compactChat(chat: ChatInfo, previewMax: number): string {
-  const flags = [chat.bot ? 'bot' : '', chat.muted ? 'muted' : '', chat.archived ? 'archived' : ''].filter(Boolean).join(',');
-  const user = chat.username ? ` @${chat.username}` : '';
-  const unread = chat.unreadCount > 0 ? ` unread=${chat.unreadCount}` : '';
-  const preview = chat.lastMessage && previewMax > 0 ? ` | ${oneLine(chat.lastMessage, previewMax)}` : '';
-  const stats = chat.full ? formatStatsSuffix(chat.full) : '';
-  return `${chat.id} ${chat.type}${flags ? ' ' + flags : ''}${unread} ${chat.title}${user}${stats}${preview}`;
+  const flags = [
+    chat.bot ? "bot" : "",
+    chat.muted ? "muted" : "",
+    chat.archived ? "archived" : "",
+  ]
+    .filter(Boolean)
+    .join(",");
+  const user = chat.username ? ` @${chat.username}` : "";
+  const unread = chat.unreadCount > 0 ? ` unread=${chat.unreadCount}` : "";
+  const preview =
+    chat.lastMessage && previewMax > 0
+      ? ` | ${oneLine(chat.lastMessage, previewMax)}`
+      : "";
+  const stats = chat.full ? formatStatsSuffix(chat.full) : "";
+  return `${chat.id} ${chat.type}${flags ? ` ${flags}` : ""}${unread} ${chat.title}${user}${stats}${preview}`;
 }
 
 export function formatChats(chats: ChatInfo[], previewMax = 60): string {
-  if (!isTTY) return chats.map(c => compactChat(c, previewMax)).join('\n');
+  if (!isTTY) {
+    return chats.map((c) => compactChat(c, previewMax)).join("\n");
+  }
   const lines: string[] = [];
 
   for (const chat of chats) {
     const typeIcon = getTypeIcon(chat.type);
-    const unread = chat.unreadCount > 0 ? chalk.red(` (${chat.unreadCount})`) : '';
-    const username = chat.username ? chalk.gray(` @${chat.username}`) : '';
+    const unread =
+      chat.unreadCount > 0 ? chalk.red(` (${chat.unreadCount})`) : "";
+    const username = chat.username ? chalk.gray(` @${chat.username}`) : "";
 
     lines.push(`${typeIcon} ${chalk.bold(chat.title)}${username}${unread}`);
 
     if (chat.lastMessage) {
-      const preview = chat.lastMessage.substring(0, 60).replace(/\n/g, ' ');
-      lines.push(chalk.gray(`   ${preview}${chat.lastMessage.length > 60 ? '...' : ''}`));
+      const preview = chat.lastMessage.slice(0, 60).replaceAll("\n", " ");
+      lines.push(
+        chalk.gray(`   ${preview}${chat.lastMessage.length > 60 ? "..." : ""}`)
+      );
     }
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-export function formatMessages(messages: MessageInfo[], chatTitle?: string, maxText?: number): string {
-  // Times are local: the header names the zone once, so a reader elsewhere does not misread them
+export function formatMessages(
+  messages: MessageInfo[],
+  chatTitle?: string,
+  maxText?: number
+): string {
   const zone = `(times in ${timeZoneLabel()})`;
   if (!isTTY) {
-    const body = messages.map(m => compactMessage(m, maxText, chatTitle)).join('\n');
+    const body = messages
+      .map((m) => compactMessage(m, maxText, chatTitle))
+      .join("\n");
     return chatTitle ? `# ${chatTitle} ${zone}\n${body}` : body;
   }
   const lines: string[] = [];
 
   if (chatTitle) {
-    lines.push(chalk.bold.blue(`\n--- ${chatTitle} ---`) + chalk.gray(` ${zone}\n`));
+    lines.push(
+      chalk.bold.blue(`\n--- ${chatTitle} ---`) + chalk.gray(` ${zone}\n`)
+    );
   }
 
   for (const msg of messages) {
     const time = formatTime(msg.date);
-    const sender = msg.isOutgoing ? chalk.green('You') : chalk.cyan(msg.sender);
-    const reply = msg.replyToMsgId ? chalk.gray(` [reply to #${msg.replyToMsgId}]`) : '';
-    const topic = msg.topicId ? chalk.gray(` [topic ${msg.topicId}]`) : '';
+    const sender = msg.isOutgoing ? chalk.green("You") : chalk.cyan(msg.sender);
+    const reply = msg.replyToMsgId
+      ? chalk.gray(` [reply to #${msg.replyToMsgId}]`)
+      : "";
+    const topic = msg.topicId ? chalk.gray(` [topic ${msg.topicId}]`) : "";
 
-    const stats = msg.full ? chalk.gray(formatStatsSuffix(msg.full)) : '';
+    const stats = msg.full ? chalk.gray(formatStatsSuffix(msg.full)) : "";
     lines.push(`${chalk.gray(time)}${topic} ${sender}${reply}${stats}:`);
     if (msg.media) {
       lines.push(`  ${chalk.magenta(`[${formatMediaLabel(msg.media)}]`)}`);
@@ -209,54 +337,78 @@ export function formatMessages(messages: MessageInfo[], chatTitle?: string, maxT
     if (msg.text) {
       lines.push(`  ${msg.text}`);
     } else if (!msg.media) {
-      lines.push(`  ${chalk.gray('(no text)')}`);
+      lines.push(`  ${chalk.gray("(no text)")}`);
     }
     if (msg.buttons) {
       lines.push(formatButtonLayout(msg.buttons));
     }
-    lines.push(chalk.gray(`  #${msg.id}`));
-    lines.push('');
+    lines.push(chalk.gray(`  #${msg.id}`), "");
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatClickOutcome(o: ClickOutcome): string {
   const lines: string[] = [];
-  lines.push(`${chalk.green('✓ Pressed')} ${chalk.cyan(`[${o.button.index}] ${o.button.text || '(no label)'}`)} ${chalk.gray(`(${o.button.type})`)}`);
+  lines.push(
+    `${chalk.green("✓ Pressed")} ${chalk.cyan(`[${o.button.index}] ${o.button.text || "(no label)"}`)} ${chalk.gray(`(${o.button.type})`)}`
+  );
 
   if (o.answerText) {
-    const tag = o.isAlert ? chalk.yellow('⚠ alert') : chalk.gray('💬 toast');
+    const tag = o.isAlert ? chalk.yellow("⚠ alert") : chalk.gray("💬 toast");
     lines.push(`  ${tag}: ${o.answerText}`);
   }
-  if (o.url) lines.push(`  ${chalk.blue('🔗 url:')} ${o.url}`);
-  if (o.query != null) lines.push(`  ${chalk.gray('inline query:')} ${o.query}`);
-  if (o.copyText) lines.push(`  ${chalk.gray('copy text:')} ${o.copyText}`);
-  if (o.sentMessageId) lines.push(`  ${chalk.gray(`sent message #${o.sentMessageId}`)}`);
-  if (o.note) lines.push(`  ${chalk.gray(o.note)}`);
+  if (o.url) {
+    lines.push(`  ${chalk.blue("🔗 url:")} ${o.url}`);
+  }
+  if (o.query != null) {
+    lines.push(`  ${chalk.gray("inline query:")} ${o.query}`);
+  }
+  if (o.copyText) {
+    lines.push(`  ${chalk.gray("copy text:")} ${o.copyText}`);
+  }
+  if (o.sentMessageId) {
+    lines.push(`  ${chalk.gray(`sent message #${o.sentMessageId}`)}`);
+  }
+  if (o.note) {
+    lines.push(`  ${chalk.gray(o.note)}`);
+  }
 
   if (o.edited) {
-    lines.push('');
-    lines.push(chalk.bold.blue(`↻ Message #${o.edited.id} updated by the bot:`));
-    if (o.edited.text) lines.push(`  ${o.edited.text.replace(/\n/g, '\n  ')}`);
-    if (o.edited.layout) lines.push(formatButtonLayout(o.edited.layout));
+    lines.push(
+      "",
+      chalk.bold.blue(`↻ Message #${o.edited.id} updated by the bot:`)
+    );
+    if (o.edited.text) {
+      lines.push(`  ${o.edited.text.replaceAll("\n", "\n  ")}`);
+    }
+    if (o.edited.layout) {
+      lines.push(formatButtonLayout(o.edited.layout));
+    }
   }
 
   if (o.newMessages?.length) {
-    lines.push('');
-    lines.push(chalk.bold.blue('✉ New bot message(s):'));
+    lines.push("", chalk.bold.blue("✉ New bot message(s):"));
     for (const m of o.newMessages) {
-      if (m.text) lines.push(`  ${m.text.replace(/\n/g, '\n  ')}`);
-      if (m.layout) lines.push(formatButtonLayout(m.layout));
+      if (m.text) {
+        lines.push(`  ${m.text.replaceAll("\n", "\n  ")}`);
+      }
+      if (m.layout) {
+        lines.push(formatButtonLayout(m.layout));
+      }
       lines.push(chalk.gray(`  #${m.id}`));
     }
   }
 
-  if (!o.edited && !o.newMessages?.length && (o.action === 'callback' || o.action === 'game')) {
-    lines.push(chalk.gray('  (no visible change to the message)'));
+  if (
+    !o.edited &&
+    !o.newMessages?.length &&
+    (o.action === "callback" || o.action === "game")
+  ) {
+    lines.push(chalk.gray("  (no visible change to the message)"));
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatContact(contact: {
@@ -271,7 +423,9 @@ export function formatContact(contact: {
 }): string {
   const lines: string[] = [];
 
-  const name = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'Unknown';
+  const name =
+    [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
+    "Unknown";
   lines.push(chalk.bold(name));
 
   if (contact.username) {
@@ -287,16 +441,16 @@ export function formatContact(contact: {
   }
 
   if (contact.isBot) {
-    lines.push(chalk.yellow('Bot'));
+    lines.push(chalk.yellow("Bot"));
   }
 
   if (contact.isMutualContact) {
-    lines.push(chalk.green('Mutual contact'));
+    lines.push(chalk.green("Mutual contact"));
   }
 
   lines.push(chalk.gray(`ID: ${contact.id}`));
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatMembers(
@@ -305,67 +459,89 @@ export function formatMembers(
   const lines: string[] = [];
 
   for (const member of members) {
-    const admin = member.isAdmin ? chalk.yellow(' [admin]') : '';
-    const username = member.username ? chalk.gray(` @${member.username}`) : '';
-    const id = isTTY ? '' : `${member.id} `;
+    const admin = member.isAdmin ? chalk.yellow(" [admin]") : "";
+    const username = member.username ? chalk.gray(` @${member.username}`) : "";
+    const id = isTTY ? "" : `${member.id} `;
     lines.push(`${id}${chalk.bold(member.name)}${username}${admin}`);
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-export function formatInbox(chats: ChatInfo[], previewMax = 50, totals?: { chats: number; unread: number }): string {
-  const unreadChats = chats.filter(c => c.unreadCount > 0);
+export function formatInbox(
+  chats: ChatInfo[],
+  previewMax = 50,
+  totals?: { chats: number; unread: number }
+): string {
+  const unreadChats = chats.filter((c) => c.unreadCount > 0);
 
   if (unreadChats.length === 0) {
-    return chalk.green('No unread messages!');
+    return chalk.green("No unread messages!");
   }
 
   if (!isTTY) {
-    const head = totals && totals.chats > unreadChats.length
-      ? `${totals.unread} unread in ${totals.chats} chats (showing ${unreadChats.length})`
-      : `${unreadChats.reduce((n, c) => n + c.unreadCount, 0)} unread in ${unreadChats.length} chats`;
-    return [head, ...unreadChats.map(c => compactChat(c, previewMax))].join('\n');
+    const head =
+      totals && totals.chats > unreadChats.length
+        ? `${totals.unread} unread in ${totals.chats} chats (showing ${unreadChats.length})`
+        : `${unreadChats.reduce((n, c) => n + c.unreadCount, 0)} unread in ${unreadChats.length} chats`;
+    return [head, ...unreadChats.map((c) => compactChat(c, previewMax))].join(
+      "\n"
+    );
   }
 
   const lines: string[] = [];
-  lines.push(chalk.bold(`\n${unreadChats.length} chats with unread messages:\n`));
+  lines.push(
+    chalk.bold(`\n${unreadChats.length} chats with unread messages:\n`)
+  );
 
-  // The order the inbox command chose (unmuted first)
   for (const chat of unreadChats) {
     const typeIcon = getTypeIcon(chat.type);
-    const muted = chat.muted ? chalk.gray(' (muted)') : '';
-    lines.push(`${typeIcon} ${chalk.bold(chat.title)}: ${chalk.red(chat.unreadCount)} unread${muted}`);
+    const muted = chat.muted ? chalk.gray(" (muted)") : "";
+    lines.push(
+      `${typeIcon} ${chalk.bold(chat.title)}: ${chalk.red(chat.unreadCount)} unread${muted}`
+    );
 
     if (chat.lastMessage && previewMax > 0) {
-      const preview = chat.lastMessage.substring(0, 50).replace(/\n/g, ' ');
-      lines.push(chalk.gray(`   ${preview}${chat.lastMessage.length > 50 ? '...' : ''}`));
+      const preview = chat.lastMessage.slice(0, 50).replaceAll("\n", " ");
+      lines.push(
+        chalk.gray(`   ${preview}${chat.lastMessage.length > 50 ? "..." : ""}`)
+      );
     }
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-export function formatUser(user: { firstName?: string; lastName?: string; username?: string; phone?: string }): string {
-  const name = [user.firstName, user.lastName].filter(Boolean).join(' ');
-  const username = user.username ? chalk.cyan(`@${user.username}`) : '';
-  const phone = user.phone ? chalk.gray(` (${user.phone})`) : '';
+export function formatUser(user: {
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+  phone?: string;
+}): string {
+  const name = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  const username = user.username ? chalk.cyan(`@${user.username}`) : "";
+  const phone = user.phone ? chalk.gray(` (${user.phone})`) : "";
 
   return `${chalk.bold(name)} ${username}${phone}`;
 }
 
-function getTypeIcon(type: ChatInfo['type']): string {
+function getTypeIcon(type: ChatInfo["type"]): string {
   switch (type) {
-    case 'user':
-      return '👤';
-    case 'group':
-      return '👥';
-    case 'supergroup':
-      return '👥';
-    case 'channel':
-      return '📢';
-    default:
-      return '💬';
+    case "user": {
+      return "👤";
+    }
+    case "group": {
+      return "👥";
+    }
+    case "supergroup": {
+      return "👥";
+    }
+    case "channel": {
+      return "📢";
+    }
+    default: {
+      return "💬";
+    }
   }
 }
 
@@ -374,7 +550,10 @@ function formatTime(date: Date): string {
   const isToday = date.toDateString() === now.toDateString();
 
   if (isToday) {
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
 
   const yesterday = new Date(now);
@@ -382,41 +561,51 @@ function formatTime(date: Date): string {
   const isYesterday = date.toDateString() === yesterday.toDateString();
 
   if (isYesterday) {
-    return `Yesterday ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    return `Yesterday ${date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
   }
 
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
 export function formatFolders(folders: FolderInfo[]): string {
   const lines: string[] = [];
 
-  lines.push(chalk.bold(`\n${folders.length} folder${folders.length !== 1 ? 's' : ''}:\n`));
+  lines.push(
+    chalk.bold(
+      `\n${folders.length} folder${folders.length === 1 ? "" : "s"}:\n`
+    )
+  );
 
   for (const folder of folders) {
-    const emoticon = folder.emoticon ? `${folder.emoticon} ` : '📁 ';
+    const emoticon = folder.emoticon ? `${folder.emoticon} ` : "📁 ";
     const chatCount = folder.includedChats.length;
-    lines.push(`${emoticon}${chalk.bold(folder.title)} ${chalk.gray(`(${chatCount} chat${chatCount !== 1 ? 's' : ''})`)}`);
+    lines.push(
+      `${emoticon}${chalk.bold(folder.title)} ${chalk.gray(`(${chatCount} chat${chatCount === 1 ? "" : "s"})`)}`
+    );
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatFolder(folder: FolderInfo): string {
   const lines: string[] = [];
 
-  const emoticon = folder.emoticon ? `${folder.emoticon} ` : '📁 ';
+  const emoticon = folder.emoticon ? `${folder.emoticon} ` : "📁 ";
   lines.push(chalk.bold(`\n${emoticon}${folder.title}\n`));
 
   if (folder.includedChats.length === 0) {
-    lines.push(chalk.gray('  No chats in this folder'));
+    lines.push(chalk.gray("  No chats in this folder"));
   } else {
-    lines.push(chalk.gray(`  ${folder.includedChats.length} chat${folder.includedChats.length !== 1 ? 's' : ''}:\n`));
+    lines.push(
+      chalk.gray(
+        `  ${folder.includedChats.length} chat${folder.includedChats.length === 1 ? "" : "s"}:\n`
+      )
+    );
 
     for (const chat of folder.includedChats) {
       const typeIcon = getFolderChatIcon(chat.type);
@@ -424,19 +613,23 @@ export function formatFolder(folder: FolderInfo): string {
     }
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 function getFolderChatIcon(type: string): string {
   switch (type) {
-    case 'user':
-      return '👤';
-    case 'group':
-    case 'supergroup':
-      return '👥';
-    case 'channel':
-      return '📢';
-    default:
-      return '💬';
+    case "user": {
+      return "👤";
+    }
+    case "group":
+    case "supergroup": {
+      return "👥";
+    }
+    case "channel": {
+      return "📢";
+    }
+    default: {
+      return "💬";
+    }
   }
 }
