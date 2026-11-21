@@ -1,6 +1,3 @@
-// Fake release assets for installer tests (install.sh now, install.ps1 later): archives laid out
-// like scripts/build-binary.sh makes them, holding a tiny `telegram` script instead of the real
-// binary, plus SHA256SUMS in the `sha256sum` format the release workflow writes.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -23,17 +20,19 @@ export const assetName = (version: string, target: string, ext: string) =>
 
 export type ArchiveFormat = "tar.gz" | "tar.xz";
 
+/**
+ * - `reports`: What the fake binary prints for --version (default: the release version)
+ * - `versionExit`: Exit status of the fake binary's --version (default 0)
+ * - `unlisted`: Asset names left out of SHA256SUMS
+ * - `tampered`: Asset names whose bytes change after SHA256SUMS was written
+ */
 export interface ReleaseFixtureOptions {
   version: string;
   targets: string[];
   formats: ArchiveFormat[];
-  /** What the fake binary prints for --version (default: the release version) */
   reports?: string;
-  /** Exit status of the fake binary's --version (default 0) */
   versionExit?: number;
-  /** Asset names left out of SHA256SUMS */
   unlisted?: string[];
-  /** Asset names whose bytes change after SHA256SUMS was written */
   tampered?: string[];
 }
 
@@ -49,7 +48,6 @@ const isBsdTar = () =>
 export const canMakeXz = () => has("xz") || isBsdTar();
 
 export function fakeTelegram(reports: string, versionExit = 0): string {
-  // printf, not echo: dash's echo would expand backslashes. `reports` holds no single quote
   return `#!/bin/sh\nif [ "$1" = --version ]; then printf '%s\\n' '${reports}'; exit ${versionExit}; fi\necho "fake telegram $*"\n`;
 }
 

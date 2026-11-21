@@ -36,7 +36,6 @@ function computeSchedule(value: string): number {
   );
 }
 
-/** A schedule date is an `int` (Unix seconds): past that it would be some other date. */
 function inIntRange(epoch: number, value: string): number {
   if (!Number.isSafeInteger(epoch) || epoch > INT32_MAX) {
     throw new InvalidArgumentError(`--schedule ${value} is too far ahead.`);
@@ -44,7 +43,6 @@ function inIntRange(epoch: number, value: string): number {
   return epoch;
 }
 
-/** --schedule is checked while parsing (exit 2, before the write guard) and resolved when sending. */
 function scheduleArg(value: string): string {
   parseScheduleToEpoch(value);
   return value;

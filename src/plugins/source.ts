@@ -81,17 +81,19 @@ export type ResolvedSource =
     }
   | { type: "local"; path: string };
 
+/**
+ * - `revision`: Commit SHA for GitHub, `sha256-…` of the content for a folder
+ * - `files`: Every file of `files`, as read once: these bytes are hashed, checked and written
+ * - `officialNote`: Why a source of an official owner is not marked official (its commit is on none of their branches or tags)
+ */
 export interface Snapshot {
   source: ResolvedSource;
-  /** Commit SHA for GitHub, `sha256-…` of the content for a folder */
   revision: string;
   manifest: Manifest;
   specVersion: string;
-  /** Every file of `files`, as read once: these bytes are hashed, checked and written */
   files: Map<string, Uint8Array>;
   hashes: Record<string, string>;
   official: boolean;
-  /** Why a source of an official owner is not marked official (its commit is on none of their branches or tags) */
   officialNote?: string;
   bytes: number;
 }
@@ -191,7 +193,6 @@ function finish(
   if (problems.length) {
     throw invalidPlugin(problems);
   }
-  // No prototype: a file called __proto__ or constructor is an ordinary own key
   const hashes = Object.create(null) as Record<string, string>;
   let bytes = 0;
   for (const [p, b] of files) {
@@ -212,13 +213,6 @@ function finish(
 
 const tooLarge = (what: string) => invalidPlugin([what]);
 
-// ---------- local folder ----------
-
-/**
- * Reads one listed file of a folder through safe-fs: every segment must exist with exactly this
- * case and be a real folder or a regular file, never a symbolic link or a junction; the file is
- * read from a descriptor checked to be the file the walk saw (a folder swapped meanwhile is caught).
- */
 function readLocalFile(
   root: string,
   rel: string,
@@ -316,8 +310,6 @@ export function readLocalSnapshot(
     cliVersion
   );
 }
-
-// ---------- GitHub ----------
 
 export const GITHUB_API = "https://api.github.com";
 export type Fetch = (
@@ -549,7 +541,6 @@ export async function fetchGithubSnapshot(
   }
   const manifestBytes = await blob(manifestEntry, MANIFEST_FILE);
   const { manifest } = checkSnapshotFiles(manifestBytes, cliVersion);
-  // Sizes from the trees first: nothing large is downloaded
   const entries = new Map<string, TreeEntry>();
   let total = 0;
   for (const rel of manifest.files) {
@@ -571,8 +562,6 @@ export async function fetchGithubSnapshot(
   for (const [rel, e] of entries) {
     files.set(rel, rel === MANIFEST_FILE ? manifestBytes : await blob(e, rel));
   }
-  // An official owner's repository serves commits of every fork in its network too: official only
-  // when the commit is on one of its own branches or tags
   let official = false;
   let officialNote: string | undefined;
   if (OFFICIAL_OWNERS.includes(owner)) {
@@ -604,11 +593,6 @@ export async function fetchGithubSnapshot(
   return officialNote ? { ...snap, officialNote } : snap;
 }
 
-/**
- * Whether the repository at `base` itself published commit `sha`: the ref named at install is one of
- * its branches or tags (annotated tags peeled) pointing at it, or the commit is in the history of its
- * default branch (compare: identical or behind). Any other answer or error means no.
- */
 async function publishedBy(
   fetchImpl: Fetch,
   base: string,

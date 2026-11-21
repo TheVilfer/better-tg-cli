@@ -121,20 +121,21 @@ export const PERMISSION_TEXT: Record<Permission, string> = {
     "propose messages or reactions that you confirm before they are sent",
 };
 
-/** Effects a command declares, the permissions they need. */
 const EFFECT_NEEDS: Record<Effect, Permission> = {
   storage: "storage:write",
   network: "network",
   actions: "actions",
 };
 
+/**
+ * - `specVersion`: The spec version (date) the manifest is written for, when its $schema could be read
+ * - `errors`: Problems with the manifest itself: the plugin is invalid
+ * - `unsupported`: The plugin is valid for another CLI or spec version: `plugin_unsupported`
+ */
 export interface ManifestCheck {
   manifest?: Manifest;
-  /** The spec version (date) the manifest is written for, when its $schema could be read */
   specVersion?: string;
-  /** Problems with the manifest itself: the plugin is invalid */
   errors: string[];
-  /** The plugin is valid for another CLI or spec version: `plugin_unsupported` */
   unsupported?: string;
 }
 
@@ -272,7 +273,6 @@ export function fileListProblems(files: string[]): string[] {
       out.push(`files: "${f}" and "${prev}" differ only in case`);
     }
   }
-  // Folders too: "Templates/a.md" and "templates/b.md" would share one folder on a case-insensitive disk
   const dirs = new Map<string, string>();
   for (const f of lower.values()) {
     const parts = f.split("/");

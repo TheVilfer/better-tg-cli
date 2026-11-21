@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { configDir, configFile, secretPrefix } from "../src/paths.js";
 
-// macOS and Linux keep ~/.config/tg; Windows uses %APPDATA%\\tg
 const base =
   process.platform === "win32" && process.env.APPDATA
     ? process.env.APPDATA
@@ -53,6 +52,6 @@ describe("Windows config dir", () => {
     expect(configDir({ APPDATA: "C:\\x" }, "darwin")).toBe(
       join(homedir(), ".config", "tg")
     );
-    expect(configDir({}, "win32")).toBe(join(homedir(), ".config", "tg")); // no APPDATA: fall back
+    expect(configDir({}, "win32")).toBe(join(homedir(), ".config", "tg"));
   });
 });

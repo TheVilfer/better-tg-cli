@@ -16,11 +16,6 @@ import { formatInboxMarkdown } from "../formatters/markdown.js";
 import { formatInbox, truncate } from "../formatters/plain.js";
 import ora from "../spinner.js";
 
-/**
- * Where a chat stands in the inbox: people first, then bots, then groups and channels, muted chats
- * last (a muted supergroup with a huge counter is rarely what the user reads first). Most unread
- * first within each.
- */
 function inboxRank(chat: ChatInfo): number {
   if (chat.muted) {
     return 3;

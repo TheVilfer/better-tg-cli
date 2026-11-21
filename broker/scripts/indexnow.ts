@@ -1,8 +1,4 @@
 #!/usr/bin/env bun
-// Tell IndexNow (Bing, Yandex, Seznam, Naver) that the pages changed. Run after `npx wrangler deploy`:
-//   bun scripts/indexnow.ts            → submits every page in every language
-//   bun scripts/indexnow.ts --dry-run  → prints the request instead
-// The key is public by design: the Worker serves it at https://better-tg-cli.com/<key>.txt.
 import { INDEXNOW_KEY, PAGE_URLS, SITE } from "../src/seo";
 
 const body = {
@@ -20,7 +16,6 @@ const res = await fetch("https://api.indexnow.org/indexnow", {
   headers: { "content-type": "application/json; charset=utf-8" },
   body: JSON.stringify(body),
 });
-// 200 and 202 both mean accepted (202: the key is still being checked)
 console.log(
   `IndexNow: ${res.status} ${res.statusText} for ${PAGE_URLS.length} URLs`
 );

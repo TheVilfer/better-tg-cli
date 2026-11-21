@@ -66,7 +66,6 @@ export type SkillState =
   | { kind: "outdated" }
   | { kind: "missing" }
   | { kind: "linked"; target: string }
-  /** A symlink whose target is gone: the agent has no skill, whatever the link says */
   | { kind: "broken-link"; target: string }
   | { kind: "foreign" };
 
@@ -85,7 +84,6 @@ function lstat(path: string) {
   }
 }
 
-/** A real folder whose SKILL.md names this skill; anything else there isn't ours to replace. */
 function isOurFolder(path: string): boolean {
   try {
     return /^name:\s*better-tg-cli\s*$/m.test(
@@ -108,7 +106,6 @@ export function skillState(path: string): SkillState {
     return { kind: "missing" };
   }
   if (st.isSymbolicLink()) {
-    // existsSync follows the link: false means it points at nothing
     return {
       kind: existsSync(path) ? "linked" : "broken-link",
       target: readlinkSync(path),
@@ -124,7 +121,6 @@ export function skillState(path: string): SkillState {
       return false;
     }
   });
-  // lstat, not existsSync: a broken link left under a retired name still makes the copy outdated
   const retired = RETIRED_SKILL_FILES.some(
     (file) => !(file in SKILL_FILES) && lstat(join(path, file)) !== undefined
   );
@@ -187,7 +183,7 @@ export function installSkill(
         reason: `${what}; --force replaces the link with a copy`,
       };
     }
-    unlinkSync(path); // the link only, never what it points at
+    unlinkSync(path);
   }
   if (state.kind === "foreign") {
     return {
@@ -197,8 +193,6 @@ export function installSkill(
       reason: "something else lives there; not touching it",
     };
   }
-  // writeFileSync follows a symlink inside our folder too, so every target is checked before the
-  // first write: one that is a link (or not a regular file) stops the whole update
   const blocked = Object.keys(SKILL_FILES).filter((file) => {
     const st = lstat(join(path, file));
     return st !== undefined && !st.isFile();
@@ -215,7 +209,6 @@ export function installSkill(
   for (const [file, content] of Object.entries(SKILL_FILES)) {
     writeFileSync(join(path, file), content);
   }
-  // Only in our own real folder (a link was replaced above): drop what this version no longer ships
   for (const file of RETIRED_SKILL_FILES) {
     if (!(file in SKILL_FILES)) {
       rmSync(join(path, file), { force: true });

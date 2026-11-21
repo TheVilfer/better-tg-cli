@@ -52,7 +52,7 @@ describe("api method resolution", () => {
   it("rejects non-requests and typos", () => {
     expect(() => resolveApiMethod("messages.Nope")).toThrow(/not a request/);
     expect(() => resolveApiMethod("nope.Thing")).toThrow(/Unknown namespace/);
-    expect(() => resolveApiMethod("messages.Dialogs")).toThrow(/not a request/); // a constructor, not a method
+    expect(() => resolveApiMethod("messages.Dialogs")).toThrow(/not a request/);
     expect(() => resolveApiMethod("")).toThrow(/Specify a method/);
   });
 });
@@ -95,7 +95,6 @@ describe("api refusals", () => {
   });
 
   it("refuses every wrapper request, so a refused method cannot ride inside one", () => {
-    // Every top-level request with an `X` (any request) argument, straight from the schema
     const wrappers = (
       apiDefinitions as unknown as {
         name: string;
@@ -115,7 +114,6 @@ describe("api refusals", () => {
     for (const w of wrappers) {
       expect(apiRefusalReason(w), w).toMatch(/wrapper/);
     }
-    // Teleproto builds the inner request from plain JSON, so the body is checked too
     expect(
       apiRefusalReason("messages.SendMessage", {
         message: "x",
@@ -270,7 +268,6 @@ describe("api hardening: hard refusals", () => {
         addPhonePrivacyException: true,
       })
     ).toMatch(/phone/i);
-    // The same methods are fine without the sensitive payload.
     expect(
       apiRefusalReason("messages.SendMedia", {
         media: { className: "InputMediaUploadedPhoto" },
@@ -309,7 +306,6 @@ describe("MCP routing of the api command", () => {
     expect(
       planCall("telegram_write", { args: ["api", "messages.GetHistory"] })
     ).toMatch(/use telegram_read/);
-    // A read off the MCP allowlist is refused on both tools
     expect(
       planCall("telegram_read", { args: ["api", "help.GetConfig"] })
     ).toMatch(/not available over MCP/);
@@ -322,7 +318,6 @@ describe("MCP routing of the api command", () => {
     expect(planCall("telegram_read", { args: ["api"] })).toMatch(
       /needs a method/
     );
-    // Hardened refusals are rejected by the read tool even though some are named like reads.
     expect(
       planCall("telegram_read", { args: ["api", "auth.CheckPassword"] })
     ).toMatch(/login|session/i);
@@ -332,19 +327,16 @@ describe("MCP routing of the api command", () => {
     expect(
       planCall("telegram_write", { args: ["api", "account.SetPrivacy"] })
     ).toMatch(/privacy/i);
-    // A reclassified side-effecting read is a write, not a read.
     expect(
       planCall("telegram_read", {
         args: ["api", "messages.GetBotCallbackAnswer"],
       })
     ).toMatch(/use telegram_write/);
-    // So is an inline query: the bot gets the query and the user's ID
     expect(
       planCall("telegram_read", {
         args: ["api", "messages.GetInlineBotResults"],
       })
     ).toMatch(/use telegram_write/);
-    // GetMessagesViews is a read; the CLI refuses increment over MCP
     expect(
       planCall("telegram_read", { args: ["api", "messages.GetMessagesViews"] })
     ).toMatchObject({ readOnly: true });
@@ -366,8 +358,6 @@ describe("api: paid reads and login tokens", () => {
     expect(isApiReadCall("contacts.Block", {})).toBe(false);
   });
 
-  // An unconfigured profile, as MCP runs it (TG_READ_ONLY for the read tool, TG_MCP for every call):
-  // the paid call must stop before any connection (otherwise it fails later with "not configured")
   const run = (args: string[], extra: Record<string, string>) =>
     spawnSync(process.execPath, [...cliArgs(), ...args], {
       encoding: "utf-8",
@@ -420,7 +410,6 @@ describe("api: paid reads and login tokens", () => {
     "in a terminal a paid search stays a write behind the write guard: %j",
     (args) => {
       const r = run(args, {});
-      // 4: write access is off on this fresh profile; 1: no secret store to read the mode from
       expect([1, 4]).toContain(r.status);
       expect(r.stderr).not.toMatch(/Refused over MCP/);
       expect(r.stderr).toMatch(/Write access|secret store/);
@@ -452,7 +441,6 @@ describe("api: paid reads and login tokens", () => {
           Object.create({ allowPaidStars: 5 })
         )
       ).toBeNull();
-      // A paid message, media or forward spends Stars too: refused over MCP like a paid search
       for (const m of [
         "messages.SendMessage",
         "messages.SendMedia",
@@ -478,7 +466,6 @@ describe("api: paid reads and login tokens", () => {
     }
   });
 
-  // A JSON "__proto__" key must not turn into an inherited allowPaidStars after the checks
   const PROTO = '{"query":"x","__proto__":{"allowPaidStars":5}}';
 
   it("plainParams builds prototype-free objects, so no field is inherited", () => {
@@ -559,7 +546,6 @@ describe("api: paid reads and login tokens", () => {
           allowPaidStars: 5,
         })
       ).rejects.toThrow(/Refused over MCP/);
-      // Coordinates for an inline bot are refused on the built request in every mode
       delete process.env.TG_MCP;
       await expect(
         invokeApi(client, "messages.GetInlineBotResults", {

@@ -7,15 +7,10 @@ import type { Spinner } from "./spinner.js";
  */
 export const EXIT = {
   OK: 0,
-  /** Anything that went wrong at run time: Telegram refused, the network failed, chat not found … */
   ERROR: 1,
-  /** The command line itself is wrong: unknown option, a value that does not parse, an ambiguous name */
   USAGE: 2,
-  /** A write in mode "ask" waits for the user's yes (src/guard.ts) */
   NEEDS_APPROVAL: 3,
-  /** Write access is off for this profile */
   WRITE_DISABLED: 4,
-  /** No login on this profile, or Telegram ended the session */
   NOT_LOGGED_IN: 5,
 } as const;
 
@@ -32,12 +27,15 @@ export const EXIT_CODES_HELP = [
   '(exit 3 prints its own {"error":"approval_required",...} line).',
 ].join("\n");
 
-/** A chat offered when a name matched several chats or none. */
+/**
+ * A chat offered when a name matched several chats or none.
+ *
+ * - `command`: The caller's own command again with this chat's ID in place of the name (argv without "telegram")
+ */
 export interface ChatCandidate {
   id: string;
   title: string;
   type: string;
-  /** The caller's own command again with this chat's ID in place of the name (argv without "telegram") */
   command?: string[];
 }
 
@@ -54,23 +52,22 @@ export function shellCommand(argv: string[]): string {
   ].join(" ");
 }
 
+/**
+ * - `code`: Stable snake_case id an agent can branch on
+ * - `message`: One line, without the candidate list or the hint
+ * - `hint`: The next step in words (a fixed command may be quoted in it)
+ * - `command`: A ready `telegram` command to run next, as argv without "telegram", built from the caller's own text: run it as is, never through a shell. The hint names the same command in shell form.
+ * - `listedAt`: When the candidates came from the dialog list on disk: the time that list was read (ISO)
+ * - `fields`: More fields of this error's JSON, after the ones above (a plugin run: `limit`, `cursor`, `partial`, `issues`)
+ */
 export interface ErrorDetails {
-  /** Stable snake_case id an agent can branch on */
   code: string;
-  /** One line, without the candidate list or the hint */
   message: string;
-  /** The next step in words (a fixed command may be quoted in it) */
   hint?: Hint;
-  /**
-   * A ready `telegram` command to run next, as argv without "telegram", built from the caller's own
-   * text: run it as is, never through a shell. The hint names the same command in shell form.
-   */
   command?: string[];
   candidates?: ChatCandidate[];
   retryAfterSeconds?: number;
-  /** When the candidates came from the dialog list on disk: the time that list was read (ISO) */
   listedAt?: string;
-  /** More fields of this error's JSON, after the ones above (a plugin run: `limit`, `cursor`, `partial`, `issues`) */
   fields?: Record<string, unknown>;
 }
 
@@ -310,7 +307,6 @@ export function errorJson(details: ErrorDetails): string {
  * and the error text on stderr.
  */
 export function fail(error: unknown, spinner?: Spinner, label?: string): never {
-  // A process.exit() already on its way (see installDrainingExit): its code stands
   if (error instanceof ExitSignal) {
     throw error;
   }
@@ -364,7 +360,6 @@ export function installDrainingExit(): void {
       const waiting = [process.stdout, process.stderr].filter(
         (s) => !s.destroyed && !s.writableEnded && s.writableLength > 0
       );
-      // Nothing buffered: exit now, as before (a later tick could still load modules and print warnings)
       if (!waiting.length) {
         realExit();
       }
@@ -379,16 +374,13 @@ export function installDrainingExit(): void {
     }
     throw new ExitSignal();
   }) as typeof process.exit;
-  // An exit requested from a callback or a promise nobody awaits is not an error
   process.on("uncaughtException", (error) => {
     if (error instanceof ExitSignal) {
       return;
     }
     try {
       fail(error);
-    } catch {
-      /* the ExitSignal of fail()'s own exit */
-    }
+    } catch {}
   });
   process.on("unhandledRejection", (error) => {
     if (error instanceof ExitSignal) {
@@ -396,8 +388,6 @@ export function installDrainingExit(): void {
     }
     try {
       fail(error);
-    } catch {
-      /* the ExitSignal of fail()'s own exit */
-    }
+    } catch {}
   });
 }

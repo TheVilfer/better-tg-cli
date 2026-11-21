@@ -6,16 +6,16 @@ import { basename, resolve } from "node:path";
  * The bytes of a local file as this process first read them. The write guard hashes a file an
  * approval covers from this snapshot, and the upload sends the same snapshot: the path is never
  * opened again after the check, so a file replaced or edited in between cannot change what goes out.
+ *
+ * - `path`: The real path the bytes were read from
+ * - `name`: The name Telegram shows (the last part of the path as given)
  */
 export interface FileSnapshot {
-  /** The real path the bytes were read from */
   path: string;
-  /** The name Telegram shows (the last part of the path as given) */
   name: string;
   bytes: Buffer;
 }
 
-/** By the absolute path as given: a symlink retargeted after the first read must not lead to other bytes */
 const taken = new Map<string, FileSnapshot>();
 
 /** Reads the file once per process (by the path as given, made absolute); throws a readable error when it can't. */
@@ -53,10 +53,6 @@ export function fileSnapshot(path: string): FileSnapshot {
   return snap;
 }
 
-/**
- * After an approval that covers files: from now on only those snapshots exist, and a path the
- * approval did not read is refused instead of read (the write can only send what was approved).
- */
 let sealed = false;
 export function sealFileSnapshots(): void {
   sealed = true;

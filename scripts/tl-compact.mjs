@@ -1,11 +1,7 @@
-// Re-encode teleproto's generated TL schema (tl/generated/api-definitions.js, ~1.8 MB of
-// verbose JSON) into a compact module that rebuilds the identical array at load time.
-// Used by scripts/bundle.mjs; test/tl-compact.test.ts checks the round trip is exact.
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 
-// Arg flag bits
 const FLAG_INDICATOR = 8;
 const IS_FLAG = 2;
 const IS_VECTOR = 1;
@@ -73,7 +69,6 @@ export function encodeDefinitions(defs) {
   return { strings, rows };
 }
 
-// Decoder source, shared by the generated module and the test
 export const DECODER = `function decodeDefinitions(S, R) {
   var F = [null, "flags", "flags2"];
   return R.map(function (r) {

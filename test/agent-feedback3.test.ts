@@ -25,9 +25,6 @@ import { saveWorld, seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
 
-// Feedback of an outside agent on 0.40.0-rc.3 (a real account): the cache works, but inbox read the
-// dialog list on its own right after a read had filled the cache (a 13 s FLOOD_WAIT), the
-// chat_not_found command dropped --json, and the cache line hid in teleproto's debug output.
 const dir = mkdtempSync(join(tmpdir(), "tg-agent-feedback3-"));
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -41,7 +38,6 @@ function worldFile(extra: (w: MockWorld) => void = () => {}): string {
   return file;
 }
 
-/** 600 more chats, older than the seed: inbox's first page of 500 is cut. */
 function crowded(w: MockWorld): void {
   for (let i = 0; i < 600; i++) {
     w.chats.push({
@@ -72,7 +68,6 @@ describe("1 inbox and chats share the dialog list with chat lookup", () => {
     await disconnectClient();
     const saved = JSON.parse(readFileSync(dialogCachePath(), "utf-8"));
     expect(saved.complete).toBe(true);
-    // Only what names a chat: no counters, no message text
     expect(
       Object.keys(saved.chats[0]).every((k) =>
         ["id", "title", "username", "type", "accessHash"].includes(k)
@@ -155,7 +150,6 @@ describe("1 inbox and chats share the dialog list with chat lookup", () => {
     const first = fetches.mock.calls.length;
     await getDialogs(client, 500, { archived: true });
     expect(fetches).toHaveBeenCalledTimes(first + 1);
-    // Unread counters stay live: a list read more than a few seconds ago is not reused
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now + 60_000);
     try {
@@ -167,7 +161,6 @@ describe("1 inbox and chats share the dialog list with chat lookup", () => {
   });
 });
 
-// A child process on the mock, as an agent runs the CLI
 const home = mkdtempSync(join(tmpdir(), "tg-agent-feedback3-home-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -192,7 +185,6 @@ function cli(args: string[], state: string, extra: NodeJS.ProcessEnv = {}) {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  // Node's own warnings (a localStorage notice on some versions) are not the CLI's output
   const err = r.stderr
     .replace(/^MOCK MODE.*\n/m, "")
     .replaceAll(/^\(node:\d+\) .*\n(\(Use `node --trace-warnings.*\n)?/gm, "");

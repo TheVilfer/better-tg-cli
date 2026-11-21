@@ -15,7 +15,6 @@ function getOpBinary(): string | null {
     return opBinaryPath;
   }
   try {
-    // `where` lists every match on Windows; take the first
     opBinaryPath = execSync(
       process.platform === "win32" ? "where op" : "which op",
       {
@@ -37,29 +36,23 @@ function resolveVault(): string | null {
     return resolvedVault;
   }
 
-  // Env var takes precedence
   const envVault = process.env.TG_OP_VAULT;
   if (envVault) {
     resolvedVault = envVault;
     return resolvedVault;
   }
 
-  // Fall back to config file (read directly to avoid circular dep with config.ts)
   try {
     const configPath = configFile("config.json5");
     if (existsSync(configPath)) {
       const raw = readFileSync(configPath, "utf-8");
-      // Use dynamic import to avoid bundling JSON5 parse at module level
-      // Simple extraction: look for opVault field
       const match = raw.match(/["']?opVault["']?\s*:\s*["']([^"']+)["']/);
       if (match) {
         resolvedVault = match[1];
         return resolvedVault;
       }
     }
-  } catch {
-    // Config unreadable — no vault
-  }
+  } catch {}
 
   resolvedVault = "";
   return null;
@@ -234,9 +227,7 @@ export function opSet(key: string, value: string): boolean {
       item = JSON.parse(
         run(["item", "get", name, "--vault", vault, "--format", "json"])
       );
-    } catch {
-      // Item doesn't exist
-    }
+    } catch {}
 
     if (item) {
       const fields = item.fields ?? [];

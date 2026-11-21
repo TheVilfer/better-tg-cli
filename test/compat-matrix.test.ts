@@ -21,7 +21,6 @@ import {
 } from "../src/clients/matrix.js";
 import { knownAgents } from "../src/skill-install.js";
 
-// The clients issue #109 names, by id. Adding one is fine; dropping one should be a decision.
 const ISSUE_CLIENTS = [
   "claude-code",
   "claude-desktop",
@@ -51,13 +50,11 @@ const byId = (id: string) => CLIENTS.find((c) => c.id === id)!;
 const at = (version: string) =>
   ({ level: "live", version, date: "2026-11-20" }) as const;
 const LIVE = at("9.9.9");
-/** The cell with a live entry added. */
 const live = <T extends { evidence: unknown[] }>(c: T) => ({
   ...c,
   evidence: [...c.evidence, LIVE],
 });
 
-/** A copy of a real record with every outcome cell given a live entry (or with `patch` on top). */
 function withLive(
   base: ClientRecord,
   patch: Partial<ClientRecord> = {}
@@ -118,7 +115,6 @@ describe("compatibility matrix", () => {
 
   it('a live entry on elicitation or on a read that is not "works" does not make a client supported', () => {
     const base = byId("codex");
-    // Install, read and the advertised form seen live, but no write was approved or refused live
     const formOnly: ClientRecord = {
       ...base,
       install: live(base.install),
@@ -133,13 +129,11 @@ describe("compatibility matrix", () => {
       false
     );
     expect(statusOf(formOnly)).toBe("untested");
-    // Every outcome cell live, but reading was blocked
     const blocked = withLive(base, {
       read: { value: "blocked", evidence: [LIVE] },
     });
     expect(validate([blocked])).toEqual([]);
     expect(statusOf(blocked)).toBe("untested");
-    // A live approval does not carry over to a derived refusal
     const approvalOnly = withLive(base);
     delete approvalOnly.refusal;
     expect(statusOf(approvalOnly)).toBe("untested");
@@ -147,7 +141,6 @@ describe("compatibility matrix", () => {
 
   it("checks seen live in different configurations do not add up to supported", () => {
     const base = byId("opencode");
-    // Install and read live in V1 and V2, approval only in V1, refusal only in V2 (cases)
     const byCase: ClientRecord = {
       ...base,
       install: {
@@ -179,7 +172,6 @@ describe("compatibility matrix", () => {
     };
     expect(validate([byCase])).toEqual([]);
     expect(statusOf(byCase)).toBe("untested");
-    // The same on plain cells: the live entries name different client versions
     const byVersion: ClientRecord = {
       ...base,
       install: { value: "config", evidence: [at("1.19.6"), at("2.0.0")] },
@@ -189,14 +181,12 @@ describe("compatibility matrix", () => {
     };
     expect(validate([byVersion])).toEqual([]);
     expect(statusOf(byVersion)).toBe("untested");
-    // One version that passed all four is enough
     expect(
       statusOf({
         ...byVersion,
         refusal: { value: "chat", evidence: [at("1.19.6")] },
       })
     ).toBe("supported");
-    // Every configuration must pass all four in one version
     const bothCases: ClientRecord = {
       ...byCase,
       approval: {
@@ -237,7 +227,6 @@ describe("compatibility matrix", () => {
         approval: { value: patch.approval ?? "G1", evidence: [LIVE] },
         refusal: { value: patch.refusal ?? "refused", evidence: [LIVE] },
       }) as ClientRecord;
-    // The record from the review: validate() accepts it, and it must not count as supported
     const naOutcomes = allLive({ approval: "n/a", refusal: "n/a" });
     expect(validate([naOutcomes])).toEqual([]);
     expect(statusOf(naOutcomes)).toBe("untested");
@@ -248,14 +237,12 @@ describe("compatibility matrix", () => {
     expect(statusOf(allLive({ install: "n/a" }))).toBe("untested");
     expect(statusOf(allLive({ approval: "unknown" }))).toBe("untested");
     expect(statusOf(allLive({ refusal: "n/a" }))).toBe("untested");
-    // The refusal must be the one the approval level gives
     expect(statusOf(allLive({ approval: "G1", refusal: "chat" }))).toBe(
       "untested"
     );
     expect(statusOf(allLive({ approval: "G2", refusal: "refused" }))).toBe(
       "untested"
     );
-    // Per configuration: one case with n/a outcomes fails the client
     const perCase: ClientRecord = {
       ...allLive({}),
       approval: {
@@ -365,7 +352,6 @@ describe("compatibility matrix", () => {
     expect(refusalOf(byId("aside")).value).toBe("chat");
     expect(approvalOf(byId("amp")).value).toBe("unknown");
     expect(approvalOf(byId("chatgpt")).value).toBe("unknown");
-    // claude.ai reaches only `telegram mcp --http`, which never elicits
     expect(approvalOf(byId("claude-ai")).value).toBe("G2");
   });
 
@@ -382,7 +368,6 @@ describe("compatibility matrix", () => {
       oc.a.V2.value,
       oc.r.V2.value,
     ]).toEqual(["G2", "chat", "G1", "refused"]);
-    // V1's source backs only V1's cells
     expect(
       oc.r.V2.evidence.some((e) => "ref" in e && e.ref?.includes("v1.19.6"))
     ).toBe(false);
@@ -399,7 +384,6 @@ describe("compatibility matrix", () => {
     expect(row("claude-code")).toContain(
       "| stdio (`claude mcp add`): G1 (doc); plugin: G2 (doc) | stdio (`claude mcp add`): refused (doc); plugin: chat (doc) |"
     );
-    // Autopilot gets the form (G1) but answers it itself: what that does to the write is unknown
     expect(row("github-copilot")).toContain(
       "| interactive: G1 (doc); Autopilot: G1 (doc) | interactive: refused (doc); Autopilot: ? |"
     );
@@ -407,7 +391,6 @@ describe("compatibility matrix", () => {
     expect(casesOf(approvalOf(byId("github-copilot")))[1].note).toMatch(
       /instead of the human/
     );
-    // HTTP depends on whether the organization is in the static_headers beta
     expect(row("claude-ai")).toContain(
       "| org in the `static_headers` beta: bearer (doc); other organizations: oauth-only (doc) |"
     );
@@ -441,7 +424,6 @@ describe("compatibility matrix", () => {
     expect(renderCompatibility()).toMatch(
       /Where write approval, refusal, headless and sandbox name no route/
     );
-    // G1 means the client got the form, not that a human answered it
     expect(approvalOf(byId("codex")).note).toMatch(/auto_review/);
     expect(renderCompatibility()).toMatch(
       /The server checks the answer, not who gave it/
@@ -476,7 +458,6 @@ describe("compatibility matrix", () => {
     expect(validate([ideGuess]).join("\n")).toMatch(
       /kiro\.read \[IDE\]: "expected" while its stdio environment is unknown/
     );
-    // A flat "expected" is rejected when any configuration's environment is unknown
     expect(
       validate([
         {
@@ -534,7 +515,6 @@ describe("compatibility matrix", () => {
     expect(warp).toMatch(/CLI \(macOS\) `~\/\.warp_cli\/\.mcp\.json`/);
     expect(byId("aside").stdioEnv.value).toBe("unknown");
     expect(byId("hermes").elicitation.value).toBe("form+url");
-    // A Linux Flatpak build matches only the unknown case
     expect(
       casesOf(byId("goose").gui).map((k) => `${k.when}=${k.value}`)
     ).toEqual([
@@ -556,7 +536,6 @@ describe("compatibility matrix", () => {
   });
 
   it("the update notice is unknown per client, and the note says when it can appear", () => {
-    // Not seeing the notice is an observation too: both values need a live run
     for (const value of ["none", "shown"] as const) {
       const guess = {
         ...byId("codex"),

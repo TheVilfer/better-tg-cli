@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Print the Homebrew formula for a release from its SHA256SUMS file.
-// Usage: node scripts/homebrew-formula.mjs <version> <SHA256SUMS path>
 import { readFileSync } from "node:fs";
 
 const [version, sumsPath] = process.argv.slice(2);

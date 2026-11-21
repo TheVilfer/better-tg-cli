@@ -1,7 +1,3 @@
-// install.sh against local fixture archives: no network. A curated PATH holds symlinks to the real
-// tools the script uses plus fake `uname`, `curl` and `wget`; the fakes serve files only for the
-// pinned release URL, so the test also proves which tag the script asks for. A fake `wget` only
-// logs: the script must never call it.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -43,8 +39,6 @@ const which = (cmd: string) => {
   const r = spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf-8" });
   return r.status === 0 ? r.stdout.trim() : null;
 };
-// Every external command install.sh may call, besides the faked ones (no cmp: Fedora and RHEL
-// images lack it)
 const TOOLS = [
   "awk",
   "cat",
@@ -72,7 +66,6 @@ const TOOLS = [
   "xz",
   "sysctl",
 ];
-// Linux CI runs /bin/sh as dash already; elsewhere try dash too when it is installed
 const SHELLS = [
   ...new Set(["/bin/sh", which("dash")].filter((s): s is string => !!s)),
 ];
@@ -80,8 +73,6 @@ const SHELLS = [
 const FAKE_UNAME = `#!/bin/sh
 case "$1" in -s) echo "$FAKE_OS" ;; -m) echo "$FAKE_ARCH" ;; *) echo "$FAKE_OS" ;; esac
 `;
-// curl -q -fsSL ... -w '%{http_code}' -o FILE URL. FAKE_PLANT: a file another process creates
-// while the archive downloads
 const FAKE_CURL = `#!/bin/sh
 printf 'curl %s\\n' "$*" >> "$FAKE_LOG"
 out=''; fmt=''; url=''
@@ -163,7 +154,6 @@ function sandbox(
     extraBin?: Record<string, string>;
   } = {}
 ): Sandbox {
-  // realpath: macOS tmpdir is a symlink (/var → /private/var), the script reports resolved paths
   const root = realpathSync(mkdtempSync(join(tmpdir(), "btg-install-")));
   sandboxes.push(root);
   const s: Sandbox = {
@@ -185,7 +175,6 @@ function sandbox(
   if (dl === "wget") {
     fakes.wget = FAKE_WGET;
   }
-  // A faked tool is never linked: writing the fake would go through the link into the real one
   for (const tool of TOOLS) {
     if (
       (tool === "xz" && opts.xz === false) ||
@@ -242,7 +231,6 @@ function spawnScript(
   });
 }
 
-/** Several runs at once: resolves with each run's exit status and stdout */
 function runParallel(s: Sandbox, n: number, env: Record<string, string> = {}) {
   return Promise.all(
     Array.from(
@@ -265,7 +253,6 @@ function runParallel(s: Sandbox, n: number, env: Record<string, string> = {}) {
   );
 }
 
-/** `stdin`: feed the script on standard input, as `curl … | sh` does. `script`: another copy of it */
 function run(
   s: Sandbox,
   env: Record<string, string> = {},
@@ -286,7 +273,6 @@ function run(
     json: JSON.parse(lines[0]),
     requests: readFileSync(s.log, "utf-8").split("\n").filter(Boolean),
   };
-  // Every run, success or failure, prints a valid contract result with a matching exit code
   expect(contractErrors(result), lines[0]).toEqual([]);
   if (!result.json.ok) {
     expect(result.json.data.path).toBeNull();
@@ -298,12 +284,6 @@ const sha256Of = (data: string | Buffer) =>
   createHash("sha256").update(data).digest("hex");
 const ids = (r: RunResult) => r.json.problems.map((p) => p.id);
 
-/**
- * Every run's whole stdout object goes through the shared schema 1 checker (#110), and the exit
- * code must be the one setupExitCode() gives for it. On top of that, what the shared checker
- * leaves open for this command: `data` is always there with the installer's fields, and the
- * script never proposes a `fix.run` (nothing it could name is on the allowlist).
- */
 function contractErrors(r: RunResult): string[] {
   const errors = setupResultErrors(r.json);
   if (errors.length) {
@@ -362,7 +342,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
           active: null,
         },
       });
-      // Not on PATH: a warning that tells to use the absolute path, no shell-profile edits
       expect(r.json.problems).toEqual([
         expect.objectContaining({
           id: "install_dir_not_on_path",
@@ -386,7 +365,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
         archive: assetName(VERSION, "linux-x64", "tar.gz"),
       });
       expect(manifest.sha256).toMatch(/^[0-9a-f]{64}$/);
-      // The sum of the installed binary itself, which an upgrade checks before replacing it
       expect(manifest.binarySha256).toBe(sha256Of(readFileSync(bin)));
       expect(Object.keys(manifest)).toEqual([
         "schema",
@@ -401,19 +379,16 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
         "binarySha256",
         "installedAt",
       ]);
-      // telegram update recognizes this install and advises running the script again
       const method = detectInstall(bin, "", true);
       expect(method).toMatchObject({ kind: "script", dir: s.installDir });
       expect(updateCommandFor(method)).toMatch(
         /install\.sh \| TG_INSTALL_DIR=.* sh$/
       );
-      // SHA256SUMS first, then exactly the archive it lists, over https only
       const base = releaseBase(VERSION);
       expect(r.requests.map((l) => l.split(" ").pop())).toEqual([
         `${base}/SHA256SUMS`,
         `${base}/${assetName(VERSION, "linux-x64", "tar.gz")}`,
       ]);
-      // curl -q first: ~/.curlrc is never read; https on every redirect too
       for (const l of r.requests) {
         expect(l).toMatch(
           /^curl -q .*--proto =https --proto-redir =https --tlsv1\.2 /
@@ -451,7 +426,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
     expect(
       JSON.parse(readFileSync(join(dir, "install.json"), "utf-8")).path
     ).toBe(join(dir, "telegram"));
-    // Same check again: a reinstall recognises its own manifest with an escaped path
     expect(run(s, { TG_INSTALL_DIR: dir }).status).toBe(0);
   });
 
@@ -484,7 +458,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
     const s = sandbox();
     release(s);
     expect(run(s).status).toBe(0);
-    // A first install places install.json before the binary: the state a kill in between leaves
     rmSync(join(s.installDir, "telegram"));
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
@@ -513,7 +486,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
     writeFileSync(join(s.root, "other"), "#!/bin/sh\necho someone else\n", {
       mode: 0o755,
     });
-    // Copied over it: the same path and a regular file, only the content is not ours
     spawnSync("cp", [join(s.root, "other"), bin]);
     writeFileSync(s.log, "");
     const r = run(s);
@@ -724,7 +696,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
         xz: false,
         extraBin: { tar: '#!/bin/sh\necho "tar (GNU tar) 1.34" >&2\nexit 2\n' },
       });
-      // Fixture built with the real tools; the sandbox then gets a tar that is not bsdtar
       makeReleaseFixtures(s.release, {
         version: VERSION,
         targets: ["linux-x64"],
@@ -748,7 +719,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
       const r = run(s);
       expect(r.status, r.stderr).toBe(0);
       expect(r.requests.at(-1)).toMatch(/\.tar\.xz$/);
-      // GNU tar without xz (Debian and Ubuntu images)
       if (
         which("xz") &&
         !/bsdtar/.test(
@@ -764,7 +734,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
     }
   );
 
-  // sha256sum on macOS does not escape names; GNU sha256sum and shasum do
   const hashers = (
     [
       ["the first hasher found", []],
@@ -819,7 +788,6 @@ describe.skipIf(process.platform === "win32")("install.sh", () => {
   });
 
   it("a tar that leaves a file behind but fails: unpack_failed, the file is never run", () => {
-    // Creates telegram (which would log RAN when run), then exits like tar on a full disk
     const fakeTar = `#!/bin/sh
 [ "$1" = --version ] && { echo 'tar (GNU tar) 1.35'; exit 0; }
 out=''
@@ -842,7 +810,6 @@ exit 2
   it("an empty PATH component is the current folder: its telegram is the active one", () => {
     const s = sandbox();
     release(s);
-    // The script runs with cwd = s.root
     writeFileSync(join(s.root, "telegram"), "#!/bin/sh\necho cwd\n");
     chmodSync(join(s.root, "telegram"), 0o755);
     for (const path of [
@@ -910,7 +877,6 @@ exit 2
     expect(before.status).toBe(0);
     expect(before.json.data.active).toBe(join(old, "telegram"));
     expect(before.json.problems[0].message).toMatch(/comes first/);
-    // Nothing is removed
     expect(readFileSync(join(old, "telegram"), "utf-8")).toContain("old");
   });
 
@@ -918,7 +884,6 @@ exit 2
     "a download of the script cut short, under %s",
     (shell) => {
       const text = readFileSync(SCRIPT, "utf-8");
-      // The block opens on line 2, so only a cut inside the shebang line itself can still exit 0
       const lineEnds = [...text.matchAll(/\n/g)]
         .map((m) => m.index + 1)
         .slice(1, 40);
@@ -938,7 +903,6 @@ exit 2
         writeFileSync(cut, text.slice(0, at));
         for (const stdin of [false, true]) {
           const r = spawnScript(s, {}, shell, stdin, cut);
-          // No JSON line is the failure signal; the exit code is not 0 either
           expect(r.status).not.toBe(0);
           expect(r.stdout).toBe("");
         }
@@ -984,7 +948,6 @@ exit 2
     expect(r.json.problems[0].fix.human).toContain(
       join(old, "scripts", "dev-install.sh")
     );
-    // The old checkout has no scripts/dev-install.sh until it is updated
     expect(r.json.problems[0].fix.human).toContain(`git -C ${old} pull`);
     expect(r.json.problems[0].fix.human.indexOf("pull")).toBeLessThan(
       r.json.problems[0].fix.human.indexOf("dev-install.sh")
@@ -1003,13 +966,11 @@ exit 2
     expect(r.status).toBe(2);
     expect(ids(r)).toEqual(["install_path_taken"]);
     expect(readFileSync(bin, "utf-8")).toBe("planted\n");
-    // Our manifest must not claim the planted file, or the next run would replace it
     expect(existsSync(join(s.installDir, "install.json"))).toBe(false);
     expect(leftovers(s.installDir)).toEqual([]);
     expect(run(s).status).toBe(2);
   });
 
-  // content: the telegram it describes (binarySha256)
   const goodManifest = (bin: string, content = "someone else\n") =>
     `{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":${JSON.stringify(bin)},"version":"0.1.0","tag":"v0.1.0","target":"linux-x64","archive":"better-tg-cli-0.1.0-linux-x64.tar.gz","sha256":"${"a".repeat(64)}","binarySha256":"${sha256Of(content)}","installedAt":"2026-11-19T12:00:00Z"}\n`;
 
@@ -1143,7 +1104,6 @@ exit 2
     release(s);
     mkdirSync(s.installDir, { recursive: true });
     const lock = join(s.installDir, LOCK);
-    // A live PID: this test process
     writeFileSync(lock, lockLine(process.pid, "Live01"));
     const r = run(s);
     expect(r.status).toBe(1);
@@ -1158,7 +1118,6 @@ exit 2
     release(s);
     const d = s.installDir;
     mkdirSync(join(d, ".better-tg-cli.stage.AbC123"), { recursive: true });
-    // A dead PID and its staging folder, as kill -9 leaves them
     writeFileSync(join(d, LOCK), lockLine(999_999, "AbC123"));
     writeFileSync(join(d, ".better-tg-cli.stage.AbC123", "telegram"), "half\n");
     const r = run(s);
@@ -1196,7 +1155,6 @@ exit 2
     expect(ids(r)).toEqual(["install_stage_left", "install_dir_not_on_path"]);
     const msg = r.json.problems[0].message;
     expect(msg).toContain(stage("Dead01"));
-    // No lock line yet (or any more): maybe a live run starting or cleaning up
     expect(msg).not.toContain(stage("NoLock"));
     expect(msg).not.toContain(stage("Live01"));
     expect(r.json.problems[0].severity).toBe("warning");
@@ -1266,12 +1224,10 @@ exit 2
     for (const o of outcomes) {
       expect(["ok", "install_in_progress"]).toContain(o);
     }
-    // The losers' staging folders, appearing and going while the winner looks, are never reported
     for (const r of results) {
       expect(r.stdout).not.toContain("install_stage_left");
     }
     expect(outcomes).toContain("ok");
-    // No two runs were ever inside the lock at the same time
     expect(readFileSync(s.log, "utf-8")).not.toContain("OVERLAP");
     expect(leftovers(s.installDir)).toEqual([]);
     expect(
@@ -1286,7 +1242,6 @@ exit 2
     const realLn = which("ln");
     const s = sandbox({
       extraBin: {
-        // The first ln onto that name: the holder finishes (its file goes) and ln reports "exists"
         ln: `#!/bin/sh\nfor a; do last=$a; done\ncase "$last" in */${name}) if [ ! -e "$FAKE_LN_MARK" ]; then : > "$FAKE_LN_MARK"; rm -f "$last"; exit 1; fi ;; esac\nexec ${realLn} "$@"\n`,
       },
     });
@@ -1321,12 +1276,10 @@ exit 2
     const realMv = which("mv");
     const s = sandbox({
       extraBin: {
-        // Kills the installer right before it renames install.json, after the binary went in
         mv: `#!/bin/sh\nfor a; do last=$a; done\nif [ -n "$FAKE_MV_KILL" ]; then case "$last" in */install.json) kill -9 $PPID; exit 1 ;; esac; fi\nexec ${realMv} "$@"\n`,
       },
     });
     release(s);
-    // The previous version, from a copy of the script pinned to it
     const oldVersion = "0.0.9";
     const oldScript = join(s.root, "old-install.sh");
     writeFileSync(
@@ -1367,11 +1320,9 @@ exit 2
     );
     expect(killed.signal).toBe("SIGKILL");
     expect(killed.stdout).toBe("");
-    // New binary, old manifest: it looks out of date, never newer than it is
     expect(reports()).toBe(VERSION);
     expect(manifest().version).toBe(oldVersion);
 
-    // Its lock stays: the next run stops and names it, a person deletes it
     const stopped = run(s);
     expect(stopped.status).toBe(2);
     expect(ids(stopped)).toEqual(["install_lock_stale"]);
@@ -1381,7 +1332,6 @@ exit 2
     expect(stage).toBeDefined();
     rmSync(join(s.installDir, LOCK));
 
-    // The binary in place is not the one the old manifest records: refused, nothing touched
     const newBin = readFileSync(bin);
     const oldManifest = readFileSync(
       join(s.installDir, "install.json"),
@@ -1396,7 +1346,6 @@ exit 2
       oldManifest
     );
 
-    // A person moves telegram away: the manifest still owns the path, so the next run installs
     rmSync(bin);
     const r = run(s);
     expect(r.status, r.stderr).toBe(0);
@@ -1407,13 +1356,11 @@ exit 2
       sha256: expect.any(String),
     });
     expect(reports()).toBe(VERSION);
-    // The manifest's sums describe the archive and the binary in place again
     const archive = readFileSync(
       join(s.release, assetName(VERSION, "linux-x64", "tar.gz"))
     );
     expect(manifest().sha256).toBe(sha256Of(archive));
     expect(manifest().binarySha256).toBe(sha());
-    // The killed run's staging folder is reported, never deleted
     expect(leftovers(s.installDir)).toEqual([stage]);
   });
 
@@ -1441,8 +1388,6 @@ exit 2
     }
   );
 
-  // The automation example in docs/install.md, run as written with a fake curl that serves a
-  // script of the test's choice: its exit code must tell installed from not installed
   describe("the docs example", () => {
     const doc = readFileSync(join(ROOT, "docs", "install.md"), "utf-8");
     const example = doc.match(/```sh\n(out=\$\([\s\S]*?)```/)?.[1] ?? "";
@@ -1499,7 +1444,6 @@ exit 2
       )
     )("%s: %s", (shell, _what, curlExit, script, want, says) => {
       expect(example).toContain('exit "$status"');
-      // No JSON line is an unknown result, never stated as "nothing is installed"
       expect(doc).not.toMatch(/so nothing is installed/);
       expect(doc).toMatch(/No JSON line at all[^.]*the result is\s+unknown/);
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "btg-doc-")));
@@ -1518,8 +1462,6 @@ exit 2
       if (says === "installed") {
         expect(r.stdout).toContain("installed: ");
       } else {
-        // The message shows the original status; 1 is only what the example exits with for a 0.
-        // No output at all is an unknown result, never reported as "not installed".
         const other =
           says === "unknown" ? "not installed" : "installation status unknown";
         expect(r.stderr).toContain(

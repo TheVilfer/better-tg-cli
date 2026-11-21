@@ -15,7 +15,6 @@ import type {
 } from "../src/onboard.js";
 import { errorMessage } from "../src/text.js";
 
-// Raw HTTP so the tests control Host and Origin exactly (fetch won't set Host)
 function call(
   url: string,
   opts: { method?: string; host?: string; origin?: string; body?: unknown } = {}
@@ -58,7 +57,6 @@ function call(
   });
 }
 
-/** A driver the test steers: it shows a QR, optionally asks for a password (wrong first), then succeeds or fails. */
 function fakeDriver(
   plan: { password?: string; wrongFirst?: boolean; failFirst?: boolean } = {}
 ) {
@@ -143,7 +141,7 @@ describe("telegram onboard server", () => {
     expect((await call(`${origin}/s/guess/state`)).status).toBe(404);
     expect(
       (await call(`${session!.url}state`, { host: "evil.example:80" })).status
-    ).toBe(421); // DNS rebinding
+    ).toBe(421);
     expect(
       (
         await call(`${session!.url}invite`, {
@@ -151,7 +149,7 @@ describe("telegram onboard server", () => {
           body: { invite: "x" },
         })
       ).status
-    ).toBe(403); // no Origin
+    ).toBe(403);
     expect(
       (await post("invite", { invite: "x" }, "https://evil.example")).status
     ).toBe(403);
@@ -169,7 +167,6 @@ describe("telegram onboard server", () => {
       `https://site.test/?return=${encodeURIComponent(`${session!.url}cb`)}`
     );
     expect((await call(`${session!.url}cb`)).status).toBe(200);
-    // English, Spanish and Russian strings; the page picks one from navigator.languages
     for (const s of [
       "Get a login key",
       "Obtener una clave de acceso",
@@ -318,7 +315,7 @@ describe(rpcCode, () => {
       await post("invite", { invite: "tok" });
       const s = await until("mode");
       expect(s.user).toMatchObject({ username: "alice" });
-      expect(s.mode).toBe("ask"); // already in effect; the page preselects it
+      expect(s.mode).toBe("ask");
       expect(m.choices).toEqual([{ mode: "ask" }]);
       expect(events.map((e) => e.event)).toEqual([
         "url",
@@ -359,7 +356,7 @@ describe(rpcCode, () => {
     it("rejects unknown modes and spans, and a mode before the login", async () => {
       const m = modes({ ok: true });
       const { post, until } = await start({}, { applyMode: m.applyMode });
-      expect((await post("mode", { mode: "ask" })).status).toBe(409); // still at the login key
+      expect((await post("mode", { mode: "ask" })).status).toBe(409);
       await post("invite", { invite: "tok" });
       await until("mode");
       expect((await post("mode", { mode: "root" })).status).toBe(400);
@@ -391,10 +388,6 @@ describe(rpcCode, () => {
       });
     });
 
-    /**
-     * A fake secret store: applyMode writes the mode and its end to it unless told to fail,
-     * currentMode reads it back. `lie`: says ok, keeps the old value. `start`: the value already there.
-     */
     const store = (
       plan: {
         refuse?: boolean;
@@ -413,8 +406,7 @@ describe(rpcCode, () => {
           }
           if (plan.dialogMs && c.mode === "on") {
             await new Promise((r) => setTimeout(r, plan.dialogMs));
-          } // the person answers a dialog
-          // Like applyModeChoice: the end is fixed right before the write and reported as written
+          }
           const until =
             c.mode !== "read-only" && c.forSeconds
               ? new Date(
@@ -446,14 +438,14 @@ describe(rpcCode, () => {
         error: "store_failed",
         mode: "read-only",
       });
-      expect(saved).toHaveLength(1); // the login itself is kept
+      expect(saved).toHaveLength(1);
       expect(events.map((e) => e.event)).toEqual([
         "url",
         "waiting_invite",
         "waiting_scan",
         "logged_in",
         "waiting_mode",
-      ]); // JSONL unchanged
+      ]);
     });
 
     it("does not trust an ok from a store that kept the old value", async () => {
@@ -501,7 +493,6 @@ describe(rpcCode, () => {
     });
 
     it('does not take an old "on" for good as the "on for an hour" that was picked', async () => {
-      // The mode name matches, the end does not: an hour later writes would still go through
       const f = store({ lie: true, start: { mode: "on" } });
       const { post, until, state, events } = await start(
         {},
@@ -563,8 +554,6 @@ describe(rpcCode, () => {
     });
 
     it('does not take an older "on for an hour" whose end falls inside the time the dialog was open', async () => {
-      // A dialog opened at 12:00 and answered at 12:02: an old end of 13:00 is not 13:02.
-      // Here the store already holds "on" until an hour from now and the dialog takes 1.5 s.
       const f = store({
         lie: true,
         start: {
@@ -642,17 +631,15 @@ describe(rpcCode, () => {
       );
       await post("invite", { invite: "tok" });
       expect((await until("mode")).mode).toBe("ask");
-      f.st.value = { mode: "read-only" }; // `telegram write-access off` in another terminal
+      f.st.value = { mode: "read-only" };
       expect((await until("done")).mode).toBe("read-only");
       expect(events.at(-1)).toMatchObject({ event: "done", mode: "read-only" });
     });
 
     describe("the clock stops while a choice is being applied", () => {
       afterEach(() => vi.useRealTimers());
-      // Only the clock the step uses is faked: node:http keeps its own timers, setImmediate stays real
       const tick = () => new Promise((r) => setImmediate(r));
 
-      /** applyMode that waits for the test, like an OS dialog the person has not answered yet */
       async function dialog() {
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         let answer!: (r: ModeResult) => void;
@@ -673,7 +660,6 @@ describe(rpcCode, () => {
         while (!asked) {
           await tick();
         }
-        // The dialog stays open far past the 10 minutes (here 1 s) of the step
         vi.advanceTimersByTime(5000);
         await tick();
         const dones = () => t.events.filter((e) => e.event === "done");

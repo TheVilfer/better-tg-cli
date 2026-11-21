@@ -3,8 +3,6 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-// The write guard is async (it looks up the recipients in mode "ask"). A call without `await` lets
-// the write run before the approval is checked, and the types would not notice: every call must await.
 describe("the write guard", () => {
   it("is awaited at every call site in src", () => {
     const files = (dir: string): string[] =>
@@ -36,7 +34,6 @@ describe("the write guard", () => {
           }
         });
     }
-    // The scan saw the call sites at all (a renamed function must not make this pass vacuously)
     expect(calls.length).toBeGreaterThan(40);
   });
 });

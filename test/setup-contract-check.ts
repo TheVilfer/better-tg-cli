@@ -1,7 +1,3 @@
-/**
- * The rules of setup contract schema 1 (docs/setup-contract.md) as a checker for the fixtures and
- * the doc's examples. Out of src/ until a command emits the contract (#110).
- */
 import type {
   Problem,
   SetupExitCode,
@@ -34,7 +30,7 @@ export const RUN_ALLOWLIST: readonly {
 ];
 
 const ID = /^[a-z][a-z0-9_]*$/;
-const PROFILE = /^[a-z0-9][a-z0-9-]{0,31}$/; // the TG_PROFILE rule of src/paths.ts
+const PROFILE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const PLAIN_VALUE = /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/;
 
 /** Why `argv` is not an allowed `fix.run`, or null when it is. */
@@ -54,7 +50,6 @@ export function runRefusal(argv: unknown): string | null {
   const rest = argv.slice(entry.command.length) as string[];
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
-    // Own keys only: "constructor" or "__proto__" must not pass as a flag
     const kind = Object.hasOwn(entry.flags, flag)
       ? entry.flags[flag]
       : undefined;
@@ -144,7 +139,6 @@ function fixRefusal(fix: unknown): string | null {
     : "unavailable must be a non-empty string";
 }
 
-/** Whether `value` serializes to a JSON object (not an array, not null). */
 function isJsonObject(value: unknown): boolean {
   if (!value || typeof value !== "object") {
     return false;
@@ -174,8 +168,6 @@ export function setupResultErrors(value: unknown): string[] {
   if (extra.length) {
     errors.push(`unexpected field ${extra[0]}`);
   }
-  // `data` is the one open field; its command documents its content. Judged as stdout shows it,
-  // so a Date (or a toJSON that is not an object) is refused.
   if ("data" in r && !isJsonObject(r.data)) {
     errors.push("data must be a JSON object");
   }

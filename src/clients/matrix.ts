@@ -1,8 +1,3 @@
-/**
- * Renders docs/compatibility.md from src/clients/data.ts. Deterministic: no clock, the order of
- * CLIENTS, LF line endings. Written by `bun scripts/compat-matrix.ts`; checked by
- * test/compat-matrix.test.ts.
- */
 import {
   CLIENTS,
   ROUTE_NOTE,
@@ -55,10 +50,6 @@ function shortCase(k: Case): string {
   return level ? `${k.value} (${level})` : k.value;
 }
 
-/**
- * A table cell: the value and the strongest level of its evidence, or "?" when unknown. A cell
- * that varies lists each configuration: `V1: G2 (src); V2: G1 (src)`.
- */
 function short(cell: Cell): string {
   return esc(
     casesOf(cell)

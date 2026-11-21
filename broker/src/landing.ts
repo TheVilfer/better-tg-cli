@@ -1,5 +1,3 @@
-/** The landing page at /: what the tool is, one install command, the way to a login key. No forms, no Turnstile. */
-
 import { a, b, code, d, escape, SCREEN_CSS, terminal } from "./guide";
 import { DICT } from "./i18n";
 import type { Dict, Lang } from "./i18n";
@@ -13,7 +11,6 @@ import {
 } from "./page";
 import { jsonLd } from "./seo";
 
-/** The two ways in: the CLI itself, or the agent skill through skills.sh (it tells the agent to install the CLI). */
 const INSTALL = {
   cli: "npm install -g better-tg-cli",
   skill: "npx skills add TheVilfer/better-tg-cli",
@@ -27,9 +24,11 @@ const AGENTS = [
 ];
 const REPO = "https://github.com/TheVilfer/better-tg-cli";
 
+/**
+ * - `query`: The request's query: the language links keep it, and an explicit ?lang= follows the visitor to the login page
+ */
 export interface LandingOptions {
   lang?: Lang;
-  /** The request's query: the language links keep it, and an explicit ?lang= follows the visitor to the login page */
   query?: URLSearchParams;
 }
 
@@ -63,7 +62,6 @@ export function landingResponse({
   });
 }
 
-/** An agent answering a question about the inbox: the whole pitch in one picture. */
 function screen(t: Dict): string {
   const s = t.guide.screens;
   return terminal("claude", [
@@ -75,7 +73,6 @@ function screen(t: Dict): string {
   ]);
 }
 
-/** The install command under a CLI / Skill switch. */
 function install(t: Dict): string {
   const ids = ["cli", "skill"] as const;
   const tabs = ids
@@ -94,7 +91,6 @@ function install(t: Dict): string {
 ${panels}`;
 }
 
-/** `stat` is a number shown big above the title, inside the heading, so the heading reads "60+ commands" */
 const tile = (
   cls: string,
   f: { title: string; text: string },
@@ -103,7 +99,6 @@ const tile = (
 ) =>
   `<div class="tile${cls ? ` ${cls}` : ""}">${stat ? `<h3 class="stat"><span class="num">${stat}</span> ${escape(f.title)}</h3>` : `<h3>${escape(f.title)}</h3>`}<p>${escape(f.text)}</p>${extra}</div>`;
 
-/** The few things that set the tool apart, as a bento grid. */
 function bento(x: Dict["landing"]): string {
   const f = x.features;
   const chip = (html: string) =>
@@ -119,7 +114,6 @@ ${tile("", f.agents, `<div class="agents">${AGENTS.map((n) => `<span>${n}</span>
 </div>`;
 }
 
-/** What the tool can and cannot do with the account, without jargon, and the limits said out loud. */
 function security(x: Dict["landing"]): string {
   return `<h2 id="security">${escape(x.securityTitle)}</h2>
 <p class="how">${escape(x.securityLead)}</p>
@@ -128,7 +122,6 @@ function security(x: Dict["landing"]): string {
 <p class="own">${escape(x.securityMore)}: <a href="${REPO}/blob/main/SECURITY.md">${escape(x.securityDoc)}</a> · <a href="${REPO}/blob/main/PRIVACY.md">${escape(x.privacyDoc)}</a></p>`;
 }
 
-/** What a login key is and the three steps to one. */
 function login(x: Dict["landing"], href: string): string {
   return `<h2 id="login">${escape(x.loginTitle)}</h2>
 <p class="how">${escape(x.loginLead)}</p>

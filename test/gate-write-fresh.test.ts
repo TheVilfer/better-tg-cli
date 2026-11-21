@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-// A long-lived MCP server must see a mode another process (the onboard page, `write-access`)
-// set after it started: on Windows the DPAPI store caches per process.
 const reads: boolean[] = [];
 vi.mock(import("../src/write-store.js"), async (orig) => ({
   ...(await orig<typeof import("../src/write-store.js")>()),

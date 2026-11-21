@@ -1,12 +1,7 @@
-// Writes src/version.ts from package.json so the version is compiled in
-// (standalone binaries have no package.json next to them).
 import { readFileSync, writeFileSync } from "node:fs";
 
 import { writeTlCommands, writeTlDocs } from "./gen-tl-commands.mjs";
 
-// One dedicated command per TL schema method, plus the embedded human descriptions (issue #47).
-// Regenerated here so build/pretest keep them current and CI's "Versioned files match package.json"
-// step (git diff after gen-version) fails if a new TL layer makes them drift.
 writeTlCommands();
 writeTlDocs();
 
@@ -23,7 +18,6 @@ if (current !== out) {
   writeFileSync(path, out);
 }
 
-// Keep the Claude Code plugin, MCP Registry entry and Gemini CLI extension on the package version
 for (const file of [
   "../.claude-plugin/plugin.json",
   "../server.json",
@@ -42,8 +36,6 @@ for (const file of [
   }
 }
 
-// install.sh downloads exactly this stable release (each stable release ships it as an asset, and
-// releases/latest/download/install.sh is the public entry point)
 {
   const url = new URL("../install.sh", import.meta.url);
   const text = readFileSync(url, "utf-8");
@@ -56,9 +48,7 @@ for (const file of [
   }
 }
 
-// Embed the agent skill so `telegram skill install` works from brew and standalone binaries too
 const skillDir = new URL("../skills/better-tg-cli/", import.meta.url);
-// Every Markdown file of the skill folder, flat: SKILL.md and the reference files it links to
 const { readdirSync, rmSync } = await import("node:fs");
 const skillNames = readdirSync(skillDir)
   .filter((f) => f.endsWith(".md"))
@@ -69,7 +59,6 @@ if (!skillNames.includes("SKILL.md")) {
 const skillFiles = Object.fromEntries(
   skillNames.map((f) => [f, readFileSync(new URL(f, skillDir), "utf-8")])
 );
-/** The copy of the skill in plugin/ or agent-plugin/ holds exactly these files: a removed one goes too. */
 function pruneSkillCopy(root) {
   const dir = new URL(`../${root}/skills/better-tg-cli/`, import.meta.url);
   let present = [];
@@ -92,8 +81,6 @@ if (skillCurrent !== skillOut) {
   writeFileSync(skillPath, skillOut);
 }
 
-// plugin/ is the folder submitted to Anthropic's plugin directory: regular files only (no links
-// into the repo), the skill and LICENSE copied in, the MCP server (Codex, Cursor) pinned to this version
 {
   const root = JSON.parse(
     readFileSync(
@@ -101,9 +88,6 @@ if (skillCurrent !== skillOut) {
       "utf-8"
     )
   );
-  // Codex and Cursor start the pinned npm package. The Claude plugin is the skill alone: Anthropic's
-  // directory accepts MCP servers that run on the user's computer only from Verified organizations,
-  // so Claude Code uses the installed telegram CLI (or `claude mcp add`) instead
   const npxServers = {
     telegram: {
       command: "npx",
@@ -111,7 +95,6 @@ if (skillCurrent !== skillOut) {
     },
   };
   delete root.mcpServers;
-  // Unofficial client: no brand name in the display name
   root.displayName = "Better-TG-CLI";
   const description =
     "Unofficial Telegram client for your own account: a skill for the telegram CLI plus a local MCP server to read, search and send messages. The agent asks you before every send.";
@@ -120,7 +103,6 @@ if (skillCurrent !== skillOut) {
   const files = {
     ".claude-plugin/plugin.json": `${JSON.stringify(root, null, 2)}\n`,
     LICENSE: readFileSync(new URL("../LICENSE", import.meta.url), "utf-8"),
-    // The directory wants a square icon of at least 128px
     ".claude-plugin/icon.svg": readFileSync(
       new URL("../assets/icon.svg", import.meta.url),
       "utf-8"
@@ -131,8 +113,6 @@ if (skillCurrent !== skillOut) {
         c,
       ])
     ),
-    // ...and the Codex / ChatGPT plugin (repo marketplace in .agents/plugins/marketplace.json).
-    // The MCP config stays out of the plugin root, where Claude Code would load it a second time
     ".codex-plugin/plugin.json": `${JSON.stringify(
       {
         name: root.name,
@@ -151,7 +131,6 @@ if (skillCurrent !== skillOut) {
       2
     )}\n`,
     ".codex-plugin/mcp.json": `${JSON.stringify({ mcpServers: npxServers }, null, 2)}\n`,
-    // The same folder is the Cursor Marketplace plugin (Cursor reads .cursor-plugin/plugin.json)
     ".cursor-plugin/plugin.json": `${JSON.stringify(
       {
         name: root.name,
@@ -185,10 +164,6 @@ if (skillCurrent !== skillOut) {
   pruneSkillCopy("plugin");
 }
 
-// agent-plugin/ is a portable Agent Plugins v1 package (plugin.json, skills/, mcp.json in its root),
-// listed in the Hermes Agent plugin catalog. It is a folder of its own because a root mcp.json with a
-// local MCP server must stay out of plugin/ (Anthropic's directory refuses one). README.md is
-// written by hand; everything else is regenerated
 {
   const root = JSON.parse(
     readFileSync(
@@ -196,9 +171,6 @@ if (skillCurrent !== skillOut) {
       "utf-8"
     )
   );
-  // Hermes hands a stdio server only PATH, HOME, USER, LANG, TERM, SHELL, TMPDIR (plus the Windows
-  // set). "${NAME}" passes one through when the user has it set. The Linux Secret Service needs the
-  // D-Bus session; credentials and approval settings are never forwarded
   const forward = [
     "DBUS_SESSION_BUS_ADDRESS",
     "XDG_RUNTIME_DIR",
@@ -265,8 +237,6 @@ if (skillCurrent !== skillOut) {
   pruneSkillCopy("agent-plugin");
 }
 
-// Embed the plugin manifest schemas (schemas/tg-plugin/<date>.json, the published files) so the CLI
-// validates tg-plugin.json with exactly the schema it publishes, also in standalone binaries
 {
   const dir = new URL("../schemas/tg-plugin/", import.meta.url);
   const schemas = Object.fromEntries(

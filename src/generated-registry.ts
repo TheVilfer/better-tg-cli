@@ -1,17 +1,8 @@
 import { TL_METHODS, TL_NAMESPACES } from "./generated/tl-commands.js";
 import type { TlMethod } from "./generated/tl-commands.js";
 
-/**
- * Pure name-mapping for the generated top-level API commands — `telegram <namespace> <method>`
- * (e.g. `telegram messages get-history`) and root-level `telegram <method>` (e.g. `telegram ping`).
- * Kept free of teleproto/commander so the MCP router (src/mcp.ts) can classify a call by its
- * underlying TL method without loading the whole client. The method list is the checked-in
- * src/generated/tl-commands.ts (one entry per TL schema method). "TL" throughout = the Telegram
- * schema layer, not a command name (there is no `tl` command).
- */
-
-const byPath = new Map<string, string>(); // `${ns}/${method}` -> className
-const rootMethodMap = new Map<string, string>(); // methodKebab -> className (no namespace)
+const byPath = new Map<string, string>();
+const rootMethodMap = new Map<string, string>();
 const namespaceMethods = new Map<string, TlMethod[]>();
 for (const m of TL_METHODS) {
   const [ns, method, className] = m;

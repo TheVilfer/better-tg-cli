@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 
-// Write mode "on": the guard lets every write through, so only the hard refusal can stop a call.
 const assertWriteEnabled = vi.hoisted(() => vi.fn());
 const getClient = vi.hoisted(() => vi.fn(async () => ({})));
 const invokeApi = vi.hoisted(() => vi.fn(async () => true));
@@ -39,7 +38,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// [class name, namespace, generated method, its flags, the same call as raw --params]
 const CASES: [string, string, string, string[], Record<string, unknown>][] = [
   [
     "messages.SendPaidReaction",
@@ -63,7 +61,6 @@ const CASES: [string, string, string, string[], Record<string, unknown>][] = [
     [],
     {},
   ],
-  // The 2FA recovery email and Telegram Passport values (plainData holds the phone and email)
   ["account.ResendPasswordEmail", "account", "resend-password-email", [], {}],
   ["account.CancelPasswordEmail", "account", "cancel-password-email", [], {}],
   [
@@ -81,7 +78,6 @@ const CASES: [string, string, string, string[], Record<string, unknown>][] = [
     ["--json-params", '{"types":[{"_":"secureValueTypePhone"}]}'],
     { types: [{ _: "secureValueTypePhone" }] },
   ],
-  // A bot's Passport form carries SecureValue entries with the same plainData
   [
     "account.GetAuthorizationForm",
     "account",
@@ -89,7 +85,6 @@ const CASES: [string, string, string, string[], Record<string, unknown>][] = [
     ["--bot-id", "1", "--scope", "x", "--public-key", "k"],
     { botId: 1, scope: "x", publicKey: "k" },
   ],
-  // Creating a geo group publishes a location (coordinates or an address)
   [
     "channels.CreateChannel",
     "channels",
@@ -115,7 +110,6 @@ const CASES: [string, string, string, string[], Record<string, unknown>][] = [
     ["--title", "t", "--about", "", "--address", "Main St 1"],
     { title: "t", about: "", address: "Main St 1" },
   ],
-  // An inline query carrying coordinates hands the user's location to the bot
   [
     "messages.GetInlineBotResults",
     "messages",
@@ -180,9 +174,6 @@ test('control: an ordinary write runs in mode "on" (so the spies above would see
   expect(invokeApi).toHaveBeenCalledOnce();
 });
 
-// A paid message, media or album (allowPaidStars) over MCP, in write mode "on" (a raw forward is
-// off the MCP allowlist altogether):
-// [class name, namespace, generated method, the free params]
 const PAID: [string, string, string, Record<string, unknown>][] = [
   [
     "messages.SendMessage",
@@ -305,7 +296,6 @@ describe('the free forms still run over MCP in mode "on"', () => {
       { from: "user" }
     );
     expect(invokeApi).toHaveBeenCalledTimes(2);
-    // The query and the user's ID go to the bot, so it passes the write guard
     expect(assertWriteEnabled).toHaveBeenCalledTimes(2);
   });
 

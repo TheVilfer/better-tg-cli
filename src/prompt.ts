@@ -1,8 +1,6 @@
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 
-// Questions go to stderr: stdout is the command's result (one JSON object with --json)
-
 /** Prompt for a line of input (echoed to the terminal). */
 export function prompt(question: string): Promise<string> {
   const rl = createInterface({
@@ -42,8 +40,6 @@ export function promptHidden(question: string): Promise<string> {
       process.stderr.write("\n");
       resolve(answer.trim());
     });
-    // The question above is written while unmuted; mute now so the
-    // user's keystrokes are not echoed back to the terminal.
     muted = true;
   });
 }

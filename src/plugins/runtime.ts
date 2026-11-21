@@ -1,21 +1,4 @@
 import variant from "@jitl/quickjs-singlefile-mjs-release-sync";
-/**
- * The plugin sandbox engine: QuickJS compiled to WebAssembly (quickjs-emscripten, the single-file
- * variant with the WASM inlined, so the npm bundle, the Bun binaries and the .mcpb worker carry it
- * without a separate file). docs/plugins.md §4.
- *
- * Every run gets a WASM module, runtime and context of its own, and all three are dropped after it:
- * nothing survives between runs but what the host stores. Values cross the boundary only as JSON
- * strings (one native function, hidden in a closure by the prelude), so the guest never holds a
- * host object and the host never trusts a guest value it did not parse itself.
- *
- * Guest promises: a host call returns a guest promise (newPromise). The job queue is drained right
- * after the command is called and after every host operation settles, until the command's promise
- * settles; with no host operation in flight and the promise still pending, it never will
- * (`plugin_error`), so `await 0` before any host call cannot hang and a never-resolving promise
- * cannot either. One deadline covers code and host waits; cancelling interrupts the engine, aborts
- * the host operations in flight and turns later results away.
- */
 import {
   newQuickJSWASMModuleFromVariant,
   newVariant,
@@ -40,41 +23,37 @@ export {
   type SandboxLimits,
 };
 
+/**
+ * - `code`: The plugin's `main`: one ES module without imports, exporting `commands`.
+ * - `api`: Granted host API by dotted name (`messages.mine`); only these exist in the guest's `host`.
+ * - `constants`: Plain values put on `host` as they are (frozen), e.g. `{ dev: true }`.
+ * - `deadline`: The run's absolute deadline when the caller shares it with the host (default: now + timeoutMs).
+ * - `onCall`: Told the name of each host call as it is made (the audit wants them for a failed run too).
+ * - `cancelled`: Polled by the engine's interrupt handler: a cancel that cannot arrive as an event while plugin code keeps the thread busy (the MCP server's flag in shared memory, for a worker thread).
+ */
 export interface SandboxRun {
-  /** The plugin's `main`: one ES module without imports, exporting `commands`. */
   code: string;
   filename: string;
   command: string;
   input: unknown;
-  /** Granted host API by dotted name (`messages.mine`); only these exist in the guest's `host`. */
   api: Record<string, HostFunction>;
-  /** Plain values put on `host` as they are (frozen), e.g. `{ dev: true }`. */
   constants?: Record<string, unknown>;
   limits?: Partial<SandboxLimits>;
-  /** The run's absolute deadline when the caller shares it with the host (default: now + timeoutMs). */
   deadline?: number;
   signal?: AbortSignal;
-  /** Told the name of each host call as it is made (the audit wants them for a failed run too). */
   onCall?: (name: string) => void;
-  /**
-   * Polled by the engine's interrupt handler: a cancel that cannot arrive as an event while plugin
-   * code keeps the thread busy (the MCP server's flag in shared memory, for a worker thread).
-   */
   cancelled?: () => boolean;
 }
 
+/**
+ * - `json`: The command's result as JSON text (what it returned, serialized in the guest).
+ * - `calls`: Names of the host API calls made, in call order (for the audit).
+ */
 export interface SandboxResult {
-  /** The command's result as JSON text (what it returned, serialized in the guest). */
   json: string;
-  /** Names of the host API calls made, in call order (for the audit). */
   calls: string[];
 }
 
-/**
- * Runs in the fresh context before the plugin: takes the native bridge off the global object, keeps
- * its own copies of what it needs (the plugin cannot swap them afterwards) and evaluates to the
- * runner the host calls. `host` is rebuilt for each call from the granted names, deeply frozen.
- */
 const PRELUDE = String.raw`(() => {
   const bridge = globalThis.__tgBridge;
   delete globalThis.__tgBridge;
@@ -127,7 +106,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
   const started = Date.now();
   const deadline = run.deadline ?? started + limits.timeoutMs;
   const abort = new AbortController();
-  /** Why the run must stop now (a limit, cancellation, the deadline); checked by the interrupt handler. */
   let failure: SandboxError | undefined;
   const fail = (error: SandboxError) => {
     failure ??= error;
@@ -152,10 +130,8 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
   );
 
   const calls: string[] = [];
-  /** Host operations started and not yet handed back. */
   const inFlight = new Set<Promise<void>>();
   const deferreds = new Set<QuickJSDeferredPromise>();
-  /** Wakes the drive loop when a host operation finishes. */
   let wake: () => void = () => {};
 
   let rt: QuickJSRuntime | undefined;
@@ -164,7 +140,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
   const keep = (h: QuickJSHandle) => (handles.push(h), h);
   let clean = false;
   try {
-    // Nothing the engine prints (an abort message) reaches the command's stdout or stderr
     const quickjs = await newQuickJSWASMModuleFromVariant(
       newVariant(variant, {
         emscriptenModule: { print: () => {}, printErr: () => {} } as object,
@@ -190,7 +165,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
     });
     const ctx = (vm = rt.newContext());
 
-    /** The reply a host call settles with, `{value}` or `{error}` as JSON, at most callBytes. */
     const reply = (
       body: { value: unknown } | { error: unknown },
       name: string
@@ -238,7 +212,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
       const deferred = ctx.newPromise();
       deferreds.add(deferred);
       const answer = (json: string) => {
-        // A late result after a limit, a cancel or the deadline is dropped, never handed in
         if (failure || !deferred.alive) {
           return;
         }
@@ -301,9 +274,7 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
         if (Array.isArray(parsed)) {
           args = parsed;
         }
-      } catch {
-        // the prelude always sends an array; anything else is no arguments
-      }
+      } catch {}
       const op = (async () => {
         let json: string;
         try {
@@ -328,7 +299,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
       )
     );
 
-    /** Run queued jobs until none is left (or a limit / the deadline stops the engine). */
     const drain = () => {
       let jobs = 0;
       while (!failure && rt!.hasPendingJob()) {
@@ -359,7 +329,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
       }
     };
 
-    /** Wait until `promise` settles, driving jobs and host operations. */
     const settle = async (promise: QuickJSHandle): Promise<QuickJSHandle> => {
       for (;;) {
         drain();
@@ -433,7 +402,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
     if (failure) {
       throw failure;
     }
-    // QuickJS recursion also runs on the host's own stack: if that ends first, it is the same limit
     if (error instanceof RangeError && /call stack/i.test(error.message)) {
       throw new SandboxError(
         "plugin_limit",
@@ -448,9 +416,6 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
     if (!abort.signal.aborted) {
       abort.abort(new SandboxError("cancelled", "The run ended"));
     }
-    // After a clean run everything is freed. A run stopped mid-job (a limit, a cancel) can leave
-    // objects QuickJS still counts, and freeing them would abort the engine: the WASM module, its
-    // memory with it, is dropped with the last reference instead.
     if (clean) {
       try {
         for (const d of deferreds) {
@@ -465,18 +430,14 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
         }
         vm?.dispose();
         rt?.dispose();
-      } catch {
-        // the module is dropped anyway
-      }
+      } catch {}
     }
   }
 }
 
-/** A guest error as text (without the host's stack frames), and its string `code` if it has one. */
 function describe(ctx: QuickJSContext, error: QuickJSHandle): Guest {
   try {
     const value = ctx.dump(error) as unknown;
-    // QuickJS throws null when it cannot even allocate the "out of memory" error
     if (value === null) {
       return { text: "InternalError: out of memory" };
     }
@@ -499,7 +460,6 @@ interface Guest {
   code?: string;
 }
 
-/** A guest exception: out of memory and stack overflow are limits, anything else the plugin's error. */
 function guestFailure(guest: Guest): SandboxError {
   if (guest.text.startsWith("InternalError: out of memory")) {
     return new SandboxError(

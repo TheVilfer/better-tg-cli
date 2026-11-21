@@ -18,7 +18,6 @@ import type {
 
 type Entity = Api.User | Api.Chat | Api.Channel;
 type Media = NonNullable<MockMessage["media"]>;
-/** Constructor arguments the CLI never reads are left out; TL classes only check them when serializing. */
 const args = <T>(value: object): T => value as T;
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -43,8 +42,6 @@ export class MockClient {
     readonly world: MockWorld,
     private readonly persist: (world: MockWorld) => void = () => {}
   ) {}
-
-  // --- entities ---
 
   private user(u: MockUser): Api.User {
     return new Api.User({
@@ -128,7 +125,6 @@ export class MockClient {
     return new Api.PeerChannel({ channelId: bigInt(chat.id) });
   }
 
-  /** The chat a peer-like value points at, or undefined (a known user we have no dialog with). */
   private locate(like: unknown): { chat?: MockChat; user?: MockUser } {
     const { users } = this.world;
     const { chats } = this.world;
@@ -233,7 +229,6 @@ export class MockClient {
     return {};
   }
 
-  /** The chat to act on; a private chat with a known user is opened on first use. */
   private chat(like: unknown, create = false): MockChat {
     const { chat, user } = this.locate(like);
     if (chat) {
@@ -253,7 +248,6 @@ export class MockClient {
 
   async getMe(): Promise<Api.User> {
     mockFailure();
-    // TG_MOCK_SLOW_ME=<ms> (tests): a slow account lookup, as on a slow connection
     const slow = Number(process.env.TG_MOCK_SLOW_ME ?? 0);
     if (slow > 0) {
       await new Promise((resolve) => setTimeout(resolve, slow));
@@ -278,8 +272,6 @@ export class MockClient {
   async getInputEntity(like: unknown): Promise<Api.TypeInputPeer> {
     return utils.getInputPeer(await this.getEntity(like));
   }
-
-  // --- messages ---
 
   private date(m: MockMessage): number {
     return m.date ?? now() - (m.ago ?? 0);
@@ -655,7 +647,6 @@ export class MockClient {
       out: true,
       text: params.message ?? "",
       replyTo: reply.replyToMsgId,
-      // A reply inside a thread stays in it, as on Telegram
       thread: reply.topMsgId ?? repliedTo?.thread,
       date: params.schedule,
     });
@@ -679,7 +670,6 @@ export class MockClient {
     return message;
   }
 
-  /** A scripted bot answers a message whose text is one of its `commands`. */
   private botAnswers(chat: MockChat, text: string): void {
     const reply =
       chat.kind === "user"
@@ -792,7 +782,6 @@ export class MockClient {
     return sent.map((m) => this.message(to, m));
   }
 
-  /** A path is read as teleproto reads it; a named blob (the CLI's snapshot of a file) is taken as it is. */
   private async fileOf(file: unknown): Promise<{ name: string; size: number }> {
     if (typeof file === "string") {
       if (!existsSync(file)) {
@@ -889,8 +878,6 @@ export class MockClient {
     return undefined;
   }
 
-  // --- dialogs ---
-
   async getDialogs(
     params: { limit?: number; archived?: boolean } = {}
   ): Promise<Dialog[]> {
@@ -932,8 +919,6 @@ export class MockClient {
         )
     );
   }
-
-  // --- raw requests ---
 
   private statsGraph(data: string): Api.StatsGraph {
     return new Api.StatsGraph(args({ json: new Api.DataJSON({ data }) }));
@@ -1026,7 +1011,6 @@ export class MockClient {
               part: 62,
               total: 100,
             }),
-            // One async graph (loaded via LoadAsyncGraph) and one error graph, to exercise both paths.
             growthGraph: g,
             followersGraph: this.asyncGraph("async-followers"),
             muteGraph: this.errorGraph("no data"),
@@ -1125,7 +1109,6 @@ export class MockClient {
         if (!chat.stats) {
           throw new Error("CHAT_ADMIN_REQUIRED");
         }
-        // A public forward of this post into another supergroup we can name.
         const into =
           this.world.chats.find(
             (c) => c.kind === "supergroup" && c.id !== chat.id
@@ -1869,7 +1852,6 @@ export class MockClient {
   private getReplies(request: Record<string, any>) {
     let chat = this.chat(request.peer);
     let rootId: number = request.msgId;
-    // Comments on a channel post live in the linked discussion group, under the forwarded copy
     if (chat.kind === "channel" && chat.linkedChatId) {
       const post = chat.messages.find((m) => m.id === rootId);
       const discussion = this.chat(bigInt(`-100${chat.linkedChatId}`));
@@ -2070,7 +2052,6 @@ export class MockClient {
     );
   }
 
-  /** A callback button was pressed: the "bot" edits the message and/or answers, as scripted. */
   private pressButton(request: Record<string, any>) {
     const chat = this.chat(request.peer);
     const m = this.findMessage(request.peer, request.msgId);
@@ -2130,8 +2111,6 @@ export class MockClient {
     };
   }
 
-  // --- lifecycle and everything else ---
-
   async connect(): Promise<boolean> {
     return true;
   }
@@ -2147,7 +2126,6 @@ export class MockClient {
   }
 }
 
-/** The true boolean flags of a ChatBannedRights request object (the denied rights). */
 function bannedFlags(rights: Record<string, unknown> | undefined): string[] {
   if (!rights) {
     return [];
@@ -2182,10 +2160,6 @@ export function createMockClient(path = mockStatePath()): TelegramClient {
   ) as unknown as TelegramClient;
 }
 
-/**
- * TG_MOCK_FAIL rehearses a Telegram that cannot answer: `network` (no connection) or an RPC error
- * such as `FLOOD_WAIT_30`, thrown by getMe and getEntity the way teleproto throws them.
- */
 let historyCalls = 0;
 
 /** Tests: start counting history reads for TG_MOCK_FLOOD_HISTORY again. */
@@ -2193,10 +2167,6 @@ export function resetMockHistoryFlood(): void {
   historyCalls = 0;
 }
 
-/**
- * TG_MOCK_FLOOD_HISTORY=<n>:<seconds> (tests): history reads after the first n in this process
- * fail with FLOOD_WAIT_<seconds>, the way teleproto throws it with floodSleepThreshold 0.
- */
 function mockHistoryFlood(): void {
   const m = /^(\d+):(\d+)$/.exec(process.env.TG_MOCK_FLOOD_HISTORY ?? "");
   if (!m || historyCalls++ < Number(m[1])) {

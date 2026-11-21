@@ -23,8 +23,6 @@ import {
 } from "../src/mcp.js";
 
 const CLI = "dist/telegram.mjs";
-// Unconfigured profile: nothing here can reach a real account
-// TG_MOCK off: an inherited TG_MOCK=1 would run file commands with no write guard at all
 const env = {
   ...process.env,
   TG_MOCK: "",
@@ -33,7 +31,6 @@ const env = {
 };
 
 let helpAllText: string | undefined;
-// `help-all` from one CLI process for the whole file
 const helpAll = (): string =>
   (helpAllText ??= spawnSync(process.execPath, [CLI, "help-all"], {
     encoding: "utf-8",
@@ -46,8 +43,6 @@ function commandNames(): string[] {
     .map((l) => l.split(" ")[0]);
 }
 
-/** Full paths of the subcommands help-all lists, at any depth, e.g. "topic create" (help-all lists a
- * group through its leaves; the path is every word before the first `<arg>`, `[arg]` or ` — `). */
 function subcommandPaths(): string[] {
   return helpAll()
     .split("\n")
@@ -63,7 +58,6 @@ function subcommandPaths(): string[] {
     )
     .filter((p) => p.includes(" "));
 }
-/** Every registered path: names, leaves and the groups in between, as commandPaths gives them. */
 function allPaths(): string[] {
   return [
     ...new Set([
@@ -110,8 +104,6 @@ describe("command classification", () => {
   });
 
   it("the write subcommands are exactly the full leaf paths of every group MCP can run (a new one fails here)", () => {
-    // Full paths, not two words: a child added under `topic create` makes `topic create …` a new
-    // leaf here, so it cannot inherit the permission of `topic create`. Never groups (skill) are off.
     const leaves = subcommandPaths().filter(
       (p) =>
         !NEVER_COMMANDS.has(p.split(" ")[0]) && p.split(" ")[0] !== "plugin"
@@ -124,7 +116,6 @@ describe("command classification", () => {
 
   it("every plugin path is classified by its full path, and a new one is refused until it is listed", () => {
     const leaves = subcommandPaths().filter((p) => p.startsWith("plugin "));
-    // validate and dev stay off MCP on purpose (they read a folder the model would name)
     expect(new Set(leaves)).toEqual(
       new Set([...Object.keys(PLUGIN_PATHS), "plugin validate", "plugin dev"])
     );
@@ -188,7 +179,6 @@ describe("command classification", () => {
       expect(classifyCall(["topic", "create", "sub", "g"]).group).toBe(
         "unknown"
       );
-      // `topic create` is now a group, so it runs only through a listed leaf
       expect(classifyCall(["topic", "create", "g", "t"]).group).toBe("unknown");
       expect(classifyCall(["topic", "create"]).group).toBe("invalid");
     } finally {
@@ -216,8 +206,6 @@ describe("command classification", () => {
   });
 });
 
-// The whole call decides, not the name: arguments of write-access, a bare --help, the TL method
-// behind api and generated commands, the operand of a clash namespace (auth, contacts, stats…).
 const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
   [
     [["inbox", "-n", "5"], "read"],
@@ -225,16 +213,13 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
     [["topic", "create", "g", "t"], "write"],
     [["download", "me", "1"], "write"],
     [["sync"], "write"],
-    // MCP only shows the write mode
     [["write-access"], "read"],
     [["write-access", "on"], "never"],
     [["write-access", "ask"], "never"],
     [["write-access", "off"], "never"],
-    // ... as text or as JSON: the read-only status form
     [["write-access", "--json"], "read"],
     [["write-access", "--json", "on"], "never"],
     [["write-access", "--for", "1h"], "never"],
-    // Administrative and interactive commands, with any arguments
     [["auth"], "never"],
     [["auth", "--phone", "+1"], "never"],
     [["logout"], "never"],
@@ -249,7 +234,6 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
     [["mcp", "--rotate-token"], "never"],
     [["mcp", "--http"], "never"],
     [["help-all"], "never"],
-    // A bare --help only prints help, for any real command (even a never one); never for an unknown one
     [["send", "--help"], "read"],
     [["mcp", "--token", "--help"], "never"],
     [["auth", "--help"], "read"],
@@ -258,12 +242,10 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
     [["messages", "get-history", "--help", "--json"], "read"],
     [["send", "@x", "--", "--help"], "write"],
     [["nope", "--help"], "unknown"],
-    // TL methods: auth.* login methods and other refused methods never run
     [["auth", "send-code"], "never"],
     [["api", "auth.CheckPassword"], "never"],
     [["api", "account.DeleteAccount"], "never"],
     [["account", "delete-account"], "never"],
-    // Paid reactions spend Stars via `count`; passkeys are log-in credentials
     [["api", "messages.SendPaidReaction"], "never"],
     [
       [
@@ -284,21 +266,20 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
     [["account", "delete-passkey", "--id", "x"], "never"],
     [["api", "account.InitPasskeyRegistration"], "never"],
     [["account", "init-passkey-registration"], "never"],
-    [["api", "account.GetPasskeys"], "never"], // a read, but off the MCP allowlist
-    [["api", "help.GetConfig"], "never"], // off the MCP allowlist
+    [["api", "account.GetPasskeys"], "never"],
+    [["api", "help.GetConfig"], "never"],
     [["api", "messages.GetHistory"], "read"],
     [["api", "contacts.Block"], "write"],
     [["api"], "invalid"],
     [["messages", "get-history"], "read"],
     [["messages", "send-message"], "write"],
-    [["ping"], "never"], // off the MCP allowlist
+    [["ping"], "never"],
     [["contacts"], "read"],
     [["contacts", "block"], "write"],
     [["stats", "@chat"], "read"],
-    [["stats", "get-broadcast-stats"], "never"], // off the MCP allowlist
+    [["stats", "get-broadcast-stats"], "never"],
     [["help"], "read"],
-    [["help", "get-config"], "never"], // off the MCP allowlist
-    // Not commands: refused, including future administrative commands until they get a group
+    [["help", "get-config"], "never"],
     [["messages"], "unknown"],
     [["messages", "bogus"], "unknown"],
     [["__update-check"], "unknown"],
@@ -310,7 +291,6 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
     [["--help"], "invalid"],
     [["watch", "me"], "invalid"],
     [["watch", "me", "-t", "30"], "read"],
-    // A read method that would spend Stars never runs over MCP, in every form of params
     [["api", "channels.SearchPosts", "--params", '{"query":"x"}'], "read"],
     [
       [
@@ -346,9 +326,7 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
       ],
       "never",
     ],
-    // The word itself in a query, a nested key or a null value is a free search
     [["channels", "search-posts", "--query", "allowPaidStars"], "read"],
-    // commander consumes a valued option's next argument, dash or not: this is a search for the text
     [["channels", "search-posts", "--query", "--allow-paid-stars=5"], "read"],
     [
       [
@@ -404,7 +382,6 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
       ],
       "read",
     ],
-    // A paid message or forward never runs over MCP either; the free forms stay writes
     [
       [
         "api",
@@ -459,8 +436,7 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
       ],
       "write",
     ],
-    [["api", "messages.SendMessage", "-p", "-"], "write"], // stdin params: the CLI refuses a paid body
-    // Recovery-email management and Passport values never run; an inline query is a write
+    [["api", "messages.SendMessage", "-p", "-"], "write"],
     [["api", "account.ResendPasswordEmail"], "never"],
     [["account", "cancel-password-email"], "never"],
     [["api", "account.GetAllSecureValues"], "never"],
@@ -485,8 +461,6 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
       "never",
     ],
     [["account", "get-authorization-form", "--bot-id", "1"], "never"],
-    // A geo group is classified on its method (a write); the CLI child refuses geoPoint/address
-    // before getClient (test/refused-before-invoke.test.ts), like an inline query with geoPoint
     [
       [
         "api",
@@ -500,7 +474,6 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
       ["api", "channels.CreateChannel", "-p", '{"title":"t","about":""}'],
       "write",
     ],
-    // Inherited names of a plain object are not commands
     [["constructor"], "unknown"],
     [["__proto__"], "unknown"],
     [["toString"], "unknown"],
@@ -509,15 +482,12 @@ const CALLS: [string[], "read" | "write" | "never" | "unknown" | "invalid"][] =
     [["constructor", "--help"], "unknown"],
     [["constructor", "get-history"], "unknown"],
     [["messages", "constructor"], "unknown"],
-    // Reads that hand out a login link never run
     [["api", "messages.GetEmojiURL", "--params", '{"langCode":"en"}'], "never"],
     [["messages", "get-emoji-url", "--lang-code", "en"], "never"],
-    // api classifies the resolved method, not the raw string
     [["api", "messages.GetNope"], "unknown"],
     [["api", "nope.GetHistory"], "unknown"],
     [["api", " account.DeleteAccount "], "never"],
     [["api", "MESSAGES.getHistory"], "read"],
-    // A write group runs only its registered subcommands
     [["topic", "close", "g", "1"], "write"],
     [["topic", "bogus", "g"], "unknown"],
     [["topic"], "invalid"],
@@ -665,8 +635,6 @@ describe("worker mode", () => {
   });
 });
 
-// Child processes everywhere else; worker threads inside Claude Desktop (forced here with TG_MCP_WORKER)
-// The two modes are independent servers, so they run at the same time
 describe.concurrent.each([
   ["child processes", {}],
   ["worker threads", { TG_MCP_WORKER: "1" }],
@@ -730,7 +698,7 @@ describe.concurrent.each([
     const code = await new Promise((r) => child.on("close", r));
 
     expect(code).toBe(0);
-    expect(lines.map((l) => l.id)).toEqual([1, 2, 3, 4, 5, 6]); // in order, nothing for the notification
+    expect(lines.map((l) => l.id)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(lines[1].result.tools.map((t: any) => t.name)).toEqual([
       "telegram_help",
       "telegram_read",
@@ -738,15 +706,12 @@ describe.concurrent.each([
       "telegram_setup",
     ]);
     expect(lines[2].result.content[0].text).toMatch(/read <chat>/);
-    // Unconfigured profile has no write access: the guard refuses, reported as a tool error
     expect(lines[3].result.isError).toBe(true);
     expect(lines[3].result.content[0].text).toMatch(
       /Write access|secret store/
     );
-    // Full output survives process.exit right after the write
     const direct = helpAll().trimEnd();
     expect(lines[4].result.content[0].text).toBe(direct);
-    // A real read on the unconfigured profile fails cleanly instead of hanging on a prompt
     expect(lines[5].result.isError).toBe(true);
     expect(lines[5].result.content[0].text).toMatch(
       /not configured|not authenticated|auth/i
@@ -754,11 +719,9 @@ describe.concurrent.each([
   }, 30_000);
 
   it("refuses never and unknown calls without running anything or writing to disk", async () => {
-    // A fresh HOME: every config path of the profile lives under it, so it must stay empty
     const home = mkdtempSync(join(tmpdir(), "tg-mcp-never-"));
     try {
       const child = spawn(process.execPath, [CLI, "mcp"], {
-        // APPDATA too: the Windows profile (config, DPAPI file) lives there, not under HOME
         env: {
           ...env,
           ...extraEnv,
@@ -797,7 +760,6 @@ describe.concurrent.each([
           );
         }
       }
-      // A local file write follows the write mode over MCP (read-only here), unlike in a terminal
       const out = join(home, "media");
       for (const args of [
         ["download", "me", "1", "-o", out],

@@ -43,7 +43,6 @@ export const schemaCommand = new Command("schema")
     ].join("\n")
   )
   .action((target: string[]) => {
-    // Indented for a person at a terminal, one line for an agent or a pipe (as every --json output)
     const out = (obj: unknown) =>
       console.log(isTTY ? JSON.stringify(obj, null, 2) : JSON.stringify(obj));
     const fail = (msg: string): never =>
@@ -53,7 +52,6 @@ export const schemaCommand = new Command("schema")
       return out(allNamespacesSchema());
     }
 
-    // Split a single "ns.Method" / "ns.method-kebab" token, else take two tokens.
     let methodToken: string | undefined;
     let ns: string;
     if (target.length === 1 && target[0].includes(".")) {
@@ -65,7 +63,6 @@ export const schemaCommand = new Command("schema")
     }
 
     if (methodToken === undefined) {
-      // A lone token: a namespace to list, or a root method to describe.
       if (isGeneratedNamespace(ns)) {
         return out(namespaceSchema(ns));
       }

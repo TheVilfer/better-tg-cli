@@ -14,7 +14,6 @@ function computeTimeOffset(offset: string): Date {
   const now = new Date();
   const match = offset.match(/^(\d+)([mhdw])$/);
   if (!match) {
-    // Absolute dates: "2026-09-01", "2026-09-01T12:00"
     const abs = Date.parse(offset);
     if (!Number.isNaN(abs)) {
       return new Date(abs);

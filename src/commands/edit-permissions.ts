@@ -16,7 +16,6 @@ import { formatJson } from "../formatters/json.js";
 import { assertWriteEnabled } from "../guard.js";
 import ora from "../spinner.js";
 
-/** Friendly `--deny` names → ChatBannedRights keys. */
 const DENY_MAP: Record<string, BannedRight> = {
   view: "viewMessages",
   send: "sendMessages",
@@ -67,7 +66,6 @@ export const editPermissionsCommand = new Command("edit-permissions")
   )
   .option("--json", "Output as JSON")
   .action(async (chat, user, options) => {
-    // The checks below come first: a bad command line must not cost an approval
     const denied = new Set<BannedRight>();
     if (options.mute) {
       permissionPresets.MUTE_RIGHTS.forEach((r) => denied.add(r));

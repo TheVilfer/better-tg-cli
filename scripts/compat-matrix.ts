@@ -1,7 +1,3 @@
-// Writes docs/compatibility.md from src/clients/data.ts.
-//   bun scripts/compat-matrix.ts           regenerate the doc
-//   bun scripts/compat-matrix.ts --check   exit 1 if the doc is out of date or the data is inconsistent
-// test/compat-matrix.test.ts runs the same check under `npm test`.
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -23,9 +19,7 @@ if (process.argv.includes("--check")) {
   let have = "";
   try {
     have = readFileSync(path, "utf-8").replaceAll("\r\n", "\n");
-  } catch {
-    /* missing counts as out of date */
-  }
+  } catch {}
   if (have !== want) {
     console.error(
       `${DOC_PATH} is out of date. Run: bun scripts/compat-matrix.ts`

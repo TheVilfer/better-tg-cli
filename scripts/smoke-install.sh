@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Acceptance of install.sh on the archives of this build, with no network: a fake curl first on
-# PATH serves the archives in <dir>, plus a SHA256SUMS written for them the way the release
-# workflow writes it, for the pinned release URL only. Used by the native smoke jobs of
-# .github/workflows/release.yml; runs the same way on a Mac or Linux machine after
-# scripts/build-binary.sh.
-# Usage: scripts/smoke-install.sh <release dir> [--no-xz]
-#   --no-xz: a PATH without xz, so a Linux run must take the .tar.gz (as on Debian and Ubuntu images)
 set -euo pipefail
 
 rel="$(cd "$1" && pwd)"
@@ -22,7 +15,6 @@ mkdir "$work/serve" "$work/bin"
 shopt -s nullglob
 archives=("$rel"/better-tg-cli-"$version"-*.tar.*)
 [[ ${#archives[@]} -gt 0 ]] || { echo "no better-tg-cli-$version-*.tar.* in $rel" >&2; exit 1; }
-# Outside the release dir: the workflow uploads that dir as is
 for f in "${archives[@]}"; do ln -s "$f" "$work/serve/${f##*/}"; done
 (cd "$work/serve" && if command -v sha256sum >/dev/null; then sha256sum -- *.tar.*; else shasum -a 256 -- *.tar.*; fi) >"$work/serve/SHA256SUMS"
 
@@ -48,7 +40,6 @@ chmod +x "$work/bin/curl"
 
 path="$work/bin:$PATH"
 if [[ "$mode" == --no-xz ]]; then
-  # Only the tools install.sh calls, and no xz
   mkdir "$work/tools"
   for t in awk cat chmod cp cut date grep gzip head ln ls mkdir mktemp mv rm rmdir sed tar tr uname sha256sum shasum openssl sysctl; do
     p="$(command -v "$t" || true)"
@@ -57,7 +48,6 @@ if [[ "$mode" == --no-xz ]]; then
   path="$work/bin:$work/tools"
 fi
 
-# run_install <dir>: runs install.sh into <dir>; sets rc and out
 run_install() {
   set +e
   out="$(env PATH="$path" TG_INSTALL_DIR="$1" SMOKE_BASE="$base" SMOKE_SERVE="$work/serve" SMOKE_LOG="$work/requests" \

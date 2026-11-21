@@ -23,10 +23,6 @@ import {
   setKnownCommands,
 } from "../src/mcp.js";
 
-// The review of the MCP masking (docs/api-coverage.md §5): login codes and redeemable gift codes
-// never reach the model on any output path; ordinary content, chat IDs, message IDs and approval
-// codes stay as they are.
-
 const saved = { ...process.env };
 afterEach(() => {
   process.env = { ...saved };
@@ -89,7 +85,6 @@ describe("percent-encoded gift slugs (finding 4)", () => {
       expect(out).toMatch(/\[gift code hidden\]\.$/);
       expect(holdsMaskedValue(link)).toBe(true);
     }
-    // Other links and a Markdown link around a gift link keep their shape
     expect(
       maskGiftCodes("[gift](https://t.me/giftcode/ABC) and t.me/durov")
     ).toBe("[gift](https://t.me/giftcode/[gift code hidden]) and t.me/durov");
@@ -149,7 +144,6 @@ describe("a gift link is one of the Telegram hosts, matched whole (review 3, fin
       expect(maskGiftCodes(text), text).toBe(text);
       expect(holdsMaskedValue(text), text).toBe(false);
     }
-    // Side by side: the foreign link keeps its path, the Telegram one loses its slug
     expect(
       maskGiftCodes("support.me/giftcode/ORDER-42 vs t.me/giftcode/ORDER-42")
     ).toBe("support.me/giftcode/ORDER-42 vs t.me/giftcode/[gift code hidden]");
@@ -252,7 +246,6 @@ describe("the login-code phrase (finding 6)", () => {
       expect(out, text).not.toMatch(/52|813/);
       expect(out, text).toMatch(/\[login code hidden\]$/);
     }
-    // The sentence after a code stays
     expect(maskForModel("Login code: 52813 Do not share it", "echo")).toBe(
       "Login code: [login code hidden] Do not share it"
     );
@@ -283,7 +276,6 @@ describe("the login-code phrase (finding 6)", () => {
     const note =
       'After a yes, call telegram_write again with the same args and stdin plus "approval": "H5SCNT". The code works once.';
     expect(maskOutput(note, "echo")).toBe(note);
-    // Through a whole approval result: the code and the chat stay readable
     const line = JSON.stringify({
       error: "approval_required",
       code: "H5SCNT",
@@ -318,13 +310,11 @@ describe("the login-code phrase (finding 6)", () => {
       { code: 0, timedOut: false, out, err: "" }
     );
     expect((read.content[0] as { text: string }).text).toBe(shown);
-    // A bot's answer to a click is chat content too
     const click = result(
       { argv: ["click", "@shop_bot", "2", "Buy"], readOnly: false },
       { code: 0, timedOut: false, out, err: "" }
     );
     expect((click.content[0] as { text: string }).text).toBe(shown);
-    // A write that carried a code gets its echo masked
     const send = result(
       { argv: ["send", "-1", "Login code: 52813"], readOnly: false },
       { code: 0, timedOut: false, out: "Sent: Login code: 52813", err: "" }
@@ -370,7 +360,6 @@ describe("the login-code phrase (finding 6)", () => {
     expect(model).toMatch(/Login code:\\+u\{a\}\[login code hidden\]/);
   });
 
-  // A time limit on these inputs, one size each: it catches a catastrophic backtrack, not a proof of linearity
   it("finishes in time on hostile inputs", () => {
     const hostile = [
       "tg://giftcode?".repeat(40_000),
@@ -541,7 +530,6 @@ describe("F: every displayed string of a login-service message is masked (findin
       expect(raw).not.toContain("52813.txt");
       expect(JSON.parse(raw).messages[0].media.document.size).toBe("52813");
     }
-    // Another sender: the file name is chat content
     const other = await toMessageInfo(
       noClient,
       doc(42, "Login code: 52813.txt")

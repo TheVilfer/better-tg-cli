@@ -78,7 +78,6 @@ export function compareVersions(a: Version, b: Version): number {
 }
 
 type Op = "<" | "<=" | ">" | ">=" | "=";
-/** `explicit`: the range itself names this version (a prerelease written in a synthesized bound does not count). */
 interface Comparator {
   op: Op;
   v: Version;
@@ -107,7 +106,6 @@ function parsePartial(text: string, range: string): Partial {
     patch: n(m[3]),
     pre: preIds(m[4]),
   };
-  // `1.x.3` is not a range
   if (
     (p.major === undefined &&
       (p.minor !== undefined || p.patch !== undefined)) ||
@@ -133,7 +131,6 @@ const cmp = (op: Op, ver: Version, explicit = false): Comparator => ({
   explicit,
 });
 
-/** The comparators of one simple range item (`^1.2`, `>=1.0.0`, `1.x`, …). */
 function expand(item: string, range: string): Comparator[] {
   const m = /^(\^|~>?|<=|>=|<|>|=)?\s*(.+)$/.exec(item);
   if (!m) {
@@ -172,7 +169,6 @@ function expand(item: string, range: string): Comparator[] {
   if (full) {
     return [cmp((op || "=") as Op, lower, explicit)];
   }
-  // A partial version with a comparator
   if (p.major === undefined) {
     return op === "<" || op === ">"
       ? [cmp("<", v(0, 0, 0, ZERO_PRE))]
@@ -288,7 +284,6 @@ export function satisfies(version: string, range: string): boolean {
     if (!ver.pre.length) {
       return true;
     }
-    // A prerelease only matches a range that names a prerelease of the same version
     return set.some(
       (c) =>
         c.explicit &&

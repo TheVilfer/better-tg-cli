@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Before any module under test is imported: a temp HOME, so no path reaches the real ~/.config
 const home = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -25,7 +24,6 @@ const home = await vi.hoisted(async () => {
   }
   return root;
 });
-// An in-memory secret store; the real Keychain, 1Password, libsecret and DPAPI are never asked
 const store = vi.hoisted(() => ({ values: new Map<string, string>() }));
 vi.mock(import("../src/secrets.js"), () => ({
   isSecretStoreAvailable: () => true,
@@ -41,7 +39,6 @@ vi.mock(import("../src/secrets.js"), () => ({
     ["apiHash", "sessionString", "writeEnabled"].includes(k),
   migrateSecretsToStore: (c: Record<string, unknown>) => c,
 }));
-// A person at a terminal who answers the y/N question with "no"
 const human = vi.hoisted(() => ({ present: false }));
 vi.mock(import("../src/confirm.js"), async (orig) => ({
   ...(await orig<typeof import("../src/confirm.js")>()),
@@ -108,7 +105,6 @@ async function run(
 }
 
 describe("checks before the write guard", () => {
-  // In "ask" the guard would stop with exit 3 and hand out a code: a bad command must not get one
   it.each([
     [pollCommand, ["Team", "Q?", "only one"]],
     [pollCommand, ["Team", "Q?", "a", "b", "--quiz", "--correct", "3"]],

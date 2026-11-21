@@ -1,32 +1,24 @@
 import type { Command } from "commander";
 
-/**
- * What a write in mode "ask" is about, as the person approving it should see it and as its approval
- * is bound: the command path, its parsed arguments and options, and the recipients resolved to IDs.
- *
- * Built from the command commander actually parsed (not from the raw argv), so the order of the
- * flags or an output-only `--json` does not change it. Everything commander parsed is part of it
- * except the options in OUTPUT_ONLY; a new option is covered without a change here.
- */
+import type { ChatCandidate, Hint } from "./errors.js";
 
 /** Options that only change how the result is printed. `--markdown`/`--html` stay: on a write they change what is sent. */
 export const OUTPUT_ONLY = new Set(["json"]);
 
+/**
+ * - `command`: `send`, `topic create`, `api` …
+ * - `args`: Positional arguments in order, by their declared name; a variadic one is a list
+ * - `options`: Options given on the command line (or implied) that differ from their default, by attribute name, sorted
+ * - `argv`: The raw argv, shown last for the agent and hashed when nothing was parsed
+ * - `apiPeers`: Chats named inside the params of a raw API call (`{"_chat": …}`, by JSON path), set by the guard from the params the call will send: they are recipients like any argument.
+ * - `parsed`: False when no parsed command was available: the raw argv is all there is
+ */
 export interface ParsedAction {
-  /** `send`, `topic create`, `api` … */
   command: string;
-  /** Positional arguments in order, by their declared name; a variadic one is a list */
   args: { name: string; value: string | string[] }[];
-  /** Options given on the command line (or implied) that differ from their default, by attribute name, sorted */
   options: [string, unknown][];
-  /** The raw argv, shown last for the agent and hashed when nothing was parsed */
   argv: string[];
-  /**
-   * Chats named inside the params of a raw API call (`{"_chat": …}`, by JSON path), set by the
-   * guard from the params the call will send: they are recipients like any argument.
-   */
   apiPeers?: { path: string; value: string }[];
-  /** False when no parsed command was available: the raw argv is all there is */
   parsed: boolean;
 }
 
@@ -74,7 +66,7 @@ export function parsedAction(argv: string[]): ParsedAction {
     const v = command.processedArgs[i] as unknown;
     if (v === undefined) {
       return;
-    } // an optional argument that was not given
+    }
     args.push({
       name: a.name(),
       value: Array.isArray(v) ? v.map(String) : String(v),
@@ -96,15 +88,12 @@ export function parsedAction(argv: string[]): ParsedAction {
     }
     if (options.some(([k]) => k === key)) {
       continue;
-    } // --foo / --no-foo share one attribute
+    }
     options.push([key, value]);
   }
   options.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return { command: commandPath(command), args, options, argv, parsed: true };
 }
-
-/** A recipient as it was looked up for the approval: the chat it resolved to, or why it did not. */
-import type { ChatCandidate, Hint } from "./errors.js";
 
 export type PeerInfo =
   | {
@@ -129,19 +118,12 @@ export type PeerInfo =
 
 interface Descriptor {
   verb: string;
-  /** Arguments that name a chat or user, with the label they get */
   peers?: Record<string, string>;
-  /** Arguments with free text the person must read in full */
   text?: Record<string, string>;
-  /** Labels for the other arguments */
   labels?: Record<string, string>;
-  /** Arguments that name a local file the command uploads: read once, hashed and sent as those bytes */
   files?: string[];
-  /** The argument whose "-" the command reads from stdin (only these show stdin in their place) */
   stdin?: string;
-  /** Takes stdin for this option's "-" (`send-file -c -`) */
   stdinOption?: string;
-  /** A peer argument value that is not a chat to look up (an invite link for `join`) */
   notPeer?: (name: string, value: string) => boolean;
 }
 
@@ -153,7 +135,6 @@ const MSG = {
   topicId: "Topic",
 };
 
-/** The curated write commands. One not listed here is shown and hashed generically, its peers unresolved. */
 const DESCRIPTORS: Record<string, Descriptor> = {
   send: {
     verb: "Send a message",
@@ -393,7 +374,6 @@ export function visible(text: string): string {
 const quoteArg = (a: string): string =>
   /^[\w@./:=+-]+$/.test(a) ? a : JSON.stringify(oneLine(a));
 
-/** What a value shows: as is for the person approving, masked for the model (see describeParsedAction). */
 type Mask = (text: string) => string;
 const asIs: Mask = (t) => t;
 
@@ -456,8 +436,6 @@ export function describeParsedAction(
   mask: Mask = asIs
 ): string {
   const d = action.parsed ? DESCRIPTORS[action.command] : undefined;
-  // Only a field the handler really reads from stdin shows stdin in its place; elsewhere "-" is
-  // what gets sent, and stdin (if any) is shown on its own below
   const fromStdin = (name: string, value: string | string[]) =>
     value === "-" &&
     stdin !== undefined &&
@@ -535,11 +513,9 @@ export function describeParsedAction(
       `  Options: ${rest.map(([k, v]) => flagText(k, v, mask)).join(" ")}`
     );
   }
-  // A body on stdin that no argument names ("-p -", or stdin handed over by the MCP server)
   const named =
     action.args.some((a) => fromStdin(a.name, a.value)) ||
     (options.get("caption") === "-" && d?.stdinOption === "caption");
-  // A curated command shows stdin only in the field that reads it: elsewhere it is not sent
   if (stdin !== undefined && !named && !d) {
     texts.push(
       textBlock(action.parsed ? "Input (stdin)" : "Text (stdin)", stdin, mask)
@@ -562,7 +538,6 @@ export function normalizedForm(
   peers: Map<string, PeerInfo>
 ): unknown {
   const d = DESCRIPTORS[action.command];
-  // Every recipient is in as the ID it resolved to; one that did not resolve never gets this far
   const resolve = (v: string) => {
     const info = peers.get(v);
     if (!info?.ok) {

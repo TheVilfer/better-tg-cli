@@ -1,11 +1,5 @@
 import { oneLine } from "../approval-action.js";
 import { maskForModel } from "../mcp-output.js";
-/**
- * Action proposals (docs/plugins.md §7): a plugin with the permission and effect `actions` proposes
- * a typed action; the host checks every field and builds the summary, the argv and the stdin from
- * the same checked values, so a plugin cannot describe one action and hand over another. The agent
- * runs the argv through the normal write path (guard, approval, mode).
- */
 import { HostError } from "./sandbox-types.js";
 
 export interface Proposal {
@@ -55,7 +49,6 @@ function text(v: unknown, mask: boolean): string {
 }
 
 function emoji(v: unknown): string {
-  // One reaction: a few code points, never an option ("-…") or whitespace
   if (
     typeof v !== "string" ||
     !v ||
@@ -82,7 +75,6 @@ export function buildProposal(
   if (typeof action !== "object" || action === null || Array.isArray(action)) {
     throw bad("a proposal is an object with a type");
   }
-  // Own fields only: nothing inherited (a `__proto__` object) is read as a field
   const a: Record<string, unknown> = Object.create(null) as Record<
     string,
     unknown
@@ -123,7 +115,6 @@ export function buildProposal(
   const msgId = id(a.msgId, "msgId");
   if (t === "reply") {
     const body = text(a.text, mask);
-    // A reply lands where the message is: the topic needs no flag of its own
     if (a.topic !== undefined && a.topic !== null) {
       id(a.topic, "topic");
     }

@@ -42,12 +42,6 @@ import {
 } from "../src/plugins/store.js";
 import type { KeyStore, LockEntry } from "../src/plugins/store.js";
 
-/**
- * One test (or more) per finding of the review of the plugin core (review-p1.md, #1-#11; #12 is in
- * windows.test.ts, #6 and #8 over the CLI in plugin-cli.test.ts). Each fails without its fix.
- * A real (non-mock) profile in a temp HOME, with the registry key in memory: never the Keychain.
- */
-
 const FIXTURE = "test/fixtures/plugins/tone-of-voice";
 const root = mkdtempSync(join(tmpdir(), "tg-plugin-fixes-"));
 const saved = Object.fromEntries(
@@ -186,13 +180,10 @@ describe("#1 the install registry is signed with a key from the secret store", (
   });
 });
 
-// ---------- #2 ----------
-
 const gitSha = (b: Uint8Array) =>
   createHash("sha1").update(`blob ${b.length}\0`).update(b).digest("hex");
 const fakeSha = (s: string) => createHash("sha1").update(s).digest("hex");
 
-/** A GitHub API with the fixture at one commit; `onBranch` says whether the owner's own refs reach it. */
 function github(
   onBranch: boolean,
   compare: "identical" | "behind" | "ahead" | "diverged" | 404,
@@ -341,7 +332,6 @@ describe("#2 official only for a commit the official repository itself has on a 
         )
       ).official
     ).toBe(true);
-    // A tag of the official repo that points elsewhere does not vouch for this commit
     expect(
       (
         await fetchGithubSnapshot(
@@ -353,8 +343,6 @@ describe("#2 official only for a commit the official repository itself has on a 
     ).toBe(false);
   });
 });
-
-// ---------- #3, #5 ----------
 
 describe(
   "#3 plugin data is never reached through a link",

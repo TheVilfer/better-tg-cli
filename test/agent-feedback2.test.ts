@@ -22,8 +22,6 @@ import { setStrictChatResolution } from "../src/resolve-mode.js";
 import { writesTextLine } from "../src/status.js";
 import { cliArgs } from "./cli.js";
 
-// Feedback of an outside agent on 0.40.0-rc.2 (a real account): a found chat resolved in 0.8 s, but
-// every chat_not_found and ambiguous_chat still read the whole dialog list (~60 s, two FLOOD_WAITs).
 const dir = mkdtempSync(join(tmpdir(), "tg-agent-feedback2-"));
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -50,7 +48,6 @@ describe("1 a read that misses, or names several chats, is answered from the lis
     delete process.env.TG_NO_CACHE;
   });
 
-  /** One "process": a fresh client, one lookup, then disconnect (which clears every in-memory cache). */
   async function run(identifier: string): Promise<{
     id?: string;
     error?: {
@@ -89,7 +86,6 @@ describe("1 a read that misses, or names several chats, is answered from the lis
     const first = await run("NoSuchChatAtAll");
     expect(first.error?.code).toBe("chat_not_found");
     expect(first.fetches).toBeGreaterThan(0);
-    // Read from Telegram just now: no listedAt
     expect(first.error?.listedAt).toBeUndefined();
 
     const miss = await run("Teem");
@@ -110,7 +106,6 @@ describe("1 a read that misses, or names several chats, is answered from the lis
     expect(ambiguous.error!.listedAt).toBe(miss.error!.listedAt);
     expect(ambiguous.error!.hint).toMatch(/TG_NO_CACHE=1/);
 
-    // One partial match is a hit, fetched by itself
     await expect(run("Desig")).resolves.toEqual({ id: "4002", fetches: 0 });
   });
 
@@ -171,7 +166,6 @@ describe("1 a read that misses, or names several chats, is answered from the lis
   });
 });
 
-// A child process on the mock, as an agent runs the CLI
 const home = mkdtempSync(join(tmpdir(), "tg-agent-feedback2-home-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -223,7 +217,6 @@ describe("2 TG_LOG_LEVEL=debug says whether chat lookup used the list on disk", 
     expect(second.err.match(/^dialog cache: .*$/gm)).toEqual([
       expect.stringMatching(/^dialog cache: hit/),
     ]);
-    // Without debug: silent
     expect(cli(["read", "Team", "-n", "1", "--json"], state).err).not.toMatch(
       /dialog cache/
     );
@@ -245,7 +238,6 @@ describe("3 every candidate carries the command that re-runs the call with its I
       expect(error.candidates.length).toBeGreaterThan(0);
       for (const c of error.candidates) {
         expect(c.command).toEqual(args.map((a) => (a === name ? c.id : a)));
-        // The command runs as given, a negative ID included
         expect(cli(c.command, state).code, c.command.join(" ")).toBe(0);
       }
     },

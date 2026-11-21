@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-// @ts-expect-error plain .mjs script without types
 import { bump, bumpFor, nextPrerelease } from "../scripts/next-version.mjs";
 
 describe("next-version", () => {
@@ -40,7 +39,6 @@ describe("next-version", () => {
     expect(
       nextPrerelease("0.34.0", "minor", ["v0.35.0-rc.9", "v0.35.0-rc.10"])
     ).toBe("0.35.0-rc.11");
-    // A later `Add …` PR raises the level: the new base starts its own numbering
     expect(
       nextPrerelease("0.34.0", "minor", ["v0.34.1-rc.1", "v0.34.1-rc.2"])
     ).toBe("0.35.0-rc.1");

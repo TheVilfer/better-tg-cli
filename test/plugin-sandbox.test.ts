@@ -7,7 +7,6 @@ import {
 } from "../src/plugins/runtime.js";
 import type { HostFunction, SandboxLimits } from "../src/plugins/runtime.js";
 
-/** One command `go` whose body is `body`, run with short limits. */
 async function run(
   body: string,
   opts: {
@@ -43,7 +42,6 @@ async function failure(p: Promise<unknown>): Promise<SandboxError> {
 const value = async (p: ReturnType<typeof run>) =>
   JSON.parse((await p).json) as unknown;
 
-// Each run instantiates its own engine, and the limit cases allocate or spin: slow on a loaded runner
 describe("plugin sandbox: isolation", { timeout: 30_000 }, () => {
   it("has only ECMAScript and host: no require, process, fetch, WebAssembly, Bun, timers, std/os, bridge", async () => {
     const r = await value(
@@ -100,7 +98,6 @@ describe("plugin sandbox: isolation", { timeout: 30_000 }, () => {
         )
       )
     ).resolves.toEqual([true, "function", false]);
-    // The guest's own JSON and prototypes are its business: the host parses the text itself
     const r = await value(
       run(
         `Object.prototype.toJSON = undefined; Array.prototype.map = null; JSON.parse = () => ({ forged: true }); return { a: [1, 2] };`
@@ -241,7 +238,6 @@ describe("plugin sandbox: limits", { timeout: 30_000 }, () => {
       );
       expect(e).toMatchObject({ code: "plugin_limit", limit: "memory" });
     }
-    // A growing promise chain ends too: out of memory in a job (or its promise dropped by it), never a hang
     const e = await failure(
       run(
         "const f = () => Promise.resolve().then(f); f(); await new Promise(() => {});",
@@ -292,7 +288,6 @@ describe("plugin sandbox: limits", { timeout: 30_000 }, () => {
         })
       )
     ).resolves.toMatchObject({ code: "plugin_limit", limit: "hostCalls" });
-    // A caught refusal does not let the run go on: the limit ends it
     await expect(
       failure(
         run(

@@ -14,11 +14,6 @@ import {
 } from "../src/client.js";
 import { fileSnapshot } from "../src/file-snapshot.js";
 
-/**
- * Without --html/--markdown the text goes out literally. teleproto's client parses Markdown when a
- * call leaves parseMode undefined, so `__init__` would become italic "init". A real TelegramClient
- * with its transport replaced records the request it would send; nothing reaches Telegram.
- */
 function recordingClient() {
   const requests: unknown[] = [];
   const client = new TelegramClient(new StringSession(""), 1, "x", {
@@ -37,7 +32,6 @@ function recordingClient() {
     },
     getMe: async () => self,
   });
-  // An upload's parts go through the media scheduler, not invoke: accept them without a network
   (
     client as unknown as { _media: { savePart: () => Promise<void> } }
   )._media.savePart = async () => {};

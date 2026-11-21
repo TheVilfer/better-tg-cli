@@ -15,12 +15,6 @@ import { afterAll, describe, expect, it } from "vitest";
 import { seedWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
 
-/**
- * What a "yes" covers is what Telegram gets: every recipient as the ID it was approved with, the
- * button as it was shown, the bytes of a file as they were hashed, messages only of the chat shown,
- * and a code given for a call holds in any mode. Rehearsed on the mock account (TG_MOCK_ASK=1):
- * the real CLI, guard and lookups, nothing reaches Telegram.
- */
 const home = mkdtempSync(join(tmpdir(), "tg-bound-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -40,7 +34,6 @@ interface World {
   }[];
 }
 
-/** A fresh mock account per test: its own state file, the same temp home. */
 function account() {
   const state = join(home, `state-${++n}.json`);
   const run = (
@@ -75,7 +68,6 @@ function account() {
       .map((l) => JSON.parse(l) as Record<string, any>);
     return { code: r.status, out: r.stdout, err: r.stderr, json: json.at(-1) };
   };
-  /** The mock account's data as the last run left it (the built-in one until something is written). */
   const world = (): World =>
     (existsSync(state)
       ? JSON.parse(readFileSync(state, "utf-8"))
@@ -89,7 +81,6 @@ describe("a code given for a call must hold in any write mode", () => {
     const cli = account();
     const asked = cli(["send", "-1004001", "ship it", "--json"]);
     expect(asked.code).toBe(3);
-    // The same code on a run that would write freely (no TG_MOCK_ASK), for other text
     const r = cli(["send", "-1004001", "drop the table"], {
       approve: asked.json!.code,
       env: { TG_MOCK_ASK: "" },
@@ -116,7 +107,6 @@ describe("a code given for a call must hold in any write mode", () => {
   });
 });
 
-/** Changes the mock account between two runs, as Telegram may change between the approval and the retry. */
 function edit(cli: ReturnType<typeof account>, change: (w: any) => void): void {
   const w = cli.world();
   change(w);
@@ -137,7 +127,7 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
     expect(asked.json!.action.description).toContain(
       "Member: Alice Example (user, @alice_example, id 1001)"
     );
-    edit(cli, swapUsername(1001, 1002)); // @alice_example is Bob now
+    edit(cli, swapUsername(1001, 1002));
     const r = cli(["create-group", "Project", "@alice_example", "--json"], {
       approve: asked.json!.code,
     });
@@ -245,7 +235,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
     expect(r.err).toContain(
       "not accepted: the approval was for a different command or text"
     );
-    // One that does not resolve gets no code at all
     const lost = cli([
       "api",
       "messages.DeleteMessages",
@@ -266,7 +255,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
     expect(asked.err).toContain(
       "Chat in params.peer: Alice Example (user, @alice_example, id 1001)"
     );
-    // The generated command's --json-params and a peer inside a nested constructor are found too
     const gen = cli([
       "messages",
       "mark-dialog-unread",
@@ -294,7 +282,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
     expect(nested.err).toContain(
       "Chat in params.replyTo.replyToPeerId: Bob Sample (user, @bob_sample, id 1002)"
     );
-    // The username moves to another account: the code no longer fits
     edit(cli, swapUsername(1001, 1002));
     const r = cli(["api", "messages.MarkDialogUnread", "-p", params], {
       approve: code(asked),
@@ -304,7 +291,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
       "not accepted: the approval was for a different command or text"
     );
     expect((cli.chat(1001) as any).markedUnread).toBeUndefined();
-    // Unchanged, the approved call marks the chat that was shown
     const ok = account();
     const again = ok(["api", "messages.MarkDialogUnread", "-p", params]);
     expect(
@@ -327,7 +313,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
     expect(asked.err).toMatch(
       /Chat in params\.folderPeers.*peer: Alice Example \(user, @alice_example, id 1001\)/
     );
-    // A constructor with no "_" at all is inferred the same way
     const noTag = cli([
       "api",
       "folders.EditPeerFolders",
@@ -339,7 +324,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
     expect(noTag.err).toMatch(
       /Chat in params\.folderPeers.*peer: Alice Example/
     );
-    // The username moves to Bob: the approved call must not archive Bob's chat
     edit(cli, swapUsername(1001, 1002));
     const r = cli(["api", "folders.EditPeerFolders", "-p", params], {
       approve: code(asked),
@@ -349,7 +333,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
       "not accepted: the approval was for a different command or text"
     );
     expect((cli.chat(1002) as any).archived).toBeUndefined();
-    // Unchanged, the approved call archives the chat that was shown
     const ok = account();
     const again = ok(["api", "folders.EditPeerFolders", "-p", params]);
     expect(
@@ -364,7 +347,6 @@ describe("every recipient, in every role, is approved as the ID it resolves to",
 describe("delete touches only messages of the chat the person saw", () => {
   it("refuses, before any code, an ID that is not in the chat (it would delete in another chat)", () => {
     const cli = account();
-    // Bob's chat has #1 and #2; #4 is a message in Alice's chat and in Family
     const r = cli(["delete", "1002", "4"]);
     expect(r.code).toBe(1);
     expect(r.err).toMatch(
@@ -426,7 +408,6 @@ describe("click: the approval names the button and what it sends", () => {
     expect(asked.json!.action.description).toContain(
       'Pressing: #2 "Status": a bot button, sends the bot the data c3RhdHVz = "status"'
     );
-    // The bot swapped the payload behind the same label and position
     edit(cli, (w) => {
       w.chats.find((c: any) => c.id === 2001).messages[1].buttons[0][1] = {
         text: "Status",
@@ -466,19 +447,16 @@ describe("click: the approval names the button and what it sends", () => {
 describe("a file is approved and sent as one snapshot of its bytes", () => {
   it("an unreadable file gets no code", () => {
     const cli = account();
-    // A missing file is a usage error checked before the guard (exit 2), so no code either
     const missing = cli(["send-file", "-1004001", join(home, "missing.pdf")]);
     expect(missing.code).toBe(2);
     expect(missing.err).toMatch(/File not found: .*missing\.pdf/);
     expect(missing.out).not.toMatch(/approval_required/);
   });
 
-  // chmod 000 keeps the file readable on Windows and for root
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "a file that exists but cannot be read gets no code either",
     () => {
       const cli = account();
-      // It reaches the guard's snapshot: nothing to approve, exit 1
       const locked = join(home, "locked.pdf");
       writeFileSync(locked, "secret");
       chmodSync(locked, 0o000);
@@ -560,7 +538,6 @@ describe("the approval knows every write and every recipient in it (scan)", () =
       /^(chat|user|users|group|target|fromChat|toChat|peer|bot|channel|member|members)$/;
     const peerOption =
       /^--(chat|user|peer|to|from|as|send-as|channel|member|bot)$/;
-    // Not a recipient: sync only reads that chat into local files over MCP (nothing is sent), and picks it with its own exact-only rules
     const notRecipient = new Set(["sync --chat"]);
     const missing: string[] = [];
     for (const w of writes) {
@@ -597,7 +574,6 @@ describe("what the person reads is what is sent, and nothing in the output acts 
       expect(r.err).not.toContain("2FA");
       expect(r.err).toMatch(/\(1 characters\):\n {4}\| -\n/);
     }
-    // send reads its "-" from stdin, and shows it there
     expect(
       cli(["send", "-1004001", "-"], { stdin: "from stdin" }).err
     ).toContain("    | from stdin");

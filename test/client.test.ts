@@ -54,7 +54,7 @@ function fakeClient(over: Partial<Fake> = {}): Fake {
     getMe: vi.fn(async () => me),
     getEntity: vi.fn(async () => news),
     getDialogs: vi.fn(async () => [
-      dialog("-1006", "Gamers", game), // contains "me" as a substring
+      dialog("-1006", "Gamers", game),
       dialog("-1005", "News", news),
     ]),
     getMessages: vi.fn(async () => []),
@@ -64,7 +64,7 @@ function fakeClient(over: Partial<Fake> = {}): Fake {
 }
 
 afterEach(async () => {
-  await disconnectClient(); // clears the resolve and dialog caches
+  await disconnectClient();
 });
 
 describe(parseTimeOffset, () => {
@@ -169,7 +169,6 @@ describe("resolveChat for writes (strict)", () => {
 
 describe("getMessages pagination", () => {
   it("pages by the oldest real message even when a batch ends with a service message", async () => {
-    // 300 messages of history; every full batch ends with a service item (pin/join marker)
     const history = (offsetId: number | undefined, limit: number) => {
       const top = (offsetId ?? 301) - 1;
       const out = [];
@@ -191,7 +190,6 @@ describe("getMessages pagination", () => {
     });
     expect(messages).toHaveLength(120);
     expect(messages[0].id).toBe(300);
-    // Continued past the first batch's trailing service message instead of stopping there
     expect(client.getMessages.mock.calls.length).toBeGreaterThan(1);
     const firstBatch = history(
       undefined,
@@ -326,7 +324,6 @@ describe("session errors: by the reason, at connect and later", () => {
       exitCode: EXIT.ERROR,
       retryAfterSeconds: 42,
     });
-    // A working session passes
     await expect(
       checkSession({ invoke: async () => ({}) } as never)
     ).resolves.toBeUndefined();

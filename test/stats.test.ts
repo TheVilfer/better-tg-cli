@@ -243,15 +243,15 @@ describe("chat statistics", () => {
       views: 15_230,
       forwards: 42,
     });
-    expect(a.graphs).toBeUndefined(); // not requested
+    expect(a.graphs).toBeUndefined();
   });
 
   it("broadcast --graphs: loads async graphs and reports error graphs per graph", async () => {
     const s = await getChatStats(mock(), "Mock News", { graphs: true });
     const a = s.activity as BroadcastActivity;
-    const followers = a.graphs!.find((g) => g.name === "followers")!; // StatsGraphAsync → loaded
+    const followers = a.graphs!.find((g) => g.name === "followers")!;
     expect(followers.data).toMatchObject({ token: "async-followers" });
-    expect(a.graphs!.find((g) => g.name === "mute")!.error).toBe("no data"); // StatsGraphError
+    expect(a.graphs!.find((g) => g.name === "mute")!.error).toBe("no data");
   });
 
   it("megagroup: activity with resolved top posters/admins/inviters", async () => {

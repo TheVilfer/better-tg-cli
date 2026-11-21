@@ -120,13 +120,8 @@ import {
 } from "./update.js";
 import { VERSION } from "./version.js";
 
-// Every exit waits until stdout and stderr reached the reader (a --json result is never cut)
 installDrainingExit();
 
-// Exit quietly when the output pipe is closed early (e.g. `telegram help stats | head`): Node turns
-// the SIGPIPE into an async EPIPE 'error' on stdout, which would otherwise crash with an unhandled
-// error. Commander's own `--help` sidesteps this by exiting right after writing; this covers the
-// custom `help` command and any other long output piped to `head`.
 process.stdout.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EPIPE") {
     process.exit(0);
@@ -142,18 +137,14 @@ program
   .version(VERSION)
   .addHelpText("after", `\n${EXIT_CODES_HELP}`);
 
-// Replace commander's built-in `help` command with our own, so `telegram help get-config` can run a
-// help.* API method while `telegram help` / `telegram help <command>` keep their usual behaviour.
 program.helpCommand(false);
 
-// Auth commands
 program.addCommand(authCommand);
 program.addCommand(onboardCommand);
 program.addCommand(logoutCommand);
 program.addCommand(checkCommand);
 program.addCommand(whoamiCommand);
 
-// Read commands
 program.addCommand(chatsCommand);
 program.addCommand(readCommand);
 program.addCommand(getCommand);
@@ -180,7 +171,6 @@ program.addCommand(sessionsCommand);
 program.addCommand(starsCommand);
 program.addCommand(invitesCommand);
 
-// Contact/group commands
 program.addCommand(contactCommand);
 program.addCommand(membersCommand);
 program.addCommand(adminsCommand);
@@ -191,13 +181,11 @@ program.addCommand(transferOwnerCommand);
 program.addCommand(muteCommand);
 program.addCommand(unmuteCommand);
 
-// Folder commands
 program.addCommand(foldersCommand);
 program.addCommand(folderCommand);
 program.addCommand(folderAddCommand);
 program.addCommand(folderRemoveCommand);
 
-// Write commands
 program.addCommand(sendCommand);
 program.addCommand(replyCommand);
 program.addCommand(sendFileCommand);
@@ -234,10 +222,8 @@ program.addCommand(setBioCommand);
 program.addCommand(setUsernameCommand);
 program.addCommand(setAvatarCommand);
 
-// Configuration
 program.addCommand(writeAccessCommand);
 
-// Utilities
 program.addCommand(apiCommand);
 program.addCommand(schemaCommand);
 program.addCommand(syncCommand);
@@ -308,8 +294,6 @@ program
     }
   );
 
-// Dense reference of every command and flag, generated from the definitions
-// above so it can never drift from the code. Cheaper for agents than N --help calls.
 program
   .command("help-all")
   .description(
@@ -323,7 +307,6 @@ program
     const needle = options.grep?.toLowerCase();
     const lines: string[] = [];
     const emit = (cmd: Command, name: string): void => {
-      // A group (e.g. `skill`) is listed through its subcommands
       if (cmd.commands.length) {
         for (const sub of cmd.commands) {
           emit(sub, `${name} ${sub.name()}`);
@@ -348,7 +331,6 @@ program
             : `[${a.name()}${a.variadic ? "..." : ""}]`
         )
         .join(" ");
-      // [json] / [json, markdown]: the output flags, so no `<cmd> --help` is needed to find them
       const formats = ["--json", "--markdown"]
         .filter((f) => cmd.options.some((o) => o.long === f))
         .map((f) => f.slice(2));
@@ -376,7 +358,6 @@ program
       }
     }
     if (needle) {
-      // A search prints only what matched; the API summary below would hide an empty answer
       if (!lines.length) {
         lines.push(
           `No commands match "${options.grep}". Try a shorter word, or run \`telegram help-all\` without -g. ` +
@@ -395,14 +376,10 @@ program
     console.log(lines.join("\n"));
   });
 
-// Our `help` command (commander's built-in was disabled above). Also hosts the help.* API methods
-// as subcommands (registerGeneratedCommands attaches `help get-config` etc. on demand).
 program.addCommand(buildHelpCommand(program));
 
-// The write guard reads the parsed command to show and bind an approval (src/approval-action.ts)
 trackActiveCommand(program);
 
-// Mock mode has no session to create, drop or unlock; these would otherwise prompt or touch the secret store
 const NOT_IN_MOCK = new Set([
   "auth",
   "onboard",
@@ -436,24 +413,14 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   void runBackgroundCheck();
 } else {
   maybeNotifyUpdate();
-  // Attach only the generated API command the current invocation needs (lazy: the one
-  // namespace/method or root method on the command line), so startup and help stay flat otherwise.
   registerGeneratedCommands(program, process.argv);
   reportUsageErrors(program);
-  // What a chat candidate's `command` re-runs (src/client.ts): this call with the chat's ID
   setInvocation(process.argv.slice(2));
-  // Always node-style argv: commander would read it Electron-style inside Claude Desktop's
-  // built-in Node (an Electron utility process) and take the script path for a command
   if (isMainThread) {
-    // An error no command caught still gets a code and, with --json, the JSON line
     program
       .parseAsync(process.argv, { from: "node" })
       .catch((error) => fail(error));
   } else {
-    // An MCP call in a worker thread (src/mcp.ts): its piped stdin keeps the thread alive,
-    // so end it once the command is done, as a child process would exit on its own.
-    // fd 0 there is the server's own stdin (the MCP channel), not this call's text: read the
-    // worker's stdin stream (the server always ends it) into the shared cache first.
     readWorkerStdin()
       .then((text) => {
         primeStdin(text);
@@ -466,18 +433,12 @@ if (process.argv[2] === BACKGROUND_CHECK_COMMAND) {
   }
 }
 
-/**
- * Commander's own errors (unknown option or command, missing argument, a value a parser refused)
- * exit 2, the usage code, instead of commander's 1; with --json they are the JSON error line.
- * Help and --version keep exit 0. Set on every command: addCommand() does not pass it down.
- */
 function reportUsageErrors(root: Command): void {
   const json = wantsJson();
   const onExit = (err: CommanderError): never => {
     if (err.exitCode === 0 || err.code === "commander.helpDisplayed") {
       process.exit(err.exitCode);
     }
-    // A command group run without its subcommand ("telegram topic"): help on stderr, then a usage error
     if (err.code === "commander.help" && err.exitCode === 0) {
       process.exit(0);
     }
@@ -500,7 +461,6 @@ function reportUsageErrors(root: Command): void {
   };
   const walk = (cmd: Command): void => {
     cmd.exitOverride(onExit);
-    // With --json the JSON line replaces commander's "error: …" text
     if (json) {
       cmd.configureOutput({ outputError: () => {} });
     }

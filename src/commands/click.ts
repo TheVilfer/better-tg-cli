@@ -52,7 +52,6 @@ export const clickCommand = new Command("click")
     } else {
       selector.text = button;
     }
-    // After the local checks: a command line that can't run never costs an approval
     await assertWriteEnabled();
 
     const spinner = ora(`Pressing button on #${id}...`).start();

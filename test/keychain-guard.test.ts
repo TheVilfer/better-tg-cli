@@ -4,8 +4,6 @@ import { describe, expect, it } from "vitest";
 
 import { keychainBlocked } from "../src/keychain.js";
 
-// `security` with a HOME that is not the user's home makes macOS show "Keychain Not Found", whose
-// default button resets the login keychain. Tests and temporary homes must never spawn it.
 describe(keychainBlocked, () => {
   const home = userInfo().homedir;
 

@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Print the Scoop manifest for a release from its SHA256SUMS file.
-// Usage: node scripts/scoop-manifest.mjs <version> <SHA256SUMS path>
 import { readFileSync } from "node:fs";
 
 export function scoopManifest(version, sumsText) {

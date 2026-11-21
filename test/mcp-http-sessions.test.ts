@@ -2,7 +2,6 @@ import { rmSync } from "node:fs";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-// Before any module under test: a temp HOME and the mock account, so a plugin lookup never reaches a real profile
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -82,13 +81,11 @@ describe("MCP over HTTP: plugin run cancellation per session (#8)", () => {
     expect(b).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(a).not.toBe(b);
 
-    // A's id 1 runs, B's id 1 waits in the queue behind it
     const replyA = rpc(runCall(1), a);
     await new Promise((r) => setTimeout(r, 50));
     const replyB = rpc(runCall(1), b);
     await new Promise((r) => setTimeout(r, 50));
     expect(started).toHaveLength(1);
-    // B cancels its own id 1: A's run is untouched and answers; B's never starts
     await rpc(cancel(1), b);
     expect(signals[0].aborted).toBe(false);
     releaseA();
@@ -98,9 +95,7 @@ describe("MCP over HTTP: plugin run cancellation per session (#8)", () => {
     });
     await expect(replyB).resolves.toMatchObject({ status: 202 });
     expect(started).toHaveLength(1);
-    // Nothing in flight: no session registry is kept
     expect(rpc.sessionCount()).toBe(0);
-    // A cancellation from outside a session never reaches a named one
     const replyA2 = rpc(runCall(2), a);
     await rpc(cancel(2));
     await expect(replyA2).resolves.toMatchObject({

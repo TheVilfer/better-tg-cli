@@ -61,7 +61,6 @@ export const forwardCommand = new Command("forward")
       if (options.json) {
         const to = await chatRef(client, toChat);
         const from = await chatRef(client, fromChat);
-        // messageIds: the originals, in fromChatId; forwardedIds: the copies, in chatId (the destination)
         console.log(
           formatJson({
             ok: true,

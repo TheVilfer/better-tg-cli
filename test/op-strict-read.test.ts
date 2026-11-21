@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// A fake `op` binary: nothing is spawned, the real 1Password is never touched
 const op = vi.hoisted(() => ({
   read: { status: 1, stdout: "", stderr: "[ERROR] something" } as {
     status: number | null;
@@ -13,7 +12,7 @@ const op = vi.hoisted(() => ({
 vi.mock(import("node:child_process"), async (orig) => ({
   ...(await orig<typeof import("node:child_process")>()),
   execSync: () => "/fake/op\n",
-  execFileSync: () => "", // `op whoami`
+  execFileSync: () => "",
   spawnSync: (_bin: string, args: string[]) => {
     op.calls.push(args);
     return op.read;
@@ -58,7 +57,7 @@ describe('opGetStrict: one `op read`, and "missing" only when nothing else could
       ok: true,
       value: null,
     });
-    expect(op.calls).toHaveLength(1); // no vault listing
+    expect(op.calls).toHaveLength(1);
   });
 
   it('"isn\'t an item" while config.json5 holds the key → a failed read, never the file copy', async () => {

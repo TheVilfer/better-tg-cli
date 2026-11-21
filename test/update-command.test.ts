@@ -4,8 +4,6 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// `telegram update` for an install.sh binary with a newer release out: it must print the
-// install.sh re-run, never "replace <path>" (that would break binarySha256 in install.json).
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "btg-update-")));
 const bin = join(dir, "telegram");
 writeFileSync(bin, "bin");
@@ -18,7 +16,6 @@ vi.mock(import("../src/update.js"), async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/update.js")>();
   return {
     ...real,
-    // The real detection, as the compiled binary at `bin` would run it
     detectInstall: () => real.detectInstall(bin, "", true),
     fetchLatestVersion: async () => "999.0.0",
     writeCache: () => {},

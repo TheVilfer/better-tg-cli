@@ -11,8 +11,6 @@ import {
   vi,
 } from "vitest";
 
-// Before any module under test is imported: a temp HOME and a real (non-mock) profile name, so the
-// code takes the path a real install takes; the secret store behind it is what this file checks.
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -36,11 +34,6 @@ const env = await vi.hoisted(async () => {
   return { root };
 });
 
-/**
- * The real backends, replaced by traps: a call to the profile's secret store (Keychain, Secret
- * Service, DPAPI, 1Password) or any child process (`security`, `secret-tool`, `op`, PowerShell)
- * is recorded and fails. Under VITEST no plugin secret code may reach either.
- */
 const traps = vi.hoisted(() => ({ calls: [] as string[] }));
 vi.mock(import("../src/secrets.js"), () => {
   const trap = (name: string) => () => {
@@ -77,9 +70,6 @@ vi.mock(import("node:child_process"), async () => {
   };
 });
 
-// `plugin remove` asks the human through the injected pluginDeps.confirm, but humanConfirms first
-// checks that a human channel exists: a TTY, or the dialog that only macOS and Windows have. A
-// headless Linux CI run has neither, so the channel is declared here instead of taken from the OS.
 vi.mock(import("../src/write-store.js"), async () => {
   const real = await vi.importActual<typeof import("../src/write-store.js")>(
     "../src/write-store.js"
@@ -119,7 +109,6 @@ const LAB = resolve("test/fixtures/plugins/net-lab");
 
 afterAll(() => rmSync(env.root, { recursive: true, force: true }));
 
-// The registry key in memory: installing never touches a store either
 let registryKey: string | null = null;
 storeDeps.keyStore = {
   available: () => true,
@@ -143,7 +132,6 @@ function memoryStore(): PluginSecretStore & { items: Map<string, string> } {
   };
 }
 
-/** Runs `telegram plugin <args>` in this process; exit codes come back, stdout/stderr are captured. */
 async function cli(
   args: string[]
 ): Promise<{ code: number; out: string; err: string }> {
@@ -166,7 +154,6 @@ async function cli(
   const exit = vi.spyOn(process, "exit").mockImplementation(((c: number) => {
     throw new Error(`exit ${c}`);
   }) as never);
-  // fail() and the guard read --json from process.argv, as in a real run
   const { argv } = process;
   process.argv = [argv[0], "telegram", "plugin", ...args];
   let code = 0;
@@ -198,7 +185,6 @@ beforeEach(() => {
   pluginDeps.cliVersion = "99.0.0";
 });
 afterEach(() => {
-  // Nothing left installed for the next test (the store's own removal, no command)
   const left = readLock().plugins["net-lab"];
   if (left) {
     removeInstall(left, false);
@@ -298,7 +284,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     const store = memoryStore();
     pluginSecretDeps.store = store;
     const entry = installLab();
-    // No terminal: refused with the command for the human's terminal, the prompt is never shown
     pluginDeps.tty = false;
     const prompt = vi.fn(async () => "never-used-value");
     pluginDeps.readSecret = prompt;
@@ -309,7 +294,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
       command: ["plugin", "secret", "set", "net-lab", "apikey"],
     });
     expect(prompt).not.toHaveBeenCalled();
-    // The value as an argument is a usage error (and is never stored)
     pluginDeps.tty = true;
     const argv = await cli([
       "secret",
@@ -320,7 +304,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     ]);
     expect(argv.code).not.toBe(0);
     expect(store.items.size).toBe(0);
-    // Too short, or with a line break: refused
     pluginDeps.readSecret = async () => "short";
     expect(
       (await cli(["secret", "set", "net-lab", "apikey", "--json"])).code
@@ -329,11 +312,9 @@ describe("plugin secret set / rm / show with an injected store", () => {
     expect(
       (await cli(["secret", "set", "net-lab", "apikey", "--json"])).code
     ).toBe(2);
-    // An unknown secret name
     expect(
       (await cli(["secret", "set", "net-lab", "nope", "--json"])).code
     ).toBe(2);
-    // The real thing
     pluginDeps.readSecret = prompt;
     const ok = await cli(["secret", "set", "net-lab", "apikey", "--json"]);
     expect(ok.code, ok.err).toBe(0);
@@ -364,7 +345,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
       },
     ]);
     expect(show.out).not.toContain("never-used-value");
-    // The audit names the secret, never the value
     const audit = readFileSync(
       join(
         process.platform === "win32"
@@ -377,7 +357,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     );
     expect(audit).toMatch(/"command":"plugin secret set".*"key":"apikey"/);
     expect(audit).not.toContain("never-used-value");
-    // rm, then remove takes the rest with it
     expect(
       JSON.parse(
         (await cli(["secret", "rm", "net-lab", "apikey", "--json"])).out
@@ -399,7 +378,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     pluginSecretDeps.store = store;
     const entry = installLab();
     pluginDeps.tty = true;
-    // Another terminal removes the plugin while this one waits for the hidden input
     pluginDeps.readSecret = async () => {
       removeInstall(readLock().plugins["net-lab"], false);
       return "typed-after-remove-123";
@@ -412,7 +390,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     );
     expect(store.items.size).toBe(0);
     expect(store.get(pluginSecretKey(entry.installId, "apikey"))).toBeNull();
-    // A reinstall in between is refused the same way (another installId)
     installLab();
     pluginDeps.readSecret = async () => {
       removeInstall(readLock().plugins["net-lab"], false);
@@ -457,7 +434,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     expect(pendingSecrets()).toEqual([
       { name: "net-lab", installId: entry.installId, secrets: ["apikey"] },
     ]);
-    // Any next plugin command finishes it, silently
     const list = await cli(["list", "--json"]);
     expect(list.code).toBe(0);
     expect(JSON.parse(list.out)).toBeTypeOf("object");
@@ -470,7 +446,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     pluginSecretDeps.store = store;
     const entry = installLab();
     store.set(pluginSecretKey(entry.installId, "apikey"), "live-value-123456");
-    // As if a remove recorded it and then failed before the lock changed
     mkdirSync(join(pluginHome(), "plugin-state"), { recursive: true });
     writeFileSync(
       join(pluginHome(), "plugin-state", "pending-secret-cleanup.json"),
@@ -488,7 +463,7 @@ describe("plugin secret set / rm / show with an injected store", () => {
 
   it("review #7: secret rm deletes a secret a removed plugin left behind (only one recorded as pending)", async () => {
     const store = memoryStore();
-    let failures = 2; // the remove itself and the retry before `secret rm`
+    let failures = 2;
     pluginSecretDeps.store = {
       ...store,
       delete: (k) => {
@@ -514,7 +489,6 @@ describe("plugin secret set / rm / show with an injected store", () => {
     expect(JSON.parse(rm.out)).toMatchObject({ ok: true, removedPlugin: true });
     expect(store.items.size).toBe(0);
     expect(pendingSecrets()).toEqual([]);
-    // Nothing pending and nothing installed: an ordinary "not installed"
     expect(
       JSON.parse(
         (await cli(["secret", "rm", "net-lab", "apikey", "--json"])).out

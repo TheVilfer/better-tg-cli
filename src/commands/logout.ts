@@ -15,7 +15,6 @@ export const logoutCommand = new Command("logout")
 
     try {
       clearSessionString();
-      // Pending approvals were given for this account; none may carry over to the next login
       clearApprovals();
       clearDialogCache();
 

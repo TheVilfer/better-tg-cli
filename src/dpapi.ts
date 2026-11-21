@@ -14,17 +14,6 @@ import type { StrictRead } from "./keychain.js";
 import { configFile } from "./paths.js";
 import { spawnAsync } from "./spawn-async.js";
 
-/**
- * Windows secret store: every secret sits in one file (`secrets.dpapi` in the config dir),
- * encrypted with DPAPI for the current Windows user through the built-in PowerShell 5.1. Only this
- * user on this machine can decrypt it. PowerShell is slow to start (~0.3–0.6 s), so the file is
- * decrypted once per process and cached for reads. A change (set, delete) decrypts the file again
- * right before it, so a key another process changed since the cache was filled is not written back
- * from the stale copy, and replaces the file atomically (temp file in the same folder, then rename).
- * There is no cross-process lock: two changes that interleave between their read and their rename
- * still lose one of the two (last rename wins), but a value is never brought back from an old cache.
- */
-
 const PS = join(
   process.env.SystemRoot || "C:\\Windows",
   "System32",
@@ -32,7 +21,6 @@ const PS = join(
   "v1.0",
   "powershell.exe"
 );
-// Extra entropy: a DPAPI blob made by another program for this user doesn't decrypt as ours
 const ENTROPY = "better-tg-cli";
 
 /** PowerShell reads the script as UTF-16LE base64, so no quoting can break it. */
@@ -41,7 +29,6 @@ export function encodedCommand(script: string): string {
 }
 
 function dpapiScript(op: "Protect" | "Unprotect"): string {
-  // Stdin carries base64 only: PowerShell 5.1 reads stdin in the OEM codepage
   return (
     "Add-Type -AssemblyName System.Security;" +
     "$in = [Console]::In.ReadToEnd().Trim();" +
@@ -100,10 +87,12 @@ async function runPowerShellAsync(
   return res.stdout.trim();
 }
 
+/**
+ * - `unprotectAsync`: unprotect without blocking the event loop (a slow PowerShell start), stopped by `signal`.
+ */
 export interface Crypter {
   protect(plainBase64: string): string;
   unprotect(blobBase64: string): string;
-  /** unprotect without blocking the event loop (a slow PowerShell start), stopped by `signal`. */
   unprotectAsync?(blobBase64: string, signal?: AbortSignal): Promise<string>;
 }
 
@@ -155,7 +144,6 @@ export function dpapiStore(
   }
 
   return {
-    /** `fresh`: read the file again, for a value another process may have changed since */
     get(key: string, fresh = false): string | null {
       try {
         return load(fresh)[key] ?? null;
@@ -163,7 +151,6 @@ export function dpapiStore(
         return null;
       }
     },
-    /** getStrict without blocking the event loop: the cached copy, else the file decrypted asynchronously. */
     async getStrictAsync(
       key: string,
       signal?: AbortSignal
@@ -193,12 +180,10 @@ export function dpapiStore(
         };
       }
     },
-    /** Like get, but a file that cannot be decrypted or parsed is an error, not a missing key. */
     getStrict(key: string): StrictRead {
       try {
         return { ok: true, value: load()[key] ?? null };
       } catch {
-        // A fixed text: a JSON.parse message would quote the decrypted content, i.e. the secrets
         return {
           ok: false,
           reason:

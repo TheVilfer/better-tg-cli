@@ -1,9 +1,3 @@
-// Works out the next version from the squash-merged PR titles since the last stable tag, so
-// nobody picks a version by hand. `Add …` (a feature) or a breaking marker (`!`, `BREAKING`) →
-// minor (breaking is still minor before 1.0); anything else → patch; only `Release v…` commits →
-// nothing.
-// Usage: node scripts/next-version.mjs               → minor | patch, or nothing to release
-//        node scripts/next-version.mjs pre [level]   → the next pre-release, e.g. 0.35.0-rc.2
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -61,7 +55,6 @@ export function nextPrerelease(current, level, tags) {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const git = (...args) =>
     execFileSync("git", args, { encoding: "utf-8" }).trim();
-  // Release candidates are tagged too; the level is always counted from the last stable release
   const last = git(
     "describe",
     "--tags",

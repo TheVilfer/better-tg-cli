@@ -8,7 +8,6 @@ import { join } from "node:path";
  */
 export function profile(): string | undefined {
   let p = process.env.TG_PROFILE;
-  // Mock runs keep their audit log and write-access flag away from every real profile
   if (isMock() && !p?.startsWith("mock")) {
     p = "mock";
   }

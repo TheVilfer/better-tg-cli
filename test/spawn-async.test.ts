@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { spawnAsync } from "../src/spawn-async.js";
 
-// The asynchronous child-process read the secret stores use for a plugin request (review #10).
-// Only `node -e` runs here: no secret store, no `security`, no network.
 const node = process.execPath;
 
 describe(spawnAsync, () => {

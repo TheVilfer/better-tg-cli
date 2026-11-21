@@ -33,12 +33,7 @@ export async function runApiMethod(
 ): Promise<void> {
   const auditCommand = options.auditCommand ?? "api";
 
-  // Prototype-free, so every check below sees exactly the fields the request gets. Refuse after
-  // params are known so param-level checks (shared contact/geo media, phone-privacy, a paid call
-  // over MCP) apply.
   params = plainParams(params);
-  // Over MCP only allowlisted methods run (src/mcp-api-allowlist.ts); the denylist reason wins
-  // when there is one, since such a method is refused in a terminal too.
   const refusal =
     apiRefusalReason(canonical, params) ??
     mcpApiAllowlistRefusal(canonical) ??
@@ -47,11 +42,8 @@ export async function runApiMethod(
   if (refusal) {
     fail(new CliError(refusal, "refused", EXIT.ERROR));
   }
-  // A bare "@name" in a peer field becomes {_chat}: approved as the ID it resolves to now, and the
-  // request is built from that same resolved chat (never resolved again by teleproto on invoke)
   bindStringPeers(canonical, params);
 
-  // A read that may spend Stars (allowPaidStars) or add a view (increment) needs write access like any write
   const isWrite = !isApiReadCall(canonical, params);
   if (isWrite) {
     await assertWriteEnabled(undefined, {

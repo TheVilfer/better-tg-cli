@@ -31,7 +31,6 @@ import {
   uninstallSkill,
 } from "../src/skill-install.js";
 
-// Every test works in a throwaway HOME; the real agent folders are never touched
 const fakeHome = () => mkdtempSync(join(tmpdir(), "tg-skill-"));
 const agent = (home: string, id: string) =>
   knownAgents(home, {}).find((a) => a.id === id)!;
@@ -103,7 +102,6 @@ describe("install / uninstall", () => {
     expect(installSkill(a).action).toBe("updated");
     expect(agentStatus(a).state.kind).toBe("installed");
 
-    // A copy from before the split still has reference.md: outdated, and the update removes it
     writeFileSync(join(path, "reference.md"), "old single reference");
     expect(agentStatus(a).state.kind).toBe("outdated");
     expect(installSkill(a).action).toBe("updated");
@@ -127,7 +125,6 @@ describe("install / uninstall", () => {
     );
     mkdirSync(a.skillsDir, { recursive: true });
     const path = join(a.skillsDir, SKILL_NAME);
-    // Windows needs a privilege for directory symlinks; a junction is what tools create there
     symlinkSync(
       checkout,
       path,
@@ -170,12 +167,10 @@ describe("install / uninstall", () => {
     expect(skipped.reason).toMatch(
       /broken symlink to .*\(the target is gone\)/
     );
-    // --force replaces only the dead link with a real copy
     expect(installSkill(a, { force: true }).action).toBe("installed");
     expect(agentStatus(a).state.kind).toBe("installed");
   });
 
-  // File symlinks need a privilege on Windows; the check itself is platform-neutral
   it.skipIf(process.platform === "win32")(
     "never writes through a symlinked file inside a real skill folder",
     () => {
@@ -196,7 +191,6 @@ describe("install / uninstall", () => {
       const skipped = installSkill(a);
       expect(skipped.action).toBe("skipped");
       expect(skipped.reason).toMatch(/writing\.md is a symlink/);
-      // Nothing was written, not even the files before the link
       expect(readFileSync(outside, "utf-8")).toBe("not the skill");
       expect(readFileSync(join(path, "SKILL.md"), "utf-8")).toBe(
         "---\nname: better-tg-cli\n---\nold\n"
@@ -262,7 +256,6 @@ describe("agent-plugin/ (Hermes Agent plugin catalog)", () => {
     for (const [file, content] of Object.entries(SKILL_FILES)) {
       expect(read(`skills/better-tg-cli/${file}`)).toBe(content);
     }
-    // Exactly these files: one the skill dropped must not linger in the copy
     expect(
       readdirSync(new URL("agent-plugin/skills/better-tg-cli/", root)).sort()
     ).toEqual(Object.keys(SKILL_FILES).sort());
@@ -347,7 +340,6 @@ describe("plugin/ (Anthropic plugin directory)", () => {
   });
 
   it("the Claude plugin is the skill alone: no MCP server, no code", () => {
-    // The directory accepts MCP servers that run on the user's computer only from Verified organizations
     const root = new URL("../", import.meta.url);
     const manifest = JSON.parse(
       readFileSync(new URL("plugin/.claude-plugin/plugin.json", root), "utf-8")

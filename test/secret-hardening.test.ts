@@ -10,7 +10,6 @@ import { delimiter, join } from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// A fake `op`: items live in a JSON file, every call's argv goes to a log
 const FAKE_OP = `#!/usr/bin/env node
 const fs = require('fs');
 const dir = process.env.FAKE_OP_DIR;
@@ -64,9 +63,9 @@ describe.skipIf(process.platform === "win32")("1Password store", () => {
     vi.resetModules();
     const { opGet, opSet } = await import("../src/onepassword.js");
 
-    expect(opSet("session", "first-secret-value")).toBe(true); // create
+    expect(opSet("session", "first-secret-value")).toBe(true);
     expect(opGet("session")).toBe("first-secret-value");
-    expect(opSet("session", "second-secret-value")).toBe(true); // edit
+    expect(opSet("session", "second-secret-value")).toBe(true);
     expect(opGet("session")).toBe("second-secret-value");
 
     const argv = readFileSync(join(dir, "argv.log"), "utf-8");
@@ -91,7 +90,6 @@ describe("MCP HTTP token", () => {
 
   it("serves the token another server stored at the same moment", async () => {
     const { mcpToken } = await import("../src/mcp-http.js");
-    // Nothing yet → this server's write loses → the other server's token is in the store
     store.get = [null, "tgmcp_other"];
     store.set = false;
     expect(mcpToken({ create: true })).toBe("tgmcp_other");
@@ -113,7 +111,7 @@ describe("MCP HTTP token", () => {
     store.set = false;
     expect(mcpToken({ rotate: true })).toBeNull();
     store.get = ["tgmcp_old"];
-    store.set = true; // claims success, but the store still holds the old one
+    store.set = true;
     expect(mcpToken({ rotate: true })).toBeNull();
   });
 });

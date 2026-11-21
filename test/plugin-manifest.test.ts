@@ -37,7 +37,6 @@ const base = (): Manifest =>
   ) as Manifest;
 const bytes = (m: unknown) => new TextEncoder().encode(JSON.stringify(m));
 const check = (m: unknown, cli = "0.40.0") => checkManifest(bytes(m), cli);
-/** The manifest schema alone (no rule beyond it), as an author's editor would apply it. */
 const bySchema = (m: unknown) => validate(schemaFile, m);
 
 describe("the published manifest schema", () => {
@@ -293,7 +292,6 @@ describe("checkManifest: the schema plus the rules it cannot express", () => {
       /needs better-tg-cli >=0\.41\.0; this is 0\.40\.0/
     );
     expect(check(m, "0.41.0").unsupported).toBeUndefined();
-    // A candidate of the next version matches only a range naming a prerelease
     expect(check(m, "0.41.0-rc.1").unsupported).toBeDefined();
     m.engines = { "better-tg-cli": ">=0.41.0-rc.0" };
     expect(check(m, "0.41.0-rc.1").unsupported).toBeUndefined();
@@ -453,7 +451,6 @@ describe("checkManifest: the schema plus the rules it cannot express", () => {
       ];
     };
     expect(errs(() => {})).toBe("");
-    // Origins: a host name, not an IP (also in decimal), not local, canonical
     for (const o of [
       "https://2130706433",
       "https://127.0.0.1",
@@ -469,7 +466,6 @@ describe("checkManifest: the schema plus the rules it cannot express", () => {
         o
       ).toMatch(/network(\/0: does not match|: ")/);
     }
-    // Secret header: not one the host sets itself; Authorization and custom headers are fine
     for (const h of [
       "Host",
       "Cookie",
@@ -485,14 +481,12 @@ describe("checkManifest: the schema plus the rules it cannot express", () => {
       );
     }
     expect(errs(secret({ header: "X-Api-Key" }))).toBe("");
-    // Format: printable, one line, {value} in it
     expect(errs(secret({ format: "Bearer {value}\r\nX-Evil: 1" }))).toMatch(
       /format: does not match/
     );
     expect(errs(secret({ format: "Bearer" }))).toMatch(
       /format: does not match/
     );
-    // Two secrets in the same header of the same origin
     expect(
       errs((m) => {
         secret({})(m);
@@ -509,7 +503,6 @@ describe("checkManifest: the schema plus the rules it cannot express", () => {
     ).toMatch(
       /key2: another secret already goes to https:\/\/api\.example\.com as authorization/
     );
-    // Settings: the default must be a valid value; keywords fit the type
     const setting = (d: Record<string, unknown>) => (m: Manifest) => {
       m.settings = { s: { type: "string", description: "x", ...d } as never };
     };

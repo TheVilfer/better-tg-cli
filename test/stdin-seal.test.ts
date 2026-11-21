@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-// fd 0 holds a body nobody approved; a real read here would block on the test runner's stdin
 vi.mock(import("node:fs"), async (orig) => {
   const real = await orig<typeof import("fs")>();
   return {

@@ -1,13 +1,4 @@
 /**
- * Setup contract, schema 1 (docs/setup-contract.md): the one shape in which setup commands
- * (`doctor`, `connect`, install and update, #137) report problems and how to fix them. No command
- * emits it yet, and existing output never changes to it.
- *
- * Types only (#110). The `fix.run` allowlist and the checker live in test/setup-contract-check.ts
- * until the first command that emits the contract moves them here.
- */
-
-/**
  * Exit codes of a command that emits this contract: 0 ok, 1 error, 2 a person is needed, 3 write
  * approval needed (`EXIT_NEEDS_APPROVAL` in src/approval.ts). Other commands keep their own codes
  * (several exit 2 on bad usage today).
@@ -39,11 +30,13 @@ export interface UnavailableFix {
 }
 export type Fix = RunFix | HumanFix | UnavailableFix;
 
+/**
+ * - `id`: Stable snake_case id; agents may match on it, so it never changes meaning
+ * - `message`: One line in English for the agent and the person
+ */
 export interface Problem {
-  /** Stable snake_case id; agents may match on it, so it never changes meaning */
   id: string;
   severity: Severity;
-  /** One line in English for the agent and the person */
   message: string;
   fix: Fix;
 }
@@ -51,21 +44,17 @@ export interface Problem {
 /**
  * The single result of a contract command (its whole stdout with `--json`). `D` is the shape of
  * the command's own `data`.
+ *
+ * - `ok`: true exactly when no problem has severity `error`
+ * - `data`: Optional command-specific content (an installer's path, version and target). The only open field of schema 1: the generic checker requires a JSON object and looks no further; each command that sets it documents and tests its own shape.
  */
 export interface SetupResult<D extends object = Record<string, unknown>> {
   schema: 1;
-  /** true exactly when no problem has severity `error` */
   ok: boolean;
   problems: Problem[];
-  /**
-   * Optional command-specific content (an installer's path, version and target). The only open
-   * field of schema 1: the generic checker requires a JSON object and looks no further; each
-   * command that sets it documents and tests its own shape.
-   */
   data?: D;
 }
 
-// Compile-time check (only src/ is type-checked): a plain interface is a valid `D`.
 interface InstallerDataExample {
   path: string;
 }

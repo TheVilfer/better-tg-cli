@@ -33,20 +33,12 @@ const fixtures = JSON.parse(
 );
 const doc = readFileSync("docs/setup-contract.md", "utf-8");
 
-// Every child process runs on a throwaway home with a profile of its own and none of the
-// inherited TG_* or OP_* settings, so it reaches no real account, config, 1Password vault or
-// approval. A temp HOME does not move the macOS Keychain (/usr/bin/security has a fixed path), so
-// on macOS and Linux the secret store the children see is a fake `op` (1Password is asked first,
-// src/secrets.ts) that logs every call and stores nothing. On Windows the DPAPI file sits in the
-// temp APPDATA.
 const home = mkdtempSync(join(tmpdir(), "tg-contract-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 const fakeOp = process.platform !== "win32";
 const fakeOpBin = join(home, "bin", "op");
 const opLog = join(home, "op-calls.log");
-// The log path reaches the script through the environment, never through its text, so a quote in
-// TMPDIR cannot break the script (a broken fake `op` would hand the children the system store)
 if (fakeOp) {
   mkdirSync(join(home, "bin"));
   writeFileSync(
@@ -60,7 +52,6 @@ const ALLOWED_OP_CALL =
 const opCalls = (log: string) =>
   existsSync(log) ? readFileSync(log, "utf-8").trimEnd().split("\n") : [];
 const baseEnv = (log = opLog): NodeJS.ProcessEnv => {
-  // Windows treats variable names case-insensitively, so `op_service_account_token` is one too
   const env: NodeJS.ProcessEnv = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !/^(TG|OP)_/i.test(k))
   );
@@ -81,10 +72,6 @@ const baseEnv = (log = opLog): NodeJS.ProcessEnv => {
   }
   return env;
 };
-// Before any child runs: with the children's PATH, `op` resolves to the fake one and its whoami
-// succeeds; otherwise the CLI would fall back to the Keychain. The path is parsed exactly as
-// getOpBinary() in src/onepassword.ts does (first line of the trimmed output), so a TMPDIR with a
-// newline, which the CLI would cut short, fails here instead of reaching the system store.
 beforeAll(() => {
   if (!fakeOp) {
     return;
@@ -96,9 +83,6 @@ beforeAll(() => {
   expect(resolved).toBe(fakeOpBin);
   expect(spawnSync(resolved, ["whoami"], { env }).status).toBe(0);
 });
-// After each test: whatever its children asked, it was only the fake store. Only the lines this
-// test added are checked, so one bad call fails the test that made it and no later one: the
-// cursor moves before the check, because a failed expect throws.
 const opLogCursor = (log: string) => {
   let checked = 0;
   return () => {
@@ -156,7 +140,6 @@ describe("setup contract, schema 1", () => {
       problems: [],
       data,
     });
-    // A Date prints as a string, so it is refused before output just as after it
     expect(setupResultErrors(result(new Date(0)))).toContain(
       "data must be a JSON object"
     );
@@ -243,7 +226,6 @@ describe("setup contract, schema 1", () => {
         r.outcome
       );
     }
-    // the case this rule exists for: the fix exits 0 and still did nothing
     expect(runs.some((r) => r.runExit === 0 && r.outcome === "not_fixed")).toBe(
       true
     );
@@ -255,7 +237,6 @@ describe("setup contract, schema 1", () => {
       const folder = join(h, ".claude", "skills", "better-tg-cli");
       mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, "README.md"), "not ours\n");
-      // Agent homes come from these variables first; none may point at the real ones
       const env: NodeJS.ProcessEnv = { ...baseEnv(), HOME: h, USERPROFILE: h };
       for (const k of [
         "CLAUDE_CONFIG_DIR",
@@ -279,7 +260,6 @@ describe("setup contract, schema 1", () => {
         action: shown.action,
         reason: shown.reason,
       });
-      // the recheck: the skill is still not there
       const status = cli(["skill", "status", "--json"], env);
       expect(status.status, status.stderr).toBe(0);
       expect(
@@ -332,8 +312,6 @@ describe("setup contract, schema 1", () => {
       ["send", "me", "hi"],
       ["skill", "install", "--force"],
       ["skill", "uninstall"],
-      // update runs a package manager or a build outside any profile; onboard hands out the page
-      // link whose secret also sets the write mode
       ["update"],
       ["update", "--json"],
       ["onboard"],
@@ -361,7 +339,6 @@ describe("setup contract, schema 1", () => {
   });
 });
 
-// The contract is opt-in: what commands print today stays as it is (#110)
 describe("current consumers keep their output", () => {
   it("chats --json prints an array", () => {
     const r = cli(["chats", "--json"], {
@@ -390,7 +367,6 @@ describe("current consumers keep their output", () => {
   }, 30_000);
 
   it("onboard --json prints its own JSON lines, without schema, ending in timeout", () => {
-    // --no-open: never a browser window; a fractional --timeout ends it on every platform
     const r = cli(["onboard", "--json", "--no-open", "--timeout", "0.02"]);
     expect(r.status).toBe(1);
     const lines = r.stdout
@@ -436,7 +412,6 @@ describe("current consumers keep their output", () => {
       method: "tools/call",
       params: { name: "telegram_help", arguments: { grep: "onboard" } },
     });
-    // A child CLI that fails (no login here) must not leak its stderr or anything else into stdout
     send({
       jsonrpc: "2.0",
       id: 4,
@@ -460,21 +435,17 @@ describe("current consumers keep their output", () => {
       ]).toContainEqual(keys);
       expect(m.jsonrpc).toBe("2.0");
     }
-    // Calls 1-3 succeed; the whoami of a profile without a login is a failed tool call, not a
-    // JSON-RPC error
     for (const m of messages.slice(0, 3)) {
       expect(m.result.isError, `id ${m.id}`).toBeFalsy();
     }
     expect(messages[3].result.isError).toBe(true);
   }, 30_000);
 
-  // Self-contained: runs a command that reads secrets and checks its own log
   it.runIf(fakeOp)(
     "a child asks only the fake secret store",
     () => {
       const log = join(home, "whoami-op-calls.log");
       const r = cli(["whoami"], baseEnv(log));
-      // 5, the exit code of a profile without a login; null (a signal) or anything else is not that
       expect(r.status, r.stderr).toBe(EXIT.NOT_LOGGED_IN);
       const calls = opCalls(log);
       expect(calls).toContain("whoami");

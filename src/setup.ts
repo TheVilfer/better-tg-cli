@@ -44,8 +44,6 @@ export async function checkStoredSession(): Promise<{
     return { state: "alive", snapshot };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // getClient's answer to an auth error code, or Telegram refusing the stored key while connecting;
-    // never a guess from any other failure
     if (message.startsWith(SESSION_EXPIRED) || isAuthError(error)) {
       return { state: "expired", snapshot };
     }
@@ -55,7 +53,6 @@ export async function checkStoredSession(): Promise<{
   }
 }
 
-/** The profile's test-server flag: a new login over an old one stays on the same servers. */
 function profileTestServers(): boolean {
   try {
     return !!loadConfig(() => {}).testServers;
@@ -127,7 +124,6 @@ export function openSetupPage(options: {
       ? {}
       : options.modeOnly
         ? { modeOnly: true, applyMode }
-        : // Writes are possible right away, each one after the user's yes in the chat; the page can change it
-          { defaultMode: "ask" as const, applyMode }),
+        : { defaultMode: "ask" as const, applyMode }),
   });
 }

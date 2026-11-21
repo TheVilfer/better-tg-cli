@@ -1,19 +1,15 @@
 import { TL_DOCS, TL_DOCS_META } from "./generated/tl-docs.js";
 
-/**
- * Human descriptions for the generated API commands' help, decoded lazily. TL_DOCS holds one JSON
- * string per namespace; a namespace's docs are parsed only the first time its help/schema is
- * rendered, so startup, `--version` and top-level `--help` never touch this data.
- */
-
 export { TL_DOCS_META };
 
+/**
+ * - `d`: Short human description (official, or a fallback line for methods new in this layer).
+ * - `p`: Per-parameter descriptions, keyed by the normalised param name (lowercased, separators stripped).
+ * - `e`: Top "Possible errors": [code, name, short message].
+ */
 export interface MethodDoc {
-  /** Short human description (official, or a fallback line for methods new in this layer). */
   d: string;
-  /** Per-parameter descriptions, keyed by the normalised param name (lowercased, separators stripped). */
   p?: Record<string, string>;
-  /** Top "Possible errors": [code, name, short message]. */
   e?: [string, string, string][];
 }
 

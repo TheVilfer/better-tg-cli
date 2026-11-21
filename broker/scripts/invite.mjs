@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// Manage broker invites via wrangler (no admin HTTP endpoint exists on purpose).
-//   node scripts/invite.mjs create <name> [--max-uses 3]   → prints the token ONCE
-//   node scripts/invite.mjs list
-//   node scripts/invite.mjs revoke <name>
-//   node scripts/invite.mjs revoke-all [--self-serve]        → every active invite (or only page signups)
-//   node scripts/invite.mjs signups on|off|status            → open or close the signup page at /
-//   node scripts/invite.mjs emails                           → CSV of signup emails (for notifications only)
-//   node scripts/invite.mjs panic                            → stop handing out keys at once (see README)
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { dirname } from "node:path";
@@ -119,11 +111,9 @@ if (cmd === "create" && name) {
   }
   console.log(`Revoked ${n} active invite(s).`);
 } else if (cmd === "signups" && ["on", "off", "status"].includes(name)) {
-  // The worker only opens signups when this key is exactly "on" (and Turnstile is configured)
   if (name !== "status") {
     put("config:signups", name);
   }
-  // A plain string, not JSON, so it is read raw rather than through get()
   let state = "off";
   try {
     state = wrangler("key", "get", "config:signups", "--text").trim() || "off";
@@ -145,8 +135,6 @@ if (cmd === "create" && name) {
     }
   }
 } else if (cmd === "panic") {
-  // Without API_HASH the worker answers 503 broker_not_configured before touching KV,
-  // so no invite can hand out keys until the secret is put back.
   execFileSync(
     "npx",
     ["--yes", "wrangler@latest", "secret", "delete", "API_HASH"],

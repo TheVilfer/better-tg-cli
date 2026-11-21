@@ -2,11 +2,6 @@ import { rmSync } from "node:fs";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-/**
- * `check` on a configured profile when Telegram cannot judge the session: no network, a rate limit.
- * That says nothing about the login, so check never calls it invalid or asks for a new login, keeps
- * the error's code and exit 1, and passes on how long to wait. Only Telegram's answers are faked.
- */
 const home = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

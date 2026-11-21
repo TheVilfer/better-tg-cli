@@ -9,7 +9,6 @@ import { setKnownCommands } from "../src/mcp.js";
 
 const TOKEN = "tgmcp_test-token";
 const calls: string[][] = [];
-// Stands in for the CLI: records argv, never touches an account
 const fakeRun = async (plan: { argv: string[] }) => {
   calls.push(plan.argv);
   return {
@@ -108,7 +107,6 @@ describe("telegram mcp --http", () => {
     });
     expect(init.status).toBe(200);
     expect((await init.json()).result.serverInfo.name).toBe("better-tg-cli");
-    // A session id for the client to send back (it scopes plugin run cancellation)
     const session = init.headers.get("mcp-session-id");
     expect(session).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(
@@ -179,7 +177,6 @@ describe("telegram mcp --http", () => {
       (await post(full.url, "{nope")).headers.get("x-content-type-options")
     ).toBe("nosniff");
 
-    // The CLI run blows up: that is our failure, so the client gets a fixed text and the log gets the rest
     const failing = createMcpHttpHandler(TOKEN, {}, async () => {
       throw new Error("<img src=x onerror=alert(1)> at /Users/me/secret.ts:1");
     });

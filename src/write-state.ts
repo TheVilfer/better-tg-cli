@@ -8,12 +8,14 @@
  */
 export type WriteMode = "read-only" | "ask" | "on";
 
+/**
+ * - `enabled`: Writes are possible at all (ask or on)
+ * - `expired`: A time-limited mode ran out; the profile is read-only again
+ */
 export interface WriteState {
   mode: WriteMode;
-  /** Writes are possible at all (ask or on) */
   enabled: boolean;
   until?: Date;
-  /** A time-limited mode ran out; the profile is read-only again */
   expired?: boolean;
 }
 
@@ -48,7 +50,6 @@ export function parseForDuration(value: string): number {
     m[2] as "m" | "h" | "d" | "w"
   ];
   const seconds = Number.parseInt(m[1], 10) * mult;
-  // The end must be a real date (it is stored and shown)
   if (
     !Number.isSafeInteger(seconds) ||
     !Number.isFinite(new Date(Date.now() + seconds * 1000).getTime())

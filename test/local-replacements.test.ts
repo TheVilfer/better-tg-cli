@@ -9,7 +9,6 @@ describe("config file format (json5 replacement)", () => {
   });
 
   it("reads files written by the old json5 writer", () => {
-    // JSON5.stringify(obj, null, 2) output: unquoted keys, single quotes, trailing commas
     const old =
       "{\n  apiId: 7557120,\n  opVault: 'Personal',\n  defaultFormat: 'plain',\n}";
     expect(parseConfigText(old)).toEqual({

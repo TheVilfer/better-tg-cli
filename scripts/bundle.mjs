@@ -2,9 +2,6 @@
 import { noNativeAddon } from "./cifrante-no-native.mjs";
 import { compactErrorsSource } from "./errors-compact.mjs";
 import { mimeStubSource } from "./mime-stub.mjs";
-// Build the shipped artifacts with Bun, shrinking teleproto on the way:
-//   bun scripts/bundle.mjs node            → dist/telegram.mjs (single file for npm, no deps)
-//   bun scripts/bundle.mjs <bun-target> <outfile>   → standalone binary (bun-darwin-arm64, …)
 import { compactModuleSource, loadOriginalDefinitions } from "./tl-compact.mjs";
 
 const stub = (contents) => () => ({ contents, loader: "js" });
@@ -12,7 +9,6 @@ const stub = (contents) => () => ({ contents, loader: "js" });
 const shrink = {
   name: "shrink-teleproto",
   setup(build) {
-    // 1.8 MB verbose schema → ~0.3 MB compact encoding decoded at load (identical objects)
     build.onLoad(
       { filter: /teleproto[\\/]tl[\\/]generated[\\/]api-definitions\.js$/ },
       () => ({
@@ -20,7 +16,6 @@ const shrink = {
         loader: "js",
       })
     );
-    // ~700 generated error classes → a table plus one generator (same classes and messages)
     build.onLoad(
       { filter: /teleproto[\\/]errors[\\/]RPCErrorList\.js$/ },
       async (args) => ({
@@ -28,8 +23,6 @@ const shrink = {
         loader: "js",
       })
     );
-    // cifrante never looks up its optional native addon: none is shipped, and the bundled
-    // __filename (the builder's path) would make the lookup search directories on the user's machine
     build.onLoad(
       { filter: /[\\/]cifrante[\\/]dist[\\/][^\\/]+\.c?js$/ },
       async (args) => ({
@@ -37,14 +30,12 @@ const shrink = {
         loader: "js",
       })
     );
-    // Unused session backend: pulls store2 + node-localstorage (the source of Node's localStorage warning)
     build.onLoad(
       { filter: /teleproto[\\/]sessions[\\/]StoreSession\.js$/ },
       stub(`"use strict";Object.defineProperty(exports,"__esModule",{value:true});
 class StoreSession{constructor(){throw new Error("StoreSession is not bundled; use StringSession")}}
 exports.StoreSession=StoreSession;`)
     );
-    // Proxies are not supported by the CLI: drop socks, ip-address, smart-buffer
     build.onResolve({ filter: /^socks$/ }, () => ({
       path: "socks-stub",
       namespace: "stub",
@@ -72,7 +63,6 @@ if (!mode || (mode !== "node" && !outfile)) {
   process.exit(1);
 }
 
-// 1. Bundle the CLI (CommonJS, minified, teleproto shrunk) in memory
 const result = await Bun.build({
   entrypoints: ["src/index.ts"],
   target: "node",
@@ -92,7 +82,6 @@ if (process.env.BUNDLE_META) {
 }
 const code = (await result.outputs[0].text()).replace(/^#!.*\n/, "");
 
-// 2. Brotli it (max quality) and wrap it in a tiny loader that inflates and runs it
 const { brotliCompressSync, constants } = await import("node:zlib");
 const packed = brotliCompressSync(code, {
   params: {
@@ -118,7 +107,6 @@ new Function('exports', 'require', 'module', '__filename', '__dirname', code)(mo
 const mb = (n) => `${(n / 1_048_576).toFixed(2)} MB`;
 console.error(`bundle ${mb(code.length)} → brotli+base64 ${mb(packed.length)}`);
 
-// 3. Emit: the npm entry point, or a standalone binary built from the same loader
 if (mode === "node") {
   await Bun.write("dist/telegram.mjs", loader);
   (await import("node:fs")).chmodSync("dist/telegram.mjs", 0o755);
@@ -133,12 +121,10 @@ if (mode === "node") {
     const { version } = JSON.parse(
       (await import("node:fs")).readFileSync("package.json", "utf-8")
     );
-    // Windows version resource: code signing (SignPath) checks product name and version
     const windows = mode.includes("windows")
       ? {
           title: "better-tg-cli",
           publisher: "better-tg-cli",
-          // Four numeric parts only: a release candidate carries the version it leads to
           version: `${version.split("-")[0]}.0`,
           description:
             "Telegram on your own account for the terminal and AI agents",
@@ -155,7 +141,6 @@ if (mode === "node") {
       }
       process.exit(1);
     }
-    // Windows targets get .exe appended; report the file Bun actually wrote
     const out = bin.outputs[0]?.path ?? outfile;
     console.log(`${out}  ${mb((await import("node:fs")).statSync(out).size)}`);
   } finally {

@@ -43,7 +43,6 @@ export const deleteCommand = new Command("delete")
         result: { success: true },
       });
       spinner.stop();
-      // `revoke` says what Telegram did (a channel or supergroup always deletes for everyone)
       if (options.json) {
         console.log(
           formatJson({

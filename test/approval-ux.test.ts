@@ -13,17 +13,11 @@ import type { ParsedAction } from "../src/approval-action.js";
 import { isMockAsk } from "../src/paths.js";
 import { cliArgs } from "./cli.js";
 
-/**
- * The approval flow of write mode "ask" as an agent meets it, rehearsed on the mock account
- * (TG_MOCK_ASK=1): the real CLI, the real guard and the real chat lookup, nothing reaches Telegram
- * and no secret store is touched (the mock profile keeps its key in a file).
- */
 const home = mkdtempSync(join(tmpdir(), "tg-approval-ux-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 let n = 0;
 
-/** A fresh mock account per test: its own state file, the same temp home. */
 function account(extra: Record<string, string> = { TG_MOCK_ASK: "1" }) {
   const state = join(home, `state-${++n}.json`);
   return (
@@ -74,7 +68,6 @@ describe('TG_MOCK_ASK rehearses write mode "ask" on the mock account (4.10)', ()
     });
     expect(ok.code).toBe(0);
     expect(ok.json).toMatchObject({ text: "ship it" });
-    // Single use
     expect(
       cli(["send", "-1004001", "ship it", "--json"], {
         approve: first.json!.code,
@@ -160,7 +153,6 @@ describe("the person sees who gets the write, by name (4.1)", () => {
 
   it("a user argument is looked up like every recipient, and one that does not resolve gets no code", () => {
     const cli = account();
-    // kick takes the very user the approval showed (no second lookup with other rules)
     expect(cli(["kick", "-1004001", "Alice Example"]).err).toContain(
       "User: Alice Example (user, @alice_example, id 1001)"
     );
@@ -168,7 +160,6 @@ describe("the person sees who gets the write, by name (4.1)", () => {
       "User: Alice Example (user, @alice_example, id 1001)"
     );
     const unknown = cli(["kick", "-1004001", "Alice"]);
-    // No code; the exit code is the lookup error's own: no exact title is a usage error (2)
     expect(unknown.code).toBe(2);
     expect(unknown.err).toMatch(
       /Not sent, nothing to approve: No chat is titled exactly "Alice"/
@@ -194,13 +185,11 @@ describe("the person sees who gets the write, by name (4.1)", () => {
 
   it("says so plainly when a chat is not found, and asks no approval for a write that would fail", () => {
     const r = account()(["send", "Tea", "hi"]);
-    // the same exit code the write itself gives in mode "on" (2: no chat has this exact title)
     expect(r.code).toBe(2);
     expect(r.err).toMatch(
       /Not sent, nothing to approve: No chat is titled exactly "Tea".*-1004001 supergroup Team(;|$)/m
     );
     expect(r.json).toBeUndefined();
-    // With --json: one error line whose candidates are fields, not text in the message (agent-ux-cli)
     const j = account()(["send", "Tea", "hi", "--json"]);
     expect(j.code).toBe(2);
     expect(j.out.trim().split("\n")).toHaveLength(1);
@@ -279,8 +268,6 @@ describe("a code is bound to the action, not to the bytes of argv (4.2)", () => 
     ).toMatchObject({ rejected: { reason: "different_action" } });
     const code3 = cli(["send", "-1004001", "-", "--json"], { stdin: "hi" })
       .json!.code;
-    // The body is what gets sent: one trailing line break is not part of it (readTextArg drops it),
-    // a second one is, and that is a different text
     expect(
       cli(["send", "-1004001", "-", "--json"], {
         stdin: "hi\n\n",
@@ -319,7 +306,6 @@ describe("a code is bound to the action, not to the bytes of argv (4.2)", () => 
       args: [{ name: "target", value: { peer: "42" } }],
       options: [["silent", true]],
     });
-    // A recipient that did not resolve has no form to approve
     expect(() =>
       normalizedForm(base, new Map([["@x", { ok: false, error: "no" }]]))
     ).toThrow(/not resolved/);
@@ -346,7 +332,7 @@ describe("the retry is spelled out (4.4)", () => {
     const r = account()(["send", "-1004001", "hi"], { env: { TG_MCP: "1" } });
     expect(r.code).toBe(3);
     expect(r.json).toMatchObject({ error: "approval_required" });
-    expect(r.json!.retry).toBeUndefined(); // the server adds the tool call
+    expect(r.json!.retry).toBeUndefined();
     expect(r.err).toContain(`"approval": "${r.json!.code}"`);
     expect(r.err).not.toMatch(/TG_APPROVE|PowerShell/);
   });

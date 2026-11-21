@@ -16,14 +16,6 @@ import {
   secretSet,
 } from "./secrets.js";
 
-/**
- * Where the write mode lives. With a secret store (Keychain, Secret Service, DPAPI, 1Password) it
- * sits there next to the session, out of reach of a config-file edit. Without one, as on cloud agent
- * computers (Grok Bot: Debian, no D-Bus, no TTY), it falls back to a 0600 file in the profile dir.
- * There the session itself is in a plain file the agent can read, so the mode is a guard against
- * mistakes, not a security boundary, and every status line and audit entry says so ("unprotected").
- */
-
 const FILE = "write-access";
 
 export function isWriteModeProtected(): boolean {
@@ -36,7 +28,6 @@ function onPath(binary: string): boolean {
     .some((dir) => dir && existsSync(join(dir, binary)));
 }
 
-/** A D-Bus session bus, which the Secret Service (GNOME Keyring, KWallet) needs. */
 function hasSessionBus(): boolean {
   if (process.env.DBUS_SESSION_BUS_ADDRESS) {
     return true;

@@ -18,7 +18,6 @@ describe(truncate, () => {
   it("never splits an emoji surrogate pair", () => {
     const out = truncate("ab😀😀😀", 3);
     expect(out).toBe("ab😀…");
-    // A lone surrogate would make JSON.parse(JSON.stringify(...)) round-trip lossy
     expect(() => JSON.parse(formatJson({ t: out }))).not.toThrow();
     expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out)).toBe(false);
   });

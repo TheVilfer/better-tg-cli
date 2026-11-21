@@ -12,9 +12,6 @@ const run = (...args: string[]) =>
     env: { ...process.env, API_COVERAGE_MIN: "" },
   });
 
-// Keeps docs/api-coverage.md in sync with the schema and the source: a new TL layer or a new
-// command changes the numbers, and this fails until `node scripts/api-coverage.mjs` is re-run.
-// `--check` also enforces the coverage gate (both metrics >= 90%), same as `npm run coverage:api`.
 describe("api coverage report", () => {
   it("docs/api-coverage.md is up to date and coverage is >= 90%", () => {
     const r = run("--check");
@@ -38,7 +35,6 @@ describe("api coverage report", () => {
   });
 
   it("the gate fails when Telethon accounting drops below the minimum", () => {
-    // 67 accounted of 67 + 10 unmapped members = 87% < 90%
     const dir = mkdtempSync(join(tmpdir(), "api-coverage-"));
     const tsv = join(dir, "members.tsv");
     const extra = Array.from(
@@ -53,7 +49,6 @@ describe("api coverage report", () => {
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/FAIL Telethon .* 67\/77/);
     expect(r.stderr).toMatch(/fake_member_0/);
-    // ...and the threshold is configurable
     expect(run("--min=80", "--telethon-tsv", tsv).status).toBe(0);
   });
 

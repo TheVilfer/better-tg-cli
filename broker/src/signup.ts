@@ -1,19 +1,9 @@
-/**
- * Self-serve invites: the page at /login trades a verified email (kept only for notifications) for a
- * invite good for a few computers: a six-digit code goes to the address, and only the code gets the invite. Asking
- * again with the same address replaces the invite (a lost token, a session Telegram ended). This hands the maintainer's app keys to strangers, so every guard fails closed:
- * signups are off unless KV `config:signups` is "on", Turnstile must pass server-side, and there
- * are per-IP, per-email and daily caps (Worker secrets, see LIMIT_DEFAULTS). `invite.mjs signups off` closes the page; `/v1/credentials` and
- * invites already issued keep working.
- */
 import { sha256Hex } from "./handler";
 import type { Env, Invite } from "./handler";
 import { asLang, DICT } from "./i18n";
 import type { Lang } from "./i18n";
 
 export const SIGNUPS_KEY = "config:signups";
-// Conservative fallbacks; the live limits are Worker secrets (SIGNUP_DAILY_CAP, SIGNUP_CODES_PER_IP,
-// SIGNUP_CODES_PER_EMAIL) so the exact thresholds aren't published with the code
 const LIMIT_DEFAULTS = {
   SIGNUP_DAILY_CAP: 10,
   SIGNUP_CODES_PER_IP: 4,
@@ -46,7 +36,6 @@ function json(status: number, body: unknown): Response {
 }
 
 export async function signupsOpen(env: Env): Promise<boolean> {
-  // Verified email is required, so no mail sender means no signups
   return (
     (await env.INVITES.get(SIGNUPS_KEY)) === "on" &&
     Boolean(
@@ -99,7 +88,6 @@ function newToken(): string {
     .replace(/=+$/, "")}`;
 }
 
-/** Soft counter in KV (eventually consistent, so caps may overshoot slightly under a burst). */
 async function bump(env: Env, key: string, cap: number): Promise<boolean> {
   const n = Number.parseInt((await env.INVITES.get(key)) ?? "0", 10) || 0;
   if (n >= cap) {
@@ -109,9 +97,6 @@ async function bump(env: Env, key: string, cap: number): Promise<boolean> {
   return true;
 }
 
-// One invite logs in up to three computers. The broker only sees credential requests, not whether a
-// login worked, so each computer gets a spare one: a timed-out QR scan or a wrong 2FA password
-// doesn't cost a computer
 export const SELF_SERVE_COMPUTERS = 3;
 const SELF_SERVE_LOGINS = SELF_SERVE_COMPUTERS * 2;
 const CODE_TTL_SECONDS = 15 * 60;
@@ -128,7 +113,6 @@ interface PendingCode {
 const codeHash = (email: string, code: string) => sha256Hex(`${email}:${code}`);
 
 function newCode(): string {
-  // Rejection sampling keeps the six digits uniform
   const buf = new Uint32Array(1);
   let n: number;
   do {
@@ -145,11 +129,6 @@ async function readJson<T>(request: Request): Promise<T | null> {
   }
 }
 
-/**
- * The invite this email already holds, if any. A revoked one stays a refusal: the maintainer
- * switched it off, and a new code must not undo that. So does one whose record is gone (deleted by
- * hand, or a stale KV read right after a re-issue), since it can't be shown to be unrevoked.
- */
 async function previousInvite(
   env: Env,
   emailKey: string
@@ -166,7 +145,6 @@ async function previousInvite(
   };
 }
 
-/** Shared gate for both steps: method, per-IP limiter, and signups open and fully configured. */
 async function gate(request: Request, env: Env): Promise<Response | null> {
   if (request.method !== "POST") {
     return json(405, { error: "method_not_allowed" });
@@ -255,7 +233,6 @@ export async function handleSignup(
   }
 
   const day = now.toISOString().slice(0, 10);
-  // Per-email first, so a refused resend doesn't also eat the IP's allowance
   if (
     !(await bump(
       env,
@@ -364,7 +341,6 @@ export async function handleVerify(
     source: "self-serve",
   };
   await env.INVITES.put(inviteKey, JSON.stringify(invite));
-  // One email, one working invite: the new one replaces the old
   if (previous.key) {
     await env.INVITES.delete(previous.key);
   }

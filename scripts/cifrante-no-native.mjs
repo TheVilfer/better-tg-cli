@@ -1,5 +1,3 @@
-// Used by scripts/bundle.mjs; tested in test/bundle-shrink.test.ts.
-
 const NATIVE_GUARD = 'if (process.env.CIFRANTE_NATIVE === "0") return;';
 
 /**

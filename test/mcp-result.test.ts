@@ -7,7 +7,6 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { cliArgs } from "./cli.js";
 
-// The MCP boundary on the mock account: the exit code survives, stderr stays out of a JSON text
 const home = mkdtempSync(join(tmpdir(), "tg-mcp-result-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -46,11 +45,9 @@ describe("5 MCP keeps the exit code and keeps stderr out of the JSON", () => {
       exitCode: 0,
       stderr: banner.trim(),
     });
-    // Plain text keeps the stderr message: it is the error itself
     expect(cliResult(1, false, "", "Chat not found: x\n").content[0].text).toBe(
       "Chat not found: x"
     );
-    // The approval result is the approval branch's: no structuredContent, text as before
     expect(
       cliResult(
         3,
@@ -93,7 +90,6 @@ describe("5 MCP keeps the exit code and keeps stderr out of the JSON", () => {
     call(2, ["read", "Tea", "--json"]);
     child.stdin.end();
     await new Promise((r) => child.on("close", r));
-    // Mock mode refuses write-access with its own JSON error: classified as a read, it ran
     expect(lines[0].result.content[0].text).not.toMatch(
       /changed in a terminal/
     );

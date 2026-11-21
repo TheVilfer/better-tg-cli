@@ -1,10 +1,8 @@
-/** What search engines and AI crawlers read besides the pages: robots, sitemap, llms.txt, JSON-LD, IndexNow. */
 import { LANGS } from "./i18n";
 import type { Lang } from "./i18n";
 
 export const SITE = "https://better-tg-cli.com";
 const REPO = "https://github.com/TheVilfer/better-tg-cli";
-/** The indexable pages; each exists in every language at ?lang= (English at the bare URL) */
 const PAGES = ["/", "/mcp", "/faq", "/compare", "/login"];
 
 /**
@@ -127,6 +125,5 @@ export function jsonLd(description: string, lang: Lang): string {
       },
     ],
   };
-  // Inside <script>, "<" must not start "</script>"
   return JSON.stringify(data).replaceAll("<", "\\u003c");
 }

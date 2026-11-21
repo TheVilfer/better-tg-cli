@@ -109,7 +109,6 @@ export const setAvatarCommand = new Command("set-avatar")
   .argument("<path>", "Path to an image file")
   .option("--json", "Output as JSON")
   .action(async (path, options) => {
-    // A local mistake first: a missing file never costs an approval
     const filePath = resolve(path);
     if (!existsSync(filePath)) {
       fail(usageError(`File not found: ${filePath}`));

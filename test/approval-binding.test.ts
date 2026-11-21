@@ -20,8 +20,6 @@ import {
   vi,
 } from "vitest";
 
-// Before any module under test is imported: HOME (and the Windows dirs) point at a temp root, so
-// no path these tests touch can resolve into the real ~/.config
 const home = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -31,18 +29,14 @@ const home = await vi.hoisted(async () => {
   process.env.HOME = root;
   process.env.USERPROFILE = root;
   process.env.APPDATA = join(root, "AppData");
-  // What each test returns to: the temp home, never the real one
   return { root, original, saved: { ...process.env } };
 });
-// What an approval in mode "ask" is bound to: the whole body (every way stdin can reach the
-// command) and the account logged in when it was given. The real Keychain is never touched.
 const store = vi.hoisted(() => ({ values: new Map<string, string>() }));
 vi.mock(import("../src/secrets.js"), () => ({
   isSecretStoreAvailable: () => true,
   secretGet: (k: string) => store.values.get(k) ?? null,
   secretSet: (k: string, v: string) => (store.values.set(k, v), true),
   secretDelete: (k: string) => store.values.delete(k),
-  // the strict read loadConfig uses once secrets resolve through it
   secretGetStrict: (k: string) => ({
     ok: true,
     value: store.values.get(k) ?? null,
@@ -52,14 +46,12 @@ vi.mock(import("../src/secrets.js"), () => ({
     ["apiHash", "sessionString", "writeEnabled"].includes(k),
   migrateSecretsToStore: (c: Record<string, unknown>) => c,
 }));
-// stdin as the guard and the commands read it
 const stdin = vi.hoisted(() => ({ text: "" }));
 vi.mock(import("../src/text.js"), async (orig) => ({
   ...(await orig<typeof import("../src/text.js")>()),
   readStdinOnce: () => stdin.text,
   readTextArg: (v: string) => (v === "-" ? stdin.text : v),
 }));
-// Reaching Telegram is what an unapproved write must never do
 const telegram = vi.hoisted(() => ({ reached: 0, connected: 0 }));
 vi.mock(import("../src/client.js"), async (orig) => ({
   ...(await orig<typeof import("../src/client.js")>()),
@@ -68,8 +60,6 @@ vi.mock(import("../src/client.js"), async (orig) => ({
     throw new Error("reached Telegram");
   },
 }));
-// The guard's recipient lookup (a read before the approval): answered here, so `reached` still
-// counts only the write's own connection
 vi.mock(import("../src/peer-lookup.js"), () => ({
   lookupPeers: async (values: string[]) =>
     new Map(
@@ -79,8 +69,6 @@ vi.mock(import("../src/peer-lookup.js"), () => ({
       ])
     ),
 }));
-// Under the real getClient (taken with importActual): the connection it would open, or (connectOk)
-// a client that pretends to be connected
 const link = vi.hoisted(() => ({ connectOk: false }));
 vi.mock(import("../src/transport.js"), () => ({
   connectClient: async () => {
@@ -94,7 +82,6 @@ vi.mock(import("../src/transport.js"), () => ({
     }
     throw new Error("connected to Telegram");
   },
-  // getClient may ask which transport to use before it connects
   transportSetting: () => "auto",
 }));
 
@@ -122,14 +109,12 @@ import { childEnv, gateWrite } from "../src/mcp.js";
 import { configDir } from "../src/paths.js";
 import { describeInProcess } from "./helpers/describe-in-process.js";
 
-/** gateWrite's describe run, in this process (the real one starts the CLI as a child). */
 const describe_ = (p: Parameters<typeof gateWrite>[0]) =>
   describeInProcess(p, (t) => {
     stdin.text = t;
   });
 
 const savedArgv = process.argv;
-// A home of its own for each test: the profile dir lives under it, and only that root is deleted
 let root: string | undefined;
 let dir: string;
 beforeEach(() => {
@@ -153,7 +138,6 @@ beforeEach(() => {
   ).toBeTruthy();
   store.values.clear();
   store.values.set("writeEnabled", "ask");
-  // Through config.ts, so its one-second cache does not hand a test the previous test's account
   setSessionString("session-of-account-A");
   stdin.text = "";
   telegram.reached = 0;
@@ -161,7 +145,6 @@ beforeEach(() => {
   link.connectOk = false;
 });
 afterEach(() => {
-  // In place: a replaced process.env is a plain object that os.homedir() no longer reads
   for (const k of Object.keys(process.env)) {
     if (!(k in home.saved)) {
       delete process.env[k];
@@ -186,13 +169,11 @@ afterAll(() => {
   rmSync(home.root, { recursive: true, force: true });
 });
 
-/** The account as the guard reads it: the stored session of the profile. */
 const account = () => getSessionString();
 
 const codeIn = (s: string) =>
   /(?:TG_APPROVE=|"approval": ")([A-Z2-9]{6})/.exec(s)?.[1];
 
-/** Captures stderr and turns process.exit into a thrown value with its code. */
 function capture() {
   const io = { err: "" };
   vi.spyOn(console, "error").mockImplementation((...a) => {
@@ -218,11 +199,9 @@ async function guard(argv: string[]) {
   }
 }
 
-/** Runs the CLI as commander parses it, with the guard reading the same process.argv. */
 async function cli(args: string[]) {
   process.argv = ["node", "telegram", ...args];
   const program = new Command().name("telegram").exitOverride();
-  // As in src/index.ts: the guard binds the action commander parsed, not the raw argv
   trackActiveCommand(program);
   program.addCommand(apiCommand);
   program.addCommand(sendFileCommand);
@@ -245,7 +224,7 @@ describe("a raw API approval covers the body, in every form that reads it from s
   beforeEach(() => {
     file = join(mkdtempSync(join(tmpdir(), "tg-binding-")), "photo.png");
     writeFileSync(file, "png");
-    forgetFileSnapshots(); // each test plays new processes; file snapshots are per process
+    forgetFileSnapshots();
   });
 
   it.each([
@@ -268,12 +247,10 @@ describe("a raw API approval covers the body, in every form that reads it from s
     stdin.text = approvedText;
     const first = await cli(args);
     expect(first.code).toBe(EXIT_NEEDS_APPROVAL);
-    // The person sees the body they are approving
     expect(first.err).toContain("Hello Alice");
     const code = codeIn(first.err)!;
     expect(code).toBeTruthy();
 
-    // Same command line, another body: the code is refused and nothing reaches Telegram
     stdin.text = otherText;
     process.env.TG_APPROVE = code;
     const swapped = await cli(args);
@@ -283,11 +260,10 @@ describe("a raw API approval covers the body, in every form that reads it from s
     );
     expect(telegram.reached).toBe(0);
 
-    // The approved body goes through
     stdin.text = approvedText;
     process.env.TG_APPROVE = codeIn(swapped.err)!;
     const again = await cli(args);
-    expect(codeIn(again.err)).toBeTruthy(); // that code was for the other text
+    expect(codeIn(again.err)).toBeTruthy();
     process.env.TG_APPROVE = codeIn(again.err)!;
     await cli(args);
     expect(telegram.reached).toBe(1);
@@ -295,14 +271,12 @@ describe("a raw API approval covers the body, in every form that reads it from s
 });
 
 describe("over MCP the approval covers the whole stdin given to the child", () => {
-  /** What the child's guard does with the plan gateWrite prepared (childEnv's variables). */
   interface Plan {
     argv: string[];
     readOnly: boolean;
     stdin?: string;
     approval?: string;
   }
-  /** The child's guard in the environment childEnv() builds for this plan (spawned child, no primed stdin). */
   const child = async (plan: Plan, text = plan.stdin ?? "") => {
     const env = childEnv(plan);
     for (const k of ["TG_APPROVE", STDIN_IN_APPROVAL_ENV]) {
@@ -322,7 +296,6 @@ describe("over MCP the approval covers the whole stdin given to the child", () =
       '{"peer":{"_chat":"@alice"},"message":"Hello Alice"}',
     ],
     [["send", "@alice", "Hello"], "stdin the args never mention"],
-    // The usual call: no stdin at all
     [["send", "@alice", "Hello"], undefined],
   ])("%j with stdin %j", async (argv, text) => {
     const asked: string[] = [];
@@ -339,9 +312,7 @@ describe("over MCP the approval covers the whole stdin given to the child", () =
     } else {
       expect(asked[0]).not.toContain("text (stdin");
     }
-    // The child, given the same stdin, accepts the minted approval…
     expect((await child(plan)).code).toBeNull();
-    // …and refuses it for any other stdin
     const p2: Plan = {
       argv,
       readOnly: false,
@@ -360,7 +331,6 @@ describe("an approval belongs to the account it was given for", () => {
   it("is refused after a switch to another account in the same profile, before the write", async () => {
     const code = codeIn((await guard(argv)).err)!;
     expect(code).toBeTruthy();
-    // Account B now holds the profile's session (without going through logout/login)
     setSessionString("session-of-account-B");
     process.env.TG_APPROVE = code;
     const r = await guard(argv);
@@ -399,7 +369,6 @@ describe("an approval belongs to the account it was given for", () => {
       stdin?: string;
       approval?: string;
     } = { argv: args, readOnly: false };
-    // The dialog opens in A; while the user reads it, the profile logs in as B
     const refused = await gateWrite(
       plan,
       {},
@@ -411,7 +380,6 @@ describe("an approval belongs to the account it was given for", () => {
     );
     expect(refused).toBeUndefined();
     expect(plan.approval).toBeTruthy();
-    // The child of this call (its environment as childEnv builds it) now runs in B
     const env = childEnv(plan);
     process.env.TG_APPROVE = env.TG_APPROVE;
     process.env[STDIN_IN_APPROVAL_ENV] = env[STDIN_IN_APPROVAL_ENV];
@@ -435,7 +403,6 @@ describe("an approval belongs to the account it was given for", () => {
       stdin?: string;
       approval?: string;
     } = { argv: args, readOnly: false };
-    // The yes was given for A; meanwhile B logs in and write mode becomes "on"
     const refused = await gateWrite(
       plan,
       {},
@@ -465,13 +432,11 @@ describe("an approval belongs to the account it was given for", () => {
     saveConfig({ apiId: 1, apiHash: "h" });
     process.env.TG_APPROVE = codeIn((await guard(argv)).err)!;
     expect((await guard(argv)).code).toBeNull();
-    // B logs in between the guard and the connection
     setSessionString("session-of-account-B");
     await expect(getClient()).rejects.toThrow(
       /Another account logged in after this write was approved/
     );
     expect(telegram.connected).toBe(0);
-    // In A, the same process connects as usual
     setSessionString("session-of-account-A");
     await expect(getClient()).rejects.toThrow(/connected to Telegram/);
     expect(telegram.connected).toBe(1);
@@ -485,9 +450,7 @@ describe("an approval belongs to the account it was given for", () => {
     saveConfig({ apiId: 1, apiHash: "h" });
     link.connectOk = true;
     try {
-      // Connected as A, as the guard's lookup would
       await getClient();
-      // An approval checked against B's session (B logged in after the connection)
       const code = createApproval(actionHash(argv), "session-of-account-B");
       expect(
         consumeApproval(code, actionHash(argv), "session-of-account-B").ok
@@ -513,7 +476,6 @@ describe("an approval belongs to the account it was given for", () => {
   it("a login as B drops the codes given in A", async () => {
     const code = createApproval(actionHash(argv), account());
     saveLogin("session-of-account-B", { apiId: 1, apiHash: "h" }, false);
-    // Even back in A the old code is gone
     setSessionString("session-of-account-A");
     expect(consumeApproval(code, actionHash(argv), account())).toEqual({
       ok: false,
@@ -539,7 +501,6 @@ describe("an approval belongs to the account it was given for", () => {
 describe("a client that can ask the user never takes a code from the model", () => {
   it('even when this process saw "on" and the child already sees "ask"', async () => {
     const argv = ["send", "@alice", "Hello"];
-    // A genuine code the model got earlier (say, from a CLI run in chat mode)
     const modelCode = createApproval(actionHash(argv, ""), account());
     store.values.set("writeEnabled", "true");
     let asked = false;
@@ -554,7 +515,6 @@ describe("a client that can ask the user never takes a code from the model", () 
     ).resolves.toMatch(/not accepted here/);
     expect(asked).toBe(false);
     expect(plan.approval).toBeUndefined();
-    // Had the code been passed on, the child (now in "ask") would have run the write with it
     store.values.set("writeEnabled", "ask");
     if (plan.approval) {
       process.env.TG_APPROVE = plan.approval;

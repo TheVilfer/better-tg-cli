@@ -69,7 +69,7 @@
     "typecheck": "tsc --noEmit",
     "coverage:api": "node scripts/api-coverage.mjs --check --min 90",
     "typecheck:watch": "tsc --noEmit --watch --preserveWatchOutput",
-    "lint": "oxlint && oxfmt --check",
+    "lint": "oxlint && oxlint -c scripts/lint/fixtures.oxlintrc.json test/fixtures && node scripts/lint/no-comments-sh.mjs && oxfmt --check",
     "format": "oxfmt",
     "fix": "oxlint --fix && oxfmt"
   },

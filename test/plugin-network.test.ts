@@ -33,9 +33,6 @@ import {
 } from "../src/plugins/run.js";
 import type { NetworkStats } from "../src/plugins/run.js";
 
-// No real network anywhere: every name resolves through `lookup` below to a public-looking address,
-// and every connection dials this file's own HTTPS server on 127.0.0.1 with a test-only certificate
-// (SANs api.example.com, other.example.com, api.example.org) trusted only here.
 const CERT = readFileSync(resolve("test/fixtures/tls/test-cert.pem"));
 const KEY = readFileSync(resolve("test/fixtures/tls/test-key.pem"));
 const LAB = resolve("test/fixtures/plugins/net-lab");
@@ -85,7 +82,6 @@ function route(req: IncomingMessage, res: ServerResponse, body: string) {
           urlValue: encodeURIComponent(value),
           b64: Buffer.from(auth).toString("base64"),
           b64url: Buffer.from(value).toString("base64url"),
-          // The header inside a longer base64 text, at another byte alignment
           embedded: Buffer.from(
             `x-forwarded: Authorization: ${auth};`
           ).toString("base64"),
@@ -108,7 +104,6 @@ function route(req: IncomingMessage, res: ServerResponse, body: string) {
       return;
     }
     case "/chunked-big": {
-      // No Content-Length: Node sends it chunked; 2 MB in 64 KB pieces
       for (let i = 0; i < 32; i++) {
         res.write(Buffer.alloc(64 * 1024, 0x62));
       }
@@ -181,7 +176,6 @@ afterEach(() => {
   delete runDeps.limits;
 });
 
-/** DNS answers per host (a function may answer differently each time), and the dials it was asked for. */
 function testNet(answers: Record<string, string[] | (() => string[])> = {}) {
   const lookups: string[] = [];
   const dials: { address: string; port: number; servername: string }[] = [];
@@ -357,14 +351,14 @@ describe("manifest origins and the URL a request names", () => {
       return "allowed";
     };
     expect(denied("https://api.example.com/v1/x?q=1")).toBe("allowed");
-    expect(denied("https://API.EXAMPLE.COM/v1")).toBe("allowed"); // the same origin once parsed
+    expect(denied("https://API.EXAMPLE.COM/v1")).toBe("allowed");
     expect(denied("https://api.example.com:443/v1")).toBe("allowed");
     expect(denied("http://api.example.com/v1")).toBe("network_denied");
     expect(denied("https://api.example.com:8443/v1")).toBe("network_denied");
     expect(denied("https://user:pw@api.example.com/v1")).toBe("network_denied");
     expect(denied("https://api.example.com@127.0.0.1/")).toBe("network_denied");
     expect(denied("https://api.example.com./v1")).toBe("network_denied");
-    expect(denied("https://аpi.example.com/v1")).toBe("network_denied"); // Cyrillic "а": another host (punycode)
+    expect(denied("https://аpi.example.com/v1")).toBe("network_denied");
     expect(denied("https://api.example.com.evil.net/")).toBe("network_denied");
     expect(denied("https://127.0.0.1/")).toBe("network_denied");
     expect(denied("ftp://api.example.com/")).toBe("network_denied");
@@ -390,7 +384,7 @@ describe("manifest origins and the URL a request names", () => {
     ).toBe(false);
     expect(
       injectMatches(inject, new URL("https://api.example.com/%2e%2e/v1"))
-    ).toBe(true); // the parser removes the dot segment
+    ).toBe(true);
     expect(injectMatches(inject, new URL("https://other.example.com/v1"))).toBe(
       false
     );
@@ -440,7 +434,6 @@ describe("SSRF: what DNS says decides nothing until the IP is checked", () => {
       ok: true,
       response: { status: 200, body: "ok GET /plain" },
     });
-    // The second request resolves again, gets the private answer and is refused: nothing pinned from before
     expect(r.all[1]).toMatchObject({
       ok: false,
       error: { code: "network_denied" },
@@ -484,7 +477,6 @@ describe("SSRF: what DNS says decides nothing until the IP is checked", () => {
     });
     try {
       const sys = systemNet({ ca: CERT });
-      // The address is the checked one (a test lets the loopback through by calling connect directly)
       const net: NetDeps = {
         lookup: async () => [{ address: PUBLIC, family: 4 }],
         connect: (o) => sys.connect({ ...o, address: "127.0.0.1", port }),
@@ -620,8 +612,8 @@ describe("sizes, encodings, headers and cookies", () => {
       [{ "Transfer-Encoding": "chunked" }, "network_denied"],
       [{ "Content-Length": "0" }, "network_denied"],
       [{ "Accept-Encoding": "identity" }, "network_denied"],
-      [{ "X-Api-Key": "mine" }, "network_denied"], // the header the secret "other" goes in
-      [{ Range: "bytes=0-3" }, "network_denied"], // a part of a body could cut an echoed secret
+      [{ "X-Api-Key": "mine" }, "network_denied"],
+      [{ Range: "bytes=0-3" }, "network_denied"],
       [{ "If-Range": "x" }, "network_denied"],
       [
         Object.fromEntries(
@@ -638,7 +630,6 @@ describe("sizes, encodings, headers and cookies", () => {
     }
     expect(t.dials).toEqual([]);
     expect(seen).toEqual([]);
-    // A body on GET, an unknown option, a bad method
     await expect(
       fetchVia(t.net, "https://api.example.com/plain", { body: "x" })
     ).resolves.toMatchObject({
@@ -750,7 +741,6 @@ describe("secrets the plugin never sees", () => {
     for (const f of forbidden(SECRET)) {
       expect(text, f).not.toContain(f);
     }
-    // The middle of the embedded base64 header, at another alignment, is gone too
     const embedded = Buffer.from(
       `x-forwarded: Authorization: Bearer ${SECRET};`
     ).toString("base64");
@@ -809,13 +799,11 @@ describe("secrets the plugin never sees", () => {
       });
     }
     expect(seen).toEqual([]);
-    // The parser resolves plain and encoded dot segments itself: /v1/%2e%2e/admin is /admin, without the secret
     expect(
       (await fetchVia(t.net, "https://api.example.com/v1/%2e%2e/echo")).ok
     ).toBe(true);
     expect(seen[0].url).toBe("/echo");
     expect(seen[0].headers.authorization).toBeUndefined();
-    // An origin whose secret has no path limit is not affected
     expect((await fetchVia(t.net, "https://other.example.com/a%2fb")).ok).toBe(
       true
     );
@@ -843,7 +831,6 @@ describe("secrets the plugin never sees", () => {
       },
     });
     expect(seen).toEqual([]);
-    // Uncaught, it reaches the CLI with its own code and the command
     const e = await run(
       "fetch-raw",
       { url: "https://api.example.com/v1/echo" },
@@ -858,7 +845,6 @@ describe("secrets the plugin never sees", () => {
     expect(String((e as CliError).hint)).toContain(
       "telegram plugin secret set net-lab apikey"
     );
-    // A path without the secret needs none
     expect(
       (
         await fetchVia(t.net, "https://api.example.com/v2/x", undefined, {
@@ -882,7 +868,6 @@ describe("secrets the plugin never sees", () => {
     expect(stripForms(Buffer.from(`x ${v} y`), forms).toString()).toBe(
       "x [secret] y"
     );
-    // Nothing short is ever a form (a short value would wipe ordinary text)
     expect(secretForms(["abc"])).toEqual([]);
   });
 });

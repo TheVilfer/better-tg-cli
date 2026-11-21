@@ -1,9 +1,3 @@
-/**
- * Install guide on the signup page: common steps (CLI, login), then one tab per agent (Claude Code, Codex, Cursor, Claude Desktop) with
- * its own steps and a drawn "screenshot" of what the person will see. The screens are HTML mockups,
- * not captures: crisp on any display, no personal data, nothing extra to host.
- */
-
 import type { Dict } from "./i18n";
 
 export const escape = (s: string) =>
@@ -20,8 +14,6 @@ const MCPB =
 /** A copyable command or text block; the button label comes from the page language. */
 export const code = (text: string, copy: string, wrap = false) =>
   `<div class="box"><pre${wrap ? ' class="wrap"' : ""}>${escape(text)}</pre><button type="button" data-copy>${escape(copy)}</button></div>`;
-
-// ---- drawn screens -----------------------------------------------------------------------------
 
 export const d = (t: string) => `<span class="s-dim">${t}</span>`;
 export const a = (t: string) => `<span class="s-acc">${t}</span>`;
@@ -72,8 +64,6 @@ function screens(t: Dict): Record<AgentId, string> {
   };
 }
 
-// ---- tabs --------------------------------------------------------------------------------------
-
 type AgentId = keyof Dict["guide"]["tabs"];
 const AGENTS: { id: AgentId; label: string }[] = [
   { id: "claude-code", label: "Claude Code" },
@@ -86,7 +76,6 @@ const step = (title: string, body: string) =>
   `<li><h4>${escape(title)}</h4>${body}</li>`;
 const p = (text: string) => `<p>${escape(text)}</p>`;
 
-/** Commands and buttons per agent; the words around them come from the dictionary. */
 function agentSteps(id: AgentId, t: Dict): string {
   const [[t1, x1], [t2, x2]] = t.guide.tabs[id];
   const c = (cmd: string) => code(cmd, t.client.copy);

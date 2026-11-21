@@ -1,7 +1,3 @@
-/**
- * Minimal chalk replacement (the subset this CLI uses, chainable: `colors.bold.blue(x)`).
- * Colors only on a TTY; NO_COLOR disables, FORCE_COLOR enables.
- */
 const CODES = {
   bold: [1, 22],
   red: [31, 39],

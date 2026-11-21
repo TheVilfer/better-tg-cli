@@ -80,7 +80,6 @@ describe("mock account: reads go through the real client code", () => {
     });
     expect(byTitle["Bob Sample"].muted).toBe(true);
     expect(byTitle["Mock News Chat"].archived).toBe(true);
-    // Newest chat first, as Telegram orders the list
     expect(chats[0].title).toBe("Alice Example");
   });
 
@@ -236,7 +235,7 @@ describe("mock account: writes change the world and are saved", () => {
     ).toEqual([]);
 
     await markChatRead(client, "@alice_example");
-    await disconnectClient(); // drop the cached dialog list
+    await disconnectClient();
     await expect(getReadState(client, "@alice_example")).resolves.toEqual({
       readInboxMaxId: 6,
       unreadCount: 0,
@@ -366,7 +365,6 @@ describe("TG_MOCK wiring", () => {
       const client = await getClient();
       expect(client).toBeInstanceOf(MockClient);
       expect((await client.getMe()).username).toBe("mock_owner");
-      // Every `new TelegramClient(...)` in src/ takes clientParams(), so this is the choke point
       expect(() => clientParams()).toThrow(/mock mode/);
       expect(() => clientParams(true)).toThrow(/mock mode/);
     } finally {
@@ -399,7 +397,6 @@ describe("TG_MOCK wiring", () => {
 describe("CLI in mock mode (from src/)", () => {
   const home = mkdtempSync(join(tmpdir(), "tg-mock-home-"));
   const state = join(home, "state.json");
-  // Same rule as configDir() in src/paths.ts: %APPDATA% on Windows, ~/.config elsewhere
   const configDir = (name: string) =>
     process.platform === "win32"
       ? join(home, "AppData", name)

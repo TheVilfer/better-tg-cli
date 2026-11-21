@@ -26,9 +26,6 @@ import { classifyCall, cliResult as mcpToolResult } from "../src/mcp.js";
 import { seedWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
 
-// Over MCP (TG_MCP on every call, TG_READ_ONLY on the read tool) the model must not see login codes,
-// redeemable gift links or a venue's place ID, and must not forward a contact card or a location.
-
 const saved = { ...process.env };
 afterEach(() => {
   process.env = { ...saved };
@@ -71,7 +68,6 @@ describe("login codes from the service account 777000", () => {
     expect(maskLoginCodes(RU_TEXT)).toBe(
       "Код для входа в Telegram: [login code hidden]. Никому не давайте код."
     );
-    // An older form without "code:" in front of it
     expect(maskLoginCodes("Your Telegram code is 52-813")).not.toMatch(
       /52|813/
     );
@@ -83,7 +79,6 @@ describe("login codes from the service account 777000", () => {
     expect(messageText(serviceMessage(LOGIN_TEXT))).toMatch(
       /\[login code hidden\]\. Do not give this code/
     );
-    // Sent by 777000 in a group (fromId) or forwarded from it
     const inGroup = new Api.Message({
       id: 2,
       date: 0,
@@ -103,7 +98,6 @@ describe("login codes from the service account 777000", () => {
       }),
     });
     expect(messageText(forwarded)).not.toMatch(/52813/);
-    // A message from anyone else keeps its numbers
     const other = new Api.Message({
       id: 4,
       date: 0,
@@ -262,7 +256,6 @@ describe("venue IDs and gift-code slugs in a raw result", () => {
       days: 90,
       slug: "[redacted]",
     });
-    // A giveaway result and a boost carry the gift code's slug under other names
     const more = JSON.parse(
       serializeApiResult({
         r: { _: "payments.giveawayInfoResults", giftCodeSlug: "gGgGgG" },
@@ -273,7 +266,6 @@ describe("venue IDs and gift-code slugs in a raw result", () => {
       r: { _: "payments.giveawayInfoResults", giftCodeSlug: "[redacted]" },
       b: { _: "boost", usedGiftSlug: "[redacted]" },
     });
-    // Other constructors keep a field of the same name
     const other = JSON.parse(
       serializeApiResult({
         theme: { _: "theme", slug: "night" },
@@ -693,9 +685,6 @@ describe("click --data over MCP finds only what the model was shown", () => {
   });
 });
 
-// Round 3: the threat model is credentials and redeemable value. Login codes come from 777000 and
-// 489000 and are hidden wherever a service message's content reaches output; gift links are masked
-// on every MCP output by shape.
 describe("login codes in every part of a service message", () => {
   const VERIFY = bigInt(489_000);
   const code = "52813";
@@ -886,7 +875,6 @@ describe("login codes in every part of a service message", () => {
         url: expect.stringContaining("[login code hidden]"),
       });
     }
-    // A quote of a service message from another chat
     const quoting = new Api.Message({
       id: 3,
       date: 0,
@@ -1112,7 +1100,6 @@ describe("gift-code links on every MCP output", () => {
         const terminal = run(args, { TG_MCP: "", TG_READ_ONLY: "" });
         expect(terminal.status, terminal.stderr).toBe(0);
         expect(terminal.stdout).toMatch(/AbC123xyz/);
-        // The server's own mask is a backstop on whatever the CLI prints
         expect(
           mcpToolResult(0, false, terminal.stdout, "").content[0].text
         ).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);

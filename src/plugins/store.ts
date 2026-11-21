@@ -94,7 +94,6 @@ export const pluginsRoot = (): string => join(pluginHome(), "plugins");
 export const dataRoot = (): string => join(pluginHome(), "plugin-data");
 const lockPath = (): string => join(pluginsRoot(), LOCK_FILE);
 
-/** The home's real path to walk from; undefined when it does not exist yet (and `create` is not set). */
 function home(create = false): string | undefined {
   const dir = pluginHome();
   if (create) {
@@ -110,6 +109,11 @@ function home(create = false): string | undefined {
   }
 }
 
+/**
+ * - `manifest`: sha256 of tg-plugin.json
+ * - `files`: sha256 of every file, by path (tg-plugin.json included); an object without a prototype
+ * - `accepted`: What the human accepted at install
+ */
 export interface LockEntry {
   name: string;
   version: string;
@@ -119,11 +123,8 @@ export interface LockEntry {
   revision: string;
   official: boolean;
   installedAt: string;
-  /** sha256 of tg-plugin.json */
   manifest: string;
-  /** sha256 of every file, by path (tg-plugin.json included); an object without a prototype */
   files: Record<string, string>;
-  /** What the human accepted at install */
   accepted: {
     permissions: Permission[];
     effects: Effect[];
@@ -152,8 +153,6 @@ export const bare = <T>(): Record<string, T> =>
   Object.create(null) as Record<string, T>;
 export const own = (o: object, k: string): boolean => Object.hasOwn(o, k);
 
-// ---------- the registry key ----------
-
 /** Where the registry key lives; tests replace it (an in-memory store, or one that is unavailable). */
 export interface KeyStore {
   available(): boolean;
@@ -167,7 +166,6 @@ export const storeDeps: {
   lockStaleMs: number;
 } = { lockTimeoutMs: 15_000, lockStaleMs: 10 * 60_000 };
 
-/** The mock account's key: a 0600 file in the mock plugin home (the mock never touches the real store). */
 const mockKeyStore: KeyStore = {
   available: () => true,
   get: () => {
@@ -203,10 +201,6 @@ const storeUnavailable = (why: string) =>
     { hint: secretStoreHint() }
   );
 
-/**
- * The profile's registry key. `create` makes one at the first install; reads never do, so a
- * registry without its key in the store is refused instead of being signed anew.
- */
 function registryKey(create: boolean): Buffer | undefined {
   const store = keyStore();
   if (!store.available()) {
@@ -238,7 +232,6 @@ function registryKey(create: boolean): Buffer | undefined {
   return Buffer.from(fresh, "hex");
 }
 
-/** JSON with sorted keys: the form the MAC covers, the same for the object written and the one read back. */
 function canonical(v: unknown): string {
   if (Array.isArray(v)) {
     return `[${v.map(canonical).join(",")}]`;
@@ -267,8 +260,6 @@ export function lockMac(
     .digest("hex");
 }
 
-// ---------- the inter-process lock ----------
-
 const sleep = (ms: number) =>
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
@@ -284,7 +275,6 @@ function alive(pid: number): boolean {
 const O_NOFOLLOW =
   (constants as Record<string, number | undefined>).O_NOFOLLOW ?? 0;
 
-/** A lock left by a process that is gone (same computer) or older than lockStaleMs is taken over. */
 function breakStale(path: string): boolean {
   let seen: string;
   let age: number;
@@ -293,14 +283,13 @@ function breakStale(path: string): boolean {
     age = Date.now() - st.mtimeMs;
     seen = st.isFile() ? readFileSync(path, "utf-8") : "";
   } catch {
-    return true; // gone meanwhile: try again
+    return true;
   }
   const [pid, host] = seen.split(" ");
   const dead = host === hostname() && /^\d+$/.test(pid) && !alive(Number(pid));
   if (!dead && age < storeDeps.lockStaleMs && !(seen === "" && age > 5000)) {
     return false;
   }
-  // Moved aside first: two processes breaking it at once cannot both delete a fresh lock
   const aside = `${path}.stale-${randomUUID().slice(0, 8)}`;
   try {
     renameSync(path, aside);
@@ -310,22 +299,16 @@ function breakStale(path: string): boolean {
   let got = "";
   try {
     got = readFileSync(aside, "utf-8");
-  } catch {
-    /* vanished */
-  }
+  } catch {}
   if (got !== seen) {
-    // Someone else's fresh lock: put it back where it was, unless a newer one is there already
     try {
       linkSync(aside, path);
-    } catch {
-      /* a newer lock holds the place */
-    }
+    } catch {}
   }
   rmSync(aside, { force: true });
   return true;
 }
 
-/** One attempt at the lock file: true when taken, false when someone else holds it. */
 function tryLock(path: string, token: string): boolean {
   try {
     const fd = openSync(
@@ -352,9 +335,7 @@ function releaseLock(path: string, token: string): void {
     if (readFileSync(path, "utf-8") === token) {
       unlinkSync(path);
     }
-  } catch {
-    /* already gone */
-  }
+  } catch {}
 }
 
 const lockBusy = (path: string) =>
@@ -367,16 +348,9 @@ const lockBusy = (path: string) =>
     }
   );
 
-/**
- * Runs `fn` while holding the plugin home's lock file (O_EXCL), so changes to the registry and the
- * quota check with its write never interleave with another process. Never held across a dialog or
- * a download. `fn` must not exit the process.
- */
-/** This process holds the lock right now (its holder runs synchronously, so nothing interleaves). */
 let lockHeld = false;
 
 export function withPluginLock<T>(fn: () => T): T {
-  // Re-entrant within this process: a store write inside a section that already holds it
   if (lockHeld) {
     return fn();
   }
@@ -433,11 +407,6 @@ export function assertGuard(guard: WriteGuard | undefined, what: string): void {
   }
 }
 
-/**
- * withPluginLock for a plugin run's storage write: the wait yields to the event loop between
- * attempts, so a cancellation (SIGTERM, an abort) and the deadline are seen while it waits, and both
- * are checked once more under the lock (`fn` calls assertGuard right before it changes the file).
- */
 async function withPluginLockGuarded<T>(
   guard: WriteGuard,
   what: string,
@@ -470,8 +439,6 @@ async function withPluginLockGuarded<T>(
     releaseLock(path, token);
   }
 }
-
-// ---------- the registry ----------
 
 const strings = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
@@ -551,7 +518,6 @@ const emptyLock = (): Lock => ({
   plugins: bare<LockEntry>(),
 });
 
-/** The registry and the key it was verified with (undefined while there is no registry). */
 function readLockKeyed(): { lock: Lock; key?: Buffer } {
   const root = home();
   if (!root) {
@@ -589,7 +555,6 @@ function readLockKeyed(): { lock: Lock; key?: Buffer } {
   ) {
     throw lockInvalid("unknown format");
   }
-  // An empty registry serves nothing: it is read without the key, so a profile with no plugins never touches the store
   if (!Object.keys(raw.plugins).length) {
     return { lock: emptyLock() };
   }
@@ -629,7 +594,6 @@ function writeLock(plugins: Record<string, LockEntry>, key: Buffer): void {
     removeRegular(home(true)!, `plugins/${LOCK_FILE}`);
     return;
   }
-  // The MAC covers what a reader parses back, so it is computed over the JSON round trip
   const body = JSON.parse(JSON.stringify({ lockfileVersion: 1, plugins })) as {
     lockfileVersion: 1;
     plugins: unknown;
@@ -670,7 +634,6 @@ export function findEntry(name: string): LockEntry {
   return plugins[name];
 }
 
-/** The registered installation is still `entry` (same installId and revision); otherwise nothing is changed. */
 function assertCurrent(
   lock: Lock,
   entry: LockEntry,
@@ -706,7 +669,6 @@ export type Verified =
     }
   | { ok: false; entry: LockEntry; reason: string };
 
-/** Every regular file under `rel` (below the home), as `/`-separated paths; a link or anything else is reported. */
 function tree(
   root: string,
   rel: string,
@@ -946,11 +908,6 @@ export function commitInstall(snapshot: Snapshot, now = new Date()): LockEntry {
 }
 
 /**
- * Removes the installation the human confirmed (registry entry first, then its folder) and, unless
- * kept, its data. Under the lock it must still be the registered one: a removal confirmed for one
- * installation never removes another that took its name meanwhile.
- */
-/**
  * Runs `fn` under the plugin lock only while `entry` is still the registered installation (same
  * installId and revision); otherwise `plugin_changed` and `fn` never runs.
  */
@@ -972,8 +929,6 @@ export function removeInstall(entry: LockEntry, keepData: boolean): void {
   withPluginLock(() => {
     const { lock, key } = readLockKeyed();
     assertCurrent(lock, entry, "nothing was removed");
-    // Its secrets are deleted after the lock is let go (the store is slow and may fail): recorded
-    // first, in the same section that drops the entry, so a deletion that fails is retried later
     if (entry.accepted.secrets.length) {
       addPendingSecrets({
         name: entry.name,
@@ -993,12 +948,9 @@ export function removeInstall(entry: LockEntry, keepData: boolean): void {
     if (!keepData) {
       removeTree(root, `plugin-data/${entry.installId}`);
     }
-    // The host's own state of this installation goes with it, kept data or not
     removeTree(root, `plugin-state/${entry.installId}`);
   });
 }
-
-// ---------- secrets of removed installations, still to delete ----------
 
 /** Secrets of a removed installation that are not deleted from the secret store yet. */
 export interface PendingSecrets {
@@ -1092,8 +1044,6 @@ export function settlePendingSecrets(installId: string, left: string[]): void {
   });
 }
 
-// ---------- the installation a write was approved for ----------
-
 let approvedInstall:
   | { name: string; installId: string; revision: string }
   | undefined;
@@ -1129,14 +1079,11 @@ export function assertApprovedInstall(entry: LockEntry): void {
   }
 }
 
-// ---------- data per installation and Telegram user ----------
-
 export const dataKeyProblem = (key: string): string | undefined =>
   KEY_RE.test(key)
     ? undefined
     : `Invalid key "${key}": use 1-64 characters a-z 0-9 . _ - starting with a letter or digit`;
 
-/** `plugin-data/<installId>/<userId>` below the home, both checked. */
 function userDataRel(entry: LockEntry, userId: string): string {
   if (!USER_ID_RE.test(userId) || !UUID_RE.test(entry.installId)) {
     throw new CliError(
@@ -1217,10 +1164,6 @@ export function dataGet(
   }
 }
 
-/**
- * Saves a value under a declared storage key, within the plugin's total quota for this account. The
- * quota check and the write happen under the lock, for the installation that is still registered.
- */
 interface SetResult {
   bytes: number;
   usedBytes: number;
@@ -1265,7 +1208,6 @@ function setUnderLock(
         }
       );
     }
-    // The last look before the file changes: a run that ended meanwhile writes nothing
     assertGuard(guard, "nothing was saved");
     try {
       writeRegular(home(true)!, `${rel}/k-${key}`, value);
@@ -1353,8 +1295,6 @@ export function dataDeleteGuarded(
   );
 }
 
-// ---------- the host's walk state behind a cursor ----------
-
 /** How long a cursor stays valid, and how many one installation keeps (the oldest go first). */
 export const CURSOR_TTL_MS = 24 * 3600e3;
 export const CURSOR_MAX = 64;
@@ -1374,7 +1314,6 @@ function cursorDir(entry: Pick<LockEntry, "installId">): string {
   return `plugin-state/${entry.installId}/cursors`;
 }
 
-/** The file of an id: a hex hash, so ids that differ only in case never meet on a case-insensitive disk. */
 const cursorFile = (id: string) =>
   `c-${createHash("sha256").update(id).digest("hex").slice(0, 40)}`;
 
@@ -1400,9 +1339,7 @@ export function cursorSave(
       ) {
         try {
           removeRegular(root, `${dir}/${f.name}`);
-        } catch {
-          /* gone meanwhile */
-        }
+        } catch {}
       }
     });
   } catch (error) {
@@ -1489,8 +1426,6 @@ export function onboardingState(
     : "done";
 }
 
-// ---------- non-secret settings per installation ----------
-
 /** The most a settings file may hold (what settingsRead reads), checked before every write. */
 export const SETTINGS_BYTES = 256 * 1024;
 
@@ -1560,7 +1495,6 @@ export function settingsWrite(
     const all = settingsRead(entry);
     all[key] = value;
     const text = JSON.stringify(all);
-    // Over the limit the file could no longer be read: refused, the previous file stays as it was
     const bytes = Buffer.byteLength(text, "utf-8");
     if (bytes > SETTINGS_BYTES) {
       throw new CliError(

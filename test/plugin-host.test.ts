@@ -28,7 +28,6 @@ const ALL: Permission[] = [
 ];
 const LOGIN = "Login code: 52813. Do not give it to anyone";
 
-/** The built-in account plus the two login-code services, a forward and a quote of them, own text with codes. */
 function world(): MockWorld {
   const w = seedWorld();
   w.users.push(
@@ -128,7 +127,6 @@ function setup(
     if (!Object.hasOwn(api, name)) {
       throw new Error(`not granted: ${name}`);
     }
-    // What the guest gets is JSON: round-trip it the same way
     return JSON.parse(
       JSON.stringify(
         await api[name](JSON.parse(JSON.stringify(args)) as unknown[], signal)
@@ -140,7 +138,6 @@ function setup(
   return { api, call, callWith, state, storage, logged, w, accounts };
 }
 
-/** One cursor store for the tests of a file, as one installation keeps its cursors across runs. */
 const sharedCursors = memoryCursors();
 
 const texts = (v: unknown) => JSON.stringify(v);
@@ -238,7 +235,6 @@ describe("host API: masking of service sources through every read API", () => {
       alice.messages.find((m: { id: number }) => m.id === id);
     expect(byId(51)).toMatchObject({ service: true, forwarded: true });
     expect(byId(52)).toMatchObject({ service: true });
-    // The level service hides any code-like token, the echo level only a labelled one
     expect(byId(52).text).not.toContain("52813");
     expect(byId(50).text).toBe(
       "your code: [login code hidden] and t.me/giftcode/[gift code hidden]"
@@ -343,7 +339,6 @@ describe("host API: messages.mine pages and cursor", () => {
     expect(cursor).toBeNull();
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen.filter((t) => t.startsWith("long text"))).toHaveLength(150);
-    // Same walk again: same order
     const again = await setup({ w }).call("messages.mine", { limit: 3 });
     expect(again.messages.map((m: { text: string }) => m.text)).toEqual(
       seen.slice(0, 3)
@@ -360,22 +355,18 @@ describe("host API: messages.mine pages and cursor", () => {
       types: ["private", "group"],
     });
     expect(first.cursor).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    // Nothing of the walk is in it: no chat IDs, no JSON
     const decoded = Buffer.from(first.cursor, "base64url");
     expect(decoded).toHaveLength(16);
     expect(decoded.toString("latin1")).not.toMatch(/1001|1002|-100|"c"/);
-    // A well-formed id the host never handed out
     await expect(
       call("messages.mine", { cursor: "A".repeat(22) })
     ).rejects.toMatchObject({ code: "invalid_cursor" });
-    // Another account, the same installation's store
     await expect(
       setup({ account: "2000" }).call("messages.mine", { cursor: first.cursor })
     ).rejects.toMatchObject({
       code: "invalid_cursor",
       message: expect.stringMatching(/another account/),
     });
-    // Another installation: its own store does not know the id; one sharing the store refuses it by name
     await expect(
       setup({ cursors: memoryCursors(), installId: "other" }).call(
         "messages.mine",
@@ -390,7 +381,6 @@ describe("host API: messages.mine pages and cursor", () => {
       code: "invalid_cursor",
       message: expect.stringMatching(/another installation/),
     });
-    // The real one still continues
     expect(
       (await call("messages.mine", { limit: 1, cursor: first.cursor })).count
     ).toBe(1);
@@ -631,7 +621,6 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
       msgId: 2_147_483_647,
       thread: true,
     });
-    // Built past the parser: the host still never falls back to the whole chat
     for (const target of [
       { chat: "1001", topic: 0, thread: false },
       { chat: "1001", msgId: 0, thread: true },
@@ -647,7 +636,6 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
         "target.message"
       )
     ).rejects.toMatchObject({ code: "invalid_argument" });
-    // A real thread: its replies only, none of the chat's other messages
     const w = world();
     const group = w.chats.find((c) => c.id === 1001)!;
     group.messages.push(
@@ -665,7 +653,6 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
   it("#4 a message whose service source is only in savedFromPeer is masked in read, search, target.message; mine drops it", async () => {
     const w = world();
     const alice = w.chats.find((c) => c.id === 1001)!;
-    // Saved from the 777000 chat, authored by someone else: fwdFrom.fromId is not a service
     alice.messages.push(
       {
         id: 70,
@@ -675,7 +662,6 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
         forwardedFrom: 1002,
         savedFrom: 777_000,
       },
-      // Own text whose quote header names the service only as the saved-from chat
       {
         id: 71,
         ago: 1,
@@ -712,7 +698,6 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
     ).not.toContain("61235");
   });
 
-  /** A mock client that counts every request the host makes and can act on a call. */
   function counting(w: MockWorld, onCall?: (name: string) => void) {
     const calls: string[] = [];
     const real = new MockClient(w) as unknown as Record<string, unknown>;
@@ -826,11 +811,9 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
     expect(commandSchemaProblems({ $ref: "#/%zz" })).toEqual([
       expect.stringMatching(/not a valid JSON Pointer/),
     ]);
-    // At run: the regular expression in the annotation is never reached
     expect(() => validate(evil, { a: `${"a".repeat(40)}!` }, 20, 2000)).toThrow(
       UnsupportedSchemaError
     );
-    // Refs to real subschema positions still work, cycles that descend into the value too
     const tree = {
       $defs: {
         node: {
@@ -854,8 +837,6 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
         { x: "one" }
       )
     ).toEqual([expect.objectContaining({ path: "/x" })]);
-    // List positions resolve too
-    // (the root's own allOf applies to the root as well: an issue at "" too)
     expect(
       validate(
         {
@@ -885,7 +866,6 @@ describe("review fixes: target IDs, saved-from service sources, lazy account, mi
         { a: "ok" }
       )
     ).toEqual([]);
-    // A $ref cycle that never descends ends with an error, not a stack overflow
     expect(() => validate({ $ref: "#" }, 1)).toThrow(UnsupportedSchemaError);
   });
 

@@ -1,5 +1,3 @@
-/** The signup page at /login: inline HTML, one nonce per response, only Turnstile and Google Fonts outside. */
-
 import { escape, GUIDE_CSS, GUIDE_JS, guideHtml } from "./guide";
 import { DICT, LANGS } from "./i18n";
 import type { Dict, Lang } from "./i18n";
@@ -22,12 +20,14 @@ export function loopbackReturn(raw: string | null): string | null {
   return port >= 1024 && port <= 65_535 ? raw : null;
 }
 
+/**
+ * - `query`: The request's query, so the language links keep ?return= (the onboard handoff), ?mode= and ?agent=
+ */
 export interface PageOptions {
   open: boolean;
   siteKey?: string;
   returnTo?: string | null;
   lang?: Lang;
-  /** The request's query, so the language links keep ?return= (the onboard handoff), ?mode= and ?agent= */
   query?: URLSearchParams;
 }
 
@@ -134,7 +134,6 @@ export function langLinks(
   return `<nav class="langs" aria-label="${escape(t.page.language)}">${links.join("")}</nav>`;
 }
 
-/** Strings the browser script needs; `<` escaped so nothing can close the script tag. */
 const clientJson = (t: Dict) =>
   JSON.stringify(t.client).replaceAll("<", "\\u003c");
 

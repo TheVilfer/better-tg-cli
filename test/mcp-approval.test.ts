@@ -6,8 +6,6 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { cliArgs } from "./cli.js";
 
-// Before any module under test is imported: a temp HOME and the mock account in mode "ask", so the
-// server process (approvals it mints) and its children (the CLI) share the mock profile there
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -44,7 +42,6 @@ beforeEach(() => {
 
 type Plan = Parameters<typeof childEnv>[0];
 
-/** The CLI as the server runs it: a child with exactly the environment childEnv() builds. */
 function spawnCli(plan: Plan): Promise<RunOutput> {
   const r = spawnSync(process.execPath, [...cliArgs(), ...plan.argv], {
     encoding: "utf-8",
@@ -94,7 +91,6 @@ describe(
       expect(first.result.content[0].text).toContain(
         `exactly the same args and stdin as this call, plus "approval": "${s.code}"`
       );
-      // Repeating the original call with the code goes through
       const second = (await handleMessage(
         call({ args, stdin, approval: s.code }),
         run
@@ -112,12 +108,10 @@ describe(
       expect(
         JSON.stringify(login.result.structuredContent!.retry)
       ).not.toContain("52813");
-      // Nor in the action or the text: the human sees the full action in the dialog or terminal
       expect(JSON.stringify(login.result)).not.toContain("52813");
       expect(JSON.stringify(login.result.structuredContent!.action)).toContain(
         "[login code hidden]"
       );
-      // Still approvable: the same call with the code sends the code as written
       const sent = (await handleMessage(
         call({
           args: ["send", "-1004001", "Login code: 52813"],
@@ -203,12 +197,10 @@ describe(
         },
       ]);
       const { text } = first.result.content[0];
-      // Older clients drop structuredContent: the text still has the action and the code
       expect(text).toContain("To: Team (supergroup, @mock_team, id -1004001)");
       expect(text).toContain(`"approval": "${s.code}"`);
       expect(text).not.toMatch(/TG_APPROVE|PowerShell|environment/);
 
-      // The retry it names goes through
       const second = (await handleMessage(
         call(s.retry.arguments),
         run
@@ -251,7 +243,6 @@ describe(
     });
 
     it("other failures stay errors", () => {
-      // with the exit code in structuredContent, as every non-approval result has it (agent-ux-cli)
       expect(
         result(
           { argv: ["send"] },
@@ -262,7 +253,6 @@ describe(
         isError: true,
         structuredContent: { exitCode: 1, stderr: "Chat not found" },
       });
-      // exit 3 without the guard's line (some other cause) is an error as before
       expect(
         result(
           { argv: ["send"] },
@@ -323,7 +313,6 @@ describe(
       })) as Reply;
       expect(asked).toHaveLength(1);
       expect(asked[0]).toContain(`it shows "${GIFT_URL}"`);
-      // The press after the yes succeeded: a URL button, its link masked for the model
       expect(r.result.isError, r.result.content[0].text).toBeUndefined();
       const out = JSON.parse(r.result.content[0].text);
       expect(out).toMatchObject({
@@ -471,7 +460,7 @@ describe(
     });
 
     it("a describe run never writes, whatever the mode", async () => {
-      delete process.env.TG_MOCK_ASK; // the mock would write at once
+      delete process.env.TG_MOCK_ASK;
       try {
         const d = await describe_({
           argv: ["send", "-1004001", "not sent"],
@@ -502,7 +491,6 @@ describe(
       expect(r.result.content[0].text).toMatch(
         /^Nothing was sent: [^]*Not sent, nothing to approve: No chat is titled exactly "Tea"/
       );
-      // The describe run's exit code comes back too (2: no chat has this exact title), as for any run
       expect(r.result.structuredContent).toMatchObject({ exitCode: 2 });
     });
 
@@ -587,7 +575,6 @@ describe(
           /Command: telegram send -1004001 /
         );
         expect(s.retry).toMatchObject({ sameArgumentsAsThisCall: true });
-        // The approval covers the raw value: the same call with the code sends it as written
         const sent = (await handleMessage(
           call({ ...c, approval: s.code }),
           run
@@ -604,7 +591,6 @@ describe(
       writeFileSync(file, "hello");
       const { seedWorld, saveWorld } = await import("../src/mock/world.js");
       saveWorld(seedWorld(), process.env.TG_MOCK!);
-      // Every outgoing message in Team, oldest first: a resend of the same body shows up as a new ID
       const outgoing = () => {
         expect(existsSync(process.env.TG_MOCK!)).toBe(true);
         const world = JSON.parse(
@@ -622,7 +608,6 @@ describe(
           .sort((a, b) => a.id - b.id);
       };
       const ids = () => outgoing().map((m) => m.id);
-      // `shown`: the text block the person approves, which is exactly what goes out
       const cases = [
         {
           c: { args: ["send", "-1004001", "Login code:\n52813"] },
@@ -646,8 +631,6 @@ describe(
           body: "Login code:\n52813",
           shown: "Caption (17 characters)",
         },
-        // stdin ends with one line break, as `echo` and editors leave it: it is not part of the body,
-        // neither in what the person approves nor in what is sent
         {
           c: { args: ["send", "-1004001", "-"], stdin: "Готово 52813\n" },
           body: "Готово 52813",
@@ -678,7 +661,6 @@ describe(
       for (const { c, body, shown } of cases) {
         const label = JSON.stringify(c);
         const changed = JSON.parse(label.replace("52813", "52814")) as typeof c;
-        // What the person approves: the body as it will be sent
         const d = await describeWithCli(
           { argv: c.args, readOnly: false, stdin: c.stdin ?? "" },
           spawnCli
@@ -686,7 +668,6 @@ describe(
         expect((d as { description: string }).description, label).toContain(
           shown
         );
-        // One digit changed under the code for the original: refused as another action (the code burns), nothing sent
         const before = ids();
         const code0 = ((await handleMessage(call(c), run)) as Reply).result
           .structuredContent!.code as string;
@@ -699,7 +680,6 @@ describe(
           rejected: { reason: "different_action" },
         });
         expect(ids(), label).toEqual(before);
-        // A fresh code: the call as approved sends exactly one message with exactly the approved body
         const code = ((await handleMessage(call(c), run)) as Reply).result
           .structuredContent!.code as string;
         expect(ids(), label).toEqual(before);
@@ -715,7 +695,6 @@ describe(
         expect(sent.result.content[0].text, label).toContain(
           `Message ID: ${added[0].id}`
         );
-        // The same code again, for the changed body and for the same one: refused, nothing more sent
         for (const retry of [changed, c]) {
           const again = (await handleMessage(
             call({ ...retry, approval: code }),
@@ -795,7 +774,6 @@ describe(
         expect(parsed.id).toBe(parsed.messageId);
         expect(Number.isInteger(parsed.messageId)).toBe(true);
       }
-      // Plain text output keeps the message ID and the chat ID
       const { second } = await approveAndRun({
         args: ["send", "-1004001", "Login code: 52813"],
       });

@@ -33,19 +33,21 @@ export type OnboardStep =
   | "done"
   | "error";
 
+/**
+ * - `errorFor`: With a mode error: the term of the refused choice ('1h', '1d', '1w'), absent for no end
+ * - `errorPick`: The mode of that refused choice, so the page names the command for it
+ * - `mode`: The write mode in effect: the default after the login, then the one picked on the page
+ * - `modeOnly`: Only the mode step is shown: `write-access` without a terminal, not a login
+ */
 export interface OnboardState {
   step: OnboardStep;
   qrSvg?: string;
   hint?: string;
   error?: string;
-  /** With a mode error: the term of the refused choice ('1h', '1d', '1w'), absent for no end */
   errorFor?: string;
-  /** The mode of that refused choice, so the page names the command for it */
   errorPick?: WriteMode;
   user?: LoginUser;
-  /** The write mode in effect: the default after the login, then the one picked on the page */
   mode?: WriteMode;
-  /** Only the mode step is shown: `write-access` without a terminal, not a login */
   modeOnly?: boolean;
 }
 
@@ -75,21 +77,26 @@ export interface SavedMode {
   until?: Date;
 }
 
-/** Choices the page offers for "until": nothing (no end), an hour, a day, a week. */
 const MODE_SPANS: Record<string, number | undefined> = {
   "": undefined,
   "1h": 3600,
   "1d": 86_400,
   "1w": 604_800,
 };
-/** The mode step gives up after this long and leaves the profile as it is (read-only by default) */
 const MODE_WAIT_MS = 10 * 60_000;
 
+/**
+ * - `redeemInvite`: Turns a login key into app credentials (the broker); called once per session
+ * - `save`: Stores the finished login
+ * - `applyMode`: Saves a write mode picked on the page (after the login, or alone with `modeOnly`). It decides whether the click is enough or the person still has to confirm in a dialog or terminal. Without it there is no mode step and `done` follows the login, as before.
+ * - `modeOnly`: Skip the login and show only the mode step
+ * - `defaultMode`: What the profile is set to right after the login, before (or without) a choice on the page
+ * - `currentMode`: Reads the write mode back from the store, so only a mode actually saved with the asked-for end counts: otherwise the step stays open with `store_failed`.
+ * - `modeWaitMs`: How long the mode step waits for a choice (tests); 10 minutes by default
+ */
 export interface OnboardOptions {
   driver: LoginDriver;
-  /** Turns a login key into app credentials (the broker); called once per session */
   redeemInvite(token: string): Promise<{ apiId: number; apiHash: string }>;
-  /** Stores the finished login */
   save(
     session: string,
     creds: { apiId: number; apiHash: string },
@@ -98,28 +105,18 @@ export interface OnboardOptions {
   emit(event: OnboardEvent): void;
   site?: string;
   port?: number;
-  /**
-   * Saves a write mode picked on the page (after the login, or alone with `modeOnly`). It decides
-   * whether the click is enough or the person still has to confirm in a dialog or terminal.
-   * Without it there is no mode step and `done` follows the login, as before.
-   */
   applyMode?(choice: ModeChoice): Promise<ModeResult>;
-  /** Skip the login and show only the mode step */
   modeOnly?: boolean;
-  /** What the profile is set to right after the login, before (or without) a choice on the page */
   defaultMode?: WriteMode;
-  /**
-   * Reads the write mode back from the store, so only a mode actually saved with the asked-for end
-   * counts: otherwise the step stays open with `store_failed`.
-   */
   currentMode?(): SavedMode;
-  /** How long the mode step waits for a choice (tests); 10 minutes by default */
   modeWaitMs?: number;
 }
 
+/**
+ * - `done`: Resolves once the login (and the mode step, if any) is finished
+ */
 export interface OnboardSession {
   url: string;
-  /** Resolves once the login (and the mode step, if any) is finished */
   done: Promise<{ user?: LoginUser; mode?: WriteMode }>;
   close(): void;
 }
@@ -173,7 +170,6 @@ export async function startOnboarding(
     (r) => (resolveDone = r)
   );
   let modeTimer: ReturnType<typeof setTimeout> | undefined;
-  /** When the mode step gives up; `modeLeft` is the time still left while a choice is being applied */
   let modeDeadline = 0;
   let modeLeft = 0;
   let applying = false;
@@ -186,17 +182,11 @@ export async function startOnboarding(
       patch
     );
 
-  /** The mode in the store now (read once), or `expected` when there is no way to read it back */
   const readBack = (expected: WriteMode | undefined): SavedMode | undefined =>
     options.currentMode
       ? options.currentMode()
       : expected && { mode: expected };
 
-  /**
-   * The store holds exactly the choice: the same mode and, for "ask" and "on", the same end. A timed
-   * choice must match the end applyMode reports as written (`written`) to the second, so an older
-   * value with the same mode name does not pass; without `written` it cannot be checked and fails.
-   */
   function holds(
     saved: SavedMode | undefined,
     choice: ModeChoice,
@@ -204,7 +194,7 @@ export async function startOnboarding(
   ): boolean {
     if (!options.currentMode) {
       return true;
-    } // nothing to check against
+    }
     if (!saved || saved.mode !== choice.mode) {
       return false;
     }
@@ -226,7 +216,6 @@ export async function startOnboarding(
       ? undefined
       : readBack(options.defaultMode)?.mode
   ): void {
-    // Exactly one done, whatever comes first: a saved choice or the time running out
     if (finished) {
       return;
     }
@@ -244,7 +233,6 @@ export async function startOnboarding(
     resolveDone({ user: state.user, mode });
   }
 
-  /** After the login: the page asks what the agent may do; skipping or waiting too long keeps read-only. */
   function askMode(error?: string): void {
     set({ step: "mode", qrSvg: undefined, error });
     options.emit({ event: "waiting_mode" });
@@ -260,10 +248,6 @@ export async function startOnboarding(
     modeTimer.unref?.();
   }
 
-  /**
-   * The clock stops while a choice is applied (a dialog may stay open for long): running out then
-   * would send done with the old mode, and the approval a second done. A refusal resumes it.
-   */
   function pauseMode(): void {
     if (modeTimer) {
       clearTimeout(modeTimer);
@@ -289,7 +273,6 @@ export async function startOnboarding(
         },
         password: (hint) =>
           new Promise<string>((resolve) => {
-            // Keep "wrong password" from the previous try visible on the page
             const wrong = state.error === "wrong_password";
             set({ step: "password", hint, qrSvg: undefined });
             if (wrong) {
@@ -307,7 +290,6 @@ export async function startOnboarding(
       set({ user: result.user, mode: options.defaultMode });
       let modeError: string | undefined;
       if (options.applyMode && options.defaultMode) {
-        // The session is saved either way; a refused mode must not show up as in effect
         const choice: ModeChoice = { mode: options.defaultMode };
         const applied = await options
           .applyMode(choice)
@@ -345,7 +327,6 @@ export async function startOnboarding(
     req: IncomingMessage,
     res: ServerResponse
   ): Promise<void> => {
-    // Only our exact host: a rebinding domain pointing at 127.0.0.1 sends its own Host
     if (req.headers.host !== origin.slice("http://".length)) {
       return json(res, 421, { error: "wrong_host" });
     }
@@ -365,7 +346,6 @@ export async function startOnboarding(
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "content-security-policy": csp,
-        // The URL carries the secret; never send it along to another site
         "referrer-policy": "no-referrer",
         "x-content-type-options": "nosniff",
       });
@@ -378,7 +358,6 @@ export async function startOnboarding(
     if (req.method !== "POST") {
       return json(res, 404, { error: "not_found" });
     }
-    // Same-origin page only; browsers always send Origin on POST
     if (req.headers.origin !== origin) {
       return json(res, 403, { error: "wrong_origin" });
     }
@@ -453,10 +432,8 @@ export async function startOnboarding(
       pauseMode();
       try {
         const choice: ModeChoice = { mode, forSeconds: MODE_SPANS[span] };
-        // May show a dialog (macOS, Windows) or a terminal prompt and wait for the person
         const result = await options.applyMode(choice);
         const saved = readBack(result.ok ? mode : state.mode);
-        // A store that said yes but kept the old value (or end) fails too
         const error = result.ok
           ? holds(saved, choice, result.until)
             ? undefined
@@ -490,7 +467,6 @@ export async function startOnboarding(
       }
     }
     if (route === "retry") {
-      // Same credentials, no new invite use: a timed-out scan or a failed attempt starts over
       if (!creds || running || state.step !== "error") {
         return json(res, 409, { error: "nothing_to_retry" });
       }

@@ -13,7 +13,6 @@ import { afterAll, describe, expect, it, test, vi } from "vitest";
 
 import { cliArgs } from "./cli.js";
 
-// Before any module under test is imported: a temp HOME, so nothing here touches a real profile
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -120,7 +119,6 @@ const install = (home: string, dir: string) => {
   expect(r.json, r.err).toMatchObject({ ok: true });
   return r.json as { installId: string; revision: string };
 };
-/** The profile's config folder as configDir() builds it for this HOME (APPDATA on Windows). */
 const profileDir = (home: string, name: string) =>
   process.platform === "win32"
     ? join(home, "AppData", name)
@@ -184,7 +182,6 @@ const call = (name: string, args: Record<string, unknown>, id = 1) => ({
   params: { name, arguments: args },
 });
 
-/** Runs `fn` with this home's mock as the MCP server's environment; calls go to a child CLI. */
 async function asServer<T>(
   home: string,
   extra: Record<string, string>,
@@ -269,11 +266,9 @@ describe(
         input = { limit: data.remaining, cursor: data.cursor };
       }
       expect(last!.json.data.done).toBe(true);
-      // The actual JSON from the shell: null is there, not dropped
       expect(last!.out).toContain('"cursor":null');
       expect(new Set(collected).size).toBe(collected.length);
       expect(collected).toContain("Note to self: renew the domain");
-      // The same last page over MCP
       await asServer(h, {}, async (run) => {
         const r = (await handleMessage(
           call("telegram_read", {
@@ -295,7 +290,6 @@ describe(
           collected.length
         );
       });
-      // The audit: plugin, revision, command, API names, outcome; no input, no result
       const entry = audit(h).findLast((e) => e.command === "plugin run");
       expect(entry).toMatchObject({
         target: "tone-of-voice",
@@ -585,7 +579,6 @@ describe(
             "--json",
           ])
         ).toMatchObject({ group: "write" });
-        // Unknown plugin or command: routed as a read; the run itself reports it
         expect(cls(["plugin", "run", "missing", "x"])).toMatchObject({
           group: "read",
         });
@@ -641,7 +634,6 @@ describe(
           { readOnly: true }
         )) as Reply;
         expect(ro.result.content[0].text).toMatch(/read-only/);
-        // Over MCP the output is masked too (the lab's own data echoes a code)
         const saved = (await handleMessage(
           call("telegram_write", {
             args: [
@@ -681,7 +673,6 @@ describe(
 
     it('mode "ask": the approval shows installation, effects and input; a snapshot swapped in between is not run', async () => {
       const h = newHome();
-      // A copy of the lab whose content can change, installed from a folder of its own
       const dir = join(h, "lab");
       cpSync(LAB, dir, { recursive: true });
       install(h, dir);
@@ -713,7 +704,6 @@ describe(
           run
         )) as Reply;
         expect(ok.result.content[0].text).toContain('"saved":8');
-        // A second approval, then the plugin is replaced by another snapshot (same name, new content)
         const again = (
           (await handleMessage(
             call("telegram_write", { args, stdin: '{"value":"swapped"}' }),
@@ -740,7 +730,6 @@ describe(
           run
         )) as Reply;
         expect(used.result.content[0].text).not.toContain('"saved"');
-        // The code was for the old installation: the action now hashes differently and needs a new yes
         expect(used.result.structuredContent?.status).toBe("approval_required");
         const installation = (d: string) =>
           /Installation: ([0-9a-f-]{36})/.exec(d)?.[1];
@@ -748,11 +737,9 @@ describe(
           installation(used.result.structuredContent?.action.description)
         ).not.toBe(installation(again.action.description));
       });
-      // Nothing ran under the old approval: the new installation has no data
       expect(
         cli(h, ["plugin", "data", "list", "sandbox-lab", "--json"]).json.items
       ).toEqual([]);
-      // The guard's own exits (describe runs, approval_required) are no runs: only the approved one is audited
       expect(
         audit(h)
           .filter((e) => e.command === "plugin run")
@@ -882,7 +869,6 @@ describe(
         let asked = 0;
         const elicit = async () => {
           asked++;
-          // While the user looks at the dialog: the plugin is replaced, its "save" now has no effects
           expect(
             cli(h, ["plugin", "remove", "sandbox-lab", "--json"], {
               TG_MOCK_HUMAN: "yes",
@@ -931,14 +917,12 @@ describe(
         expect(r.result.content[0].text).toContain("plugin_changed");
         expect(r.result.content[0].text).not.toContain("-424242");
       });
-      // Neither the old code (no data) nor the new one ran
       expect(
         cli(h, ["plugin", "data", "list", "sandbox-lab", "--json"]).json.items
       ).toEqual([]);
       expect(
         audit(h).filter((e) => e.command === "plugin run" && e.result.success)
       ).toEqual([]);
-      // The env var is the server's: one the server inherited never reaches a child
       process.env.TG_PLUGIN_EXPECT = "forged";
       try {
         expect(
@@ -960,7 +944,6 @@ describe("PluginRuns: what a cancellation reaches", () => {
     expect(runs.begin(5).aborted).toBe(true);
     runs.end(5);
     runs.settled(5);
-    // A finished call's id (HTTP sessions reuse ids) and an id never seen: a later run with it still runs
     runs.cancel(5);
     runs.cancel("never");
     runs.arrived(5);
@@ -984,7 +967,6 @@ describe("PluginRuns: what a cancellation reaches", () => {
 });
 
 describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
-  /** A real `telegram mcp` server over stdio. */
   function server(home: string, extra: Record<string, string> = {}) {
     const p = spawn(process.execPath, [...cliArgs(), "mcp"], {
       env: homeEnv(home, extra),
@@ -1085,7 +1067,6 @@ describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
       expect(s.got.has(2)).toBe(false);
       s.p.stdin.end();
       await s.exited;
-      // In a worker the shared flag stops the busy sandbox itself, so the run is audited as cancelled
       if (label === "worker thread") {
         expect(
           audit(h).findLast((e) => e.command === "plugin run")
@@ -1094,7 +1075,6 @@ describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
     });
   }
 
-  /** Waits until the server has sent something with this id (a request of its own, such as a dialog). */
   async function sent(s: { got: Set<unknown> }, id: unknown, ms = 30_000) {
     const until = Date.now() + ms;
     while (!s.got.has(id)) {
@@ -1150,7 +1130,6 @@ describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
     });
     expect(next.result.isError).toBeUndefined();
     expect(Date.now() - t).toBeLessThan(10_000);
-    // The user's late yes to the closed dialog changes nothing and gets no answer
     s.send({
       jsonrpc: "2.0",
       id: "tg-elicit-1",
@@ -1280,7 +1259,6 @@ describe("plugin dev --mock", { timeout: 60_000 }, () => {
     expect(readFileSync(devLog("sandbox-lab").path, "utf-8")).toMatch(
       /debug line \{"n":1\}\n$/
     );
-    // No profile was touched: no config folder, no plugin store
     expect(existsSync(profileDir(h, "tg"))).toBe(false);
     expect(existsSync(profileDir(h, "tg-mock"))).toBe(false);
   });

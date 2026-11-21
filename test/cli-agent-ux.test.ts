@@ -8,8 +8,6 @@ import { afterAll, describe, expect, it } from "vitest";
 import { TOOLS } from "../src/mcp.js";
 import { cliArgs } from "./cli.js";
 
-// The CLI as an agent runs it: a child process with stdin closed and no TTY, on the mock account
-// (TG_MOCK, a state file of its own), so nothing reaches Telegram and no secret store is asked.
 const home = mkdtempSync(join(tmpdir(), "tg-agent-ux-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -43,7 +41,6 @@ function cli(
   return { code: r.status, out: strip(r.stdout), err: strip(r.stderr), state };
 }
 
-/** The one JSON line an error prints on stdout with --json. */
 const jsonError = (out: string) => JSON.parse(out.trim()).error;
 
 describe("discovery", () => {
@@ -206,7 +203,6 @@ describe("chat names", () => {
         command: ["read", "-1004002", "--json"],
       },
     ]);
-    // One exact title or one partial match still reads
     expect(cli(["read", "Team", "-n", "1"]).code).toBe(0);
     expect(cli(["read", "Desig", "-n", "1"]).out).toMatch(/^# Team Design /m);
   }, 30_000);
@@ -233,7 +229,6 @@ describe("chat names", () => {
     );
     const json = jsonError(cli(["read", "Tem", "--json"]).out);
     expect(json).toMatchObject({
-      // --json in, --json out: the command answers in the format the caller asked for
       code: "chat_not_found",
       hint: "List matching chats: telegram chats -q Tem --preview 0 --json",
       command: ["chats", "-q", "Tem", "--preview", "0", "--json"],
@@ -274,7 +269,6 @@ describe("output shapes", () => {
     const inChat = JSON.parse(
       cli(["search", "green", "--chat", "Team", "--json"]).out
     );
-    // One flat object like read, never an array around it
     expect(inChat).toMatchObject({
       query: "green",
       chatTitle: "Team",

@@ -1,6 +1,3 @@
-// Re-encode teleproto's errors/RPCErrorList.js (~700 near-identical generated classes,
-// ~400 KB) as a table plus one generator. Classes with a captured value (FLOOD_WAIT_N,
-// …) are kept verbatim. test/bundle-shrink.test.ts checks every class behaves the same.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -11,7 +8,7 @@ export function originalErrorsPath() {
 }
 
 const SIMPLE = new RegExp(
-  String.raw`(?:/\*\*[^*]*(?:\*(?!/)[^*]*)*\*/\n)?` + // optional JSDoc
+  String.raw`(?:/\*\*[^*]*(?:\*(?!/)[^*]*)*\*/\n)?` +
     String.raw`class (\w+) extends RPCBaseErrors_1\.(\w+) \{\n` +
     String.raw`    constructor\(args\) \{\n` +
     String.raw`        const message = ("(?:[^"\\]|\\.)*") \+ RPCBaseErrors_1\.RPCError\._fmtRequest\(args\.request\);\n` +
@@ -54,7 +51,6 @@ for (const [n, b, d, c] of __ERRS) {
 `;
   out = out.replace("/*__GENERATED__*/\n", generator);
 
-  // Remaining code (verbatim classes, lookup maps) referred to the removed classes by bare name
   const names = new Set(table.map((t) => t[0]));
   const head = out.indexOf(generator) + generator.length;
   const tail = out

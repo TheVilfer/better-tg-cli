@@ -25,15 +25,16 @@ import { readStdinOnce, stdinBody } from "./text.js";
  * The parts of an action that only Telegram or the disk can tell, read before an approval is shown
  * or checked: they go into the approval hash and the description, and the write later uses exactly
  * what was read here (the same file bytes, the same button), or refuses.
+ *
+ * - `bound`: Bound into the approval hash
+ * - `lines`: More lines for the person to read
+ * - `modelLines`: The same lines for the MCP model where they differ from `lines` (a button as the model sees it)
+ * - `onApproved`: Called once the approval for this action held, before the write runs
  */
 export interface Prepared {
-  /** Bound into the approval hash */
   bound: unknown[];
-  /** More lines for the person to read */
   lines: string[];
-  /** The same lines for the MCP model where they differ from `lines` (a button as the model sees it) */
   modelLines?: string[];
-  /** Called once the approval for this action held, before the write runs */
   onApproved(): void;
 }
 
@@ -77,7 +78,6 @@ export function describeButton(info: ButtonInfo): string {
   }
 }
 
-/** The click's button, chosen as the command chooses it. */
 function selectorOf(action: ParsedAction): ClickSelector | undefined {
   const data = action.options.find(([k]) => k === "data")?.[1];
   if (typeof data === "string") {
@@ -142,7 +142,6 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
         selector
       );
       prepared.bound.push(["button", fingerprint]);
-      // The person sees the button that will be pressed; the model only its masked copy
       prepared.modelLines = [
         ...prepared.lines,
         `  Pressing: ${describeButton(info)}`,
@@ -156,8 +155,6 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     action.command === "plugin data delete" ||
     action.command === "plugin settings set"
   ) {
-    // The approval covers this installation of the plugin: one installed under the same name later
-    // (another source, other code) does not inherit it
     const { entry } = loadPlugin(arg(action, "name") ?? "");
     prepared.bound.push(["plugin", entry.installId, entry.revision]);
     prepared.lines.push(
@@ -166,8 +163,6 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     prepared.onApproved = () => expectInstall(entry);
   }
   if (action.command === "plugin run") {
-    // This installation and snapshot, this command with its effects, this input: an update in
-    // between (another snapshot) invalidates the approval
     const { entry, manifest } = loadPlugin(arg(action, "name") ?? "");
     const command = (manifest.commands ?? []).find(
       (c) => c.name === arg(action, "command")
@@ -180,7 +175,6 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
           ? input
           : "{}";
     const effects = command?.effects ?? [];
-    // Where the run may send data: the manifest's origins, and the secrets the host would attach
     const origins = effects.includes("network")
       ? [...(manifest.network ?? [])].sort()
       : [];

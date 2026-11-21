@@ -6,9 +6,6 @@ import { describe, expect, it } from "vitest";
 
 import { SKILL_FILES } from "../src/skill-files.js";
 
-// The agent skill is SKILL.md (loaded on every activation, so it must stay small) plus flat
-// reference files it links to, read only on demand. Every linked file has to reach every install
-// path: npm, the plugin/ and agent-plugin/ copies and the copy embedded in the CLI.
 const root = new URL("../", import.meta.url);
 const skillDir = new URL("skills/better-tg-cli/", root);
 const read = (f: string) => readFileSync(new URL(f, skillDir), "utf-8");
@@ -31,16 +28,11 @@ function frontmatter(text: string): {
   return { fields, body: text.slice(m[0].length) };
 }
 
-/**
- * o200k_base tokens, estimated: calibrated on the old SKILL.md body (12 315 chars, 1 811 words,
- * 3 176 tokens), i.e. ~3.9 chars and ~1.75 tokens per word. The larger estimate wins.
- */
 const approxTokens = (text: string) =>
   Math.ceil(
     Math.max(text.length / 3.9, text.split(/\s+/).filter(Boolean).length * 1.75)
   );
 
-/** GitHub's heading anchor: lowercase, punctuation dropped, spaces to dashes. */
 const slug = (heading: string) =>
   heading
     .trim()
@@ -50,9 +42,7 @@ const slug = (heading: string) =>
 const anchors = (text: string) =>
   new Set([...text.matchAll(/^#{1,6} (.+)$/gm)].map((m) => slug(m[1])));
 
-/** Relative Markdown links of a file: [text](file.md) or [text](file.md#anchor) or (#anchor). */
 function links(text: string): { file: string; anchor?: string }[] {
-  // code spans hold syntax examples such as `[text](url)`, not links
   return [...text.replaceAll(/`[^`\n]*`/g, "").matchAll(/\]\(([^)\s]+)\)/g)]
     .map((m) => m[1])
     .filter((href) => !/^[a-z]+:/i.test(href))
@@ -129,17 +119,13 @@ describe("reference files", () => {
   it("hold no recipe the agent must not follow", () => {
     for (const f of files) {
       const text = read(f);
-      // 2FA buttons and ownership transfer are the user's, in the Telegram app
       expect(text, f).not.toMatch(/--password|transfer-owner[^\n]*-y\b/);
-      // a constructor passed without "_" does not serialize (Ambiguous type); results may show className
       expect(text, f).not.toMatch(
         /--(params|json-params|reaction|reply-to)[^\n]*"className"/
       );
-      // FLOOD_WAIT: report and stop
       expect(text, f).not.toMatch(
         /FLOOD_WAIT[^.\n]*(then retry|and retry|wait \w+ seconds)/i
       );
-      // only commands with an audit log write one
       expect(text, f).not.toMatch(/every write (is logged|goes to)/i);
     }
   });

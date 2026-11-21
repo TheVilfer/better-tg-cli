@@ -7,18 +7,24 @@ import { configFile } from "../paths.js";
  * The mock account as plain data: it is what TG_MOCK serves instead of Telegram, what the state
  * file stores between commands, and what a custom scenario file contains. `src/mock/client.ts`
  * turns it into real `Api.*` objects on every call, so the CLI's own code runs unchanged.
+ *
+ * - `me`: `users[].id` of the logged-in account.
+ * - `stars`: Telegram Stars balance (for `stars`).
  */
 export interface MockWorld {
   version: 1;
-  /** `users[].id` of the logged-in account. */
   me: number;
   users: MockUser[];
   chats: MockChat[];
   folders?: MockFolder[];
-  /** Telegram Stars balance (for `stars`). */
   stars?: number;
 }
 
+/**
+ * - `forumView`: Bots only: the private chat is shown as forum topics (botForumView).
+ * - `profilePhotos`: How many profile photos this user has (for `profile-photos`); synthesized deterministically.
+ * - `commands`: Bots only: what the bot answers to a message with exactly this text (e.g. "/start").
+ */
 export interface MockUser {
   id: number;
   firstName: string;
@@ -26,48 +32,62 @@ export interface MockUser {
   username?: string;
   phone?: string;
   bot?: boolean;
-  /** Bots only: the private chat is shown as forum topics (botForumView). */
   forumView?: boolean;
   contact?: boolean;
   mutual?: boolean;
   about?: string;
   blocked?: boolean;
-  /** How many profile photos this user has (for `profile-photos`); synthesized deterministically. */
   profilePhotos?: number;
-  /** Bots only: what the bot answers to a message with exactly this text (e.g. "/start"). */
   commands?: Record<string, MockReply>;
 }
 
+/**
+ * - `keyboard`: `buttons` are a reply keyboard (pressing sends the label) instead of inline buttons.
+ */
 export interface MockReply {
   text: string;
   buttons?: MockButton[][];
-  /** `buttons` are a reply keyboard (pressing sends the label) instead of inline buttons. */
   keyboard?: boolean;
 }
 
+/**
+ * - `data`: Callback button payload. Without `data` and `url` the button is a reply-keyboard button.
+ * - `answer`: Toast the bot answers with when the button is pressed.
+ * - `edit`: The bot edits the pressed message to this. A string names one of the bot's `commands`.
+ * - `reply`: The bot sends this as a new message. A string names one of the bot's `commands`.
+ */
 export interface MockButton {
   text: string;
-  /** Callback button payload. Without `data` and `url` the button is a reply-keyboard button. */
   data?: string;
   url?: string;
-  /** Toast the bot answers with when the button is pressed. */
   answer?: string;
   alert?: boolean;
-  /** The bot edits the pressed message to this. A string names one of the bot's `commands`. */
   edit?: MockReply | string;
-  /** The bot sends this as a new message. A string names one of the bot's `commands`. */
   reply?: MockReply | string;
 }
 
+/**
+ * - `id`: Bare ID: the user ID for a private chat, otherwise the group/channel ID without -100.
+ * - `role`: Our role in a group/channel.
+ * - `stats`: This account may view aggregate statistics for this chat (otherwise CHAT_ADMIN_REQUIRED).
+ * - `mutedUntil`: Unix time the chat is muted until.
+ * - `pinnedDialog`: Pinned in the dialog list (for `pin-chat` / `unpin-chat`).
+ * - `markedUnread`: Marked unread with no unread messages (for `mark-unread`).
+ * - `draft`: A saved but unsent draft message (for `drafts`).
+ * - `adminLog`: Recent admin-log entries (for `admin-log`), newest last.
+ * - `joinRequests`: Pending join requests (for `invites --requests`).
+ * - `defaultBannedFlags`: Default restrictions set by `edit-permissions` (denied right names).
+ * - `bannedUsers`: Per-user restrictions set by `edit-permissions` (channels.EditBanned).
+ * - `linkedChatId`: Channel → its discussion group (bare ID), where post comments live.
+ * - `scheduled`: Messages queued to send later (listed by `scheduled`).
+ */
 export interface MockChat {
-  /** Bare ID: the user ID for a private chat, otherwise the group/channel ID without -100. */
   id: number;
   kind: "user" | "group" | "supergroup" | "channel";
   title?: string;
   username?: string;
   about?: string;
   forum?: boolean;
-  /** Our role in a group/channel. */
   role?: "creator" | "admin";
   members?: { userId: number; role?: "creator" | "admin" }[];
   membersCount?: number;
@@ -78,20 +98,14 @@ export interface MockChat {
   verified?: boolean;
   scam?: boolean;
   fake?: boolean;
-  /** This account may view aggregate statistics for this chat (otherwise CHAT_ADMIN_REQUIRED). */
   stats?: boolean;
   unread?: number;
   readInboxMaxId?: number;
-  /** Unix time the chat is muted until. */
   mutedUntil?: number;
   archived?: boolean;
-  /** Pinned in the dialog list (for `pin-chat` / `unpin-chat`). */
   pinnedDialog?: boolean;
-  /** Marked unread with no unread messages (for `mark-unread`). */
   markedUnread?: boolean;
-  /** A saved but unsent draft message (for `drafts`). */
   draft?: string;
-  /** Recent admin-log entries (for `admin-log`), newest last. */
   adminLog?: {
     id: number;
     userId: number;
@@ -100,7 +114,6 @@ export interface MockChat {
     now?: string;
     ago?: number;
   }[];
-  /** Pending join requests (for `invites --requests`). */
   joinRequests?: { userId: number; about?: string; ago?: number }[];
   topics?: {
     id: number;
@@ -110,31 +123,37 @@ export interface MockChat {
     pinned?: boolean;
     hidden?: boolean;
   }[];
-  /** Default restrictions set by `edit-permissions` (denied right names). */
   defaultBannedFlags?: string[];
-  /** Per-user restrictions set by `edit-permissions` (channels.EditBanned). */
   bannedUsers?: { userId: number; flags: string[]; until?: number }[];
-  /** Channel → its discussion group (bare ID), where post comments live. */
   linkedChatId?: number;
   messages: MockMessage[];
-  /** Messages queued to send later (listed by `scheduled`). */
   scheduled?: MockMessage[];
 }
 
+/**
+ * - `ago`: Age in seconds, counted from now on every load, so the seed never goes stale.
+ * - `date`: Unix time; set on messages created while running (they do not age with the seed).
+ * - `from`: Sender user ID. Missing: us when `out`, otherwise the chat itself (private chat peer, channel).
+ * - `thread`: Forum topic or comment thread root this message belongs to.
+ * - `media`: `downloadFails`: downloading this media throws (a file Telegram no longer serves, a dropped connection).
+ * - `reactions`: A reaction: a standard `emoji`, a `customEmojiId`, or a `paid` (star) reaction.
+ * - `replies`: Comment count shown on a channel post or thread root.
+ * - `savedFrom`: Saved to Saved Messages from this user's chat (`fwdFrom.savedFromPeer`); with `forwardedFrom` the author, with `quoteFrom` the quote header's saved-from chat instead of its author.
+ * - `quoteFrom`: A reply that quotes a message of this user's chat elsewhere (the reply header names it as its source).
+ * - `views`: --full stats.
+ * - `groupedId`: Album group id (shared by messages in the same album).
+ * - `poll`: A poll attached to this message (for `--full` media detail).
+ * - `scheduledFor`: Unix time this message is scheduled to send (listed by `scheduled`, not in normal history).
+ */
 export interface MockMessage {
   id: number;
-  /** Age in seconds, counted from now on every load, so the seed never goes stale. */
   ago?: number;
-  /** Unix time; set on messages created while running (they do not age with the seed). */
   date?: number;
-  /** Sender user ID. Missing: us when `out`, otherwise the chat itself (private chat peer, channel). */
   from?: number;
   out?: boolean;
   text: string;
   replyTo?: number;
-  /** Forum topic or comment thread root this message belongs to. */
   thread?: number;
-  /** `downloadFails`: downloading this media throws (a file Telegram no longer serves, a dropped connection). */
   media?: {
     kind: "photo" | "document" | "video" | "voice";
     fileName?: string;
@@ -147,35 +166,25 @@ export interface MockMessage {
   keyboard?: boolean;
   pinned?: boolean;
   edited?: boolean;
-  /** A reaction: a standard `emoji`, a `customEmojiId`, or a `paid` (star) reaction. */
   reactions?: {
     userId: number;
     emoji?: string;
     customEmojiId?: string;
     paid?: boolean;
   }[];
-  /** Comment count shown on a channel post or thread root. */
   replies?: number;
   forwardedFrom?: number;
-  /**
-   * Saved to Saved Messages from this user's chat (`fwdFrom.savedFromPeer`); with `forwardedFrom`
-   * the author, with `quoteFrom` the quote header's saved-from chat instead of its author.
-   */
   savedFrom?: number;
-  /** A reply that quotes a message of this user's chat elsewhere (the reply header names it as its source). */
   quoteFrom?: number;
   quoteText?: string;
-  /** --full stats. */
   views?: number;
   forwards?: number;
   viaBotId?: number;
-  /** Album group id (shared by messages in the same album). */
   groupedId?: number;
   postAuthor?: string;
   ttlPeriod?: number;
   silent?: boolean;
   noforwards?: boolean;
-  /** A poll attached to this message (for `--full` media detail). */
   poll?: {
     question: string;
     options: {
@@ -189,15 +198,16 @@ export interface MockMessage {
     closed?: boolean;
     totalVoters?: number;
   };
-  /** Unix time this message is scheduled to send (listed by `scheduled`, not in normal history). */
   scheduledFor?: number;
 }
 
+/**
+ * - `include`: Bare chat IDs.
+ */
 export interface MockFolder {
   id: number;
   title: string;
   emoticon?: string;
-  /** Bare chat IDs. */
   include: number[];
   exclude?: number[];
 }
@@ -206,7 +216,6 @@ const MIN = 60;
 const HOUR = 3600;
 const DAY = 86_400;
 
-/** The demo bot's main menu: an edit-in-place flow, a toast, a URL button and an alert with a new message. */
 const START_MENU: MockReply = {
   text: "Welcome! Pick a section.",
   buttons: [

@@ -82,7 +82,6 @@ export async function humanConfirms(
       }
     );
   }
-  // A terminal prompt shows the question itself; a dialog does not leave it in the terminal
   if (!tty) {
     console.error(
       `${question}\n(waiting for the user's answer in a system dialog)`
@@ -94,7 +93,6 @@ export async function humanConfirms(
 const clip = (s: string, n: number) =>
   oneLine(s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-/** Where a plugin came from, as one line: a folder name or a registry field may hold a line break or a terminal escape. */
 /** Where on its origin a secret goes, for a human: the paths (and below), or every path. */
 export function secretPathsLabel(paths: string[] | undefined): string {
   if (paths === undefined) {
@@ -160,7 +158,6 @@ export function installSummary(s: Snapshot): string {
     `  Effects:     ${effects.length ? effects.join(", ") : "none (its commands only read)"}`
   );
   const network = m.network ?? [];
-  // Every data source, then every destination: what may leave the computer and where to
   const sources = [
     permissions.includes("messages:read-own") && "your own messages",
     permissions.includes("messages:read") && "other people's messages",

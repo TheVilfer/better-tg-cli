@@ -1,16 +1,3 @@
-// Fetches the official human descriptions for every TL method from core.telegram.org/method/<ns.method>
-// once, and writes a compact committed data file (scripts/data/tl-docs-layer229.json) with a short
-// description, per-parameter descriptions and the top "Possible errors" for each method. The CLI
-// embeds this (scripts/gen-tl-commands.mjs → src/generated/tl-docs.ts) to render rich `--help`; it is
-// NEVER fetched at runtime.
-//
-//   node scripts/fetch-tl-docs.mjs            fetch (cached) + rebuild the data file
-//   node scripts/fetch-tl-docs.mjs --no-fetch rebuild the data file from the cache only
-//
-// Polite: ~4 concurrent, a small delay, a couple of retries, a naming User-Agent, and raw HTML cached
-// under .tl-docs-cache/ (gitignored) so reruns are cheap. The docs site is a layer or two behind the
-// bundled schema, so methods new in the current layer 404 or have no description — those get a clear
-// fallback line pointing at the (future) docs URL.
 import {
   readFileSync,
   writeFileSync,
@@ -36,10 +23,8 @@ const MAX_ERRORS = 4;
 
 const noFetch = process.argv.includes("--no-fetch");
 
-/** lowerCamel method part for the docs URL: "GetHistory" → "getHistory", "InvokeWithLayer" → "invokeWithLayer". */
 const lowerFirst = (s) => s.charAt(0).toLowerCase() + s.slice(1);
 
-/** Every TL method: { className, ns, name, urlPath }. */
 function methods() {
   const defs = require("teleproto/tl/generated/api-definitions.js");
   return defs
@@ -72,7 +57,7 @@ async function fetchOne(urlPath) {
       if (res.status === 404) {
         writeFileSync(file, "");
         return "";
-      } // no page: cache the miss
+      }
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -90,8 +75,6 @@ async function fetchOne(urlPath) {
   return "";
 }
 
-// ---- tiny HTML helpers (no deps) --------------------------------------------------------------
-
 const ENTITIES = {
   amp: "&",
   lt: "<",
@@ -106,8 +89,6 @@ const ENTITIES = {
   laquo: "«",
   raquo: "»",
 };
-// Plain text for terminal help: drop tags until none are left (one pass can leave a tag behind,
-// e.g. `<scr<b>ipt>`), then decode entities exactly once, last, so decoded `<`/`>` stay text.
 function stripHtml(s) {
   let text = s.replaceAll(/<\/(p|div|tr|td|th|li|h[1-6])>/gi, " ");
   for (let prev = ""; prev !== text;) {
@@ -150,7 +131,6 @@ function tableAfter(html, heading) {
   if (!h) {
     return [];
   }
-  // Only <td> cells, so the <th> header row (Name|Type|Description) yields nothing and is dropped.
   return [...h[1].matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
     .map((r) =>
       [...r[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) =>
@@ -160,7 +140,6 @@ function tableAfter(html, heading) {
     .filter((cells) => cells.length >= 2);
 }
 
-/** Normalised param key so snake_case docs match camelCase schema names (offset_id ↔ offsetId). */
 const normParam = (s) => s.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
 
 function parsePage(html) {
@@ -169,7 +148,6 @@ function parsePage(html) {
       html
     );
   const content = body ? body[1] : html;
-  // Description: the first <p> before the first table/section heading.
   const beforeTable = content.split(/<h[0-9]|<table/i)[0];
   const firstP = /<p>([\s\S]*?)<\/p>/i.exec(beforeTable);
   const description = firstP ? clip(stripHtml(firstP[1]), MAX_DESC) : "";
@@ -196,8 +174,6 @@ function parsePage(html) {
 
   return { description, params, errors };
 }
-
-// ---- run --------------------------------------------------------------------------------------
 
 async function main() {
   mkdirSync(CACHE, { recursive: true });

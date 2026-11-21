@@ -1,16 +1,3 @@
-/**
- * The host API a plugin gets inside the sandbox (docs/plugins.md §5): built per run from what the
- * manifest's permissions and the command's effects grant together, so a command with `effects: []`
- * never gets a write (`storage.set`, `actions.propose`) even when the plugin holds the permission.
- *
- * Every read API hands the sandbox a narrow shape built from the raw `Api.Message` (no buttons,
- * entities, quotes or previews) with its text masked before it gets there, in a terminal as over
- * MCP: a message of a login-code service account (777000, 489000), a forward of one or a quote of
- * one at the level `service`, everything else at `echo`. `messages.mine` drops those outright.
- *
- * Values from the guest arrive as parsed JSON: every field is read by name with a type check, a
- * cursor is decoded strictly and every filter is applied again whatever it says.
- */
 import { createHash } from "node:crypto";
 
 import bigInt from "big-integer";
@@ -47,9 +34,7 @@ import type { HostFunction } from "./sandbox-types.js";
 
 /** Serialized characters a page of messages may take (spec: about 40 000). */
 export const PAGE_CHARS = 40_000;
-/** Telegram requests one `messages.mine` call may make before it returns what it has. */
 const MINE_REQUESTS = 20;
-/** Chats `messages.mine` walks, newest activity first. */
 const MINE_CHATS = 100;
 const MINE_MAX = 2000;
 const READ_MAX = 100;
@@ -68,11 +53,14 @@ export interface WriteGuard {
   aborted: () => boolean;
 }
 
-/** Where the plugin's data lives: the installation's store, or memory in `plugin dev`. */
+/**
+ * Where the plugin's data lives: the installation's store, or memory in `plugin dev`.
+ *
+ * - `set`: Waits for the store's lock within `guard` and checks it again right before the file changes.
+ */
 export interface StorageBackend {
   get(key: string): string | undefined;
   list(): { key: string; bytes: number; updatedAt: string }[];
-  /** Waits for the store's lock within `guard` and checks it again right before the file changes. */
   set(
     key: string,
     value: string,
@@ -84,11 +72,12 @@ export interface StorageBackend {
 /**
  * The host's walk state behind `messages.mine` cursors: kept by the host (a private folder of the
  * installation, or memory in `plugin dev`), never by the plugin; the plugin holds only a random id.
+ *
+ * - `save`: Keeps `state` and returns a fresh random id for it.
+ * - `load`: The state behind an id; undefined when unknown, expired, or another installation's.
  */
 export interface CursorStore {
-  /** Keeps `state` and returns a fresh random id for it. */
   save(state: unknown): string;
-  /** The state behind an id; undefined when unknown, expired, or another installation's. */
   load(id: string): unknown;
 }
 
@@ -100,59 +89,62 @@ export interface Target {
   thread: boolean;
 }
 
+/**
+ * - `account`: The owner's Telegram user ID (data and cursors are bound to it); fetched on first use, inside the run.
+ * - `storage`: The data of this installation and account, opened on first use (it needs the account).
+ * - `installId`: The installation cursors are bound to (`plugin dev`: a fixed name; its cursors live in memory).
+ * - `deadline`: The run's absolute deadline (ms since the epoch): storage writes hold to it.
+ * - `cancelled`: The MCP server's shared cancel flag, readable while the thread is busy.
+ * - `maskProposals`: Proposal texts masked at `echo` before the host builds the command (over MCP).
+ * - `log`: `plugin dev` only: host.log appends here, never to the command's output.
+ * - `network`: What `http.fetch` uses (a command with the `network` effect): the backend and the secrets.
+ * - `settings`: The values `plugin settings set` stored (missing: the manifest default).
+ */
 export interface HostContext {
   manifest: Manifest;
   command: PluginCommand;
   client: () => Promise<TelegramClient>;
-  /** The owner's Telegram user ID (data and cursors are bound to it); fetched on first use, inside the run. */
   account: () => Promise<string>;
-  /** The data of this installation and account, opened on first use (it needs the account). */
   storage: () => Promise<StorageBackend>;
   cursors: CursorStore;
-  /** The installation cursors are bound to (`plugin dev`: a fixed name; its cursors live in memory). */
   installId: string;
-  /** The run's absolute deadline (ms since the epoch): storage writes hold to it. */
   deadline: number;
-  /** The MCP server's shared cancel flag, readable while the thread is busy. */
   cancelled?: () => boolean;
   target?: Target;
-  /** Proposal texts masked at `echo` before the host builds the command (over MCP). */
   maskProposals: boolean;
-  /** `plugin dev` only: host.log appends here, never to the command's output. */
   log?: (line: string) => void;
-  /** What `http.fetch` uses (a command with the `network` effect): the backend and the secrets. */
   network?: NetworkContext;
-  /** The values `plugin settings set` stored (missing: the manifest default). */
   settings?: () => Record<string, unknown>;
 }
 
+/**
+ * - `backend`: The network itself, or fixtures (`plugin dev --mock`, TG_MOCK).
+ * - `secret`: The value of a declared secret, or null when the human has not set it. Never handed to the plugin. Read asynchronously: `signal` aborts when the request ends (its deadline, the run's end).
+ * - `setCommand`: The command a human runs to set a secret (argv after `telegram`).
+ */
 export interface NetworkContext {
-  /** The network itself, or fixtures (`plugin dev --mock`, TG_MOCK). */
   backend: Backend;
-  /**
-   * The value of a declared secret, or null when the human has not set it. Never handed to the
-   * plugin. Read asynchronously: `signal` aborts when the request ends (its deadline, the run's end).
-   */
   secret(
     name: string,
     signal: AbortSignal
   ): string | null | Promise<string | null>;
-  /** The command a human runs to set a secret (argv after `telegram`). */
   setCommand(name: string): string[];
 }
 
+/**
+ * - `flood`: The last flood_wait a host call reported, as the host built it (never the guest's copy).
+ * - `requests`: `http.fetch` for the audit: requests made and the origins they went to (never URLs, bodies or secrets).
+ * - `secretMissing`: The last secret a request needed and did not find, as the host recorded it.
+ */
 export interface HostState {
   proposals: Proposal[];
-  /** The last flood_wait a host call reported, as the host built it (never the guest's copy). */
   flood?: {
     retryAfterSeconds: number;
     cursor: string | null;
     partial: unknown;
   };
-  /** `http.fetch` for the audit: requests made and the origins they went to (never URLs, bodies or secrets). */
   requests?: number;
   origins?: string[];
-  /** The last secret a request needed and did not find, as the host recorded it. */
   secretMissing?: { name: string; command: string[] };
 }
 
@@ -202,7 +194,6 @@ const str = (v: unknown, what: string, max = 4096): string => {
   return v;
 };
 
-/** A chat as a plugin names it: an ID or an @username, never a title to match. */
 const CHAT_REF = /^(-?\d{1,20}|@[A-Za-z0-9_]{3,64})$/;
 function chatRef(v: unknown, what = "chat"): string {
   if (typeof v === "number" && Number.isSafeInteger(v)) {
@@ -214,7 +205,6 @@ function chatRef(v: unknown, what = "chat"): string {
   return v;
 }
 
-/** The FLOOD_WAIT seconds of a Telegram error, if it is one. */
 function floodSeconds(e: unknown): number | undefined {
   try {
     const d = errorDetails(e);
@@ -224,7 +214,6 @@ function floodSeconds(e: unknown): number | undefined {
   }
 }
 
-/** Any other host failure as the guest sees it: the CLI's code and a masked message. */
 function hostFailure(e: unknown): HostError {
   if (e instanceof HostError) {
     return e;
@@ -243,7 +232,6 @@ const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const serviceUser = (entity: ResolvedEntity) =>
   entity instanceof Api.User && SERVICE_IDS.has(entity.id.toString());
 
-/** A message another person may have written, as the read APIs return it. */
 function readMessage(msg: Api.Message) {
   const service = isServiceSource(msg);
   const from =
@@ -266,7 +254,6 @@ function readMessage(msg: Api.Message) {
   };
 }
 
-/** Takes items while the serialized page stays under PAGE_CHARS (at least one). */
 function bounded<T>(items: T[]): T[] {
   let size = 2;
   const out: T[] = [];
@@ -281,26 +268,16 @@ function bounded<T>(items: T[]): T[] {
   return out;
 }
 
-// ---------- the cursor of messages.mine ----------
-
 type MineType = "private" | "group";
 const MINE_TYPES: readonly MineType[] = ["private", "group"];
 
-/**
- * The walk behind a cursor, kept by the host (CursorStore): the plugin gets a random id only, so it
- * never sees the chats walked and cannot swap them.
- */
 interface MineCursor {
-  /** Account tag: a cursor of another account is refused. */
   a: string;
-  /** The installation that listed the chats. */
   n: string;
   t: MineType[];
   s: number;
-  /** The chats to walk, fixed on the first page. */
   c: string[];
   i: number;
-  /** offsetId inside chat i (0: from the newest). */
   o: number;
 }
 
@@ -329,7 +306,6 @@ function loadCursor(ctx: HostContext, id: string, account: string): MineCursor {
   if (a !== accountTag(account)) {
     throw badCursor("cursor belongs to another account");
   }
-  // Host-written, but read back from disk: checked all the same
   if (
     !Array.isArray(t) ||
     !t.length ||
@@ -356,7 +332,6 @@ function loadCursor(ctx: HostContext, id: string, account: string): MineCursor {
   return { a, n, t: t as MineType[], s, c: c as string[], i, o };
 }
 
-/** The own-message type of a chat, or undefined for one `messages.mine` never reads. */
 function mineType(entity: ResolvedEntity): MineType | undefined {
   if (entity instanceof Api.User) {
     return entity.bot || serviceUser(entity) ? undefined : "private";
@@ -386,8 +361,6 @@ function sinceSeconds(v: unknown): number {
   return Math.floor(ms / 1000);
 }
 
-// ---------- the API ----------
-
 /** The host functions a command gets: its manifest's permissions and its effects together. */
 export function grantedApi(
   ctx: HostContext,
@@ -399,7 +372,6 @@ export function grantedApi(
     string,
     HostFunction
   >;
-  /** A Telegram read: FLOOD_WAIT and every other failure come back as host errors. */
   const tg = <T>(fn: () => Promise<T>) =>
     fn().catch((error: unknown) => {
       const wait = floodSeconds(error);
@@ -614,7 +586,6 @@ export function grantedApi(
         const p = opts(o, "target.thread");
         const limit = int(p.limit, "limit", 1, READ_MAX, 20);
         const before = optInt(p.before, "before", 1, MAX_MESSAGE_ID);
-        // The target's own root only, never the whole chat: a root outside 1…2^31-1 is refused
         const mode: HistoryMode | undefined =
           target.topic === undefined
             ? isMessageId(target.msgId)
@@ -633,7 +604,6 @@ export function grantedApi(
       });
   }
 
-  // The store is opened on first use: the account it is bound to is fetched then, inside the run's deadline
   if (perms.has("storage:read")) {
     api["storage.get"] = async ([key]) => {
       const k = storageKey(ctx, key);
@@ -643,7 +613,6 @@ export function grantedApi(
     api["storage.list"] = async () => ({ items: (await ctx.storage()).list() });
   }
   if (perms.has("storage:write") && effects.has("storage")) {
-    /** The run's deadline and cancellation, checked before, after every wait, and under the store's lock. */
     const guard = (signal: AbortSignal): WriteGuard => ({
       deadline: ctx.deadline,
       aborted: () => signal.aborted || !!ctx.cancelled?.(),
@@ -689,7 +658,6 @@ export function grantedApi(
           `settings.get: "${String(key)}" is not a setting this plugin declares`
         );
       }
-      // The value `plugin settings set` stored, else the manifest's default
       const stored = ctx.settings?.();
       if (stored && Object.hasOwn(stored, key)) {
         return stored[key];
@@ -701,16 +669,13 @@ export function grantedApi(
 
   if (perms.has("network") && effects.has("network") && ctx.network) {
     const net = ctx.network;
-    /** Every secret value this run put into a request, in each form: stripped from every response. */
     const used: string[] = [];
     api["http.fetch"] = async ([url, o], signal) => {
-      // One deadline for the whole request, fixed on entry: secret reads, DNS, connect, TLS, response
       const until = requestDeadline(ctx.deadline);
       const req = checkRequest(ctx.manifest, url, o);
       const matching = (ctx.manifest.secrets ?? []).filter((s) =>
         injectMatches(s.inject, req.url)
       );
-      // A secret limited to some paths goes only with a path every server reads the same way
       if (matching.some((s) => s.inject.paths !== undefined)) {
         const why = pathProblem(req.rawPath) ?? pathProblem(req.url.pathname);
         if (why) {
@@ -720,7 +685,6 @@ export function grantedApi(
           );
         }
       }
-      // Aborted at the request's deadline or when the run ends: a slow secret store is stopped too
       const ac = new AbortController();
       const stop = () => ac.abort();
       signal.addEventListener("abort", stop, { once: true });
@@ -768,7 +732,6 @@ export function grantedApi(
           throw new HostError("timeout", "The request took too long");
         }
         const raw = await net.backend({ ...req, inject }, signal, until);
-        // A part of a body (206) could hold a cut secret no form matches: refused where one was sent
         if (inject.length && raw.status === 206) {
           throw new HostError(
             "bad_response",
@@ -827,19 +790,16 @@ function storageKey(ctx: HostContext, key: unknown): string {
   return key;
 }
 
-/** What `history` reads: the whole chat, or only the messages under one topic or thread root. */
 type HistoryMode =
   | { kind: "chat" }
   | { kind: "topic" | "thread"; root: number };
 
-/** History of a chat, a forum topic or a comment thread: newest first, size-bounded. */
 async function history(
   client: TelegramClient,
   chat: string,
   mode: HistoryMode,
   p: { limit: number; before?: number }
 ) {
-  // A topic or thread with no valid root is refused, never read as the whole chat
   if (mode.kind !== "chat" && !isMessageId(mode.root)) {
     throw invalid(`the ${mode.kind} ID must be from 1 to ${MAX_MESSAGE_ID}`);
   }
@@ -875,15 +835,12 @@ async function history(
   return {
     chatId: utils.getPeerId(entity).toString(),
     messages: page,
-    // Pass as `before` for the next page; null when this page reached the start
     before: page.length < msgs.length || msgs.length >= p.limit ? oldest : null,
   };
 }
 
-/** The run ended (cancelled, timed out): a host call stops at once and its result is dropped. */
 const runEnded = () => new HostError("cancelled", "The run ended");
 
-/** `promise`, or a rejection as soon as `signal` aborts (the request itself cannot be withdrawn). */
 function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
     promise.catch(() => {});
@@ -905,12 +862,6 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/**
- * `messages.mine`: the owner's own text, chat by chat (latest activity first), newest first.
- * Every Telegram request of the call (the dialog list, the account, getMe, resolving each chat,
- * each history batch) goes through `rpc`: counted against MINE_REQUESTS, never started after the
- * run ended, and abandoned the moment it ends.
- */
 async function mine(
   ctx: HostContext,
   state: HostState,
@@ -933,7 +884,6 @@ async function mine(
   let cur: MineCursor | undefined;
   const messages: { text: string; date: string; chatType: MineType }[] = [];
   let size = 2;
-  /** A cursor for where the walk stands: the state stays with the host, the plugin gets its id. */
   const cursorOf = (c: MineCursor | undefined) => {
     if (!c || signal.aborted) {
       return null;
@@ -999,11 +949,9 @@ async function mine(
     }
     const me = await rpc(() => client.getMe());
     while (cur.i < cur.c.length && messages.length < limit) {
-      // A chat takes two requests (resolve, history): stop with a cursor before the budget runs out
       if (requests + 2 > MINE_REQUESTS) {
         return page(false);
       }
-      // The type again (the list is the host's own, but a chat may have changed): never a service chat
       const chatId: string = cur.c[cur.i];
       const entity: ResolvedEntity = await rpc(() =>
         resolveChat(client, chatId)
@@ -1044,7 +992,6 @@ async function mine(
           (msg.fromId instanceof Api.PeerUser &&
             msg.fromId.userId.equals(me.id));
         const text = plainMessageText(msg);
-        // Own authored text only: no forwards, nothing from or quoting a service account, no empty media
         if (own && !msg.fwdFrom && !isServiceSource(msg) && text.trim()) {
           const item = {
             text: maskForModel(text, "echo"),
@@ -1053,7 +1000,6 @@ async function mine(
           };
           const n = JSON.stringify(item).length + 1;
           if (messages.length && size + n > PAGE_CHARS) {
-            // Resume at this very message next time (offsetId is exclusive)
             cur = { ...cur, o: msg.id + 1 };
             return page(false);
           }
@@ -1075,7 +1021,6 @@ async function mine(
     if (wait === undefined || signal.aborted) {
       throw hostFailure(error);
     }
-    // The point to continue from and what this call had collected before Telegram said wait
     const cursor = cursorOf(cur);
     const partial = { messages, count: messages.length };
     state.flood = { retryAfterSeconds: wait, cursor, partial };

@@ -1,7 +1,5 @@
 import { randomBytes } from "node:crypto";
 
-/** The local onboarding page: inline only, one nonce per response, English, Spanish or Russian from the browser. */
-
 const en = {
   title: "Log in to Telegram for Better-TG-CLI",
   lead: "Your agent opened this page. What you enter here stays on this computer: the agent never sees the login key, the QR code or your password.",

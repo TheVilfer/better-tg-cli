@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-// A temp home: nothing here reads or writes the real profile
 const home = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -26,10 +25,6 @@ afterAll(async () => {
   (await import("node:fs")).rmSync(home.root, { recursive: true, force: true });
 });
 
-/**
- * A store that keeps its own per-process cache (Windows DPAPI decrypts its file once): a plain read
- * returns what this process saw first, only a fresh read sees another process's login.
- */
 const dpapi = vi.hoisted(() => ({ seen: "session-A", now: "session-A" }));
 vi.mock(import("../src/secrets.js"), () => ({
   isSecretStoreAvailable: () => true,

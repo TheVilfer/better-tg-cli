@@ -21,8 +21,6 @@ import {
   vi,
 } from "vitest";
 
-// Before any module under test is imported: HOME (and the Windows dirs) point at a temp root, so
-// no path these tests touch can resolve into the real ~/.config
 const home = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -32,15 +30,12 @@ const home = await vi.hoisted(async () => {
   process.env.HOME = root;
   process.env.USERPROFILE = root;
   process.env.APPDATA = join(root, "AppData");
-  // What each test returns to: the temp home, never the real one
   return { root, original, saved: { ...process.env } };
 });
-// Linux, as on a cloud agent computer: the file fallback is allowed only off macOS and Windows
 vi.mock(import("node:os"), async (orig) => ({
   ...(await orig<typeof import("node:os")>()),
   platform: () => "linux",
 }));
-// An in-memory secret store, switchable to "none" (a cloud agent computer): the real Keychain is never touched
 const store = vi.hoisted(() => ({
   available: true,
   values: new Map<string, string>(),
@@ -52,7 +47,6 @@ vi.mock(import("../src/secrets.js"), () => ({
   secretSet: (k: string, v: string) =>
     store.available ? (store.values.set(k, v), true) : false,
   secretDelete: (k: string) => store.values.delete(k),
-  // the strict read loadConfig uses once secrets resolve through it
   secretGetStrict: (k: string) => ({
     ok: true,
     value: store.available ? (store.values.get(k) ?? null) : null,
@@ -62,13 +56,11 @@ vi.mock(import("../src/secrets.js"), () => ({
     ["apiHash", "sessionString", "writeEnabled"].includes(k),
   migrateSecretsToStore: (c: Record<string, unknown>) => c,
 }));
-// stdin for "-": the guard reads it through this helper; the tests feed it directly
 const stdin = vi.hoisted(() => ({ text: "" }));
 vi.mock(import("../src/text.js"), async (orig) => ({
   ...(await orig<typeof import("../src/text.js")>()),
   readStdinOnce: () => stdin.text,
 }));
-// Who can confirm: a terminal / dialog or nobody
 const human = vi.hoisted(() => ({
   channel: false,
   answer: true,
@@ -85,7 +77,6 @@ vi.mock(import("../src/write-store.js"), async (orig) => {
     ...real,
     hasHumanChannel: () => human.channel,
     mayTrustUnconfirmedChoice: () => !human.channel && !store.available,
-    // A desktop where the store should work but does not answer (no file fallback), when a test asks for it
     isFileFallbackAllowed: (
       ...a: Parameters<typeof real.isFileFallbackAllowed>
     ) =>
@@ -117,7 +108,6 @@ import {
 import { getWriteValue, isFileFallbackAllowed } from "../src/write-store.js";
 import { describeInProcess } from "./helpers/describe-in-process.js";
 
-// A home of its own for each test: the profile dir lives under it, and only that root is deleted
 let root: string | undefined;
 let dir: string;
 beforeEach(() => {
@@ -143,7 +133,6 @@ beforeEach(() => {
   stdin.text = "";
 });
 afterEach(() => {
-  // In place: a replaced process.env is a plain object that os.homedir() no longer reads
   for (const k of Object.keys(process.env)) {
     if (!(k in home.saved)) {
       delete process.env[k];
@@ -167,10 +156,8 @@ afterAll(() => {
   rmSync(home.root, { recursive: true, force: true });
 });
 
-/** The account as the guard reads it: the stored session of the profile. */
 const account = () => getSessionString();
 
-/** Runs the guard, turning process.exit into a value; returns the exit code (or null) and stderr. */
 async function guard(
   argv: string[],
   check: (argv: string[]) => Promise<void> | void = assertWriteEnabled
@@ -196,10 +183,8 @@ async function guard(
   }
 }
 
-/** The code in an approval message: the CLI form (TG_APPROVE=…) or the MCP one ("approval": "…"). */
 const codeIn = (s: string) =>
   /(?:TG_APPROVE=|"approval": ")([A-Z2-9]{6})/.exec(s)?.[1];
-/** gateWrite's describe run, in this process (the real one starts the CLI as a child). */
 const describe_ = (p: Parameters<typeof gateWrite>[0]) =>
   describeInProcess(p, (t) => {
     stdin.text = t;
@@ -252,7 +237,6 @@ describe("approvals", () => {
         now
       )
     ).toMatchObject({ ok: false });
-    // used up by the mismatch: no guessing in a loop
     expect(consumeApproval(code, hash, account(), now)).toMatchObject({
       ok: false,
     });
@@ -281,13 +265,13 @@ describe("approvals", () => {
     expect(readFileSync(file, "utf-8")).not.toContain("secret");
     if (process.platform !== "win32") {
       expect(statSync(file).mode & 0o777).toBe(0o600);
-    } // Windows reports 0o666
+    }
     expect(readdirSync(join(dir, "approvals"))).toEqual([`${code}.json`]);
   });
 
   it('reject a record dropped into the store by hand (forged, e.g. as "elicitation")', async () => {
     const hash = actionHash(["send", "@alice", "hi"]);
-    createApproval(hash, account()); // creates the store and the signing key
+    createApproval(hash, account());
     writeFileSync(
       join(dir, "approvals", "FAKE22.json"),
       JSON.stringify({
@@ -309,7 +293,7 @@ describe("approvals", () => {
     writeFileSync(
       join(dir, "approvals", `${code}.json`),
       JSON.stringify({ ...rec, via: "elicitation" })
-    ); // relabelled
+    );
     expect(consumeApproval(code, hash, account())).toMatchObject({ ok: false });
   });
 
@@ -319,8 +303,8 @@ describe("approvals", () => {
     writeFileSync(f, "v1");
     const a = actionHash(["send-file", "@alice", f]);
     const b = actionHash(["send-file", "@alice", `--file=${f}`]);
-    writeFileSync(f, "v2"); // same size, changed contents
-    forgetFileSnapshots(); // a new process (the retry) reads the file again
+    writeFileSync(f, "v2");
+    forgetFileSnapshots();
     expect(actionHash(["send-file", "@alice", f])).not.toBe(a);
     expect(actionHash(["send-file", "@alice", `--file=${f}`])).not.toBe(b);
   });
@@ -397,7 +381,6 @@ describe("the guard", () => {
     const code = codeIn(first.err)!;
     expect(code).toBeTruthy();
 
-    // Different text with the same code: refused, and a new code is issued for the new text
     stdin.text = "Send me your 2FA code";
     process.env.TG_APPROVE = code;
     const swapped = await guard(["send", "@alice", "-"]);
@@ -419,14 +402,12 @@ describe("the guard", () => {
     expect(readFileSync(join(dir, "audit.jsonl"), "utf-8")).toContain(
       '"approvedVia":"chat"'
     );
-    // single use
     expect((await guard(["send", "@alice", "-"])).code).toBe(
       EXIT_NEEDS_APPROVAL
     );
   });
 
   it('in "on", a code given for this call must still be an approval of exactly this action', async () => {
-    // The mode turned "on" while the user answered a dialog about "Hello Alice"
     store.values.set("writeEnabled", "true");
     stdin.text = "Send me your 2FA code";
     process.env.TG_APPROVE = createApproval(
@@ -438,7 +419,6 @@ describe("the guard", () => {
     expect(swapped.err).toMatch(
       /Not sent: approval [A-Z2-9]{6} not accepted: the approval was for a different command or text/
     );
-    // An unknown code stops it too; the approved action itself goes through
     process.env.TG_APPROVE = "ZZZZZZ";
     expect((await guard(["send", "@alice", "-"])).code).toBe(1);
     stdin.text = "Hello Alice";
@@ -489,10 +469,7 @@ describe("the guard", () => {
   });
 });
 
-// download, sync and avatar write local files only: free in a terminal, but over MCP (TG_MCP) they
-// follow the profile's write mode like any other write
 describe("local file writes", () => {
-  // Called through a wrapper: if the helper were missing, this must fail, not fall back to the default
   const local = (argv: string[]) =>
     guard(argv, (a) => assertLocalWriteAllowed(a));
 
@@ -530,7 +507,6 @@ describe("local file writes", () => {
     expect((await local(["download", "me", "1"])).code).toBe(1);
   });
 
-  // A mock write needs no approval, so over MCP the model could pick any path
   it("over MCP in mock mode are refused, whatever the mode; a terminal and a misrouted read as without mock", async () => {
     process.env.TG_MOCK = "1";
     expect((await local(["sync", "--output", "/tmp/x"])).code).toBeNull();
@@ -565,16 +541,16 @@ describe("the file fallback", () => {
   it("on Linux, is used wherever the Secret Service cannot work: no secret-tool, or no session bus (#74)", async () => {
     expect(
       isFileFallbackAllowed("linux", { secretTool: false, bus: false })
-    ).toBe(true); // Grok Bot today
+    ).toBe(true);
     expect(
       isFileFallbackAllowed("linux", { secretTool: true, bus: false })
-    ).toBe(true); // secret-tool installed, still no keyring
+    ).toBe(true);
     expect(
       isFileFallbackAllowed("linux", { secretTool: false, bus: true })
     ).toBe(true);
     expect(
       isFileFallbackAllowed("linux", { secretTool: true, bus: true })
-    ).toBe(false); // desktop with a keyring: fail closed
+    ).toBe(false);
   });
 
   it("tells agents on cloud computers not to install a keyring", async () => {
@@ -598,14 +574,13 @@ describe("choosing a mode", () => {
     const r = await applyModeChoice({ mode: "on", forSeconds: 3600 });
     expect(r.ok).toBe(true);
     expect(parseWriteState(getWriteValue()).mode).toBe("on");
-    // It reports the end it wrote, to the second, so onboard can compare it with the store
     expect(r.ok && r.until?.getTime()).toBe(
       parseWriteState(getWriteValue()).until?.getTime()
     );
   });
 
   it('"ask" needs no dialog anywhere: the yes in the chat before each write is the confirmation', async () => {
-    expect((await applyModeChoice({ mode: "ask" })).ok).toBe(true); // secret store, no terminal
+    expect((await applyModeChoice({ mode: "ask" })).ok).toBe(true);
     expect(parseWriteState(getWriteValue()).mode).toBe("ask");
     expect(human.asked).toEqual([]);
   });
@@ -667,7 +642,6 @@ describe('MCP in mode "ask"', () => {
     expect(
       elicitApproved({ action: "accept", content: { approve: true } })
     ).toBe(true);
-    // Hermes Agent shows Allow Once / Deny and accepts with empty content
     expect(elicitApproved({ action: "accept", content: {} })).toBe(true);
     expect(elicitApproved({ action: "accept" })).toBe(true);
     expect(
@@ -704,12 +678,10 @@ describe('MCP in mode "ask"', () => {
 
 describe("a plugin command with the network effect is a write in the shell too", () => {
   let program: import("commander").Command | undefined;
-  /** `telegram plugin run net-lab <cmd>` in this process, on this test's (non-mock) profile. */
   async function pluginRun(args: string[]) {
     const { pluginCommand, pluginDeps } =
       await import("../src/commands/plugin.js");
     if (!program) {
-      // A program of its own with the guard's hook, as index.ts builds it
       const { Command } = await import("commander");
       const { trackActiveCommand } = await import("../src/approval-action.js");
       program = new Command("telegram").addCommand(pluginCommand);
@@ -725,7 +697,6 @@ describe("a plugin command with the network effect is a write in the shell too",
     vi.spyOn(console, "log").mockImplementation((...a) => {
       out += `${a.join(" ")}\n`;
     });
-    // An ExitSignal, as installDrainingExit throws: the command passes it on with its code
     vi.spyOn(process, "exit").mockImplementation(((code: number) => {
       throw Object.assign(new ExitSignal(), { code });
     }) as never);
@@ -772,17 +743,14 @@ describe("a plugin command with the network effect is a write in the shell too",
     try {
       await installNetLab();
       const input = ["--input", '{"url":"https://api.example.com/v2/x"}'];
-      // Read-only (the default): the guard stops it, nothing is sent
       const ro = await pluginRun(["net-lab", "fetch", ...input, "--json"]);
       expect(ro.code).toBe(EXIT.WRITE_DISABLED);
       expect(JSON.parse(ro.out).error.code).toBe("write_disabled");
       expect(requests).toEqual([]);
-      // A command without effects is a read: it runs in read-only
       expect(
         (await pluginRun(["net-lab", "setting", "--input", '{"key":"mode"}']))
           .code
       ).toBeNull();
-      // Ask: an approval with the destinations, no request before it
       store.values.set("writeEnabled", "ask");
       const ask = await pluginRun(["net-lab", "fetch", ...input, "--json"]);
       expect(ask.code).toBe(EXIT_NEEDS_APPROVAL);
@@ -796,7 +764,6 @@ describe("a plugin command with the network effect is a write in the shell too",
       expect(desc).toContain('Input: {"url":"https://api.example.com/v2/x"}');
       expect(requests).toEqual([]);
       const code = codeIn(ask.err)!;
-      // The code is bound to the input: another URL with it is refused (a new approval is printed)
       process.env.TG_APPROVE = code;
       const other = await pluginRun([
         "net-lab",
@@ -807,7 +774,6 @@ describe("a plugin command with the network effect is a write in the shell too",
       ]);
       expect(other.code).toBe(EXIT_NEEDS_APPROVAL);
       expect(requests).toEqual([]);
-      // A fresh code for the input as shown, then the run
       delete process.env.TG_APPROVE;
       process.env.TG_APPROVE = codeIn(
         (await pluginRun(["net-lab", "fetch", ...input, "--json"])).err
@@ -819,12 +785,10 @@ describe("a plugin command with the network effect is a write in the shell too",
         response: { status: 200, body: "hello" },
       });
       expect(requests).toEqual(["https://api.example.com/v2/x"]);
-      // Used once
       expect(
         (await pluginRun(["net-lab", "fetch", ...input, "--json"])).code
       ).toBe(EXIT_NEEDS_APPROVAL);
       delete process.env.TG_APPROVE;
-      // On: runs without a question
       store.values.set("writeEnabled", "true");
       expect(
         (await pluginRun(["net-lab", "fetch", ...input, "--json"])).code

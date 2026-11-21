@@ -18,8 +18,6 @@ import { seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
 
-// Review round 1 of the agent-ready CLI: the CLI as an agent runs it (a child process, stdin
-// closed, no TTY) on the mock account, so nothing reaches Telegram.
 const home = mkdtempSync(join(tmpdir(), "tg-agent-ux-r1-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -59,7 +57,6 @@ function cli(args: string[], extra: NodeJS.ProcessEnv = {}, state?: string) {
   };
 }
 
-/** stdout must be exactly one JSON value (one line outside a terminal). */
 function oneJson(out: string): any {
   const lines = out.trim().split("\n");
   expect(lines).toHaveLength(1);
@@ -80,8 +77,6 @@ describe("2/3 --json always yields one complete JSON object", () => {
   }, 30_000);
 
   it("a long error is written in full before the process exits, even to a slow reader", async () => {
-    // The long text comes from the account, not argv: one argument may not exceed 128 KB on Linux,
-    // and a whole command line 32 KB on Windows. Two chats share "Huge", so the error lists both.
     const long = "y".repeat(120_000);
     const state = await worldFile((w) => {
       for (const [id, tag] of [
@@ -101,7 +96,6 @@ describe("2/3 --json always yields one complete JSON object", () => {
       [...cliArgs(), "read", "Huge", "--json"],
       { env: env({}, state), stdio: ["ignore", "pipe", "ignore"] }
     );
-    // Read nothing for a while: the pipe fills up and the CLI must wait for it
     child.stdout.pause();
     await new Promise((r) => setTimeout(r, 1500));
     let out = "";
@@ -132,7 +126,6 @@ describe("2/3 --json always yields one complete JSON object", () => {
   }, 30_000);
 });
 
-/** The seeded mock account plus `extra` chats, as a TG_MOCK state file. */
 async function worldFile(extra: (w: MockWorld) => void): Promise<string> {
   const w = seedWorld();
   extra(w);
@@ -141,7 +134,6 @@ async function worldFile(extra: (w: MockWorld) => void): Promise<string> {
   return file;
 }
 
-/** `count` supergroups older than every seeded chat, then one more "Team" older still, past them all. */
 const crowd =
   (count: number, duplicate = true) =>
   (w: MockWorld) => {
@@ -183,7 +175,6 @@ describe("1 a title is unique only when the whole dialog list was seen", () => {
     const r = cli(["send", "Team", "hi", "--json"], {}, state);
     expect(r.code).toBe(2);
     expect(oneJson(r.out).error.code).toBe("ambiguous_chat");
-    // Nothing was sent: the newest message of Team is still the seeded one
     const read = cli(["read", "-1004001", "-n", "1", "--json"], {}, state);
     expect(JSON.parse(read.out).messages[0].text).not.toBe("hi");
   }, 60_000);
@@ -328,7 +319,6 @@ describe("7 --topic: bot forums count, and an empty unread page is checked like 
 
 describe("11 hasMore only when a next page was seen", () => {
   it("read: a page of exactly limit at the start of history has no hasMore; one less has", () => {
-    // Team has exactly 3 messages
     const exact = cli(["read", "Team", "-n", "3", "--json"]);
     expect(JSON.parse(exact.out).messages).toHaveLength(3);
     expect(JSON.parse(exact.out).hasMore).toBeUndefined();
@@ -336,7 +326,6 @@ describe("11 hasMore only when a next page was seen", () => {
     const page = JSON.parse(cli(["read", "Team", "-n", "2", "--json"]).out);
     expect(page.messages).toHaveLength(2);
     expect(page.hasMore).toBe(true);
-    // The promised next page is not empty
     expect(
       JSON.parse(
         cli([
@@ -353,7 +342,6 @@ describe("11 hasMore only when a next page was seen", () => {
   }, 30_000);
 
   it("search: exactly limit results is the end; one less says more exist", () => {
-    // An empty query matches every message: fewer than the default 50
     const all = JSON.parse(cli(["search", "", "--json"]).out).messages.length;
     expect(all).toBeGreaterThan(1);
     expect(
@@ -390,7 +378,6 @@ describe("4 forward --json tells source IDs from destination IDs", () => {
     });
     expect(result.forwardedIds).toHaveLength(2);
     expect(result.forwardedIds).not.toEqual([2, 3]);
-    // The copies really are these IDs in the destination chat
     const copies = JSON.parse(
       cli(
         ["get", "me", ...result.forwardedIds.map(String), "--json"],
@@ -442,7 +429,6 @@ describe("10 usage errors exit 2, and are found before the write guard", () => {
     expect(oneJson(r.out).error.code).toBe("invalid_argument");
   }, 30_000);
 
-  // These take no --json (it would itself be an unknown option, exit 2 for any reason)
   it.each([
     [["topic"], /missing subcommand|Usage: telegram topic/],
     [["api", "help.GetConfig", "-p", "oops"], /Invalid --params JSON/],
@@ -457,8 +443,6 @@ describe("10 usage errors exit 2, and are found before the write guard", () => {
     30_000
   );
 
-  // A real guard in write mode "ask": the child runs as on a Linux cloud computer (the mode in a
-  // file of the profile, no secret store), so this machine's Keychain is never touched
   it("in mode ask a command line that cannot run gets exit 2, never an approval (exit 3)", () => {
     const profile = mkdtempSync(join(home, "ask-"));
     const real = (args: string[]) => {
@@ -486,13 +470,9 @@ describe("10 usage errors exit 2, and are found before the write guard", () => {
     expect(JSON.parse(real(["write-access", "--json"]).out).writeMode).toBe(
       "ask"
     );
-    // A well-formed write does reach the guard and asks for an approval (set-name names no
-    // recipient, so the guard looks nothing up and this profile needs no login)
     const named = real(["set-name", "Bob", "--json"]);
     expect(named.code, named.out + named.err).toBe(3);
     expect(oneJson(named.out).error).toBe("approval_required");
-    // A write with a recipient reaches the guard too, which looks it up first: without a login
-    // that stops with exit 5 and its JSON error, still no approval
     const send = real(["send", "me", "hi", "--json"]);
     expect(send.code, send.out + send.err).toBe(5);
     expect(oneJson(send.out).error.code).toBe("not_configured");
@@ -551,7 +531,6 @@ describe("12 the skill says what the CLI does", () => {
 
   it('raw API writes work in mode "ask"; GetBotCallbackAnswer and GetInlineBotResults are named as writes', () => {
     for (const f of ["SKILL.md", "api.md"]) {
-      // Never "a raw write needs write-access on": in mode ask the user approves each call
       expect(read(f).replaceAll(/\s+/g, " "), f).not.toMatch(
         /write \(needs `telegram write-access on`|a write that needs `telegram write-access on`/
       );
@@ -621,7 +600,6 @@ describe("sync --media: a failed download is a failure that --resume retries", (
     const file = r.chats[0].file as string;
     expect(readFileSync(file, "utf-8")).not.toContain("*#3*");
 
-    // The file can be downloaded now: --resume picks it up, and the rest of the chat
     const w = JSON.parse(readFileSync(state, "utf-8"));
     delete w.chats
       .find((c: { id: number }) => c.id === 1001)
@@ -774,7 +752,6 @@ describe("sync --media: the checkpoint follows message IDs, never past one that 
         .messages.find((m) => m.id === 3)!.media!.downloadFails = true;
     });
     const out = join(home, `sync-media-${n++}`);
-    // Message #3 is a day old: the first in a 2-day window
     const first = cli(
       [
         "sync",
@@ -796,7 +773,6 @@ describe("sync --media: the checkpoint follows message IDs, never past one that 
       JSON.parse(readFileSync(join(out, ".sync-meta.json"), "utf-8"))["1001"]
     ).toMatchObject({ lastMessageId: 2, retryPin: true });
 
-    // By the retry, #3 has left the --days window; the pin still brings it back
     setMedia(state, 3, false);
     const again = cli(
       [
@@ -823,7 +799,6 @@ describe("sync --media: the checkpoint follows message IDs, never past one that 
     const text = readFileSync(r.chats[0].file, "utf-8");
     expect(text.match(/\*#3\*/g)).toHaveLength(1);
     expect(text).toContain("*#5*");
-    // Nothing was exported before: the file does not claim an earlier export
     expect(text).not.toContain("Continues after message");
     expect(
       JSON.parse(readFileSync(join(out, ".sync-meta.json"), "utf-8"))["1001"]

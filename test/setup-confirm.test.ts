@@ -17,11 +17,6 @@ import {
   vi,
 } from "vitest";
 
-/**
- * Setup decisions with the real write-mode and write-store code: only the computer around it is
- * faked (its OS, whether there is a terminal, the secret store, Telegram's answers). Nothing opens
- * a page, a dialog or a connection.
- */
 const home = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -36,21 +31,16 @@ const home = await vi.hoisted(async () => {
 const machine = vi.hoisted(() => ({
   os: "linux" as NodeJS.Platform,
   tty: false,
-  /** The person's answer in a dialog or at the terminal, and what they were asked */
   answer: true,
   asked: [] as string[],
-  /** What Telegram answers updates.GetState with: nothing (alive), or this error */
   stateError: undefined as unknown,
-  /** Runs while Telegram is being asked (another process saving a login meanwhile) */
   duringCheck: undefined as undefined | (() => void),
-  /** The options the last setup page was started with */
   page: undefined as undefined | Record<string, any>,
 }));
 vi.mock(import("node:os"), async (orig) => ({
   ...(await orig<typeof import("node:os")>()),
   platform: () => machine.os,
 }));
-// No secret store (a cloud agent computer); the real one is never touched
 vi.mock(import("../src/secrets.js"), () => ({
   isSecretStoreAvailable: () => false,
   secretGet: () => null,
@@ -66,7 +56,6 @@ vi.mock(import("../src/confirm.js"), () => ({
   confirmByHuman: async (q: string) => (machine.asked.push(q), machine.answer),
   windowsConfirmScript: () => "",
 }));
-// Telegram: a client that answers GetState as told, and checks authorization the way teleproto does
 vi.mock(import("../src/transport.js"), async (orig) => ({
   ...(await orig<typeof import("../src/transport.js")>()),
   connectClient: async () => ({
@@ -78,7 +67,6 @@ vi.mock(import("../src/transport.js"), async (orig) => ({
       }
       return {};
     },
-    // teleproto: any failure of GetState is "not authorized"
     async isUserAuthorized() {
       try {
         await this.invoke();
@@ -118,10 +106,9 @@ const tty = { stdin: process.stdin.isTTY, stdout: process.stdout.isTTY };
 let n = 0;
 beforeEach(() => {
   process.env.TG_PROFILE = `setup-confirm-${++n}`;
-  freshSessionString(); // the config cache of the previous test's profile
-  // No secret-tool on PATH: the write mode lives in the profile file (unprotected), as on a cloud computer
+  freshSessionString();
   process.env.PATH = mkdtempSync(join(home.root, "bin-"));
-  process.env.SSH_CONNECTION = "test"; // never open a browser
+  process.env.SSH_CONNECTION = "test";
   for (const k of ["TG_MOCK", "TG_MCP", "DBUS_SESSION_BUS_ADDRESS"]) {
     delete process.env[k];
   }
@@ -238,7 +225,6 @@ describe('a session is "expired" only when Telegram says so (7)', () => {
       { errorMessage: "AUTH_KEY_DUPLICATED" }
     );
     await expect(sessionState()).resolves.toBe("expired");
-    // 2FA still to enter is a 401 too, but no reason to replace the session
     machine.stateError = Object.assign(
       new Error("RPCError 401: SESSION_PASSWORD_NEEDED"),
       { errorMessage: "SESSION_PASSWORD_NEEDED" }
@@ -255,7 +241,7 @@ describe('a session is "expired" only when Telegram says so (7)', () => {
 
   it("a login finished on an old page does not replace a session saved meanwhile by another process", async () => {
     await openSetupPage({ emit: () => {}, fromModel: true });
-    setSessionString("session-B"); // another process logged in
+    setSessionString("session-B");
     expect(() =>
       machine.page!.save(
         "session-C",
@@ -293,7 +279,7 @@ describe('a session is "expired" only when Telegram says so (7)', () => {
 
   it("also when the other login was written behind this process's config cache", async () => {
     await openSetupPage({ emit: () => {}, fromModel: true });
-    expect(loadConfig(() => {}).sessionString).toBe("session-A"); // cached now
+    expect(loadConfig(() => {}).sessionString).toBe("session-A");
     const path = join(configDir(), "config.json5");
     writeFileSync(
       path,

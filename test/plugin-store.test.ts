@@ -60,7 +60,6 @@ const saved = {
 let n = 0;
 let home: string;
 
-/** The registry key in memory: these tests use a real (non-mock) profile and must never reach the Keychain. */
 let memKey: string | null = null;
 const memStore: KeyStore = {
   available: () => true,
@@ -70,7 +69,6 @@ const memStore: KeyStore = {
     return true;
   },
 };
-/** Writes a registry signed with the test key, as only this CLI could (to reach the checks behind the signature). */
 function writeSignedLock(body: { lockfileVersion: 1; plugins: unknown }): void {
   writeFileSync(
     join(pluginsRoot(), "plugin.lock.json"),
@@ -103,7 +101,6 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** A copy of the fixture to change. */
 function copyFixture(): string {
   const dir = join(root, `src-${++n}`);
   cpSync(FIXTURE, dir, { recursive: true });
@@ -151,7 +148,6 @@ describe("install from a local folder", () => {
       secrets: [],
     });
     expect(lock.source).toMatchObject({ type: "local" });
-    // No staging folder left behind
     expect(
       readdirNames(pluginsRoot()).filter((f) => f.startsWith(".staging"))
     ).toEqual([]);
@@ -408,7 +404,6 @@ describe("plugin data: per installation and Telegram account", () => {
     expect(onboardingState(entry, manifest, undefined)).toBe("unknown");
     dataSet(entry, manifest, "1000", "style", enc("formal"));
     expect(onboardingState(entry, manifest, "1000")).toBe("done");
-    // Another Telegram account on the same profile starts over
     expect(onboardingState(entry, manifest, "2000")).toBe("pending");
     expect(dataGet(entry, "2000", "style")).toBeUndefined();
     expect(dataList(entry, "1000")).toEqual([
@@ -426,7 +421,6 @@ describe("plugin data: per installation and Telegram account", () => {
         enc("12345")
       )
     ).toThrow(expect.objectContaining({ code: "plugin_limit" }));
-    // Replacing a key counts its new size, not both
     expect(
       dataSet(
         entry,
@@ -467,8 +461,6 @@ describe("plugin data: per installation and Telegram account", () => {
   );
 });
 
-// ---------- GitHub through a stubbed API (no network) ----------
-
 interface FakeFile {
   bytes: Uint8Array;
   mode?: string;
@@ -477,7 +469,6 @@ const gitSha = (b: Uint8Array) =>
   createHash("sha1").update(`blob ${b.length}\0`).update(b).digest("hex");
 const fakeSha = (s: string) => createHash("sha1").update(s).digest("hex");
 
-/** A fake GitHub REST API serving `files` at one commit, recording every URL asked for. */
 function fakeGithub(
   files: Record<string, FakeFile>,
   opts: {
@@ -486,7 +477,6 @@ function fakeGithub(
     private?: boolean;
     tamperBlob?: string;
     rateLimited?: boolean;
-    /** The commit is not on the repository's own branches or tags (a fork's commit served through the network); compare answers this, or 404 */
     fork?: "ahead" | "diverged" | 404;
   } = {}
 ) {
@@ -642,7 +632,6 @@ describe("install from GitHub (stubbed API)", () => {
       "0.40.0"
     );
     expect(snap.revision).toBe(gh.commit);
-    // The canonical owner from the API, not the typed one, decides "official"
     expect(snap.source).toEqual({
       type: "github",
       owner: "TheVilfer",
@@ -658,7 +647,7 @@ describe("install from GitHub (stubbed API)", () => {
       "tg-plugin.json",
     ]);
     expect(gh.urls.some((u) => /tarball|zipball|archive/.test(u))).toBe(false);
-    expect(gh.urls.filter((u) => u.includes("/git/blobs/"))).toHaveLength(5); // README.md is not listed, so not fetched
+    expect(gh.urls.filter((u) => u.includes("/git/blobs/"))).toHaveLength(5);
     const entry = commitInstall(snap);
     expect(entry.source).toMatchObject({ type: "github", commit: gh.commit });
     expect(verifyInstalled(entry).ok).toBe(true);
@@ -715,7 +704,7 @@ describe("install from GitHub (stubbed API)", () => {
     await expect(
       fetchGithubSnapshot(src, gh.fetchImpl, "0.40.0")
     ).rejects.toThrow(/"onboarding\.md" is larger than/);
-    expect(gh.urls.filter((u) => u.includes("/git/blobs/"))).toHaveLength(1); // only the manifest
+    expect(gh.urls.filter((u) => u.includes("/git/blobs/"))).toHaveLength(1);
     await expect(
       fetchGithubSnapshot(
         src,
@@ -780,7 +769,6 @@ function readdirNames(dir: string): string[] {
 }
 
 describe("review fixes: guarded storage writes (#6) and the host-side cursor folder (#3)", () => {
-  /** Holds the plugin home's lock as another live telegram process would (this pid: never "stale"). */
   function holdLock(): string {
     const path = join(pluginsRoot(), "..", ".plugins.lock");
     writeFileSync(path, `${process.pid} ${hostname()} someone-else`);
@@ -794,7 +782,6 @@ describe("review fixes: guarded storage writes (#6) and the host-side cursor fol
     dataSet(entry, m, "1000", key, new TextEncoder().encode("before"));
     const lock = holdLock();
     const started = Date.now();
-    // The lock is released after the deadline: an unguarded wait would then write
     setTimeout(() => rmSync(lock, { force: true }), 400);
     await expect(
       dataSetGuarded(entry, m, "1000", key, new TextEncoder().encode("after"), {
@@ -827,7 +814,6 @@ describe("review fixes: guarded storage writes (#6) and the host-side cursor fol
     expect(new TextDecoder().decode(dataGet(entry, "1000", key))).toBe(
       "before"
     );
-    // Free lock, the run ends between taking it and writing: still nothing written
     let looks = 0;
     await expect(
       dataDeleteGuarded(entry, "1000", key, {
@@ -838,7 +824,6 @@ describe("review fixes: guarded storage writes (#6) and the host-side cursor fol
     expect(new TextDecoder().decode(dataGet(entry, "1000", key))).toBe(
       "before"
     );
-    // Within its deadline it writes as before
     await dataSetGuarded(
       entry,
       m,
@@ -857,7 +842,6 @@ describe("review fixes: guarded storage writes (#6) and the host-side cursor fol
     expect(cursorLoad(entry, id)).toEqual({ c: ["1001", "1002"] });
     expect(cursorLoad(entry, "A".repeat(22))).toBeUndefined();
     expect(cursorLoad(entry, "../../x")).toBeUndefined();
-    // The id in another case is another id (the file is named by a hash)
     const swapped = id.replace(/[a-z]/, (c) => c.toUpperCase());
     if (swapped !== id) {
       expect(cursorLoad(entry, swapped)).toBeUndefined();

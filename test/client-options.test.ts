@@ -14,7 +14,7 @@ function stderr(fn: () => void): string {
   );
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   fn();
-  expect(log).not.toHaveBeenCalled(); // never stdout: it would corrupt --json
+  expect(log).not.toHaveBeenCalled();
   return out;
 }
 

@@ -2,12 +2,6 @@ import { InvalidArgumentError, Option } from "commander";
 
 import { parseTimeOffset } from "./time.js";
 
-/**
- * Parsers for commander options and arguments. They run while the command line is parsed, before
- * the action and so before the write guard: a bad value exits 2 (usage) and never costs an
- * approval, and never turns into a silent default or an empty result.
- */
-
 const WHOLE = /^\s*\d+\s*$/;
 
 /**
@@ -42,7 +36,6 @@ export function messageIdList(value: string, previous?: number[]): number[] {
   if (!parts.length) {
     throw new InvalidArgumentError("Expected message IDs like 123 or 123,124.");
   }
-  // The same check as a single ID: a value past the int range would silently become another ID
   const ids = parts.map((p) => {
     if (!WHOLE.test(p) || Number(p) < 1 || Number(p) > INT32_MAX) {
       throw new InvalidArgumentError(

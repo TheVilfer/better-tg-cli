@@ -23,7 +23,6 @@ export function createLogger(
 ): Logger {
   const logger = new Logger(LEVELS[level ?? ""] ?? LogLevel.ERROR);
   const quiet = level === "none";
-  // Flood waits are retried silently at INFO; surface them so a long pause doesn't look like a hang.
   const info = logger.info.bind(logger);
   logger.info = (message: string, error?: Error) => {
     const m = /^Sleeping for (\d+)s on flood wait \(Caused by ([\w.]+)\)/.exec(
@@ -56,7 +55,6 @@ export function clientParams(
   testServers = !!loadConfig(() => {}).testServers,
   transport: Transport = "tcp"
 ) {
-  // Every real TelegramClient is built with these options, so this one check keeps TG_MOCK offline
   if (isMock()) {
     throw new Error(
       "This needs a real Telegram connection, which mock mode (TG_MOCK) never opens. Unset TG_MOCK to use a real account."
@@ -70,7 +68,6 @@ export function clientParams(
     baseLogger: createLogger(),
     testServers,
     floodSleepThreshold: floodWaitMax(),
-    // teleproto maps each DC to wss://<name>.web.telegram.org/apiws and picks the obfuscated framing itself
     ...(transport === "wss" ? { networkSocket: PromisedWebSockets } : {}),
   };
 }

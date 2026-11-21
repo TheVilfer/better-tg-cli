@@ -26,7 +26,6 @@ export type InstallMethod =
   | { kind: "scoop" }
   | { kind: "source"; root: string }
   | { kind: "binary"; path: string }
-  /** Placed by install.sh, which records it in install.json beside it with its SHA-256. */
   | { kind: "script"; path: string; dir: string };
 
 /**
@@ -79,13 +78,10 @@ export function detectInstall(
   let script = scriptPath;
   try {
     script = realpathSync(scriptPath);
-  } catch {
-    /* keep as given */
-  }
+  } catch {}
   if (new RegExp(`[\\\\/]node_modules[\\\\/]${PACKAGE}[\\\\/]`).test(script)) {
     return { kind: "npm" };
   }
-  // dist/telegram.mjs inside a checkout
   const root = dirname(dirname(script));
   if (existsSync(join(root, ".git"))) {
     return { kind: "source", root };
@@ -93,11 +89,6 @@ export function detectInstall(
   return { kind: "npm" };
 }
 
-/**
- * install.sh writes install.json next to the binary it places. Replacing that binary by hand
- * breaks the recorded binarySha256 and the script then refuses the path, so such an install is
- * updated by running the script again.
- */
 function installedByScript(execPath: string): InstallMethod | undefined {
   try {
     const manifest = JSON.parse(
@@ -112,7 +103,6 @@ function installedByScript(execPath: string): InstallMethod | undefined {
     const same =
       manifest.path === execPath ||
       realpathSync(manifest.path) === realpathSync(execPath);
-    // The folder as install.sh spelled it, which is what it compares install.json with
     return same
       ? { kind: "script", path: execPath, dir: dirname(manifest.path) }
       : undefined;
@@ -160,8 +150,6 @@ export function updateCommandFor(method: InstallMethod): string {
   }
 }
 
-// ---- once-a-day notice -------------------------------------------------------
-
 interface CheckCache {
   checkedAt: number;
   latest?: string;
@@ -183,9 +171,7 @@ export function writeCache(cache: CheckCache): void {
   try {
     mkdirSync(dirname(cachePath()), { recursive: true });
     writeFileSync(cachePath(), JSON.stringify(cache));
-  } catch {
-    /* the notice is best effort */
-  }
+  } catch {}
 }
 
 /** Hidden command run in a detached child: refresh the cache and exit. */
@@ -222,7 +208,6 @@ export function maybeNotifyUpdate(argv = process.argv.slice(2)): void {
   ) {
     return;
   }
-  // `plugin dev` runs against the mock account in memory and touches no profile, not even this cache
   if (
     cmd === "plugin" &&
     argv.slice(1).find((a) => !a.startsWith("-")) === "dev"
@@ -237,7 +222,6 @@ export function maybeNotifyUpdate(argv = process.argv.slice(2)): void {
     );
   }
   if (!cache || Date.now() - cache.checkedAt > CHECK_INTERVAL_MS) {
-    // Mark first so parallel runs don't all spawn a check.
     writeCache({ checkedAt: Date.now(), latest: cache?.latest });
     const args = isCompiledBinary()
       ? [BACKGROUND_CHECK_COMMAND]
@@ -249,9 +233,7 @@ export function maybeNotifyUpdate(argv = process.argv.slice(2)): void {
         windowsHide: true,
         env: { ...process.env, TG_NO_UPDATE_CHECK: "1" },
       }).unref();
-    } catch {
-      /* offline or sandboxed: skip */
-    }
+    } catch {}
   }
 }
 
@@ -290,7 +272,5 @@ export function runUpdate(method: InstallMethod): number {
       : method.kind === "scoop"
         ? ["scoop", "update", "better-tg-cli"]
         : ["npm", "install", "-g", `${PACKAGE}@latest`];
-  // npm and scoop are .cmd/.ps1 shims on Windows, which Node only starts through a shell;
-  // the arguments are constants, so the shell is safe here
   return spawnSync(bin, args, { stdio: "inherit", shell: WIN }).status ?? 1;
 }

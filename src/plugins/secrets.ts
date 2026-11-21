@@ -1,15 +1,3 @@
-/**
- * Plugin secrets (docs/plugins.md §6): values only a human enters, kept in the profile's secret
- * store under a key the core builds (profile, installation, secret name). The plugin never sees
- * one: the host puts it into a request header itself (http.ts) and strips it from the response.
- *
- * Where the values live, in this order:
- *   - a store a test injected (`pluginSecretDeps.store`), in memory;
- *   - under TG_MOCK, a 0600 file in the mock plugin home (fake values; never the real store);
- *   - under VITEST otherwise, nowhere: every call is refused, so no test can reach the Keychain,
- *     Secret Service, DPAPI or 1Password through this module;
- *   - the profile's secret store (src/secrets.ts), the one that holds the session.
- */
 import { mkdirSync } from "node:fs";
 
 import { CliError, EXIT } from "../errors.js";
@@ -26,10 +14,12 @@ import { KEY_RE } from "./manifest.js";
 import { anchor, readRegular, writeRegular } from "./safe-fs.js";
 import { pluginHome, withPluginLock } from "./store.js";
 
+/**
+ * - `get`: The value, or null when none is set. Throws when the store cannot be read.
+ * - `getAsync`: get without blocking the event loop, stopped when `signal` aborts (a request's deadline).
+ */
 export interface PluginSecretStore {
-  /** The value, or null when none is set. Throws when the store cannot be read. */
   get(key: string): string | null;
-  /** get without blocking the event loop, stopped when `signal` aborts (a request's deadline). */
   getAsync?(key: string, signal: AbortSignal): Promise<string | null>;
   set(key: string, value: string): boolean;
   delete(key: string): boolean;
@@ -89,7 +79,6 @@ const unavailable = (why: string) =>
 
 const MOCK_FILE = "plugin-secrets.json";
 
-/** The mock account's secrets: fake values in a 0600 file beside the mock plugin data. */
 const mockStore: PluginSecretStore = {
   get: (key) => {
     const all = readMock();
@@ -149,7 +138,6 @@ function readMock(): Record<string, string> {
   return out;
 }
 
-/** Under VITEST without TG_MOCK or an injected store: refused, never the real backend. */
 const testRefusal: PluginSecretStore = {
   get: () => {
     throw unavailable("tests never use the real secret store");
@@ -162,7 +150,6 @@ const testRefusal: PluginSecretStore = {
   },
 };
 
-/** The profile's secret store (src/secrets.ts). */
 const systemStore: PluginSecretStore = {
   get: (key) => {
     if (!isSecretStoreAvailable()) {

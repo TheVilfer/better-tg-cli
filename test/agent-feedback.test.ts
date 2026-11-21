@@ -9,8 +9,6 @@ import { seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
 
-// Feedback of an outside agent on 0.40.0-rc.1, run as that agent runs the CLI: a child process
-// on the mock account (nothing reaches Telegram), stdin closed, no TTY.
 const home = mkdtempSync(join(tmpdir(), "tg-agent-feedback-"));
 
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -80,8 +78,6 @@ describe('1 hint is always a string; a command to run next is an argv in "comman
 });
 
 describe("4 Saved Messages is titled so, and the account's own messages are outgoing", () => {
-  // A message saved into Saved Messages, and one the account wrote in a group from another device:
-  // Telegram may give both out=false
   const state = () =>
     worldFile((w) => {
       w.chats
@@ -137,7 +133,6 @@ describe("4 Saved Messages is titled so, and the account's own messages are outg
 });
 
 describe("5 inbox: unmuted chats first, each marked muted or not", () => {
-  // A muted supergroup with a huge counter must not push the people down
   const state = () =>
     worldFile((w) => {
       w.chats.push({
@@ -164,7 +159,6 @@ describe("5 inbox: unmuted chats first, each marked muted or not", () => {
       muted: true,
     });
     expect(json.chats[0].muted).toBe(false);
-    // Totals still count every chat
     expect(json.totalUnread).toBeGreaterThanOrEqual(900);
   }, 30_000);
 

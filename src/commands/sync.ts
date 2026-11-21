@@ -38,19 +38,12 @@ import { formatMediaLabel } from "../formatters/plain.js";
 import { assertLocalWriteAllowed } from "../guard.js";
 import ora from "../spinner.js";
 
-/** Per-chat sync checkpoints, keyed by chat ID (titles can change or collide). */
 interface SyncMeta {
   [chatId: string]: {
     title: string;
     lastMessageId: number;
     lastSyncDate: string;
-    /** --media: failed downloads per message ID, so a file that never downloads stops the chat only so often */
     mediaAttempts?: Record<string, number>;
-    /**
-     * --media: nothing of this chat was exported yet, and the first message failed. lastMessageId is
-     * then the ID just before it, so --resume retries from that message instead of the --days window
-     * (which it may have left by then); the file gets no "continues after" line.
-     */
     retryPin?: boolean;
   };
 }
@@ -77,11 +70,6 @@ function writeSyncMeta(outputDir: string, meta: SyncMeta): void {
   );
 }
 
-/**
- * The Markdown of one message. With `downloadMedia`, a media download that fails is returned as
- * `mediaError`, with a placeholder in the lines: the caller stops the chat before this message (so
- * --resume retries it), or keeps it once the download was given up.
- */
 async function formatMessageLines(
   client: TelegramClient,
   chatId: string,
@@ -106,7 +94,6 @@ async function formatMessageLines(
           chatMediaDir,
           (path) => {
             exportPath(outputDir, path);
-            // A directory at the file's place would let teleproto choose the file inside it: stop the sync
             try {
               assertDownloadTarget(path);
             } catch (error) {
@@ -124,7 +111,6 @@ async function formatMessageLines(
         if (error instanceof ExportPathError) {
           throw error;
         }
-        // The caller decides: stop before this message, or (given up) keep it with this placeholder
         lines.push(`> _[${formatMediaLabel(msg.media)}] (download failed)_`);
         mediaError = error instanceof Error ? error.message : String(error);
       }
@@ -153,11 +139,9 @@ export function selectSyncChats(
   exactOnly: boolean,
   complete = true
 ): ChatInfo[] | CliError {
-  // An empty name would match every title (and must never fall back to exporting every chat)
   if (!name.trim()) {
     return usageError("--chat needs a chat: an ID, @username or title");
   }
-  // A numeric name is an ID, never a title ("123" must not pick a chat titled 123)
   if (/^-?\d+$/.test(name.trim())) {
     const byId = all.filter((c) => c.id === name.trim());
     return byId.length > 0
@@ -183,7 +167,6 @@ export function selectSyncChats(
     .slice(0, 5)
     .map((c) => ({ id: c.id, title: c.title, type: c.bot ? "bot" : c.type }));
   const hint = "Run the command again with one of these IDs.";
-  // A @username is unique on Telegram, so one match is proven even in a cut list; a title is not
   if (matches.length === 1 && (complete || needle.startsWith("@"))) {
     return matches;
   }
@@ -236,7 +219,7 @@ export function exportPath(dir: string, path: string): string {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         break;
-      } // nothing below it exists either
+      }
       throw error;
     }
     if (link) {
@@ -254,7 +237,6 @@ export function chatFileName(chat: Pick<ChatInfo, "id" | "title">): string {
   return `${safeTitle} (${chat.id.replaceAll(/[^\w-]/g, "_")}).md`;
 }
 
-/** The header line that names the chat a Markdown file belongs to (checked by --resume). */
 const chatIdLine = (id: string) => `Chat ID: ${id}`;
 
 /** `path` itself, or a stop if it is not strictly inside `dir` (a chat title must never pick the folder). */
@@ -330,15 +312,12 @@ export const syncCommand = new Command("sync")
       const client = await getClient();
       const outputDir = options.output;
 
-      // Determine date range
       let minDate: Date | undefined;
       let maxDate: Date | undefined;
 
-      if (options.all) {
-        // No date filtering
-      } else if (options.since) {
+      if (options.since && !options.all) {
         minDate = parseTimeOffset(options.since);
-      } else {
+      } else if (!options.all) {
         minDate = new Date();
         minDate.setDate(minDate.getDate() - options.days);
       }
@@ -348,13 +327,10 @@ export const syncCommand = new Command("sync")
       }
 
       let chats;
-      // Present but empty is a mistake to stop at, never "every chat"
       if (options.chat === undefined) {
-        // Sync all chats with recent activity
         chats = await getDialogs(client, 100);
       } else {
         const overMcp = !!process.env.TG_MCP;
-        // As for any title: a full page is read on, and past DIALOG_MAX a title is not proven unique
         let dialogs = await getDialogs(client, DIALOG_PAGE);
         if (dialogs.length >= DIALOG_PAGE) {
           dialogs = await getDialogs(client, DIALOG_MAX);
@@ -374,17 +350,14 @@ export const syncCommand = new Command("sync")
       if (!existsSync(outputDir)) {
         mkdirSync(outputDir, { recursive: true });
       }
-      // Before any file is written: the checkpoints must not be a link out of the folder
       exportPath(outputDir, join(outputDir, ".sync-meta.json"));
 
-      // Checkpoints are always written, but only read with --resume
       const meta = readSyncMeta(outputDir);
 
       spinner.text = `Syncing ${chats.length} chats...`;
 
       let synced = 0;
       let newMessages = 0;
-      // What happened to each chat: the agent needs the file path and whether anything was new
       const report: {
         chatId: string;
         title: string;
@@ -408,17 +381,11 @@ export const syncCommand = new Command("sync")
             outputDir,
             join(outputDir, chatFileName(chat))
           );
-          // By chat ID: a title such as ".." would otherwise put the media outside outputDir
           const chatMediaDir = exportPath(
             outputDir,
             join(outputDir, "media", chat.id.replaceAll(/[^\w-]/g, "_"))
           );
 
-          // Incremental sync. A known checkpoint always bounds the fetch from below, so the gap
-          // since the last run is fetched in full even when it goes to a new file (an export made
-          // before the file name carried the chat ID, or a file at this name that names another
-          // chat, which is then replaced). Appending is a separate question: only to a file whose
-          // header names this chat.
           const existing =
             options.resume && existsSync(filePath)
               ? readFileSync(filePath, "utf-8")
@@ -428,7 +395,6 @@ export const syncCommand = new Command("sync")
             existing.split("\n", 8).includes(chatIdLine(chat.id));
           const checkpoint = options.resume ? meta[chat.id] : undefined;
           const pinned = !!checkpoint?.retryPin;
-          // A retry pin bounds the fetch even at 0 (the failed message was #1)
           const minId =
             checkpoint && (checkpoint.lastMessageId > 0 || pinned)
               ? checkpoint.lastMessageId
@@ -458,15 +424,8 @@ export const syncCommand = new Command("sync")
             continue;
           }
 
-          // By ID, never by date: two messages in the same second must not swap, or a failure on the
-          // earlier one would leave the checkpoint past it. IDs in a chat only grow, so this is also
-          // chronological.
           messages.sort((a, b) => a.id - b.id);
 
-          // With --media, the chat stops before the first message whose media could not be
-          // downloaded: the file and the checkpoint end before it, so --resume tries it again
-          // After MEDIA_ATTEMPTS failed runs the file is given up, so one that never downloads
-          // (deleted, expired) cannot hold the chat back for good
           const body: string[] = [];
           const kept: MessageInfo[] = [];
           const attempts = { ...meta[chat.id]?.mediaAttempts };
@@ -512,7 +471,6 @@ export const syncCommand = new Command("sync")
           if (kept.length > 0) {
             let content: string;
             if (append && minId !== undefined && !pinned) {
-              // Append new messages to the existing file
               content = `${readFileSync(filePath, "utf-8").trimEnd()}\n\n${body.join("\n")}`;
             } else {
               const header: string[] = [
@@ -524,7 +482,6 @@ export const syncCommand = new Command("sync")
                 header.push(`Username: @${chat.username}`);
               }
               header.push(`\nSynced: ${new Date().toISOString()}`);
-              // Resumed into a new file: the earlier messages are in a previous export
               if (minId !== undefined && !pinned) {
                 header.push(
                   `Continues after message #${minId} (earlier messages are in a previous export)`
@@ -553,8 +510,6 @@ export const syncCommand = new Command("sync")
               lastId: meta[chat.id].lastMessageId,
             });
           } else if (failures.length) {
-            // Nothing kept: only the attempt count changes, the checkpoint stays where it was. With no
-            // checkpoint yet, one is pinned just before the failed message, so --resume starts there.
             const prev = meta[chat.id];
             if (prev && prev.lastMessageId > 0 && !prev.retryPin) {
               const { mediaAttempts: _old, ...rest } = prev;
@@ -593,7 +548,6 @@ export const syncCommand = new Command("sync")
           if (error instanceof ExportPathError) {
             throw error;
           }
-          // Go on with the other chats, but never call a partial export a success
           const { code, message } = errorDetails(error);
           failed.push({
             chatId: chat.id,

@@ -99,7 +99,6 @@ export function describeEntry(
           },
         }
       : {}),
-    // argv runs the command; its input (a JSON object matching `input`) goes after --input
     commands: (m.commands ?? []).map((c) => ({
       name: c.name,
       description: c.description,

@@ -73,7 +73,6 @@ export async function applyModeChoice(
           modeQuestion(choice.mode, choice.forSeconds)
         );
       } catch {
-        // The dialog could not be shown at all (dialog_failed): that is not the person's No
         return { ok: false, error: "needs_terminal" };
       }
       if (!yes) {
@@ -83,8 +82,6 @@ export async function applyModeChoice(
       return { ok: false, error: "needs_terminal" };
     }
   }
-  // The end is fixed after any dialog above and reported as written, so the caller can compare it
-  // with what the store holds afterwards
   const value = encodeWriteState(choice.forSeconds, Date.now(), choice.mode);
   if (!setWriteValue(value)) {
     return { ok: false, error: "store_failed" };

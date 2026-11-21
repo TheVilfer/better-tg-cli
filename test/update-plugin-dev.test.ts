@@ -3,7 +3,6 @@ import { dirname } from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-// A temp profile before any module under test: the update cache lands there, never in a real one
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -21,7 +20,6 @@ const env = await vi.hoisted(async () => {
   return { root };
 });
 
-// The background check is never started for real (it would reach the npm registry)
 const spawned = vi.hoisted(() => [] as string[][]);
 vi.mock(import("node:child_process"), async (importOriginal) => {
   const real = await importOriginal<typeof import("node:child_process")>();
@@ -60,7 +58,6 @@ describe("update check: plugin dev touches no profile (#9)", () => {
       expect(existsSync(cachePath())).toBe(false);
       expect(existsSync(dirname(cachePath()))).toBe(false);
       expect(spawned).toEqual([]);
-      // A fresh cache with a newer version: plugin dev says nothing, another command does
       mkdirSync(dirname(cachePath()), { recursive: true });
       writeFileSync(
         cachePath(),
@@ -70,7 +67,6 @@ describe("update check: plugin dev touches no profile (#9)", () => {
       expect(written.join("")).toBe("");
       maybeNotifyUpdate(["plugin", "list"]);
       expect(written.join("")).toContain("999.0.0");
-      // The forced branch is real: with no cache another command marks it and starts the check
       rmSync(cachePath());
       maybeNotifyUpdate(["chats"]);
       expect(existsSync(cachePath())).toBe(true);

@@ -2,11 +2,6 @@ import apiDefinitions from "teleproto/tl/generated/api-definitions.js";
 
 import { apiMarker } from "./approval-action.js";
 
-/**
- * TL parameter types teleproto resolves from a bare string on invoke (`"peer": "@name"`): left as
- * strings, they would be resolved after the approval, so a username that moved to another account in
- * between would get the write.
- */
 const PEER_TYPES = new Set([
   "InputPeer",
   "InputUser",
@@ -42,10 +37,6 @@ for (const d of apiDefinitions as unknown as Def[]) {
   byResult.set(d.result, [...(byResult.get(d.result) ?? []), d]);
 }
 
-/**
- * The constructor teleproto builds a plain params object into: by its `_` tag, or, when the tag is
- * missing or empty (teleproto tests it for truth, not for presence), the only constructor of its type.
- */
 function constructorOf(
   obj: Record<string, unknown>,
   type: string | null
@@ -68,7 +59,6 @@ function bindFields(fields: Record<string, unknown>, def: Def): void {
       }
       if (v && typeof v === "object" && !Array.isArray(v)) {
         const obj = v as Record<string, unknown>;
-        // A marker ({_chat}, {_base64}…) stays as is; a nested constructor is walked by its own schema
         if (!apiMarker(obj)) {
           const inner = constructorOf(obj, arg.type);
           if (inner) {

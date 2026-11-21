@@ -1,12 +1,3 @@
-/**
- * Which backend answers a plugin's `http.fetch` (http.ts):
- *   - a backend a test injected (`httpDeps.backend`);
- *   - `plugin dev --mock`: the plugin folder's `dev/fixtures/*.json`;
- *   - TG_MOCK: `mock-http/*.json` in the mock plugin home (nothing reaches the network, as nothing
- *     reaches Telegram);
- *   - VITEST otherwise: refused (no test opens a socket by accident);
- *   - the network: resolve once, check the IP, connect to it (systemNet).
- */
 import { CliError, EXIT } from "../errors.js";
 import { isMock } from "../paths.js";
 import {

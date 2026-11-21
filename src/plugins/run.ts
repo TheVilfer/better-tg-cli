@@ -1,10 +1,4 @@
 import { randomBytes } from "node:crypto";
-/**
- * `plugin run` and `plugin dev` (docs/plugins.md §4, §8): one command of a plugin in the sandbox,
- * its input and output checked by the manifest's schemas, and the output envelope
- * `{data, proposals}` built by the host. The installed snapshot is read once (verified against the
- * lock) and those bytes run; `plugin dev` runs a folder against the mock account in memory.
- */
 import {
   closeSync,
   constants,
@@ -45,7 +39,6 @@ import type { SandboxLimits } from "./sandbox-types.js";
 /** Test seam (in-process tests only): shorter limits. */
 export const runDeps: { limits?: Partial<SandboxLimits> } = {};
 
-/** Time a schema check of plugin input or output may take. */
 const SCHEMA_MS = 2000;
 
 /** What `plugin run` prints: the plugin's result as `data`, and only what the host built as `proposals`. */
@@ -54,9 +47,11 @@ export interface Envelope {
   proposals: Proposal[];
 }
 
+/**
+ * - `json`: The envelope as JSON, `null` kept (never formatJson, which drops it).
+ */
 export interface RunOutcome {
   envelope: Envelope;
-  /** The envelope as JSON, `null` kept (never formatJson, which drops it). */
   json: string;
   calls: string[];
 }
@@ -100,7 +95,6 @@ const issuesText = (issues: SchemaIssue[]) =>
     .map((i) => `${i.path || "/"} ${i.message}`)
     .join("; ");
 
-/** The plugin's value against the command's schema; time-bounded, never a regular expression (manifest rule). */
 function schemaIssues(
   schema: Record<string, unknown>,
   value: unknown
@@ -116,7 +110,6 @@ function schemaIssues(
         { fields: { limit: "schema" } }
       );
     }
-    // A schema this version refuses (a $ref outside the subschema positions, a $ref cycle)
     if (error instanceof UnsupportedSchemaError) {
       throw new CliError(
         `The command's schema cannot be used: ${error.message}`,
@@ -162,7 +155,6 @@ export function parseTarget(
     );
   }
   const [, chat, msg, topic] = m;
-  // A message, topic or thread ID is a positive 32-bit integer: 0 would read as "no root" (the whole chat)
   const id = Number(topic ?? msg);
   if (!isMessageId(id)) {
     throw usageError(
@@ -180,6 +172,12 @@ export function parseTarget(
   return { chat, msgId: id, thread };
 }
 
+/**
+ * - `account`: Fetched on first use (storage, messages.mine), inside the run's deadline.
+ * - `mcp`: Over MCP: the output and proposal texts get maskForModel (`echo`).
+ * - `network`: `http.fetch` of a command with the `network` effect: the backend and the secrets.
+ * - `settings`: Stored settings of the installation.
+ */
 export interface RunRequest {
   manifest: Manifest;
   command: PluginCommand;
@@ -187,18 +185,14 @@ export interface RunRequest {
   filename: string;
   input: unknown;
   client: () => Promise<TelegramClient>;
-  /** Fetched on first use (storage, messages.mine), inside the run's deadline. */
   account: () => Promise<string>;
   storage: () => Promise<StorageBackend>;
   cursors: CursorStore;
   installId: string;
   target?: Target;
-  /** Over MCP: the output and proposal texts get maskForModel (`echo`). */
   mcp: boolean;
   log?: (line: string) => void;
-  /** `http.fetch` of a command with the `network` effect: the backend and the secrets. */
   network?: NetworkContext;
-  /** Stored settings of the installation. */
   settings?: () => Record<string, unknown>;
   signal?: AbortSignal;
   cancelled?: () => boolean;
@@ -233,7 +227,6 @@ async function runWith(
   state: HostState
 ): Promise<RunOutcome> {
   const limits = { ...DEFAULT_LIMITS, ...runDeps.limits };
-  // One deadline for the sandbox and for the host's own waits (the store's lock, the write)
   const deadline = Date.now() + limits.timeoutMs;
   const ctx: HostContext = {
     manifest: req.manifest,
@@ -252,7 +245,6 @@ async function runWith(
     settings: req.settings,
   };
   const api = grantedApi(ctx, state);
-  // Loaded on demand: a CLI call that runs no plugin never instantiates the engine
   const { runInSandbox } = await import("./runtime.js");
   let json: string;
   try {
@@ -285,7 +277,6 @@ async function runWith(
         EXIT.ERROR
       );
     }
-    // A FLOOD_WAIT the command passed on: the host's own record of it (never what the plugin wrote)
     if (error.guestCode === "flood_wait" && state.flood) {
       throw new CliError(
         `Telegram rate limit: retry after ${state.flood.retryAfterSeconds} s`,
@@ -298,7 +289,6 @@ async function runWith(
         }
       );
     }
-    // A secret the request needed is not set: the human sets it in their own terminal
     if (error.guestCode === "secret_missing" && state.secretMissing) {
       const { name, command } = state.secretMissing;
       throw new CliError(

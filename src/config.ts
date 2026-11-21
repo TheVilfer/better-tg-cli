@@ -12,17 +12,19 @@ import {
   secretSet,
 } from "./secrets.js";
 
+/**
+ * - `credentialSource`: 'invite': api credentials came from the broker; api_hash is deliberately not stored.
+ * - `testServers`: Session lives on Telegram's test DCs (`telegram auth --test-dc`).
+ * - `transport`: How to reach Telegram: saved as "wss" when TCP is blocked (see src/transport.ts).
+ */
 export interface TgConfig {
   apiId?: number;
   apiHash?: string;
   sessionString?: string;
   defaultFormat?: "plain" | "json" | "markdown";
   opVault?: string;
-  /** 'invite': api credentials came from the broker; api_hash is deliberately not stored. */
   credentialSource?: "own" | "invite";
-  /** Session lives on Telegram's test DCs (`telegram auth --test-dc`). */
   testServers?: boolean;
-  /** How to reach Telegram: saved as "wss" when TCP is blocked (see src/transport.ts). */
   transport?: "tcp" | "wss";
 }
 
@@ -30,16 +32,14 @@ const DEFAULT_CONFIG: TgConfig = {
   defaultFormat: "plain",
 };
 
-// Cache loaded config to avoid repeated file I/O
 let cachedConfig: TgConfig | null = null;
-/** Per loaded snapshot: where each secret came from and which file copies differ from the store. */
 interface SecretsInfo {
   conflicts: string[];
   sources: Partial<Record<SecretKey, "store" | "file">>;
 }
 const secretsInfo = new WeakMap<TgConfig, SecretsInfo>();
 let cachedConfigTime = 0;
-const CONFIG_CACHE_TTL_MS = 1000; // 1 second cache
+const CONFIG_CACHE_TTL_MS = 1000;
 
 function getGlobalConfigPath(): string {
   return configFile("config.json5");
@@ -60,7 +60,6 @@ function readConfigFile(
     const raw = readFileSync(path, "utf-8");
     const parsed = parseConfigText(raw);
 
-    // Validate that parsed result is a plain object
     if (!isPlainObject(parsed)) {
       warn(`Config at ${path} must be an object, got ${typeof parsed}`);
       return {};
@@ -78,7 +77,6 @@ function readConfigFile(
 export function loadConfig(
   warn: (message: string) => void = console.warn
 ): TgConfig {
-  // Return cached config if still valid
   const now = Date.now();
   if (cachedConfig && now - cachedConfigTime < CONFIG_CACHE_TTL_MS) {
     return cachedConfig;
@@ -87,8 +85,6 @@ export function loadConfig(
   const globalPath = getGlobalConfigPath();
   const fileConfig = readConfigFile(globalPath, warn);
 
-  // File values + the stored secrets, which win. writeEnabled is never taken from the file: the
-  // write mode lives in the store (write-store.ts).
   const config: TgConfig = {
     ...DEFAULT_CONFIG,
     ...fileConfig,
@@ -102,16 +98,9 @@ export function loadConfig(
   return cachedConfig;
 }
 
-/** The secrets of a config: the store holds them, config.json5 may hold an older copy. */
 const CONFIG_SECRETS = ["apiHash", "sessionString"] as const;
 type SecretKey = (typeof CONFIG_SECRETS)[number];
 
-/**
- * How every command, read or write, gets the session and api_hash: one strict store read per key.
- * Stored → that value; missing → the file copy, if any; a failed read (locked Keychain, 1Password
- * offline) throws, so no command connects with a file copy that may be another account. Writes
- * nothing. Returns where each secret came from and which file copies differ (for `telegram check`).
- */
 function resolveSecrets(
   config: TgConfig,
   fileConfig: Partial<TgConfig>
@@ -172,12 +161,10 @@ export function saveConfig(config: Partial<TgConfig>): void {
   const path = getGlobalConfigPath();
   const dir = dirname(path);
 
-  // Create directory with restrictive permissions (owner only)
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
-  // Route secrets to secret store when available
   const fileData: Partial<TgConfig> = {};
   const removed = new Set<string>();
   for (const [key, value] of Object.entries(config)) {
@@ -189,7 +176,6 @@ export function saveConfig(config: Partial<TgConfig>): void {
       typeof value === "string"
     ) {
       if (!secretSet(key, value)) {
-        // Secret store write failed — fall back to file storage
         (fileData as Record<string, unknown>)[key] = value;
       }
     } else {
@@ -197,7 +183,6 @@ export function saveConfig(config: Partial<TgConfig>): void {
     }
   }
 
-  // Load existing config and merge, with proper error handling
   let existing: Partial<TgConfig> = {};
   if (existsSync(path)) {
     try {
@@ -207,15 +192,12 @@ export function saveConfig(config: Partial<TgConfig>): void {
         existing = parsed as Partial<TgConfig>;
       }
     } catch (error) {
-      // Log but don't fail - we'll overwrite with new config
       console.warn(
         `Warning: Could not read existing config, will be overwritten: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
 
-  // Drop the file copy of a secret this call saves to the store, and only that one: an old profile's
-  // file copy may be its only copy, so saving an unrelated setting (transport, testServers) keeps it.
   if (isSecretStoreAvailable()) {
     for (const key of Object.keys(existing)) {
       if (isSecretKey(key) && key in config && !(key in fileData)) {
@@ -230,10 +212,8 @@ export function saveConfig(config: Partial<TgConfig>): void {
   const merged = { ...existing, ...fileData };
   const content = stringifyConfig(merged);
 
-  // Write with restrictive permissions (owner read/write only)
   writeFileSync(path, content, { encoding: "utf-8", mode: 0o600 });
 
-  // Invalidate cache
   cachedConfig = null;
 }
 
@@ -260,7 +240,6 @@ export function setInviteCredentials(apiId: number): void {
   if (isSecretStoreAvailable()) {
     secretDelete("apiHash");
   }
-  // One write: the new source and the dropped file api_hash never exist apart
   saveConfig({ apiId, credentialSource: "invite", apiHash: undefined });
 }
 
@@ -305,10 +284,8 @@ export function freshSessionString(): string | undefined {
 }
 
 export function clearSessionString(): void {
-  // Delete from secret store
   secretDelete("sessionString");
 
-  // Delete from file
   const path = getGlobalConfigPath();
   if (existsSync(path)) {
     try {
@@ -321,11 +298,8 @@ export function clearSessionString(): void {
           mode: 0o600,
         });
       }
-    } catch {
-      // If we can't parse, nothing to clear
-    }
+    } catch {}
   }
 
-  // Invalidate cache
   cachedConfig = null;
 }

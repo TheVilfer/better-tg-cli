@@ -5,14 +5,11 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-// @ts-expect-error plain .mjs build helpers
 import { noNativeAddon } from "../scripts/cifrante-no-native.mjs";
-// @ts-expect-error plain .mjs build helpers
 import {
   compactErrorsSource,
   originalErrorsPath,
 } from "../scripts/errors-compact.mjs";
-// @ts-expect-error plain .mjs build helpers
 import {
   compactModuleSource,
   loadOriginalDefinitions,
@@ -31,14 +28,12 @@ describe("bundle shrinking keeps teleproto behaviour identical", () => {
     const original = loadOriginalDefinitions();
     const source = compactModuleSource(original);
     const decoded = evalCjs(source);
-    // Byte-identical JSON also proves key order (argsConfig order drives serialization)
     expect(JSON.stringify(decoded)).toBe(JSON.stringify(original));
     expect(source.length).toBeLessThan(JSON.stringify(original).length / 4);
   });
 
   it("RPC errors: every generated class matches the original class", () => {
     const originalPath = originalErrorsPath();
-    // Evaluate the compact module next to the original so its relative requires resolve
     const dir = mkdtempSync(join(tmpdir(), "tg-errors-"));
     const compactPath = join(
       dirname(originalPath),
@@ -91,14 +86,13 @@ describe("the bundles never look up cifrante's native addon", () => {
     const patched = noNativeAddon(source, originalPath);
     expect(patched).not.toContain("CIFRANTE_NATIVE");
     expect(patched.split("\n")).toHaveLength(source.split("\n").length);
-    // Next to the original, so its own requires resolve the same way
     const patchedPath = join(
       dirname(originalPath),
       `__nonative_${process.pid}.cjs`
     );
     try {
       writeFileSync(patchedPath, patched);
-      process.env.CIFRANTE_NATIVE = "0"; // the original then skips the addon too
+      process.env.CIFRANTE_NATIVE = "0";
       const A = require(originalPath);
       const B = require(patchedPath);
       const bytes = (n: number, seed: number) =>

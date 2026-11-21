@@ -11,10 +11,7 @@ import { join, relative } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// An in-memory Keychain under the real secrets.ts, so the real secret resolution runs and the real
-// Keychain is never touched; 1Password, Secret Service and DPAPI are off.
 const store = vi.hoisted(() => new Map<string, string>());
-// Keys whose next strict read fails once (a locked Keychain, 1Password offline)
 const failNextRead = vi.hoisted(() => new Set<string>());
 vi.mock(import("../src/keychain.js"), async (orig) => ({
   ...(await orig<typeof import("../src/keychain.js")>()),
@@ -51,12 +48,10 @@ vi.mock(import("../src/dpapi.js"), () => ({
 }));
 
 const saved = { ...process.env };
-// A home of its own for each test: the profile dir lives under it, and only it is deleted
 let root: string | undefined;
 let dir: string;
 let file: string;
 
-/** Fresh modules for each test (config.ts caches the loaded config for a second). */
 async function modules() {
   vi.resetModules();
   return {
@@ -79,7 +74,6 @@ beforeEach(async () => {
   process.env.HOME = root;
   process.env.USERPROFILE = root;
   process.env.APPDATA = join(root, "AppData");
-  // A profile of its own also keeps any store access the mock misses off the real Keychain items
   process.env.TG_PROFILE = "test-rocfg";
   const { paths } = await modules();
   dir = paths.configDir();
@@ -93,7 +87,6 @@ beforeEach(async () => {
   failNextRead.clear();
 });
 afterEach(() => {
-  // In place: a replaced process.env is a plain object that os.homedir() no longer reads
   for (const k of Object.keys(process.env)) {
     if (!(k in saved)) {
       delete process.env[k];
@@ -106,7 +99,6 @@ afterEach(() => {
   root = undefined;
 });
 
-// An old profile: secrets still in the file, and a stray writeEnabled that must never become the mode
 const OLD =
   '{"apiId": 1, "apiHash": "file-hash", "sessionString": "file-session", "writeEnabled": "true"}';
 
@@ -165,8 +157,6 @@ describe("the write mode is never taken from the config file", () => {
   });
 });
 
-// A read and the write after it must use the same account: one strict store read per key; stored
-// wins, missing falls back to the file, a failed read stops. Nothing is written on load.
 describe("whoami → write resolve the same account", () => {
   const B =
     '{"apiId": 1, "apiHash": "file-hash", "sessionString": "session-B"}';
@@ -177,23 +167,19 @@ describe("whoami → write resolve the same account", () => {
     store.set("sessionString", "session-A");
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    // whoami through telegram_read
     process.env.TG_READ_ONLY = "1";
     let { config } = await modules();
     expect(config.getSessionString()).toBe("session-A");
     expect(config.getCredentials().apiHash).toBe("store-hash");
 
-    // the next write (telegram_write, its own process)
     delete process.env.TG_READ_ONLY;
     ({ config } = await modules());
     expect(config.isConfigured()).toBe(true);
     expect(config.getSessionString()).toBe("session-A");
     expect(config.getCredentials().apiHash).toBe("store-hash");
-    // the conflict is only reported by `telegram check`, never printed on load
     expect(config.secretFileConflicts()).toEqual(["apiHash", "sessionString"]);
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
-    // nothing changed anywhere
     expect(readFileSync(file, "utf-8")).toBe(B);
     expect(store.get("sessionString")).toBe("session-A");
     expect(store.get("apiHash")).toBe("store-hash");
@@ -235,7 +221,6 @@ describe("whoami → write resolve the same account", () => {
         /Could not read sessionString from the secret store \(macOS Keychain read failed.*nothing was used or changed/s
       );
       expect(String(error)).not.toMatch(/session-[AB]|hash/);
-      // nothing was cached from the failed load: the next call reads the store again and gets A
       expect(config.getSessionString()).toBe("session-A");
     }
     expect(store.get("sessionString")).toBe("session-A");
@@ -294,7 +279,7 @@ describe("whoami → write resolve the same account", () => {
     const text = readFileSync(file, "utf-8");
     expect(text).toMatch(/transport.*wss/);
     expect(text).toMatch(/session-B/);
-    expect(text).toMatch(/file-hash/); // a file-only api_hash: its only copy
+    expect(text).toMatch(/file-hash/);
     expect(store.get("sessionString")).toBe("session-A");
   });
 
@@ -367,7 +352,6 @@ describe("whoami → write resolve the same account", () => {
         /^Authentication failed: Could not read sessionString/
       );
 
-      // onboard without --json: the plain message on stderr, nothing on stdout
       out.length = 0;
       err.length = 0;
       failNextRead.add("sessionString");
@@ -388,8 +372,6 @@ describe("whoami → write resolve the same account", () => {
   });
 });
 
-// getClient() and `telegram check` take everything from one loaded snapshot, so a store that fails
-// after the 1 s cache expired cannot break a connection it already gave credentials for.
 describe("one snapshot per connection", () => {
   const later = (ms: number) => {
     const now = Date.now();
@@ -429,7 +411,6 @@ describe("one snapshot per connection", () => {
         options: { setting?: string }
       ) => {
         seen.setting = options.setting;
-        // The cache has expired and the store fails now: a second loadConfig() here would throw
         later(5000);
         failNextRead.add("sessionString");
         return make("wss");
@@ -442,7 +423,7 @@ describe("one snapshot per connection", () => {
       expect(built).toHaveLength(1);
       expect((built[0][0] as { s: string }).s).toBe("session-A");
       expect(built[0][3]).toEqual({ testServers: true, t: "wss" });
-      expect(failNextRead.has("sessionString")).toBe(true); // nobody read the store again
+      expect(failNextRead.has("sessionString")).toBe(true);
     } finally {
       for (const m of [
         "teleproto",
@@ -504,7 +485,7 @@ describe("one snapshot per connection", () => {
       /Session stored in: config\.json5 \(plaintext file, used as is/
     );
     expect(r.out).not.toMatch(/Keychain/);
-    expect(r.out).toMatch(/Servers: TEST/); // from the snapshot, after the store started failing
+    expect(r.out).toMatch(/Servers: TEST/);
     expect((given as { sessionString: string }).sessionString).toBe(
       "session-B"
     );

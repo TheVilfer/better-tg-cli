@@ -82,9 +82,7 @@ export const watchCommand = new Command("watch")
             } else if (s instanceof Api.Channel || s instanceof Api.Chat) {
               sender = s.title;
             }
-          } catch {
-            // ignore
-          }
+          } catch {}
 
           const stats = full ? buildMessageFull(msg) : undefined;
           if (options.json) {

@@ -56,6 +56,8 @@ See `DEVELOPMENT.md`. The short version:
 - `TG_MOCK=1 scripts/tg-dev <args>` runs against a fake account (`src/mock/`): no login, no
   write-access step, nothing reaches Telegram. Prefer it for anything that does not need real data.
 - Never add a watch mode that writes `dist/`, because the installed `telegram` runs it live.
+- No comments in code files: the why goes into names, a JSDoc on an export or `docs/internals.md`
+  (exceptions in `AGENTS.md`). Run `npm run fix` and `npm run lint` before a PR.
 - All state paths go through `src/paths.ts`, and every TelegramClient is built with `clientParams()`
   from `src/client-options.ts` (stderr logger, `TG_LOG_LEVEL`, the profile's `testServers`).
 

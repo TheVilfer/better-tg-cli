@@ -1,6 +1,3 @@
-// Packs dist/telegram.mjs as a Claude Desktop extension (MCP Bundle, https://github.com/modelcontextprotocol/mcpb):
-//   node scripts/mcpb.mjs [outfile]   (default release/better-tg-cli.mcpb; run `npm run build` first)
-// Claude Desktop runs it on its built-in Node, so users need no Node, npm or brew.
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,

@@ -18,23 +18,22 @@ import { configFile, isMock } from "./paths.js";
  *
  * Only what names a chat is kept: ID, title, @username, type and the access hash Telegram needs to
  * fetch that one chat again. Never a message, a preview or a counter.
+ *
+ * - `id`: Peer ID as `chats` prints it: user ID, -chatId, -100channelId
+ * - `accessHash`: What Telegram needs to fetch a user or channel by ID (none for a basic group)
  */
 export interface CachedChat {
-  /** Peer ID as `chats` prints it: user ID, -chatId, -100channelId */
   id: string;
   title: string;
   username?: string;
   type: "user" | "bot" | "group" | "supergroup" | "channel";
-  /** What Telegram needs to fetch a user or channel by ID (none for a basic group) */
   accessHash?: string;
 }
 
 interface DialogCacheFile {
   v: 1;
-  /** A hash of the session this list came from: another login never reads it */
   account: string;
   savedAt: number;
-  /** The whole dialog list (not cut at the read limit): a title found once is the only one */
   complete: boolean;
   chats: CachedChat[];
 }
@@ -143,7 +142,6 @@ export function writeDialogCache(
       account,
       savedAt: now,
       complete,
-      // Field by field: nothing else of a dialog ever reaches the file
       chats: chats.map((c) => ({
         id: c.id,
         title: c.title,
@@ -157,9 +155,7 @@ export function writeDialogCache(
   } catch {
     try {
       rmSync(tmp, { force: true });
-    } catch {
-      /* nothing to clean */
-    }
+    } catch {}
   }
 }
 
@@ -167,7 +163,5 @@ export function writeDialogCache(
 export function clearDialogCache(): void {
   try {
     rmSync(dialogCachePath(), { force: true });
-  } catch {
-    // nothing to remove
-  }
+  } catch {}
 }

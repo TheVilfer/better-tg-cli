@@ -58,10 +58,8 @@ export const writeAccessCommand = new Command("write-access")
           )
         );
       }
-      // --json: the status after the command, on stdout as one line; the human text goes to stderr
       const out = options.json ? console.error : console.log;
       if (action === "ask") {
-        // No dialog: in "ask" every write waits for the user's yes in the chat, which is the confirmation
         const result = await applyModeChoice({
           mode: "ask",
           forSeconds: options.for ? parseForDuration(options.for) : undefined,
@@ -84,7 +82,6 @@ export const writeAccessCommand = new Command("write-access")
           : undefined;
         let result;
         if (hasHumanChannel()) {
-          // A dialog that could not be shown throws dialog_failed (not a No)
           const yes = await confirmByHuman(
             modeQuestion(action, forSeconds)
           ).catch((error: unknown) => fail(error));
@@ -145,7 +142,6 @@ export const writeAccessCommand = new Command("write-access")
     }
   );
 
-/** The mode could not be changed: one error (JSON with --json), exit 1. */
 function unchanged(reason: string): never {
   fail(
     new CliError(
@@ -156,11 +152,6 @@ function unchanged(reason: string): never {
   );
 }
 
-/**
- * No terminal, no dialog, no secret store (a cloud agent computer): the person picks the mode on a
- * local page, like the last step of `telegram onboard`. The agent passes the URL on; the page waits
- * up to 10 minutes and changes nothing if nobody picks.
- */
 async function chooseOnPage(
   open: boolean,
   print: (line: string) => void = console.log
@@ -192,7 +183,7 @@ async function chooseOnPage(
     currentMode: savedMode,
   });
   const result = await session.done;
-  await new Promise((r) => setTimeout(r, 2500)); // let the page show "saved" before the server goes
+  await new Promise((r) => setTimeout(r, 2500));
   session.close();
   return result.mode
     ? picked

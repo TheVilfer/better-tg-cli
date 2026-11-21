@@ -49,7 +49,6 @@ export const chatsCommand = new Command("chats")
       const { limit } = options;
       const filtering =
         options.type || options.query || options.unread || options.unmuted;
-      // Filters apply after fetching, so scan a wider window when filtering
       let chats = await getDialogs(
         client,
         filtering ? Math.max(limit, 500) : limit,

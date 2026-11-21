@@ -24,25 +24,13 @@ export const LOGIN_CODE_HIDDEN = "[login code hidden]";
 
 export type MaskLevel = "chat" | "echo" | "service";
 
-/**
- * A gift slug as a client writes it: slug characters (`[A-Za-z0-9_-]`, percent-encoding `%53` too).
- * It ends at the first other character, so punctuation and whatever follows it
- * ("…/SAMPLE_ONLY,thanks") stay. One class, one pass, nothing given back.
- */
 const SLUG = "[A-Za-z0-9_%-]+";
 
-/**
- * A gift link up to its code: the slug after `/giftcode/`, or the query of `tg://giftcode?` (its
- * `slug=` value is hidden by SLUG_PARAM). The query ends at whitespace, a quote, a bracket, a
- * backslash (JSON escapes) or `|`. The host is t.me, telegram.me or telegram.dog (with an optional
- * `www.`) as a whole name: no host character before it, so `support.me` or `shop.t.me` is not one.
- */
 const GIFT_LINK = new RegExp(
   String.raw`((?<![A-Za-z0-9_.-])(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog))\/giftcode\/)(${SLUG})|(tg:(?:\/\/)?giftcode\/?\?)([^\s"'<>()[\]{}\\|]*)`,
   "gi"
 );
 
-/** A `slug` parameter in a query (`&amp;` of HTML too): its value as SLUG reads it. */
 const SLUG_PARAM = new RegExp(String.raw`(^|[?&;])(slug=)(${SLUG})`, "gi");
 
 /** Text with the code of every gift link replaced (the whole slug, percent-encoding included). */
@@ -67,24 +55,11 @@ export function maskGiftCodes(text: string): string {
 const DASHES = "\\-\u2010\u2011\u2012\u2013\u2014\u2015\u2212";
 const SEPARATORS = ":\uFF1A\uFE55\uA789\u2236";
 
-/**
- * Between the colon and the code: whitespace, the "| " of an approval description, or whitespace
- * already escaped by someone else (`\n`, `\u{a}`, `\u000a`, `\x0a`, a JSON-quoted `\\n`), as in an
- * error that quotes an argument. Each alternative starts with a different character: no rescans.
- */
 const GAP = String.raw`(?:[\s|]|\\+(?:[nrtv]|u\{[0-9A-Fa-f]{1,6}\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}))*`;
 
-/**
- * Russian puts the rest of the label after "код" (`Код для входа в Telegram:`, `Код подтверждения:`).
- */
 const RU_LABEL_WORDS =
   "(?:[ \\t\\u00a0]+(?:для|входа|вход|в|telegram|подтверждения|авторизации)){0,4}";
 
-/**
- * The words that may stand right before "code"/"код" in a login-code label ("Your login code:",
- * "Telegram verification code:", "Ваш код:"). Any other word there makes it no label: "Promo code:",
- * "exit code:" stay. No word at all ("Code:", "| Code:") is a label too.
- */
 const LABEL_WORDS =
   "(?:login|log-in|sign-in|verification|confirmation|auth|authentication|authorization|security|access|telegram|your|ваш|твой|проверочный)";
 const SPACE = "[ \\t\\u00a0]";
@@ -103,8 +78,6 @@ const LABEL_LEAD = `(?<=(?:^|[^\\p{L}\\p{N}_ \\t\\u00a0-])${SPACE}*|(?<![\\p{L}\
  * URL scheme there ("code: tg://…") is not a code. The $1 group is the lead-in.
  */
 export const LOGIN_CODE_PHRASE = new RegExp(
-  // The lookahead first: it fails at once where no "code"/"код" starts, so the lookbehind (which
-  // walks back over spaces) runs only there, not at every position of a long run of spaces
   `((?=code|код)${LABEL_LEAD}(?:code|код${RU_LABEL_WORDS})${SPACE}*[${SEPARATORS}]${GAP})` +
     `(?![A-Za-z0-9_]*:\\/\\/)[A-Za-z0-9_]+(?:[${DASHES}][A-Za-z0-9_]+|[ \\t\\u00a0]+[0-9][A-Za-z0-9_]*)*`,
   "giu"
@@ -115,10 +88,6 @@ export function maskLoginCodePhrases(text: string): string {
   return text.replaceAll(LOGIN_CODE_PHRASE, `$1${LOGIN_CODE_HIDDEN}`);
 }
 
-/**
- * In a service message: a token with a digit, 4+ characters (dashes inside count), or digit groups
- * joined by runs of spaces, tabs or dashes ("52  813", "52\t813").
- */
 const SERVICE_CODE = new RegExp(
   `(?<![A-Za-z0-9_${DASHES}])(?:(?=[A-Za-z0-9_${DASHES}]*\\d)[A-Za-z0-9_${DASHES}]{4,}|\\d+(?:[ \\t\\u00a0${DASHES}]+\\d+)+)(?![A-Za-z0-9_${DASHES}])`,
   "g"
@@ -152,10 +121,8 @@ export function maskDeep<T>(value: T, level: MaskLevel): T {
   return value;
 }
 
-/** A JSON string literal, and whether a colon follows it (a key). Linear: the alternatives never overlap. */
 const JSON_STRING = /"(?:[^"\\]|\\.)*"(\s*:)?/g;
 
-/** One JSON text with each string value masked as decoded text; keys, numbers and layout stay byte for byte. */
 function maskJsonText(json: string, level: MaskLevel): string {
   return json.replaceAll(JSON_STRING, (literal, colon?: string) => {
     if (colon) {

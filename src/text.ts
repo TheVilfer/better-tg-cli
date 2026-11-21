@@ -1,10 +1,6 @@
 import { readFileSync } from "node:fs";
 
 /**
- * Message text argument: "-" reads it from stdin, so agents can pass long or
- * multi-line text without shell quoting (`cat msg.txt | telegram send @x -`).
- */
-/**
  * Error text that is safe to send in an HTTP answer: the message of a real Error and nothing
  * else. Stringifying an arbitrary thrown value could put a stack trace or an object dump on the wire.
  */
@@ -24,7 +20,6 @@ export function primeStdin(text: string): void {
 }
 
 export function readStdinOnce(): string {
-  // An approval in mode "ask" that did not cover stdin: a body read from it now would be unapproved
   if (stdinSealed) {
     throw new Error(
       "This command reads stdin, but its approval did not cover stdin. Run it again to get an approval that does."

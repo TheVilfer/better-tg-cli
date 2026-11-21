@@ -24,15 +24,12 @@ export async function lookupPeers(
   for (const v of wanted) {
     try {
       const entity = await resolveChat(client, v);
-      // The write takes this very object (resolveChat returns it), not a second lookup
       pinPeer(v, entity);
       out.set(v, peerInfo(entity));
     } catch (error) {
       if (error instanceof ExitSignal) {
         throw error;
       }
-      // The whole message (it may list the candidates), as one line
-      // and the error's own code and exit code (an ambiguous name is a usage error, exit 2)
       const {
         code,
         exitCode,

@@ -1,9 +1,3 @@
-/**
- * Answer-first pages for search engines and AI assistants: /mcp (connect an MCP client), /faq and
- * /compare. Each one answers one need, in the three languages of the site, as plain HTML with a nonce
- * CSP and JSON-LD. Texts follow the README; keep them in step when the behaviour changes.
- */
-
 import { escape } from "./guide";
 import { DICT } from "./i18n";
 import type { Lang } from "./i18n";
@@ -24,7 +18,6 @@ export const isDocPath = (p: string): p is DocPath =>
 
 const REPO = "https://github.com/TheVilfer/better-tg-cli";
 
-/** A section: paragraphs and list items take `code` and [links](url); `code` blocks are shown as is. */
 interface Section {
   h2: string;
   p?: string[];
@@ -92,7 +85,6 @@ const NPX_CONFIG = `{
   }
 }`;
 
-/** Projects compared on /compare, from each one's README and manifest (November 2026). */
 const RIVALS = [
   { name: "Better-TG-CLI", url: REPO },
   {
@@ -608,7 +600,6 @@ const TEXTS: Record<Lang, Texts> = {
   },
 };
 
-/** Escapes text, then turns `code` into <code> and [text](url) into links (local links keep the language). */
 function inline(text: string, lang: Lang): string {
   return escape(text)
     .replaceAll(/`([^`]+)`/g, "<code>$1</code>")

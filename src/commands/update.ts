@@ -57,7 +57,6 @@ export const updateCommand = new Command("update")
       return;
     }
 
-    // A git checkout may carry unreleased commits, so it is pulled even without a newer release.
     if (!newer && method.kind !== "source") {
       console.log(`${VERSION} is up to date`);
       return;
@@ -67,7 +66,6 @@ export const updateCommand = new Command("update")
       process.exit(1);
     }
     if (method.kind === "script") {
-      // Never advise replacing it by hand: install.json would no longer match it.
       console.error(
         `Installed by install.sh; update it by running the script again: ${command}`
       );

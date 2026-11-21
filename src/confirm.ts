@@ -53,7 +53,6 @@ export function windowsConfirmScript(): string {
   return (
     "Add-Type -AssemblyName System.Windows.Forms;" +
     "$text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()));" +
-    // A hidden topmost owner keeps the box above the agent's window instead of behind it
     "$owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; $owner.ShowInTaskbar = $false;" +
     "$r = [System.Windows.Forms.MessageBox]::Show($owner, $text, 'Telegram CLI', 'YesNo', 'Warning', 'Button2');" +
     "if ($r -eq 'Yes') { [Console]::Out.Write('ALLOW') } else { [Console]::Out.Write('DENY') }"
@@ -130,7 +129,6 @@ export async function confirmOnWindows(
   throw dialogFailed(`unexpected answer ${JSON.stringify(out.slice(0, 40))}`);
 }
 
-/** Runs a process with `input` on stdin: its stdout, or why it failed (a timeout is told apart). */
 function runWithInput(
   file: string,
   args: string[],
@@ -164,7 +162,6 @@ function runWithInput(
   });
 }
 
-/** stdout of a finished process, or null on a non-zero exit, a timeout or a spawn error (Cancel). */
 function run(
   file: string,
   args: string[],

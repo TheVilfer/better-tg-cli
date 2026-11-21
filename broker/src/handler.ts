@@ -1,7 +1,3 @@
-/**
- * Credential broker: hands the app's api_id/api_hash to invited users at login time.
- * Invites live in KV under sha256(token); the raw token is never stored or logged.
- */
 import { ICON_SVG, OG_PNG_BASE64 } from "./assets";
 import { docResponse, isDocPath } from "./docs";
 import { pickLang } from "./i18n";
@@ -26,13 +22,16 @@ export interface KV {
   delete(key: string): Promise<void>;
 }
 
+/**
+ * - `LIMITER`: Workers rate limiting binding ([[ratelimits]] in wrangler.toml); absent in tests
+ * - `SIGNUP_LIMITER`: Self-serve signup page (src/signup.ts): its own limiter, Turnstile keys and daily cap
+ * - `EMAIL`: Cloudflare Email Sending ([[send_email]]) and the verified sender address for signup codes
+ */
 export interface Env {
   INVITES: KV;
   API_ID: string;
   API_HASH: string;
-  /** Workers rate limiting binding ([[ratelimits]] in wrangler.toml); absent in tests */
   LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
-  /** Self-serve signup page (src/signup.ts): its own limiter, Turnstile keys and daily cap */
   SIGNUP_LIMITER?: {
     limit(options: { key: string }): Promise<{ success: boolean }>;
   };
@@ -41,7 +40,6 @@ export interface Env {
   SIGNUP_DAILY_CAP?: string;
   SIGNUP_CODES_PER_IP?: string;
   SIGNUP_CODES_PER_EMAIL?: string;
-  /** Cloudflare Email Sending ([[send_email]]) and the verified sender address for signup codes */
   EMAIL?: {
     send(message: {
       to: string;
@@ -102,12 +100,6 @@ function staticFile(body: BodyInit, type: string): Response {
   });
 }
 
-/**
- * The language of a page comes from its URL alone, so every URL has one language and one canonical
- * (what search engines expect from hreflang). Without a valid ?lang=, a browser that prefers Spanish
- * or Russian is sent to that URL (302: the preference is per visitor); everyone else, crawlers
- * included, gets English at the bare URL.
- */
 function pageLang(url: URL, request: Request): Lang | Response {
   const asked = url.searchParams.get("lang");
   const lang = pickLang(asked, request.headers.get("accept-language"));
@@ -142,7 +134,6 @@ export async function handle(
       301
     );
   }
-  // HEAD gets the same answer as GET (the runtime drops the body); crawlers and link checkers use it
   const read = request.method === "GET" || request.method === "HEAD";
   if (url.pathname === "/health") {
     return json(200, { ok: true });
@@ -169,7 +160,6 @@ export async function handle(
     return staticFile(INDEXNOW_KEY, "text/plain; charset=utf-8");
   }
   if (url.pathname === "/" && read) {
-    // The signup page used to live here: telegram onboard (?return=) and guide links (?mode=, ?agent=) still arrive at /
     if (["return", "mode", "agent"].some((p) => url.searchParams.has(p))) {
       return Response.redirect(`${url.origin}${LOGIN_PATH}${url.search}`, 302);
     }
@@ -215,7 +205,6 @@ export async function handle(
     return json(405, { error: "method_not_allowed" });
   }
 
-  // Per-IP limit before any KV work: slows token guessing and scripted abuse
   if (env.LIMITER) {
     const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
     const { success } = await env.LIMITER.limit({ key: ip });
@@ -234,7 +223,6 @@ export async function handle(
     return json(400, { error: "bad_request" });
   }
 
-  // Check config first so a misconfigured broker never burns an invite use
   const apiId = Number.parseInt(env.API_ID, 10);
   if (!apiId || !env.API_HASH) {
     return json(503, { error: "broker_not_configured" });
@@ -250,7 +238,6 @@ export async function handle(
   if (record.revoked) {
     return json(403, { error: "invite_revoked" });
   }
-  // KV is eventually consistent, so this cap is soft; fine for a small trusted circle
   if (record.uses >= record.maxUses) {
     return json(429, { error: "invite_used_up" });
   }

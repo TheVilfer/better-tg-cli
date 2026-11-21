@@ -3,33 +3,23 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-/**
- * Setup for agents that only have MCP, and for a login that died: telegram_setup, the session check
- * of `telegram onboard`, and the hints every "log in again" and "no secret store" message gives.
- * Telegram, the page server and the stores are fakes; nothing opens a connection or a browser.
- */
 const fake = vi.hoisted(() => ({
   configured: true,
   session: "stored-session" as string | undefined,
-  /** What getClient() does: connect fine, or throw this */
   clientError: undefined as Error | undefined,
   mode: "read-only" as "read-only" | "ask" | "on",
   pages: [] as { modeOnly?: boolean; defaultMode?: string }[],
   opened: [] as string[],
-  /** applyMode of the last page, as the page server would call it */
   applyMode: undefined as
     | undefined
     | ((c: {
         mode: "read-only" | "ask" | "on";
         forSeconds?: number;
       }) => Promise<{ ok: boolean; error?: string }>),
-  /** The person's answer in the OS dialog, and what was asked */
   answer: false,
   asked: [] as string[],
-  /** What reached the write-mode store */
   written: [] as string[],
 }));
-// A person who can be asked (an OS dialog), and a store that records instead of touching a real one
 vi.mock(import("../src/confirm.js"), () => ({
   confirmByHuman: async (q: string) => (fake.asked.push(q), fake.answer),
   windowsConfirmScript: () => "",
@@ -283,7 +273,6 @@ describe("telegram_setup gives an MCP-only user a way in (5.1)", () => {
       ok: true,
     });
     expect(fake.written).toEqual(["ask"]);
-    // Going back to read-only needs nobody
     await expect(fake.applyMode!({ mode: "read-only" })).resolves.toEqual({
       ok: true,
     });
@@ -295,7 +284,7 @@ describe("telegram_setup gives an MCP-only user a way in (5.1)", () => {
     await runSetup();
     await expect(fake.applyMode!({ mode: "ask" })).resolves.toMatchObject({
       ok: true,
-    }); // the login's default
+    });
     expect(fake.asked).toEqual([]);
     await expect(
       fake.applyMode!({ mode: "ask", forSeconds: 3600 })

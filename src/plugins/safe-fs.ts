@@ -74,10 +74,12 @@ interface Step {
   ino: bigint;
 }
 
+/**
+ * - `create`: Create a missing folder (0700) instead of failing
+ * - `exactCase`: Each name must be listed in its folder with exactly this case (a case-insensitive disk would find another)
+ */
 export interface WalkOptions {
-  /** Create a missing folder (0700) instead of failing */
   create?: boolean;
-  /** Each name must be listed in its folder with exactly this case (a case-insensitive disk would find another) */
   exactCase?: boolean;
 }
 
@@ -98,7 +100,6 @@ function stepOf(path: string, at: string, st: BigIntStats): Step {
   return { path, at, dev: st.dev, ino: st.ino };
 }
 
-/** Checks one component: present (with exact case if asked), not a link, of the right kind. */
 function component(
   dir: string,
   name: string,
@@ -136,7 +137,6 @@ function component(
   }
 }
 
-/** Walks `segments` below the anchor `root`: each one a real folder. */
 function walk(
   root: string,
   segments: readonly string[],
@@ -168,7 +168,6 @@ function walk(
     if (!st.isDirectory()) {
       throw new UnsafePath("not-dir", at);
     }
-    // Windows: a reparse point Node does not report as a link would still resolve elsewhere
     if (process.platform === "win32" && realpathSync(path) !== path) {
       throw new UnsafePath("link", at);
     }
@@ -178,7 +177,6 @@ function walk(
   return steps;
 }
 
-/** Every recorded folder is still the same folder, and still not a link. */
 function recheck(steps: readonly Step[]): void {
   for (const s of steps) {
     let st: BigIntStats;
@@ -223,9 +221,11 @@ export function safeDirExists(root: string, dirRel: string): boolean {
   }
 }
 
+/**
+ * - `singleLink`: A file with more than one hard link is refused (data the CLI wrote itself never has one)
+ */
 export interface ReadOptions extends WalkOptions {
   maxBytes?: number;
-  /** A file with more than one hard link is refused (data the CLI wrote itself never has one) */
   singleLink?: boolean;
 }
 

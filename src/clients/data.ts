@@ -30,8 +30,10 @@ export interface Case<V extends string = string> {
   evidence: Evidence[];
 }
 
+/**
+ * - `value`: `varies` when the answer depends on the configuration: `cases` holds one entry per configuration.
+ */
 export interface Cell<V extends string = string> {
-  /** `varies` when the answer depends on the configuration: `cases` holds one entry per configuration. */
   value: V | "unknown" | "n/a" | "varies";
   note?: string;
   evidence: Evidence[];
@@ -74,30 +76,30 @@ export type Sandbox = "outside" | "opt-in" | "cloud" | "n/a";
 /** Can the client reach `telegram mcp --http`, which takes a static bearer token? */
 export type Http = "bearer" | "oauth-only";
 
+/**
+ * - `versionSeen`: The client version the research looked at, when it named one.
+ * - `approval`: Derived from `elicitation` unless set.
+ * - `approvalNote`: Who besides the human may answer the form (a hook, a reviewer agent): added to the derived approval.
+ * - `refusal`: Derived from the approval level unless set.
+ * - `update`: Set once a live run shows whether the update notice reaches the agent here (see UPDATE_NOTICE).
+ */
 export interface ClientRecord {
   id: string;
   name: string;
   surfaces: Surface[];
-  /** The client version the research looked at, when it named one. */
   versionSeen?: string;
 
-  // Facts about the client
   config: Cell;
   elicitation: Cell<Elicitation>;
   stdioEnv: Cell<StdioEnv>;
   toolTimeout: Cell;
   approvalDefault: Cell<ApprovalDefault>;
 
-  // Better-TG-CLI inside the client
   install: Cell<Install>;
   read: Cell<Read>;
-  /** Derived from `elicitation` unless set. */
   approval?: Cell<Approval>;
-  /** Who besides the human may answer the form (a hook, a reviewer agent): added to the derived approval. */
   approvalNote?: string;
-  /** Derived from the approval level unless set. */
   refusal?: Cell<Refusal>;
-  /** Set once a live run shows whether the update notice reaches the agent here (see UPDATE_NOTICE). */
   update?: Cell<"shown" | "none">;
   gui: Cell<Gui>;
   headless: Cell<Headless>;
@@ -105,7 +107,6 @@ export interface ClientRecord {
   http: Cell<Http>;
 }
 
-/** The day the research behind the doc/src/report entries was done. */
 const CHECKED = "2026-11-19";
 
 const ev =
@@ -120,7 +121,6 @@ const doc = ev("doc");
 const src = ev("src");
 const report = ev("report");
 
-/** `{ note }` when there is one, so records without a note have no `note` key. */
 const withNote = (note?: string) => (note ? { note } : {});
 
 function cell<V extends string>(
@@ -130,14 +130,12 @@ function cell<V extends string>(
 ): Cell<V> {
   return { value, ...withNote(note), evidence };
 }
-/** Does not apply (no GUI, no headless mode, remote only): needs no evidence. */
 function na<V extends string>(): Cell<V | "n/a"> {
   return { value: "n/a", evidence: [] };
 }
 function unknown<V extends string = string>(note?: string): Cell<V> {
   return { value: "unknown", ...withNote(note), evidence: [] };
 }
-/** One configuration of a `varies` cell. */
 function when<V extends string>(
   label: string,
   value: V | "unknown" | "n/a",
@@ -146,11 +144,9 @@ function when<V extends string>(
 ): Case<V> {
   return { when: label, value, ...withNote(note), evidence };
 }
-/** A configuration nobody could confirm. */
 function whenUnknown(label: string, note?: string): Case<never> {
   return when<never>(label, "unknown", [], note);
 }
-/** A cell whose answer depends on the interface, version or mode. */
 function varies<V extends string>(
   cases: NoInfer<Case<V>>[],
   note?: string
@@ -188,7 +184,6 @@ export const UPDATE_NOTICE =
 export const ROUTE_NOTE =
   "Where write approval, refusal, headless and sandbox name no route, they describe the local MCP server (`telegram mcp`); a labelled case (the Claude Code plugin, Grok Bot's Remote HTTPS) describes the route it names. The skill route (the agent runs the `telegram` CLI in a shell) and `telegram mcp --http` are G2 in every client: the CLI prints a one-time code, and the HTTP server never asks the client for a form.";
 
-// Sources, shortened where several cells cite them
 const CC = "https://code.claude.com/docs/en";
 const CD = "https://claude.com/docs/connectors";
 const CURSOR = "https://cursor.com/docs";
@@ -1412,17 +1407,9 @@ export const CLIENTS: ClientRecord[] = [
   },
 ];
 
-// ---- derived cells -------------------------------------------------------------------------
-
-/**
- * Evidence a derived cell may carry: the client's docs or source. A live entry on the cell it is
- * derived from shows that cell (say, the client advertised elicitation), not that our write
- * approval or refusal was seen, so it is dropped; those need live entries of their own.
- */
 const notLive = (evidence: Evidence[]) =>
   evidence.filter((e) => e.level !== "live");
 
-/** A cell from its cases: a plain cell for one unlabelled case, `varies` otherwise. */
 function fromCases<V extends string>(cases: Case<V>[]): Cell<V> {
   if (cases.length === 1 && !cases[0].when) {
     const { value, note, evidence } = cases[0];
@@ -1437,7 +1424,6 @@ function derive<V extends string, W extends string>(
   note?: string
 ): Case<W> {
   const evidence = value === "unknown" ? [] : notLive(from.evidence);
-  // Backed only by live entries: the derived claim needs a live entry of its own
   if (value !== "unknown" && !evidence.length) {
     return when<W>(from.when, "unknown", [], "Record it live.");
   }
@@ -1523,19 +1509,9 @@ const hasLive = (cell: { evidence: Evidence[] }) =>
   cell.evidence.some((e) => e.level === "live");
 const liveVersions = (k: Case) =>
   new Set(k.evidence.flatMap((e) => (e.level === "live" ? [e.version] : [])));
-/** The case of `cell` for a configuration label; a plain cell covers every label. */
 const caseFor = (cell: Cell, label: string) =>
   cell.cases ? cell.cases.find((k) => k.when === label) : casesOf(cell)[0];
 
-/**
- * Supported only when, in every configuration the record lists, install, read, approval and
- * refusal were all seen live in that same configuration with the same client version, install is
- * a real route, reading was seen working, approval is G1 or G2 and refusal is the one that level
- * gives (G1 refused, G2 chat). A configuration is a case label; a plain cell covers every label, and a
- * `varies` cell without a case for a label fails it. Checks seen in different versions or
- * configurations never add up. Derived approval and refusal never carry a live entry, so both must
- * be recorded. Unsupported when there is no way to install it today. Everything else is untested.
- */
 const ROUTES = new Set<string>([
   "plugin",
   "extension",
@@ -1546,7 +1522,6 @@ const ROUTES = new Set<string>([
   "tunnel",
   "beta",
 ] satisfies Install[]);
-/** The refusal each approval level gives (see `refusalOf`). */
 const REFUSAL_OF: Record<"G1" | "G2", Refusal> = { G1: "refused", G2: "chat" };
 
 export function statusOf(c: ClientRecord): Status {
@@ -1563,7 +1538,6 @@ export function statusOf(c: ClientRecord): Status {
       return false;
     }
     const [install, read, approval, refusal] = found as Case[];
-    // A real install route, reading seen working, a write approval level and the "no" it gives
     if (!ROUTES.has(install.value) || read.value !== "works") {
       return false;
     }
@@ -1573,7 +1547,6 @@ export function statusOf(c: ClientRecord): Status {
     if (refusal.value !== REFUSAL_OF[approval.value]) {
       return false;
     }
-    // One client version seen live in all four
     const [first, ...rest] = (found as Case[]).map(liveVersions);
     return [...first].some((v) => rest.every((s) => s.has(v)));
   };
@@ -1659,11 +1632,9 @@ export function validate(clients: ClientRecord[]): string[] {
             }
           }
         }
-        // A claim about our server working there can only come from running it there
         if (k.value === "works" && !hasLive(k)) {
           problems.push(`${at}: "works" without a live entry`);
         }
-        // Whether the notice reached the agent, or did not, is only seen by running the client
         if (
           name === "update" &&
           (k.value === "shown" || k.value === "none") &&
@@ -1673,7 +1644,6 @@ export function validate(clients: ClientRecord[]): string[] {
         }
       }
     }
-    // Reading is expected only where the stdio environment of the same configuration is known
     const envCases = casesOf(c.stdioEnv);
     for (const k of casesOf(c.read)) {
       if (k.value !== "expected") {

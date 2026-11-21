@@ -24,7 +24,6 @@ class NetSocketClosedError extends Error {
   }
 }
 
-/** A client whose connect() fails or succeeds per transport, recording what was tried. */
 function fakes(outcome: Partial<Record<Transport, Error | "ok">>) {
   const tried: Transport[] = [];
   const destroyed: Transport[] = [];
@@ -47,7 +46,6 @@ function fakes(outcome: Partial<Record<Transport, Error | "ok">>) {
   return { make, tried, destroyed };
 }
 
-// A throwaway profile: the config dir follows TG_PROFILE (~/.config/tg-<profile>), never the real one
 let dir: string;
 const saved = { ...process.env };
 beforeEach(() => {
@@ -82,7 +80,7 @@ describe(connectClient, () => {
     });
     expect((c as unknown as { transport: string }).transport).toBe("wss");
     expect(f.tried).toEqual(["tcp", "wss"]);
-    expect(f.destroyed).toEqual(["tcp"]); // the failed client is torn down, not leaked
+    expect(f.destroyed).toEqual(["tcp"]);
     expect(notes.join("\n")).toMatch(/switching to WebSocket/);
   });
 

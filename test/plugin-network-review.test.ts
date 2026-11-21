@@ -28,9 +28,6 @@ import {
   runPluginCommand,
 } from "../src/plugins/run.js";
 
-// The review fixes of the plugin network (P3). No real network: names resolve through the injected
-// `lookup`, every connection dials this file's own TLS server on 127.0.0.1, which writes raw bytes
-// (responses node:http would never send). The test certificate is trusted only where `ca` says so.
 const CERT = readFileSync(resolve("test/fixtures/tls/test-cert.pem"));
 const KEY = readFileSync(resolve("test/fixtures/tls/test-key.pem"));
 const LAB = resolve("test/fixtures/plugins/net-lab");
@@ -208,12 +205,10 @@ describe("#1 only chunked transfer coding is read", () => {
         ok: false,
         error: { code: "bad_response" },
       });
-      // The server's value is never repeated in the error
       expect(r.error.message, te).not.toContain(te);
       expect(JSON.stringify(r)).not.toMatch(/H4sI|bodyBase64/);
       routes.clear();
     }
-    // Plain chunked (any case) still works
     routes.set("/v1/te", (_req, s) => {
       s.end(
         `${head("200 OK", { "Transfer-Encoding": "Chunked" })}5\r\nhello\r\n0\r\n\r\n`
@@ -256,7 +251,6 @@ describe("#2 a path-restricted secret goes only with an unambiguous path", () =>
     ]) {
       expect(pathProblem(p), p).toBeUndefined();
     }
-    // The path as written, before the parser resolves anything (tabs and newlines are dropped first)
     expect(rawPathOf("https://api.example.com/v2/../v1/echo?x=/../#a")).toBe(
       "/v2/../v1/echo"
     );
@@ -275,7 +269,6 @@ describe("#2 a path-restricted secret goes only with an unambiguous path", () =>
       "/v1/%c3%a9",
       "/v1//admin",
       "/v1/./echo",
-      // Resolved by the parser to /v1/echo (so the secret would go): the written form is checked too
       "/v2/../v1/echo",
       "/v2/%2e%2e/v1/echo",
       "/x/..\\v1/echo",
@@ -300,7 +293,6 @@ describe("#2 a path-restricted secret goes only with an unambiguous path", () =>
       `Bearer ${SECRET}`,
       `Bearer ${SECRET}`,
     ]);
-    // No path-restricted secret would be sent: nothing to refuse (and none is sent)
     expect((await fetchVia(t.net, "https://api.example.com/v1/../x")).ok).toBe(
       true
     );
@@ -349,7 +341,6 @@ describe("#3 an empty paths list sends the secret nowhere", () => {
         new URL("https://api.example.com/anything")
       )
     ).toBe(true);
-    // As if installed before the rule: the secret goes nowhere
     const old: Manifest = {
       ...manifest,
       secrets: manifest.secrets!.map((s) =>
@@ -441,7 +432,6 @@ describe("#5 the network's own NAT64 prefixes (RFC 7050)", () => {
   });
 
   it("an address in a discovered prefix is checked by the IPv4 address it carries (injected DNS)", async () => {
-    // A custom /96 inside 2001:db8::/32: the reason names the embedded IPv4, not "documentation"
     const doc = testNet({
       "ipv4only.arpa": ["2001:db8:64::c000:aa", "2001:db8:64::c000:ab"],
       "api.example.com": ["2001:db8:64::a00:1"],
@@ -451,7 +441,6 @@ describe("#5 the network's own NAT64 prefixes (RFC 7050)", () => {
     expect(r1.error.message).toMatch(
       /NAT64 \(2001:db8:64:0:0:0:0:0\/96\) of 10\.0\.0\.1, private/
     );
-    // An ordinary global-unicast /64 prefix that a translator carries to loopback
     const glob = testNet({
       "ipv4only.arpa": ["2a00:1450:1:2:c0:0:aa00:0"],
       "api.example.com": ["2a00:1450:1:2:7f:0:100:0"],
@@ -462,9 +451,7 @@ describe("#5 the network's own NAT64 prefixes (RFC 7050)", () => {
       "network_denied",
     ]);
     expect(glob.dials).toEqual([]);
-    // Discovered once per run
     expect(glob.lookups.filter((h) => h === "ipv4only.arpa")).toHaveLength(1);
-    // A public IPv4 address behind the prefix is fine
     const pub = testNet({
       "ipv4only.arpa": ["2a00:1450:1:2:c0:0:aa00:0"],
       "api.example.com": ["2a00:1450:1:2:5d:b8d8:2200:0"],
@@ -506,7 +493,6 @@ describe("#6 certificate checks never come from the environment", () => {
       };
       const r = await fetchVia(net, "https://api.example.com/v1/echo");
       expect(r).toMatchObject({ ok: false, error: { code: "network" } });
-      // Trusted CA, but the certificate does not name the host
       const withCa = systemNet({ ca: CERT });
       const net2: NetDeps = {
         lookup: async () => [{ address: PUBLIC, family: 4 }],
@@ -516,7 +502,6 @@ describe("#6 certificate checks never come from the environment", () => {
         fetchVia(net2, "https://wrong.example.net/x")
       ).resolves.toMatchObject({ ok: false, error: { code: "network" } });
       expect(seen).toEqual([]);
-      // The right name with the trusted CA works
       expect((await fetchVia(net2, "https://api.example.com/v2/x")).ok).toBe(
         true
       );
@@ -542,7 +527,6 @@ describe("#8 one budget for heads, chunk lines and trailers, and a bounded chunk
     const ok = await fetchVia(testNet().net, "https://api.example.com/few");
     expect(ok).toMatchObject({ ok: true });
     expect(ok.response.body).toBe("a".repeat(4000));
-    // 9000 chunks fit the 64 KB budget (5 bytes each) but not the chunk count
     routes.set("/many", (_r, s) => {
       s.end(chunked(`${"1\r\na\r\n".repeat(9000)}0\r\n\r\n`));
     });
@@ -637,7 +621,6 @@ describe("#10 one deadline for the whole request", () => {
     await expect(
       fetchVia(t.net, "https://api.example.com/slow")
     ).resolves.toMatchObject({ ok: false, error: { code: "timeout" } });
-    // Well short of the two steps' 1.4 s plus the sandbox start; the code itself is what tells
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
@@ -663,7 +646,6 @@ describe("#10 one deadline for the whole request", () => {
     }
     expect(Date.now() - started).toBeLessThan(3000);
     expect(aborted).toBe(true);
-    // The event loop kept running while the store was busy
     expect(ticks).toBeGreaterThan(5);
     expect(seen).toEqual([]);
   });

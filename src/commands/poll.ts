@@ -24,7 +24,6 @@ export const pollCommand = new Command("poll")
   .option("--public", "Non-anonymous poll (voters are visible)")
   .option("--json", "Output as JSON")
   .action(async (chat, question, answers, options) => {
-    // Checked before the write guard: a bad poll must not cost an approval
     if (answers.length < 2) {
       fail(usageError("A poll needs at least 2 options"));
     }

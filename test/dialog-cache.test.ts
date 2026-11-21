@@ -23,9 +23,6 @@ import { loadWorld, saveWorld, seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { setStrictChatResolution } from "../src/resolve-mode.js";
 
-// 2 Naming a chat must not read the whole dialog list in every process: on a big account that is
-// dozens of messages.GetDialogs calls and a FLOOD_WAIT. Each getClient() after disconnectClient()
-// stands for a new CLI process; getDialogs is counted on the mock.
 const dir = mkdtempSync(join(tmpdir(), "tg-dialog-cache-"));
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -41,7 +38,6 @@ function world(extra: (w: MockWorld) => void = () => {}): string {
   return file;
 }
 
-/** One "process": a fresh client, one lookup, then disconnect (which clears every in-memory cache). */
 async function run(
   identifier: string
 ): Promise<{ id: string; fetches: number }> {
@@ -74,7 +70,6 @@ describe("2 chat lookup by name uses a short-lived dialog list on disk", () => {
     expect(first.id).toBe("4001");
     expect(first.fetches).toBeGreaterThan(0);
     await expect(run("Team")).resolves.toEqual({ id: "4001", fetches: 0 });
-    // Case and spaces as the title match takes them; a numeric ID too
     await expect(run("  team ")).resolves.toEqual({ id: "4001", fetches: 0 });
     await expect(run("-1004001")).resolves.toEqual({ id: "4001", fetches: 0 });
     await expect(run("1001")).resolves.toEqual({ id: "1001", fetches: 0 });
@@ -97,7 +92,6 @@ describe("2 chat lookup by name uses a short-lived dialog list on disk", () => {
       messages: [{ id: 1, ago: 5, from: 1001, text: "hi" }],
     });
     saveWorld(w, state);
-    // Within the TTL a miss costs no list read (on a big account that is a minute of FLOOD_WAITs)
     const before = fetches.mock.calls.length;
     await expect(run("Brand New")).rejects.toMatchObject({
       code: "chat_not_found",
@@ -122,7 +116,6 @@ describe("2 chat lookup by name uses a short-lived dialog list on disk", () => {
     const w = loadWorld(state);
     w.chats.find((c) => c.id === 4001)!.title = "Renamed";
     saveWorld(w, state);
-    // The cached "Team" is 4001, which is no longer called so: the list is read again
     const r = await run("Team Design");
     expect(r.id).toBe("4002");
     const again = await run("Team");

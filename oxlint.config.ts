@@ -2,7 +2,7 @@ import { defineConfig } from "oxlint";
 import core from "ultracite/oxlint/core";
 import vitest from "ultracite/oxlint/vitest";
 
-import { generatedFiles } from "./scripts/lint/generated.mjs";
+import { fixtures, generatedCode } from "./scripts/lint/generated.mjs";
 
 const unsafeAutofix: Record<string, string> = {
   "typescript/consistent-indexed-object-style":
@@ -25,7 +25,17 @@ const unsafeAutofix: Record<string, string> = {
     "its autofix renames top-level it() to test() without importing test",
 };
 
+const testsOnly: Record<string, string> = {
+  "import/first": "vi.mock() calls must run before the imports they replace",
+};
+
 const houseStyle: Record<string, string> = {
+  "unicorn/prefer-response-static-json":
+    "the broker and the test servers build JSON responses with their own headers and status",
+  "unicorn/custom-error-definition":
+    "error classes keep the name Error that callers, tests and the audit already see",
+  "no-template-curly-in-string":
+    "strings such as ${PLUGIN_DATA} and ${#v} are literal text for other programs and shells",
   "class-methods-use-this":
     "methods of fakes and transports keep their interface even without this",
   complexity:
@@ -37,8 +47,6 @@ const houseStyle: Record<string, string> = {
     "an anonymous function expression is passed straight to its caller",
   "func-style":
     "the code base uses function declarations: hoisted and named in stack traces",
-  "import/first":
-    "vi.hoisted() and vi.mock() blocks have to run before some imports",
   "import/no-cycle":
     "the broker handler and signup modules reference each other only inside functions",
   "max-classes-per-file":
@@ -73,8 +81,6 @@ const houseStyle: Record<string, string> = {
     "the comma operator appears only in compact test fakes and one sandbox bridge",
   "no-shadow":
     "the shadowing names are local and short-lived; renaming them is churn without a bug behind it",
-  "no-template-curly-in-string":
-    "strings such as ${PLUGIN_DATA} are literal placeholders for other programs",
   "no-unmodified-loop-condition":
     "the loop condition changes inside an awaited callback the rule cannot see",
   "no-use-before-define":
@@ -117,8 +123,6 @@ const houseStyle: Record<string, string> = {
     "constructor parameter properties keep small error and transport classes short",
   "unicorn/consistent-function-scoping":
     "closures sit next to their only caller on purpose",
-  "unicorn/custom-error-definition":
-    "error classes set name through their constructor argument",
   "unicorn/import-style":
     "named imports from node: modules are the house style",
   "unicorn/no-array-for-each":
@@ -146,8 +150,6 @@ const houseStyle: Record<string, string> = {
   "unicorn/prefer-module": "the CommonJS __dirname appears in tests on purpose",
   "unicorn/prefer-number-coercion":
     "parseInt-style parsing of digit groups is intended",
-  "unicorn/prefer-response-static-json":
-    "the broker sets its own JSON headers on each response",
   "unicorn/prefer-single-call":
     "one push per output line keeps formatters readable",
   "unicorn/prefer-structured-clone":
@@ -185,14 +187,21 @@ const houseStyle: Record<string, string> = {
     "vitest's expect(value, message) second argument labels assertions",
 };
 
-const rules = Object.fromEntries(
-  Object.keys({ ...unsafeAutofix, ...houseStyle }).map((rule) => [rule, "off"])
-);
+const off = (reasons: Record<string, string>) =>
+  Object.fromEntries(Object.keys(reasons).map((rule) => [rule, "off"]));
+const rules = off({ ...unsafeAutofix, ...houseStyle });
 
 export default defineConfig({
   env: { ...core.env, browser: false, node: true },
   extends: [core, vitest],
-  ignorePatterns: [...core.ignorePatterns, ...generatedFiles],
-  overrides: [{ files: ["**/*.test.ts"], plugins: ["vitest"], rules }],
-  rules,
+  ignorePatterns: [...core.ignorePatterns, ...generatedCode, ...fixtures],
+  jsPlugins: ["./scripts/lint/no-comments.mjs"],
+  overrides: [
+    {
+      files: ["**/*.test.ts"],
+      plugins: ["vitest"],
+      rules: { ...rules, ...off(testsOnly) },
+    },
+  ],
+  rules: { ...rules, "better-tg-cli/no-comments": "error" },
 });

@@ -9,10 +9,11 @@
  * pointer into an annotation (`default`, `examples`, `const`, `enum`) or any other value is refused
  * when the schema is checked and again when a value is validated, so whatever a `$ref` reaches was
  * checked by the same rules as the rest of the schema. Schemas are self-contained by the plugin spec.
+ *
+ * - `path`: JSON Pointer of the value that failed, `""` for the root
  */
 
 export interface SchemaIssue {
-  /** JSON Pointer of the value that failed, `""` for the root */
   path: string;
   message: string;
 }
@@ -46,7 +47,6 @@ export function commandSchemaProblems(schema: unknown): string[] {
   return out;
 }
 
-/** Steps between two looks at the clock, and the deadline of the validation running now. */
 let budget = { steps: 0, deadline: Infinity };
 const tick = () => {
   if ((++budget.steps & 1023) === 0 && Date.now() > budget.deadline) {
@@ -101,7 +101,6 @@ const SUPPORTED = new Set([
   "else",
 ]);
 
-/** Keywords whose value is a schema, a list of schemas or a map of schemas (walked by `schemaKeywords`). */
 const ONE_SCHEMA = [
   "additionalProperties",
   "propertyNames",
@@ -157,7 +156,6 @@ const escapePointer = (s: string) =>
 const unescapePointer = (s: string) =>
   s.replaceAll("~1", "/").replaceAll("~0", "~");
 
-/** Every position of a schema that is a subschema (object or boolean), as escaped JSON Pointers. */
 function schemaPointers(
   schema: unknown,
   pointer = "",
@@ -195,7 +193,6 @@ function schemaPointers(
   return out;
 }
 
-/** The subschema positions of a root, computed once per root object. */
 const positionsOf = new WeakMap<object, Set<string>>();
 function positions(root: Schema): Set<string> {
   if (typeof root === "boolean") {
@@ -208,7 +205,6 @@ function positions(root: Schema): Set<string> {
   return set;
 }
 
-/** A local `$ref` as the escaped pointer `schemaPointers` uses (`#` is ""), or an error message. */
 function refPointer(ref: string): string | { problem: string } {
   if (ref === "#") {
     return "";
@@ -232,7 +228,6 @@ function refPointer(ref: string): string | { problem: string } {
   }
 }
 
-/** Why a `$ref` of `root` is refused (it points outside the subschema positions), or undefined. */
 function refProblem(root: Schema, ref: string): string | undefined {
   const pointer = refPointer(ref);
   if (typeof pointer !== "string") {
@@ -266,7 +261,6 @@ export function assertSupported(schema: unknown): void {
           `$ref must be a string, at ${pointer || "/"}`
         );
       }
-      // Every reachable target is itself one of the subschemas walked here, so it passed the same rules
       const problem = refProblem(schema, s.$ref);
       if (problem) {
         throw new UnsupportedSchemaError(`${problem}, at ${pointer || "/"}`);
@@ -300,7 +294,6 @@ function compilePattern(p: unknown, pointer = ""): RegExp {
 }
 
 function resolveRef(root: Schema, ref: string): Schema {
-  // Only a position the checker walked as a subschema: never a value inside an annotation
   const problem = refProblem(root, ref);
   if (problem) {
     throw new UnsupportedSchemaError(problem);
@@ -313,7 +306,6 @@ function resolveRef(root: Schema, ref: string): Schema {
     .slice(2)
     .split("/")
     .map((p) => unescapePointer(decodeURIComponent(p)))) {
-    // A list position (`allOf/0`, `prefixItems/1`) is an index into an array
     if (
       Array.isArray(cur) &&
       /^(0|[1-9]\d*)$/.test(part) &&
@@ -386,7 +378,6 @@ export function jsonEqual(a: unknown, b: unknown): boolean {
   );
 }
 
-/** Characters as JSON Schema counts them: code points, not UTF-16 units. */
 const length = (s: string) => [...s].length;
 
 const describe = (v: unknown) => JSON.stringify(v)?.slice(0, 60) ?? String(v);
@@ -412,7 +403,6 @@ export function validate(
   return issues.slice(0, limit);
 }
 
-/** Nested checks of one validation: a `$ref` cycle that never descends into the value ends here. */
 const MAX_DEPTH = 500;
 let depth = 0;
 

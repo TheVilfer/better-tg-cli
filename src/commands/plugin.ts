@@ -93,12 +93,6 @@ import { promptHidden } from "../prompt.js";
 import { readStdinOnce, stdinBody } from "../text.js";
 import { VERSION } from "../version.js";
 
-/**
- * `telegram plugin …` (docs/plugins.md): install by snapshot, list, show, data, remove, validate (P1);
- * run and dev in the sandbox (P2). Network and secrets (P3) and `plugin update` with the MCP
- * management dialog (P4) plug in here.
- */
-
 const json = (value: unknown) => JSON.stringify(value);
 
 /**
@@ -114,7 +108,6 @@ export const pluginDeps: {
 } = {};
 const cliVersion = () => pluginDeps.cliVersion ?? VERSION;
 
-/** The Telegram account the data belongs to; `soft` gives undefined instead of failing (not logged in, offline). */
 async function accountId(soft: boolean): Promise<string | undefined> {
   if (soft && !isMock()) {
     try {
@@ -139,8 +132,6 @@ async function accountId(soft: boolean): Promise<string | undefined> {
 async function done(): Promise<void> {
   await disconnectClient();
 }
-
-// ---------- install ----------
 
 async function takeSnapshot(
   sourceText: string,
@@ -194,7 +185,6 @@ const installCommand = new Command("install")
         ...(options.expect ? ["--expect", options.expect] : []),
       ];
       try {
-        // Refused over MCP before anything is fetched (the classifier refuses it there too)
         if (process.env.TG_MCP || process.env.TG_READ_ONLY) {
           throw humanRequired(argv);
         }
@@ -221,7 +211,6 @@ const installCommand = new Command("install")
             }
           );
         }
-        // No unsigned installs: without the secret store the human is not even asked
         assertCanSign();
         const summary = installSummary(snap);
         const yes = await humanConfirms(summary, argv, pluginDeps.confirm);
@@ -291,8 +280,6 @@ const installCommand = new Command("install")
     }
   );
 
-// ---------- list / show ----------
-
 const listCommand = new Command("list")
   .description(
     "Installed plugins with their triggers and onboarding, each with the argv to read it (plugin text is data)"
@@ -300,7 +287,6 @@ const listCommand = new Command("list")
   .option("--json", "Output as JSON")
   .action(async (options: { json?: boolean }) => {
     try {
-      // The account is looked up only when there is an onboarding state to tell
       const userId = Object.keys(readLock().plugins).length
         ? await accountId(true)
         : undefined;
@@ -343,7 +329,6 @@ const listCommand = new Command("list")
     }
   });
 
-/** The text of a resource as installed: a whole file, or one #section of a Markdown file. */
 function resourceText(
   m: Manifest,
   files: Map<string, Uint8Array>,
@@ -467,10 +452,6 @@ const showCommand = new Command("show")
     }
   );
 
-/**
- * `plugin show <name>`: where it may send data, which secrets are set (never a value) and its
- * settings. Host lines only; the plugin's descriptions are one line each.
- */
 function showOverview(entry: LockEntry, m: Manifest, asJson: boolean): void {
   const states = secretStates(
     entry.installId,
@@ -542,8 +523,6 @@ function showOverview(entry: LockEntry, m: Manifest, asJson: boolean): void {
     );
   }
 }
-
-// ---------- data ----------
 
 const dataGetCommand = new Command("get")
   .description("Print data saved for a plugin and this Telegram account")
@@ -638,7 +617,6 @@ const dataSetCommand = new Command("set")
       valueArg: string,
       options: { json?: boolean }
     ) => {
-      // Before anything else: over MCP this is a write, refused on the read tool and approved in mode "ask"
       await assertLocalWriteAllowed(undefined, {
         fixedDestination: true,
         readsStdin: valueArg === "-",
@@ -656,7 +634,6 @@ const dataSetCommand = new Command("set")
           );
         }
         const { entry, manifest } = loadPlugin(name, cliVersion());
-        // An approval (mode "ask") covers this installation only, not one installed under the name since
         assertApprovedInstall(entry);
         const userId = (await accountId(false))!;
         const r = dataSet(
@@ -761,12 +738,6 @@ const dataCommand = new Command("data")
   .addCommand(dataSetCommand)
   .addCommand(dataDeleteCommand);
 
-// ---------- run / dev ----------
-
-/**
- * Cancels a run: SIGTERM/SIGINT (the MCP server stops its child that way), or the MCP server's
- * "tg-cancel" message when this call runs in its worker thread.
- */
 function cancellation(): { signal: AbortSignal; cancelled?: () => boolean } {
   const ac = new AbortController();
   const stop = () => ac.abort();
@@ -780,7 +751,6 @@ function cancellation(): { signal: AbortSignal; cancelled?: () => boolean } {
       stop();
     }
   });
-  // The server's flag in shared memory reaches a run whose code keeps this thread busy, too
   const flag = (workerData as { tgCancel?: unknown } | null)?.tgCancel;
   const shared =
     flag instanceof SharedArrayBuffer ? new Int32Array(flag) : undefined;
@@ -790,11 +760,6 @@ function cancellation(): { signal: AbortSignal; cancelled?: () => boolean } {
   };
 }
 
-/**
- * The installation's data for this Telegram account, through the same store as `plugin data`. A
- * plugin run's writes hold to its deadline and cancellation, while waiting for the lock and right
- * before the file changes.
- */
 function installStorage(
   entry: LockEntry,
   m: Manifest,
@@ -819,7 +784,6 @@ function installStorage(
   };
 }
 
-/** The installation's cursor state: a private folder of the host, not plugin data. */
 function installCursors(entry: LockEntry): CursorStore {
   return {
     save: (state) => cursorSave(entry, state),
@@ -827,18 +791,6 @@ function installCursors(entry: LockEntry): CursorStore {
   };
 }
 
-/**
- * Prints exactly the JSON whose length was checked against the output limit (null kept, as the
- * output schema sees it): never re-serialized, never formatJson(). The same line with or without
- * --json, so an indented copy can never outgrow the limit.
- */
-/**
- * Over MCP the server names the installation it classified `plugin run` by (TG_PLUGIN_EXPECT,
- * installId and revision). Another one installed meanwhile under the same name is refused before
- * anything of it runs: its command may have other effects than the ones the call was routed and
- * approved for. A call over MCP without the variable is refused too (the server always sets it
- * when it found the plugin; when it did not, nothing was classified to run).
- */
 function assertExpectedInstall(entry: LockEntry): void {
   const expected = process.env.TG_PLUGIN_EXPECT;
   const overMcp = !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
@@ -902,10 +854,8 @@ const runCommand = runOptions(
   let proposals: string[] = [];
   let error: string | undefined = "error";
   try {
-    // The verified snapshot, read once: these bytes run, whatever happens to the folder meanwhile
     const loaded = loadPlugin(name, cliVersion());
     entry = loaded.entry;
-    // Over MCP: only the installation this call was classified (and approved) by, whatever its effects now
     assertExpectedInstall(entry);
     const m = loaded.manifest;
     const c = findCommand(m, cmd);
@@ -922,17 +872,12 @@ const runCommand = runOptions(
     checkInput(c, input);
     const sends = c.effects.includes("network");
     if (sends) {
-      // Data leaves the computer: in every transport, the shell too, this is a write through the
-      // guard (read-only refuses, "ask" needs an approval bound to the installation, command,
-      // input and origins, "on" runs). One guard call: an approval code is used once.
       await assertWriteEnabled(
         undefined,
         fromStdin ? { readsStdin: true } : {}
       );
       assertApprovedInstall(entry);
     } else if (c.effects.length) {
-      // A local write: over MCP it follows the write mode (refused when read-only, approved in
-      // "ask"), and an approval covers this installation and snapshot only
       await assertLocalWriteAllowed(undefined, {
         fixedDestination: true,
         readsStdin: fromStdin,
@@ -942,13 +887,11 @@ const runCommand = runOptions(
     let client: Promise<TelegramClient> | undefined;
     const telegram = () =>
       (client ??= getClient().then((tg) => {
-        // A plugin call never sleeps through a FLOOD_WAIT: it gets the error with its cursor
         (tg as unknown as { floodSleepThreshold: number }).floodSleepThreshold =
           0;
         return tg;
       }));
     let me: Promise<string> | undefined;
-    // Fetched on first use, inside the run and its deadline: connecting and getMe count against it
     const account = () =>
       (me ??= telegram()
         .then((tg) => getMe(tg))
@@ -995,7 +938,6 @@ const runCommand = runOptions(
     printOutcome(outcome);
     await done();
   } catch (error_) {
-    // The write guard's own exits (describe run, approval_required, writes off): no run happened
     if (error_ instanceof ExitSignal) {
       entry = undefined;
     }
@@ -1015,7 +957,6 @@ const runCommand = runOptions(
           command: cmd,
           apis: [...new Set(calls)],
           proposals,
-          // Origins and a count only: never a URL, a query, a header, a body or a secret
           ...(stats.requests
             ? { network: { requests: stats.requests, origins: stats.origins } }
             : {}),
@@ -1057,7 +998,6 @@ const devCommand = runOptions(
           `For a check on the real account install the folder: telegram plugin install ${dir}`
         );
       }
-      // Every check install runs, then the bytes read here
       const snap = readLocalSnapshot(dir, cliVersion());
       const m = snap.manifest;
       const c = findCommand(m, cmd);
@@ -1066,7 +1006,6 @@ const devCommand = runOptions(
         options.input === "-" ? stdinBody(readStdinOnce()) : options.input
       );
       checkInput(c, input);
-      // The built-in mock account in memory: never the profile, its session or its secret store
       const { MockClient } = await import("../mock/client.js");
       const { seedWorld } = await import("../mock/world.js");
       const world = seedWorld();
@@ -1087,7 +1026,6 @@ const devCommand = runOptions(
         target,
         mcp: false,
         log: log.write,
-        // HTTP from dev/fixtures/*.json, never the network; secrets are fake placeholders
         ...(c.effects.includes("network")
           ? {
               network: {
@@ -1112,9 +1050,6 @@ const devCommand = runOptions(
   }
 );
 
-// ---------- settings ----------
-
-/** A setting the plugin declares, or a usage error listing them. */
 function declaredSetting(m: Manifest, key: string) {
   const d = m.settings && own(m.settings, key) ? m.settings[key] : undefined;
   if (!d) {
@@ -1259,16 +1194,12 @@ const settingsCommand = new Command("settings")
   .addCommand(settingsGetCommand)
   .addCommand(settingsSetCommand);
 
-// ---------- secrets ----------
-
-/** A secret is the human's: over MCP or without a terminal the agent gets the command for the human's terminal. */
 const secretHumanRequired = (argv: string[], why: string) =>
   new CliError(why, "human_required", EXIT.ERROR, {
     hint: `Ask the user to run this in a terminal on this computer and type the value there: ${humanCommand(argv)}`,
     command: argv,
   });
 
-/** The declared secret of a plugin, or a usage error listing them. */
 function declaredSecret(m: Manifest, secret: string) {
   const d = (m.secrets ?? []).find((x) => x.name === secret);
   if (!d) {
@@ -1284,11 +1215,6 @@ function declaredSecret(m: Manifest, secret: string) {
   return d;
 }
 
-/**
- * Deletes the secrets of removed installations that `plugin remove` recorded (its own, and any an
- * earlier remove could not delete); returns, per installation, the names still in the store. A
- * name is settled only once the store said it is gone.
- */
 function cleanupPendingSecrets(
   only?: (p: { name: string; installId: string }) => boolean
 ): Map<string, string[]> {
@@ -1300,7 +1226,6 @@ function cleanupPendingSecrets(
     if (only && !only(p)) {
       continue;
     }
-    // Still installed (its removal did not complete): its secrets are live, the record is dropped
     if (installed.has(p.installId)) {
       settlePendingSecrets(p.installId, []);
       continue;
@@ -1324,15 +1249,12 @@ function cleanupPendingSecrets(
   return out;
 }
 
-/** Before every plugin command: finish a secret cleanup an earlier `plugin remove` left; silent, never fails the command. */
 function retryPendingSecrets(): void {
   try {
     if (pendingSecrets().length) {
       cleanupPendingSecrets();
     }
-  } catch {
-    // tried again on the next plugin command
-  }
+  } catch {}
 }
 
 const secretSetCommand = new Command("set")
@@ -1371,8 +1293,6 @@ const secretSetCommand = new Command("set")
       const value = await (pluginDeps.readSecret ?? promptHidden)(
         `Value for ${d.name} (input hidden): `
       );
-      // The prompt may have waited long: stored only for the installation that is still registered
-      // (a `plugin remove` meanwhile would otherwise leave the value under a removed installation)
       withCurrentInstall(entry, "the secret was not stored", () =>
         setPluginSecret(entry.installId, d.name, value)
       );
@@ -1426,7 +1346,6 @@ const secretRmCommand = new Command("rm")
           "Plugin secrets are managed by the user in their own terminal, never over MCP"
         );
       }
-      // A removed plugin whose secret is still in the store (its cleanup failed): delete that one
       if (!own(readLock().plugins, name)) {
         const orphans = pendingSecrets().filter(
           (p) => p.name === name && p.secrets.includes(secret)
@@ -1515,8 +1434,6 @@ const secretCommand = new Command("secret")
   .addCommand(secretSetCommand)
   .addCommand(secretRmCommand);
 
-// ---------- remove / validate ----------
-
 const removeCommand = new Command("remove")
   .description(
     "Remove a plugin and its data (--keep-data keeps the data); the user confirms in a terminal or dialog"
@@ -1548,10 +1465,7 @@ const removeCommand = new Command("remove")
             EXIT.ERROR
           );
         }
-        // Under the lock, and only if this is still the installation the human was shown
         removeInstall(entry, !!options.keepData);
-        // Its secrets go with it (they belong to this installation, kept data or not); removeInstall
-        // recorded them first, so what the store fails to delete now is retried by the next command
         const secretsLeft =
           cleanupPendingSecrets((p) => p.installId === entry.installId).get(
             entry.installId
@@ -1607,7 +1521,6 @@ const validateCommand = new Command("validate")
   .option("--json", "Output as JSON")
   .action(async (dir: string, options: { json?: boolean }) => {
     try {
-      // Every check install runs: schema, rules, paths, links, sizes, SKILL.md, resource sections
       const snap = readLocalSnapshot(dir, cliVersion());
       const m = snap.manifest;
       const result = {

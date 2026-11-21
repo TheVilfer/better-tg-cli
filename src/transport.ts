@@ -101,8 +101,6 @@ export async function connectClient(
     options.notice ?? ((m: string) => process.stderr.write(`${m}\n`));
 
   const first = make(setting === "wss" ? "wss" : "tcp");
-  // In auto mode a blocked TCP try would print a stack trace per retry before the switch; keep it
-  // quiet unless TG_LOG_LEVEL asks for logs, and restore the level once connected
   const hush = setting === "auto" && !process.env.TG_LOG_LEVEL;
   if (hush) {
     first.setLogLevel?.("none" as never);
@@ -143,16 +141,13 @@ export async function connectClient(
       ? new Error(`${BLOCKED_HINT} (${(error as Error).message})`)
       : error;
   }
-  // A read (TG_READ_ONLY, the MCP read tool) never writes the profile; the next run just tries TCP again
   if (options.remember !== false && !process.env.TG_READ_ONLY) {
     try {
       saveConfig({ transport: "wss" });
       notice(
         'Saved transport "wss" for this profile (TG_TRANSPORT=tcp or auto overrides it).'
       );
-    } catch {
-      // Not fatal: the next run just tries TCP first again
-    }
+    } catch {}
   }
   return second;
 }

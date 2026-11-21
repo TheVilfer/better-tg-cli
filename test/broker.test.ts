@@ -49,7 +49,6 @@ const post = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
-/** A browser that prefers another language is sent to that page's ?lang= URL: follow that one hop. */
 async function followLang(request: Request, e: Env): Promise<Response> {
   const res = await handle(request, e);
   const to = res.status === 302 ? res.headers.get("location") : null;
@@ -115,7 +114,6 @@ describe("credential broker", () => {
     expect(
       (await handle(new Request("https://broker.test/nope"), e)).status
     ).toBe(404);
-    // / is the signup page now (see the signup tests below)
   });
 
   it("does not burn an invite use when the broker is misconfigured", async () => {
@@ -142,7 +140,7 @@ describe("credential broker", () => {
     expect(res.status).toBe(429);
     await expect(res.json()).resolves.toEqual({ error: "rate_limited" });
     expect(seen).toEqual(["203.0.113.9"]);
-    expect(JSON.parse(store.values().next().value!).uses).toBe(0); // no use consumed
+    expect(JSON.parse(store.values().next().value!).uses).toBe(0);
   });
 });
 
@@ -242,11 +240,10 @@ describe("self-serve signup", () => {
         "cursor",
         "claude-desktop",
       ]);
-      expect(html).toContain("telegram onboard --json"); // the Auto prompt
+      expect(html).toContain("telegram onboard --json");
       expect(html).toContain("telegram auth --login-key --qr");
-      // Installed versions before 0.37 only know the old flag
       expect(html).toContain('<span class="mono">--invite</span>');
-      expect(html).not.toMatch(/ style="/); // blocked by the nonce CSP
+      expect(html).not.toMatch(/ style="/);
     }
   });
 
@@ -278,7 +275,6 @@ describe("self-serve signup", () => {
     expect(mails[0].to).toBe("alice@example.com");
     const code = codeOf(mails);
     expect(mails[0].text).toContain(code);
-    // Nothing invite-like exists until the code comes back, and the code itself is not stored
     expect(keysBesides(store).every((k) => k.startsWith("verify:"))).toBe(true);
     expect([...store.values()].join(",")).not.toContain(code);
 
@@ -293,7 +289,7 @@ describe("self-serve signup", () => {
     const { invite } = (await ok.json()) as { invite: string };
     expect(invite).toMatch(/^tgi_[A-Za-z0-9_-]{43}$/);
     expect([...store.keys()].join(",")).not.toContain(invite);
-    expect(keysBesides(store).some((k) => k.startsWith("verify:"))).toBe(false); // the code is spent
+    expect(keysBesides(store).some((k) => k.startsWith("verify:"))).toBe(false);
 
     const rec = JSON.parse(store.get(`invite:${await sha256Hex(invite)}`)!);
     expect(rec).toMatchObject({
@@ -311,7 +307,6 @@ describe("self-serve signup", () => {
     });
 
     expect((await confirm(e, "alice@example.com", code)).status).toBe(410);
-    // Three computers with a spare request each, so a failed QR scan or a wrong 2FA password doesn't cost one
     for (let i = 0; i < 6; i++) {
       expect((await handle(post({ invite }), e)).status).toBe(200);
     }
@@ -345,7 +340,6 @@ describe("self-serve signup", () => {
     await expect(refused.json()).resolves.toEqual({ error: "email_used" });
     expect(mails).toHaveLength(2);
 
-    // A missing invite record can't be shown to be unrevoked, so it refuses too
     store.delete(key);
     expect((await ask(e, "a@b.co", undefined, later(183_000))).status).toBe(
       409
@@ -392,18 +386,18 @@ describe("self-serve signup", () => {
       SIGNUP_CODES_PER_EMAIL: "3",
     });
     expect((await ask(e, "a@b.co")).status).toBe(202);
-    expect((await ask(e, "a@b.co")).status).toBe(429); // resend_wait
+    expect((await ask(e, "a@b.co")).status).toBe(429);
     expect((await ask(e, "a@b.co", undefined, later(61_000))).status).toBe(202);
     expect((await ask(e, "a@b.co", undefined, later(122_000))).status).toBe(
       202
     );
     expect((await ask(e, "a@b.co", undefined, later(183_000))).status).toBe(
       429
-    ); // 3 codes per email per day
+    );
     expect((await ask(e, "c@b.co", undefined)).status).toBe(202);
     expect((await ask(e, "d@b.co", undefined)).status).toBe(202);
     expect((await ask(e, "x@b.co", undefined)).status).toBe(202);
-    expect((await ask(e, "y@b.co", undefined)).status).toBe(429); // 6 codes per IP per day
+    expect((await ask(e, "y@b.co", undefined)).status).toBe(429);
 
     expect(
       (
@@ -429,7 +423,7 @@ describe("self-serve signup", () => {
     for (const who of ["a", "b", "c", "d", "e"]) {
       codes.push((await ask(e, `${who}@b.co`)).status);
     }
-    expect(codes).toEqual([202, 202, 202, 202, 429]); // 4 codes per IP per day by default
+    expect(codes).toEqual([202, 202, 202, 202, 429]);
   });
 
   it("reports a mail failure", async () => {
@@ -660,7 +654,6 @@ describe("self-serve signup", () => {
             const html = await res.text();
             expect(res.headers.get("vary")).toBe("Accept-Language");
             expect(html).toContain(`<html lang="${lang}">`);
-            // Only the language switcher names Russian
             expect(html.replace(">Русский</a>", "")).not.toMatch(CYRILLIC);
           }
         }
@@ -770,7 +763,6 @@ describe("search engines and AI crawlers", () => {
     }
     expect(xml.match(/<url>/g)).toHaveLength(15);
     expect(xml.match(/hreflang="x-default"/g)).toHaveLength(15);
-    // Every URL in the sitemap answers 200
     for (const url of PAGE_URLS) {
       expect(
         (await get(new URL(url).pathname + new URL(url).search)).status,
@@ -812,13 +804,11 @@ describe("search engines and AI crawlers", () => {
     expect(ru.headers.get("location")).toBe(
       "https://better-tg-cli.com/login?return=x&lang=ru"
     );
-    // Crawlers send no Accept-Language: English at the bare URL, canonical to itself
     const en = await (await get("/")).text();
     expect(en).toContain('<html lang="en">');
     expect(en).toContain(
       '<link rel="canonical" href="https://better-tg-cli.com/">'
     );
-    // An explicit ?lang= wins over the browser
     expect(
       (await get("/?lang=en", { headers: { "accept-language": "ru" } })).status
     ).toBe(200);
@@ -865,7 +855,6 @@ describe("search engines and AI crawlers", () => {
           )![1]
         );
         expect(ld.inLanguage).toBe(lang);
-        // Only the language switcher names Russian on the other pages
         if (lang !== "ru") {
           expect(html.replace(">Русский</a>", "")).not.toMatch(CYRILLIC);
         }
@@ -881,7 +870,6 @@ describe("search engines and AI crawlers", () => {
     );
     expect(ld["@type"]).toBe("FAQPage");
     expect(ld.mainEntity).toHaveLength(faq.match(/<section><h2>/g)!.length);
-    // Answers in JSON-LD are plain text (no markdown left over)
     for (const q of ld.mainEntity) {
       expect(q.acceptedAnswer.text).not.toMatch(/`|\]\(/);
     }
@@ -891,7 +879,6 @@ describe("search engines and AI crawlers", () => {
     await expect((await get("/mcp")).text()).resolves.toContain(
       "claude mcp add telegram -- telegram mcp"
     );
-    // The footer links every page, keeping the language
     for (const path of ["/", "/login?lang=ru", "/faq?lang=es"]) {
       const html = await (await get(path)).text();
       const q = path.includes("lang=") ? `?lang=${path.split("lang=")[1]}` : "";
@@ -899,7 +886,6 @@ describe("search engines and AI crawlers", () => {
         expect(html, path).toContain(`<a href="${p}${q}">`);
       }
     }
-    // A Spanish browser at /faq is sent to /faq?lang=es
     expect(
       (await get("/faq", { headers: { "accept-language": "es" } })).headers.get(
         "location"

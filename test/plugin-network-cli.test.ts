@@ -14,9 +14,6 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { cliArgs } from "./cli.js";
 
-// Before any module under test is imported: a temp HOME, so nothing here touches a real profile.
-// Every child runs with TG_MOCK=<a file in its own HOME>: HTTP is answered from the mock's
-// fixtures (mock-http/*.json beside it), secrets from the mock's file; no network, no secret store.
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -124,7 +121,6 @@ const install = (home: string, dir = LAB) => {
     summary: r.err,
   };
 };
-/** HTTP answers of the mock account (what a request under TG_MOCK gets instead of the network). */
 function mockHttp(home: string, fixtures: unknown[]) {
   mkdirSync(join(plugins(home), "mock-http"), { recursive: true });
   writeFileSync(
@@ -132,7 +128,6 @@ function mockHttp(home: string, fixtures: unknown[]) {
     JSON.stringify(fixtures)
   );
 }
-/** A secret as the mock account keeps it (its own file, never a real store), under the core's key. */
 function mockSecret(
   home: string,
   installId: string,
@@ -229,7 +224,6 @@ describe(
         b64: "[secret]",
       });
       expect(r.out).not.toContain(SECRET);
-      // An unmatched request is an error, never the network
       expect(
         fetch(h, "https://api.example.com/v2/none").json.data
       ).toMatchObject({ ok: false, error: { code: "fixture_missing" } });
@@ -263,13 +257,11 @@ describe(
         code: "secret_missing",
         command: ["plugin", "secret", "set", "net-lab", "apikey"],
       });
-      // The mock's own state in the command (quoted as the shell needs it), so it never runs on a real profile
       expect(r.json.error.hint).toContain("TG_MOCK=");
       expect(r.json.error.hint).toContain("mock-state.json");
       expect(r.json.error.hint).toContain(
         "telegram plugin secret set net-lab apikey"
       );
-      // A path the secret does not cover needs none
       expect(
         fetch(h, "https://api.example.com/v2/open").json.data
       ).toMatchObject({ ok: true, response: { body: "open" } });
@@ -333,7 +325,6 @@ describe(
       const h = newHome();
       const { installId, revision } = install(h);
       mockHttp(h, ECHO);
-      // As the server starts the child: the installation it classified the call by
       const r = fetch(h, "https://api.example.com/v2/open", {
         TG_READ_ONLY: "1",
         TG_MCP: "1",
@@ -482,7 +473,6 @@ describe(
         expect((set as { reason: string }).reason).toContain(
           `telegram plugin secret set net-lab apikey`
         );
-        // A value the model added is never echoed into a command
         const withValue = classifyCall([
           "plugin",
           "secret",
@@ -510,7 +500,6 @@ describe(
             ],
           })
         ).toMatch(/use telegram_write/);
-        // A read-only MCP server refuses it
         const call = {
           jsonrpc: "2.0",
           id: 1,
@@ -553,7 +542,6 @@ describe(
         expect(ok.result.isError, ok.result.content[0].text).toBeUndefined();
         expect(ok.result.content[0].text).toContain("open");
       } finally {
-        // An undefined value would become the string "undefined": such a key is deleted
         for (const [k, v] of Object.entries(saved)) {
           if (v === undefined) {
             delete process.env[k];
@@ -564,7 +552,6 @@ describe(
       }
     });
 
-    /** A real `telegram mcp` server over stdio (as the P2 cancellation tests run it). */
     function server(home: string, extra: Record<string, string> = {}) {
       const p = spawn(process.execPath, [...cliArgs(), "mcp"], {
         env: homeEnv(home, extra),
@@ -591,8 +578,6 @@ describe(
       return { p, request, exited };
     }
 
-    // Review #12: through a real MCP server, so the worker transport (TG_MCP_WORKER) itself carries
-    // the approval and the approved retry, not a stand-in that always starts a child process
     for (const [label, extra] of [
       ["child process", {}],
       ["worker thread", { TG_MCP_WORKER: "1" }],
@@ -603,7 +588,6 @@ describe(
         mockHttp(h, ECHO);
         const s = server(h, { TG_MOCK_ASK: "1", ...extra });
         try {
-          // No elicitation capability: the server answers approval_required with a code
           await s.request(0, {
             method: "initialize",
             params: { protocolVersion: "2025-06-18", capabilities: {} },
@@ -627,7 +611,6 @@ describe(
           expect(first.action.description).toMatch(
             /Effects: network[\s\S]*Sends to: https:\/\/api\.example\.com, https:\/\/other\.example\.com, https:\/\/wrong\.example\.net/
           );
-          // No run happened yet
           expect(
             existsSync(join(profileDir(h, "tg-mock"), "audit.jsonl"))
               ? audit(h).filter((a) => a.command === "plugin run")
@@ -636,7 +619,6 @@ describe(
           const ok = (await call(2, { approval: first.code })).result;
           expect(ok.isError, ok.content[0].text).toBeUndefined();
           expect(ok.content[0].text).toContain("open");
-          // Once: the same code again is refused
           const again = (await call(3, { approval: first.code })).result;
           expect(
             again.structuredContent?.status === "approval_required" ||
@@ -715,7 +697,6 @@ describe("settings", { timeout: 60_000 }, () => {
       { key: "note2", type: "string", value: null, stored: false },
       { key: "note3", type: "string", value: null, stored: false },
     ]);
-    // Over the MCP read tool it is a write
     expect(
       cli(h, ["plugin", "settings", "set", "net-lab", "count", "5", "--json"], {
         TG_READ_ONLY: "1",
@@ -734,8 +715,6 @@ describe("settings file size (review #11)", { timeout: 60_000 }, () => {
   it("a value that would take the file past 256 KB (in bytes) is refused; the previous file and every reader keep working", () => {
     const h = newHome();
     const { installId } = install(h);
-    // 30 000 characters, 90 000 bytes in UTF-8: one argument stays under Linux's 128 KB per
-    // argument and Windows' 32 767 characters per command line; three of them pass 256 KB
     const long = JSON.stringify("€".repeat(30_000));
     expect(
       cli(h, ["plugin", "settings", "set", "net-lab", "note1", long, "--json"])
@@ -763,7 +742,6 @@ describe("settings file size (review #11)", { timeout: 60_000 }, () => {
     expect(
       readFileSync(join(plugins(h), "plugin-state", installId, "settings.json"))
     ).toEqual(file);
-    // Still readable: get, show, and a smaller value replaces a long one
     const got = cli(h, ["plugin", "settings", "get", "net-lab", "--json"]);
     expect(got.code, got.err).toBe(0);
     expect(
@@ -825,11 +803,9 @@ describe(
           opts: { method: "POST", body: "{}" },
         }).json.data
       ).toMatchObject({ ok: true, response: { status: 201, body: "created" } });
-      // The origin rules hold in dev too
       expect(
         dev({ url: "https://evil.example.com/x" }).json.data
       ).toMatchObject({ ok: false, error: { code: "network_denied" } });
-      // A link in dev/fixtures is not followed
       if (process.platform !== "win32") {
         const dir = join(h, "lab");
         cpSync(LAB, dir, { recursive: true });

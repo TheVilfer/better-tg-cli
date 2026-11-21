@@ -1,33 +1,4 @@
 #!/usr/bin/env node
-// API coverage for issue #47: how much of the Telegram client API Better-TG-CLI reaches.
-//
-//   node scripts/api-coverage.mjs                regenerate docs/api-coverage.md
-//   node scripts/api-coverage.mjs --check         fail if docs/api-coverage.md is out of date, or
-//                                                 if either coverage metric is below the minimum
-//   node scripts/api-coverage.mjs --min 90        only the coverage gate (no report written/compared)
-//   node scripts/api-coverage.mjs --json          print the two metrics as JSON
-//
-// Coverage gate (CI, `npm run coverage:api`): three metrics, otherwise exit 1:
-//  - reachability (>= min, default 90): TL schema methods reachable (via `api`) / all TL methods
-//  - dedicated commands (= 100%): TL methods with a generated `telegram <namespace> <method>`
-//    command (src/generated/tl-commands.ts) / all TL methods. Every method must have its own command.
-//  - Telethon accounting (>= min): Telethon 1.45.0 TelegramClient members (scripts/data/…tsv, plus
-//    the raw client(request) call) mapped below to a built command, library plumbing or a
-//    documented exclusion / all members. A member missing from the table, or mapped to a command
-//    whose file does not exist yet, is unaccounted. `--telethon-tsv <path>` swaps the list (tests).
-// `--min <n>` or env API_COVERAGE_MIN overrides the reachability/Telethon minimum (not the 100%).
-//
-// Two measures, both written into the report:
-//  1. Issue #47 (primary): every `extends Request<…>` in teleproto's tl/generated/api.d.ts is a
-//     TL method. "reached" = dedicated code that invokes it — a `new Api.<ns>.<Method>(` in src/
-//     (scanned) plus the methods behind the teleproto high-level client helpers the CLI calls
-//     (a hand-kept list; the issue treats this group as ±5). The generic `api` command, once
-//     present, makes 100% of methods *reachable* in one step; that is reported separately from
-//     the dedicated per-namespace coverage.
-//  2. Telethon 1.45.0 TelegramClient parity (secondary): every public member of Telethon's
-//     TelegramClient mapped to a CLI command, a covered library helper, or a documented exclusion.
-//     The mapping table is embedded here; the member list it must cover is
-//     scripts/data/telethon-1.45.0-client-methods.tsv (name, sync/async, module).
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -40,14 +11,10 @@ const TELETHON_TSV = join(
   root,
   "scripts/data/telethon-1.45.0-client-methods.tsv"
 );
-/** Not a named TelegramClient member, but counted: Telethon's raw client(request) call. */
 const RAW_CALL = "__call__ (raw request)";
 const DEFAULT_MIN = 90;
 const ALLOWLIST = join(root, "src/mcp-api-allowlist.ts");
 
-// ---- 0. the MCP allowlist (src/mcp-api-allowlist.ts, read as text: CI also runs Node 20) -------
-
-/** The groups of src/mcp-api-allowlist.ts: { access, title, reason, methods }. */
 function allowlistGroups() {
   const text = readFileSync(ALLOWLIST, "utf-8");
   const body = text.slice(text.indexOf("MCP_API_ALLOWLIST"));
@@ -75,7 +42,6 @@ function allowlistGroups() {
   return groups;
 }
 
-/** Allowlisted names that are not TL schema methods (a typo or a method removed by a new layer). */
 function allowlistUnknown() {
   const methods = schemaMethods();
   return allowlistGroups()
@@ -83,16 +49,11 @@ function allowlistUnknown() {
     .filter((m) => !methods.has(m));
 }
 
-// ---- 1. the schema: every TL method, by namespace ---------------------------------------------
-
-/** All request classNames (`<ns>.<Method>` or a bare top-level wrapper). */
 function schemaMethods() {
   const lines = readFileSync(DTS, "utf-8").split("\n");
   const methods = new Set();
   let inRequest = false;
   for (const line of lines) {
-    // Api.Message / Api.MessageService are tagged classType:"request" by mistake (they extend
-    // CustomMessage, not Request); keying off `extends Request<` skips them and yields 823.
     if (/export class \w+ extends Request</.test(line)) {
       inRequest = true;
     } else if (inRequest) {
@@ -109,9 +70,6 @@ function schemaMethods() {
 const namespaceOf = (name) =>
   name.includes(".") ? name.split(".")[0] : "(top level)";
 
-// ---- 2. what src/ reaches ---------------------------------------------------------------------
-
-/** Every `new Api.<ns>.<Method>(` / `new Api.<Method>(` in src/ that names a real request. */
 function directlyUsed(methods) {
   const top = new Set([...methods].filter((m) => !m.includes(".")));
   const used = new Set();
@@ -142,11 +100,6 @@ function directlyUsed(methods) {
   return used;
 }
 
-/**
- * Methods reached only through teleproto's high-level client helpers (getDialogs, sendMessage,
- * sendFile, downloadMedia, login, updates…) — no literal `new Api.*` in src/, so the scanner
- * can't see them. Kept by hand, as the issue did (treat this group as ±5).
- */
 const HELPER_REACHED = [
   "auth.CheckPassword",
   "auth.ExportAuthorization",
@@ -184,14 +137,8 @@ const HELPER_REACHED = [
   "users.GetUsers",
 ];
 
-/** Does the generic `api` command exist? If so, every method is reachable in one step. */
 const hasGenericApi = () => existsSync(join(root, "src/commands/api.ts"));
 
-/**
- * Schema methods that have their own dedicated `telegram <namespace> <method>` command. The generated
- * src/generated/tl-commands.ts lists every method's className; this counts how many are present, so
- * a method dropped from the generator (or a stale file) shows up as missing dedicated coverage.
- */
 function dedicatedCommandMethods(methods) {
   let text = "";
   try {
@@ -201,8 +148,6 @@ function dedicatedCommandMethods(methods) {
   }
   return new Set([...methods].filter((m) => text.includes(`"${m}"`)));
 }
-
-// ---- namespace notes (from issue #47) ---------------------------------------------------------
 
 const NOTES = {
   messages:
@@ -240,7 +185,6 @@ const NOTES = {
   fragment: "Collectible info. Via `api`.",
 };
 
-// Namespace display order (same as the issue: by method count, then the full-coverage tail).
 const NS_ORDER = [
   "messages",
   "account",
@@ -270,10 +214,6 @@ const NS_ORDER = [
   "fragment",
 ];
 
-// ---- Telethon 1.45.0 TelegramClient parity (embedded) -----------------------------------------
-// kind: 'cli' (a dedicated command), 'lib' (covered by library/plumbing we drive), 'excluded'.
-// For 'cli', field 4 is the primary command name — if that command's source file is one of the
-// PLANNED ones below and does not exist yet, the row is reported as ⏳ planned instead of ✅.
 const TELETHON = [
   ["action", "chats", "cli", "typing", "`typing` (chat action)"],
   [
@@ -455,8 +395,6 @@ const TELETHON = [
     "",
     "upload plumbing driven by `send-file`",
   ],
-  // Telethon's raw client(request) / __call__: not a named member, but the single most important
-  // one — invoking any TL request. This is exactly the generic `api` command.
   [
     "__call__ (raw request)",
     "core",
@@ -466,7 +404,6 @@ const TELETHON = [
   ],
 ];
 
-/** New commands this effort adds — reported ✅ once their source file lands, ⏳ planned before. */
 const PLANNED = {
   "delete-dialog": "src/commands/dialog.ts",
   permissions: "src/commands/permissions.ts",
@@ -476,7 +413,6 @@ const PLANNED = {
   api: "src/commands/api.ts",
 };
 
-/** ✅ for a built command, ⏳ for one still planned (file not present yet). */
 function cliStatus(cmd) {
   const planned = PLANNED[cmd];
   if (planned && !existsSync(join(root, planned))) {
@@ -485,9 +421,6 @@ function cliStatus(cmd) {
   return "cli";
 }
 
-// ---- the two gated metrics ---------------------------------------------------------------------
-
-/** Public TelegramClient member names from the committed Telethon 1.45.0 list, plus the raw call. */
 function telethonMembers(tsvPath = TELETHON_TSV) {
   const names = readFileSync(tsvPath, "utf-8")
     .split("\n")
@@ -496,7 +429,6 @@ function telethonMembers(tsvPath = TELETHON_TSV) {
   return [...new Set([...names, RAW_CALL])];
 }
 
-/** Reachability, dedicated-command and Telethon accounting, as counts and percentages. */
 function metrics(tsvPath = TELETHON_TSV) {
   const methods = schemaMethods();
   const reached = new Set([
@@ -540,13 +472,8 @@ function metrics(tsvPath = TELETHON_TSV) {
   };
 }
 
-/** Dedicated per-method commands must cover every schema method; this gate is fixed at 100%. */
 const DEDICATED_MIN = 100;
 
-/**
- * Fails (returns false) when reachability or Telethon accounting is below `min`, or when the
- * dedicated per-method command coverage is below 100% (every TL method must have a command).
- */
 function gate(min, tsvPath) {
   const { reachability: r, dedicated: d, telethon: t } = metrics(tsvPath);
   const fmt = (x) => `${(Math.floor(x * 10) / 10).toFixed(1)}%`;
@@ -594,8 +521,6 @@ function gate(min, tsvPath) {
   (ok ? console.log : console.error)(out.join("\n"));
   return ok;
 }
-
-// ---- build the report -------------------------------------------------------------------------
 
 function build() {
   const methods = schemaMethods();
@@ -693,7 +618,6 @@ function build() {
     ""
   );
 
-  // Telethon parity — resolve 'cli' into built vs planned
   const telRows = TELETHON.map(([name, mod, kind, cmd, maps]) => ({
     name,
     mod,
@@ -976,10 +900,7 @@ function build() {
   return `${lines.join("\n")}\n`;
 }
 
-// ---- CLI --------------------------------------------------------------------------------------
-
 const argv = process.argv.slice(2);
-/** Value of `--name <v>` or `--name=<v>`, else undefined. */
 function opt(name) {
   const i = argv.findIndex((a) => a === name || a.startsWith(`${name}=`));
   if (i === -1) {

@@ -15,7 +15,6 @@ import type { TestProject } from "vitest/node";
 export default function setup(project: TestProject) {
   const dir = resolve(".test-cli");
   const entry = join(dir, `cli-${process.pid}.mjs`);
-  // A killed watcher never runs the teardown: drop bundles whose run is gone
   for (const name of (() => {
     try {
       return readdirSync(dir);
@@ -58,10 +57,8 @@ export default function setup(project: TestProject) {
     );
     return null;
   };
-  // Node >= 22.1 keeps compiled bytecode here, so the many short CLI processes load faster (~20%)
   process.env.NODE_COMPILE_CACHE ??= join(dir, "compile-cache");
   project.provide("cliEntry", build());
-  // Watch mode: rebuild before every rerun, so a child process never runs stale code
   project.onTestsRerun(() => {
     project.provide("cliEntry", build());
   });

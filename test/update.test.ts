@@ -30,7 +30,6 @@ describe(compareVersions, () => {
     expect(compareVersions("0.35.0", "0.35.0-rc.2")).toBe(1);
     expect(compareVersions("0.35.0-rc.10", "0.35.0-rc.9")).toBe(1);
     expect(compareVersions("0.35.0-rc.1", "0.35.0-rc.1")).toBe(0);
-    // Someone on a candidate is not told to "update" to the older stable version
     expect(compareVersions("0.34.0", "0.35.0-rc.1")).toBe(-1);
   });
 });
@@ -63,7 +62,6 @@ describe(detectInstall, () => {
     );
   });
 
-  // install.sh records the binary in install.json; replacing it by hand would break binarySha256
   describe("a binary placed by install.sh", () => {
     const line = (path: string) => ({
       schema: 1,
@@ -78,7 +76,6 @@ describe(detectInstall, () => {
       binarySha256: "b".repeat(64),
       installedAt: "2026-11-19T00:00:00Z",
     });
-    /** A folder with a telegram and the install.json that `manifest(bin)` returns. */
     const placed = (manifest: (bin: string) => object | string) => {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), "btg-it's-")));
       const bin = join(dir, "telegram");
@@ -204,8 +201,6 @@ describe("isCompiledBinary", () => {
   });
 });
 
-// Manual replacement breaks binarySha256 in install.json, so the READMEs send install.sh users
-// back to the script and never say `telegram update` handles a release binary
 describe("README update advice", () => {
   const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -231,7 +226,6 @@ describe("README update advice", () => {
   ])("%s", (file, stale, rerun, noReplace) => {
     const doc = readFileSync(join(ROOT, file), "utf-8");
     expect(doc).not.toMatch(stale);
-    // Both places: the install section and the FAQ
     expect(doc.match(rerun)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(doc.match(noReplace)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });

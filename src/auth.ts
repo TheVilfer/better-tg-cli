@@ -56,7 +56,6 @@ export async function authenticate(
 
   console.log("\nConnecting to Telegram...");
 
-  // Connected up front so a blocked TCP transport falls back to WebSocket before any prompt
   const client = await connectClient(
     (t) =>
       new TelegramClient(
@@ -77,7 +76,6 @@ export async function authenticate(
         qrCode: async ({ token }) => {
           const url = `tg://login?token=${Buffer.from(token).toString("base64url")}`;
           const art = renderQr(url);
-          // Redraw in place: the token refreshes every 30 s
           if (drawn && process.stdout.isTTY) {
             process.stdout.write(`\u001B[${drawn}A\u001B[J`);
           }
@@ -98,10 +96,8 @@ export async function authenticate(
         await prompt(
           "Enter your phone number (with country code, e.g., +1234567890): "
         ),
-      // Hidden input: the 2FA password must not end up in terminal scrollback
       password,
       phoneCode: async () => await prompt("Enter the code you received: "),
-      // Only asked for a phone with no account yet (typical for test-DC numbers)
       firstAndLastNames: async () => [
         (await prompt("New account. First name: ")) || "Dev",
         (await prompt("Last name (optional): ")) || "",
@@ -137,12 +133,10 @@ export function saveLogin(
   } else {
     setCredentials(creds.apiId, creds.apiHash);
   }
-  // Only touch the flag when it is or was set, so ordinary configs stay unchanged
   if (testServers || loadConfig(() => {}).testServers) {
     saveConfig({ testServers });
   }
   setSessionString(session);
-  // A new login (maybe another account): approvals and the dialog list of the old one do not carry over
   clearApprovals();
   clearDialogCache();
 }
@@ -175,7 +169,6 @@ export function rpcCode(err: Error): string {
 export function qrLoginDriver(testServers = false): LoginDriver {
   return {
     async login(creds, io) {
-      // A blocked TCP transport (cloud agent computers) falls back to WebSocket here
       const client = await connectClient(
         (t) =>
           new TelegramClient(
@@ -185,7 +178,6 @@ export function qrLoginDriver(testServers = false): LoginDriver {
             clientParams(testServers, t)
           )
       );
-      // teleproto reports a stop as AUTH_USER_CANCEL; keep the real cause to show instead
       let cause: string | undefined;
       try {
         const user = await client

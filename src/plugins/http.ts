@@ -1,17 +1,3 @@
-/**
- * `host.http.fetch` (docs/plugins.md §6): one pipeline for every request a plugin makes.
- *
- *   check the request (exact origin from the manifest, method, headers, size)
- *   → inject the secrets whose origin and path match (the plugin never sees them)
- *   → a backend: the network (resolve once, refuse a non-public IP, connect to that IP, speak
- *     HTTP/1.1 over TLS ourselves), or fixtures (`plugin dev --mock`, TG_MOCK)
- *   → cap the body (raw and decompressed), strip every secret form, drop cookies
- *   → {status, headers, body | bodyBase64}
- *
- * No redirect is followed (a 3xx comes back as it is), no cookie is kept or sent, no proxy is used
- * (the socket is opened by tls.connect to the checked IP, which reads no proxy variable), and the
- * request ends with the run (its deadline and cancellation).
- */
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { checkServerIdentity, connect as tlsConnect } from "node:tls";
@@ -31,22 +17,13 @@ import type { Nat64Prefix } from "./net-address.js";
 import { HostError } from "./sandbox-types.js";
 
 export const HTTP_LIMITS = {
-  /** Body bytes a plugin may send. */
   requestBytes: 256 * 1024,
-  /** Body bytes a plugin may receive, after decompression (and before it, on the wire). */
   responseBytes: 1024 * 1024,
-  /**
-   * Everything of a response that is not body, together: the status lines and headers of every
-   * interim (1xx) and final answer, chunk-size lines with their extensions, the CRLF after each
-   * chunk, and trailers.
-   */
   headerBytes: 64 * 1024,
-  /** Chunks of one chunked body (each costs at least 5 bytes of the budget above, so this binds first). */
   chunks: 8192,
   urlChars: 8192,
   headers: 50,
   headerValueChars: 8192,
-  /** All the plugin's header names and values together. */
   requestHeaderBytes: 16 * 1024,
 } as const;
 
@@ -56,7 +33,6 @@ export const HTTP_LIMITS = {
  */
 export const httpTiming = { timeoutMs: 30_000 };
 
-/** A request ends a little before the run's deadline, so the plugin still gets its `timeout` error. */
 const DEADLINE_MARGIN_MS = 250;
 
 /** The one absolute deadline of a request entering `http.fetch` now: 30 s, or the run's end, whichever is first. */
@@ -64,10 +40,8 @@ export function requestDeadline(runDeadline: number, now = Date.now()): number {
   return Math.min(now + httpTiming.timeoutMs, runDeadline - DEADLINE_MARGIN_MS);
 }
 
-/** A text body is handed in as text only while its JSON form stays below this (else base64). */
 const TEXT_JSON_CHARS = 1_500_000;
 
-/** Request headers the plugin may not set (lower case); `proxy-*` and `sec-*` too. */
 const FORBIDDEN_HEADERS = new Set([
   "host",
   "cookie",
@@ -85,7 +59,6 @@ const FORBIDDEN_HEADERS = new Set([
   "http2-settings",
   "proxy-authorization",
   "proxy-connection",
-  // A partial body could cut an echoed secret into pieces no stripping would recognize
   "range",
   "if-range",
 ]);
@@ -118,13 +91,16 @@ const METHODS = new Set([
 ]);
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-/** A request as the host checked it: only these values reach a backend. */
+/**
+ * A request as the host checked it: only these values reach a backend.
+ *
+ * - `rawPath`: The path as the plugin wrote it, before the URL parser resolved dot segments and backslashes.
+ * - `headers`: Header names as given, unique case-insensitively; the secrets' headers are added later.
+ */
 export interface CheckedRequest {
   method: string;
   url: URL;
-  /** The path as the plugin wrote it, before the URL parser resolved dot segments and backslashes. */
   rawPath: string;
-  /** Header names as given, unique case-insensitively; the secrets' headers are added later. */
   headers: [string, string][];
   body?: Buffer;
   responseType: "text" | "base64";
@@ -357,7 +333,6 @@ export function checkRequest(
  * up to the query or fragment.
  */
 export function rawPathOf(urlText: string): string {
-  // eslint-disable-next-line no-control-regex
   const text = urlText
     .replaceAll(/[\t\n\r]/g, "")
     .replaceAll(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "");
@@ -431,8 +406,6 @@ export function injectMatches(
   );
 }
 
-// ---------- removing secrets from a response ----------
-
 /**
  * Every form of a secret an endpoint might echo: the value and its formatted header, each as is,
  * URL-encoded (both ways), JSON-escaped, hex, and base64 / base64url at each of the three byte
@@ -447,13 +420,11 @@ export function secretForms(values: string[]): Buffer[] {
     forms.add(v);
     forms.add(encodeURIComponent(v));
     forms.add(encodeURIComponent(v).replaceAll("%20", "+"));
-    // application/x-www-form-urlencoded (URLSearchParams, HTML forms) also encodes !'()~
     forms.add(new URLSearchParams({ k: v }).toString().slice(2));
     forms.add(JSON.stringify(v).slice(1, -1));
     const raw = Buffer.from(v, "utf-8");
     forms.add(raw.toString("hex"));
     forms.add(raw.toString("hex").toUpperCase());
-    // Whole base64 (with its padding) first; the alignments below catch it inside a longer text
     forms.add(raw.toString("base64"));
     forms.add(raw.toString("base64url"));
     for (let k = 0; k < 3; k++) {
@@ -468,7 +439,6 @@ export function secretForms(values: string[]): Buffer[] {
       }
     }
   }
-  // Longest first, so a formatted header goes as a whole before its value inside it
   return [...forms]
     .filter((f) => f.length >= 8)
     .sort((a, b) => b.length - a.length)
@@ -511,7 +481,6 @@ export function shapeResponse(
     if (lower === "set-cookie" || lower === "set-cookie2") {
       continue;
     }
-    // The body is handed in decoded and whole: these would describe the bytes on the wire
     if (
       lower === "content-encoding" ||
       lower === "content-length" ||
@@ -534,13 +503,10 @@ export function shapeResponse(
   if (responseType === "text") {
     try {
       const text = new TextDecoder("utf-8", { fatal: true }).decode(body);
-      // The bridge counts UTF-8 bytes of the JSON it hands in
       if (Buffer.byteLength(JSON.stringify(text)) <= TEXT_JSON_CHARS) {
         return { status: r.status, headers: { ...headers }, body: text };
       }
-    } catch {
-      // not UTF-8: handed in as base64
-    }
+    } catch {}
   }
   return {
     status: r.status,
@@ -549,12 +515,12 @@ export function shapeResponse(
   };
 }
 
-// ---------- the network backend ----------
-
+/**
+ * - `lookup`: Every address of a host name (one DNS resolution per request).
+ * - `connect`: A TLS connection to exactly this address, verified for `servername`.
+ */
 export interface NetDeps {
-  /** Every address of a host name (one DNS resolution per request). */
   lookup(hostname: string): Promise<{ address: string; family: number }[]>;
-  /** A TLS connection to exactly this address, verified for `servername`. */
   connect(o: {
     address: string;
     family: number;
@@ -581,13 +547,10 @@ export function systemNet(tlsExtra: { ca?: string | Buffer } = {}): NetDeps {
         ALPNProtocols: ["http/1.1"],
         minVersion: "TLSv1.2",
         ...tlsExtra,
-        // Set here, never inherited: NODE_TLS_REJECT_UNAUTHORIZED=0 in the environment changes nothing,
-        // and the certificate must name the origin's host (the socket is opened to an IP literal)
         rejectUnauthorized: true,
         checkServerIdentity: (_host, cert) =>
           checkServerIdentity(servername, cert),
       });
-      // The socket must reach the address that was checked, nothing else
       socket.once("secureConnect", () => {
         const remote = (socket.remoteAddress ?? "").replace(
           /^::ffff:(?=\d+\.)/,
@@ -661,7 +624,6 @@ export function networkBackend(net: NetDeps): Backend {
     if (signal.aborted) {
       throw new HostError("cancelled", "The run ended");
     }
-    // Every address must be public: one private answer makes the whole name suspect
     for (const a of addresses) {
       const why = addressProblem(a.address, nat64);
       if (why) {
@@ -743,23 +705,19 @@ const tooLarge = () =>
     "response_too_large",
     `The response is larger than ${HTTP_LIMITS.responseBytes} bytes`
   );
-// A server-supplied value is never put into an error: error messages reach the sandbox unstripped
 const badResponse = (why: string) =>
   new HostError(
     "bad_response",
     `The server's response is not valid HTTP/1.1: ${why}`
   );
 
-/** What one response may spend on everything that is not body (HTTP_LIMITS.headerBytes, .chunks). */
 class Overhead {
   private bytes = 0;
   private chunks = 0;
-  /** false once the response spent more than its budget. */
   spend(n: number): boolean {
     this.bytes += n;
     return this.bytes <= HTTP_LIMITS.headerBytes;
   }
-  /** Would `n` more bytes still fit (a head whose end has not arrived yet)? */
   fits(n: number): boolean {
     return this.bytes + n <= HTTP_LIMITS.headerBytes;
   }
@@ -768,11 +726,9 @@ class Overhead {
   }
 }
 
-/** The body in one buffer that grows by doubling (never one buffer per socket read or per chunk). */
 class BodySink {
   private buf = Buffer.alloc(0);
   length = 0;
-  /** false when the body passed the limit. */
   push(b: Buffer): boolean {
     if (!b.length) {
       return true;
@@ -876,7 +832,6 @@ export function exchange(
       | undefined;
     const overhead = new Overhead();
     const body = new BodySink();
-    // The body is complete: the socket is no longer read, only the decoding can still fail
     let ended = false;
     const done = () => {
       ended = true;
@@ -943,13 +898,11 @@ export function exchange(
       for (;;) {
         const end = buf.indexOf("\r\n\r\n");
         if (end === -1) {
-          // What is buffered counts against the budget too, before its end is seen
           if (!overhead.fits(buf.length)) {
             finish(badResponse("the headers are longer than 64 KB"));
           }
           return;
         }
-        // Every head, the interim ones included, spends the one budget
         if (!overhead.spend(end + 4)) {
           return finish(badResponse("the headers are longer than 64 KB"));
         }
@@ -962,7 +915,7 @@ export function exchange(
           if (parsed.status === 101) {
             return finish(badResponse("the server switched protocols"));
           }
-          continue; // an interim answer (103 Early Hints): the real one follows
+          continue;
         }
         status = parsed.status;
         headers = parsed.headers;
@@ -1070,8 +1023,6 @@ function bodyFraming(
   }
   const te = headerValue(headers, "transfer-encoding");
   if (te !== undefined) {
-    // Only chunked: the host cannot undo any other transfer coding (gzip on the wire would hide
-    // an echoed secret from the stripper and the size limit from the body)
     if (te.trim().toLowerCase() !== "chunked") {
       return { error: "a transfer coding other than chunked" };
     }
@@ -1092,7 +1043,6 @@ function bodyFraming(
   return { kind: "close" };
 }
 
-/** Chunked transfer coding, parsed as bytes arrive, written straight into the body's buffer. */
 class ChunkParser {
   private state: "size" | "data" | "data-crlf" | "trailer" | "done" = "size";
   private line = "";
@@ -1117,7 +1067,6 @@ class ChunkParser {
         }
         continue;
       }
-      // Size lines with their extensions, the CRLF after each chunk and trailers: all overhead
       const c = chunk[i++];
       if (!overhead.spend(1)) {
         return { error: "the chunk lines and trailers are longer than 64 KB" };
@@ -1154,7 +1103,6 @@ class ChunkParser {
   }
 }
 
-/** The decoders the host asked for (`Accept-Encoding`); a Map, so no inherited name is a decoder. */
 const DECODERS = new Map<string, () => Gunzip>([
   ["gzip", () => createGunzip()],
   ["x-gzip", () => createGunzip()],
@@ -1172,7 +1120,6 @@ export function decompress(
     return Promise.resolve(raw);
   }
   const make = DECODERS.get(enc);
-  // The server's value is not repeated: it never reaches the sandbox unstripped
   if (!make) {
     return Promise.reject(
       badResponse("a content encoding that was not asked for")
@@ -1219,7 +1166,6 @@ export function decompress(
     if (error instanceof HostError && error.code !== "bad_response") {
       throw error;
     }
-    // "deflate" is sometimes sent without its zlib wrapper
     if (enc === "deflate") {
       return run(() => createInflateRaw() as unknown as Gunzip).catch(
         (error_) => {
@@ -1233,8 +1179,6 @@ export function decompress(
     throw badResponse(`the ${enc} body is damaged`);
   });
 }
-
-// ---------- fixtures (plugin dev --mock, TG_MOCK) ----------
 
 export interface Fixture {
   method: string;

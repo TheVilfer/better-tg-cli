@@ -1,7 +1,3 @@
-// Replacement for the `mime` package in the bundle (`scripts/bundle.mjs`). teleproto calls
-// `mime.getType(path)` to pick photo / document / audio when uploading and
-// `mime.getExtension(mimeType)` to name downloaded documents, so the stub must implement both.
-// Common extensions only; unknown types fall back to teleproto's own defaults.
 export const MIME = {
   jpg: "image/jpeg",
   jpeg: "image/jpeg",

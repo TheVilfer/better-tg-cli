@@ -20,12 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { downloadAvatar, downloadMessageMedia } from "../src/client.js";
 
-// `download` and `avatar` (also over MCP) and sync's media: the computed target must be the file
-// written. teleproto's own path choice runs for real here: a photo with a cached size is written
-// by teleproto without any network request, so only the client around it is faked.
-
 const DATE = 1_700_000_000;
-/** Where teleproto puts a photo when a directory sits at the path it was given. */
 const CHOSEN = `photo${DATE}.jpg`;
 
 function cachedPhotoMessage(id: number): Api.Message {
@@ -61,14 +56,12 @@ const me = new Api.User({
   accessHash: bigInt(0),
 });
 
-/** A client whose downloadMedia is teleproto's own (getProperFilename and the write included). */
 function fakeClient(): TelegramClient {
   const client = {
     getMe: async () => me,
     getMessages: async () => [cachedPhotoMessage(1)],
     downloadMedia: (msg: Api.Message, p: { outputFile?: string }) =>
       downloads.downloadMedia(client as never, msg, p.outputFile),
-    // The network boundary of downloadProfilePhoto: teleproto writes through createWriteStream
     downloadProfilePhoto: async (_e: unknown, p: { outputFile: string }) => {
       await new Promise<void>((done, fail) =>
         createWriteStream(p.outputFile).on("error", fail).end("AVATAR", done)
@@ -108,7 +101,6 @@ describe.skipIf(process.platform === "win32")(
 
     it("a directory at the target is refused (teleproto would pick a file inside it)", async () => {
       mkdirSync(join(out, "1_photo.jpg"));
-      // The file teleproto would choose is a link out of the folder
       symlinkSync(sentinel, join(out, "1_photo.jpg", CHOSEN));
       await expect(
         downloadMessageMedia(fakeClient(), "me", 1, out)

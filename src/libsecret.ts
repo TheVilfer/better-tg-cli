@@ -6,11 +6,6 @@ import { secretPrefix } from "./paths.js";
 import { spawnAsync } from "./spawn-async.js";
 import type { SpawnResult } from "./spawn-async.js";
 
-/**
- * Linux Secret Service (GNOME Keyring, KWallet, KeePassXC) through `secret-tool`
- * from libsecret-tools. Items: service=<tg-cli[-profile]>, account=<key>.
- */
-
 let availableCache: boolean | null = null;
 
 function run(args: string[], input?: string) {
@@ -29,8 +24,6 @@ export function isLibsecretAvailable(): boolean {
   if (platform() !== "linux" || process.env.TG_NO_LIBSECRET) {
     return (availableCache = false);
   }
-  // A lookup that finds nothing exits 1 silently; a missing binary, D-Bus session or
-  // Secret Service exits with an error on stderr (or ENOENT).
   const probe = run([
     "lookup",
     "service",
@@ -100,7 +93,6 @@ export function libsecretSet(key: string, value: string): boolean {
     ],
     value
   );
-  // Read back: some Secret Service backends accept the call but store nothing while locked
   return r.status === 0 && libsecretGet(key) === value;
 }
 

@@ -25,11 +25,6 @@ import { seedWorld } from "../src/mock/world.js";
 import { lookupPeers } from "../src/peer-lookup.js";
 import { setStrictChatResolution } from "../src/resolve-mode.js";
 
-/**
- * The write takes what the approval was checked against, in the same process: the recipient object
- * the guard resolved, the file bytes it hashed, the button it showed. The mock account stands in
- * for Telegram (TG_MOCK), nothing leaves the machine.
- */
 const dir = mkdtempSync(join(tmpdir(), "tg-bound-write-"));
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -52,7 +47,7 @@ describe("the recipient the guard resolved is the one the write gets", () => {
     const peers = await lookupPeers(["@alice_example"]);
     expect(peers.get("@alice_example")).toMatchObject({ ok: true, id: "1001" });
     const first = await resolveChat(await getClient(), "@alice_example");
-    await disconnectClient(); // drops the lookup cache
+    await disconnectClient();
     setStrictChatResolution(false);
     await expect(
       resolveChat(await getClient(), "@alice_example")
@@ -60,7 +55,6 @@ describe("the recipient the guard resolved is the one the write gets", () => {
   });
 });
 
-/** A client that records what an upload was given, and nothing else. */
 function recorder() {
   const got: unknown[] = [];
   const entity = { className: "User" };
@@ -77,7 +71,7 @@ function recorder() {
 }
 
 async function bytesOf(file: unknown): Promise<string> {
-  expect(file).toBeTypeOf("object"); // never the path: it would be read again
+  expect(file).toBeTypeOf("object");
   return Buffer.from(
     await (file as { arrayBuffer(): Promise<ArrayBuffer> }).arrayBuffer()
   ).toString();
@@ -87,7 +81,7 @@ describe("an upload sends the snapshot the approval hashed, never the path again
   it("send-file", async () => {
     const f = join(dir, "a.txt");
     writeFileSync(f, "approved bytes");
-    fileSnapshot(f); // what the guard hashed
+    fileSnapshot(f);
     writeFileSync(f, "swapped later!");
     const { client, got } = recorder();
     await sendFileMessage(client, "me", f);
@@ -128,7 +122,6 @@ describe("click presses only the button the person approved", () => {
   it("refuses when the keyboard changed between the approval and the press", async () => {
     const world = seedWorld();
     const menu = world.chats.find((c) => c.id === 2001)!.messages[1];
-    // What the person approved: #2 "Status", payload "status"
     const approved = buttonFingerprint({
       index: 2,
       row: 0,
@@ -148,7 +141,6 @@ describe("click presses only the button the person approved", () => {
     await expect(
       clickButton(await getClient(), "2001", 2, { index: 2 }, { waitMs: 0 })
     ).rejects.toThrow(/changed after the approval; nothing was pressed/);
-    // Unchanged, it is pressed
     expectButton(
       buttonFingerprint({
         index: 1,
@@ -178,7 +170,7 @@ describe("click presses only the button the person approved", () => {
       const approved = await findButton(await getClient(), "2001", 2, {
         index: 2,
       });
-      expect(approved.info.text).not.toContain("AAAA1111"); // still shown masked
+      expect(approved.info.text).not.toContain("AAAA1111");
       menu.buttons![0][1] = {
         text: "Claim https://t.me/giftcode/BBBB2222",
         data: "status",
@@ -187,8 +179,8 @@ describe("click presses only the button the person approved", () => {
       writeFileSync(state, JSON.stringify(world));
       await disconnectClient();
       const now = await findButton(await getClient(), "2001", 2, { index: 2 });
-      expect(now.info).toEqual(approved.info); // the masked views are the same…
-      expectButton(approved.fingerprint); // …the binding is not
+      expect(now.info).toEqual(approved.info);
+      expectButton(approved.fingerprint);
       await expect(
         clickButton(await getClient(), "2001", 2, { index: 2 }, { waitMs: 0 })
       ).rejects.toThrow(/changed after the approval; nothing was pressed/);
@@ -209,7 +201,7 @@ describe("review findings on the binding itself", () => {
       writeFileSync(a, "approved bytes");
       writeFileSync(b, "other bytes!!!");
       symlinkSync(a, link);
-      fileSnapshot(link); // the guard
+      fileSnapshot(link);
       unlinkSync(link);
       symlinkSync(b, link);
       const { client, got } = recorder();

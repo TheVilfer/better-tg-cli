@@ -64,7 +64,6 @@ export function isKeychainAvailable(): boolean {
   }
 
   try {
-    // Verify the security binary exists and is executable
     execFileSync(SECURITY_PATH, ["help"], { stdio: "ignore" });
     keychainAvailableCache = true;
   } catch {
@@ -162,8 +161,6 @@ export function keychainSet(key: string, value: string): boolean {
   }
 
   try {
-    // Feed the command through stdin (`security -i`) instead of argv, so the secret
-    // (e.g. the session string) never shows up in `ps` output while it is written.
     const command = [
       "add-generic-password",
       "-s",
@@ -172,7 +169,7 @@ export function keychainSet(key: string, value: string): boolean {
       quoteForSecurityShell(key),
       "-w",
       quoteForSecurityShell(value),
-      "-U", // update if entry already exists
+      "-U",
     ].join(" ");
     execFileSync(SECURITY_PATH, ["-i"], {
       input: `${command}\n`,

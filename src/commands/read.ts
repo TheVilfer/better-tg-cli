@@ -149,7 +149,6 @@ export const readCommand = new Command("read")
       if (options.unread) {
         const state = await getReadState(client, chat);
         if (state.unreadCount === 0) {
-          // The same checks (--topic needs a forum) and the same chat fields as a page with messages
           const { chatId, chatTitle } = await chatRef(client, chat, {
             topic: !!options.topic && !options.thread,
           });
@@ -182,7 +181,6 @@ export const readCommand = new Command("read")
       const title = thread
         ? `${chatTitle} › thread ${thread}${threadChatId ? ` (comments chat ${threadChatId})` : ""}`
         : chatTitle;
-      // Only when an older message was seen: a page that ends exactly at the start of history has none
       const oldest = messages.length
         ? Math.min(...messages.map((m) => m.id))
         : undefined;

@@ -2,32 +2,29 @@
  * What the sandbox engine (runtime.ts) and the host API (host.ts) share, without loading the engine:
  * the limits, the errors, the shape of a host function. runtime.ts, which pulls in QuickJS, is
  * imported on demand by the run itself.
+ *
+ * - `timeoutMs`: The whole run, host waits included.
+ * - `callBytes`: UTF-8 bytes of one call's arguments, and of one result handed into the sandbox.
+ * - `httpReplyBytes`: UTF-8 bytes of one `http.fetch` result: a 1 MB body (the response limit) arrives as text or base64 with its headers, more than `callBytes` once escaped.
+ * - `outputChars`: Characters of the command's result after serialization.
+ * - `jobsPerDrain`: Jobs run in one drain of the queue (a promise loop that never yields to the host).
  */
 
 export interface SandboxLimits {
-  /** The whole run, host waits included. */
   timeoutMs: number;
   memoryBytes: number;
   stackBytes: number;
   hostCalls: number;
   concurrentCalls: number;
-  /** UTF-8 bytes of one call's arguments, and of one result handed into the sandbox. */
   callBytes: number;
-  /**
-   * UTF-8 bytes of one `http.fetch` result: a 1 MB body (the response limit) arrives as text or
-   * base64 with its headers, more than `callBytes` once escaped.
-   */
   httpReplyBytes: number;
-  /** Characters of the command's result after serialization. */
   outputChars: number;
-  /** Jobs run in one drain of the queue (a promise loop that never yields to the host). */
   jobsPerDrain: number;
 }
 
 export const DEFAULT_LIMITS: SandboxLimits = {
   timeoutMs: 60_000,
   memoryBytes: 64 * 1024 * 1024,
-  // Below the host's own stack: QuickJS raises a catchable RangeError before V8 runs out
   stackBytes: 256 * 1024,
   hostCalls: 200,
   concurrentCalls: 4,
@@ -54,7 +51,6 @@ export class SandboxError extends Error {
     readonly code: "plugin_limit" | "plugin_error" | "cancelled",
     message: string,
     readonly limit?: string,
-    /** The `code` of the error the command rejected with, when it had a string one (a host error passed on) */
     readonly guestCode?: string
   ) {
     super(message);

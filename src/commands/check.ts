@@ -25,7 +25,6 @@ import {
 import { transportSetting } from "../transport.js";
 import { VERSION } from "../version.js";
 
-/** Where the session of this snapshot actually came from, not just which store is reachable. */
 function sessionStorageLabel(config: TgConfig): string {
   if (secretSource("sessionString", config) === "file") {
     return "config.json5 (plaintext file, used as is; it is not moved into the secret store)";
@@ -50,8 +49,6 @@ export const checkCommand = new Command("check")
     const json = !!options.json;
     if (isMock()) {
       const me = await getMe(await getClient());
-      // The guard is skipped under TG_MOCK (writes only change the local state file), unless
-      // TG_MOCK_ASK rehearses mode "ask"
       const mode = isMockAsk() ? "ask" : "on";
       if (json) {
         console.log(
@@ -91,7 +88,6 @@ export const checkCommand = new Command("check")
       await disconnectClient();
       return;
     }
-    // One snapshot for the whole check: the conflicts, the session, the transport and the servers
     let config: TgConfig;
     let configured: boolean;
     let conflicts: string[];
@@ -100,7 +96,6 @@ export const checkCommand = new Command("check")
       configured = isConfigured(config);
       conflicts = secretFileConflicts(config);
     } catch (error) {
-      // e.g. the secret store could not be read
       if (json) {
         fail(error);
       }
@@ -138,7 +133,6 @@ export const checkCommand = new Command("check")
       process.exit(EXIT.NOT_LOGGED_IN);
     }
 
-    // Before connecting: with a dead stored session this is the hint that the file holds another one
     for (const key of conflicts) {
       const line = `config.json5 also holds a ${key} that differs from the secret store; the stored one is used.`;
       if (json) {
@@ -188,8 +182,6 @@ export const checkCommand = new Command("check")
       await disconnectClient();
     } catch (error) {
       const details = errorDetails(error);
-      // Only an ended session (exit 5) is a reason to log in again; no network or a rate limit
-      // says nothing about the session
       const ended = details.exitCode === EXIT.NOT_LOGGED_IN;
       if (json) {
         spinner.stop();
@@ -238,7 +230,6 @@ export const checkCommand = new Command("check")
     }
   });
 
-/** `plugins` (and `pluginsError` for a damaged lock file) for check --json. */
 function pluginsJson(userId: string | undefined): {
   plugins: ReturnType<typeof checkPlugins>["plugins"];
   pluginsError?: string;

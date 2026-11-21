@@ -6,12 +6,10 @@ import { getSessionString, isConfigured, saveConfig } from "../config.js";
 import { promptHidden } from "../prompt.js";
 import { readTextArg } from "../text.js";
 
-/** Login key from --login-key <key|->, TG_LOGIN_KEY, or a hidden prompt (keeps it out of argv). */
 async function resolveLoginKey(value: string | true): Promise<string> {
   if (typeof value === "string") {
     return readTextArg(value).trim();
   }
-  // TG_INVITE: the variable's name until 0.36
   const fromEnv = process.env.TG_LOGIN_KEY || process.env.TG_INVITE;
   if (fromEnv) {
     return fromEnv.trim();
@@ -27,7 +25,6 @@ export const authCommand = new Command("auth")
     "--login-key [key]",
     'Log in with a login key instead of your own API keys (omit the key to be prompted; "-" reads stdin)'
   )
-  // The flag's name until 0.36: scripts and older guides still pass it
   .addOption(new Option("--invite [key]").hideHelp())
   .option(
     "--broker <url>",
@@ -51,14 +48,11 @@ export const authCommand = new Command("auth")
       testDc?: boolean;
       qr?: boolean;
     }) => {
-      // Save op vault config if provided (before auth, so secrets route there)
       if (opts.opVault) {
         saveConfig({ opVault: opts.opVault });
         console.log(`1Password vault set to: ${opts.opVault}`);
       }
 
-      // Never overwrite a working login; after `telegram logout` there is no session and auth proceeds.
-      // A store that cannot be read stops here: it may hold a working login that must not be replaced.
       let loggedIn: boolean;
       try {
         loggedIn = isConfigured() && !!getSessionString();

@@ -31,17 +31,14 @@ export function openBrowser(url: string): void {
   const [cmd, ...args] =
     process.platform === "darwin"
       ? ["open", url]
-      : // explorer.exe mangles URLs with query strings; the URL protocol handler opens the default browser
-        process.platform === "win32"
+      : process.platform === "win32"
         ? ["rundll32", "url.dll,FileProtocolHandler", url]
         : ["xdg-open", url];
   try {
     spawn(cmd, args, { stdio: "ignore", detached: true, windowsHide: true })
       .on("error", () => {})
       .unref();
-  } catch {
-    /* the URL is printed anyway */
-  }
+  } catch {}
 }
 
 export const onboardCommand = new Command("onboard")
@@ -77,22 +74,17 @@ export const onboardCommand = new Command("onboard")
             ? JSON.stringify(e)
             : (HUMAN[e.event] as (x: OnboardEvent) => string)(e)
         );
-        // The login is saved: the overall limit no longer applies, the mode step has its own (10 min)
         if (e.event === "logged_in" && timer) {
           clearTimeout(timer);
         }
       };
 
-      // Never replace a working login, same as `telegram auth`. A stored session Telegram no longer
-      // accepts is replaced by a new login; an unreadable store or no network stops here
       let state: Awaited<ReturnType<typeof checkStoredSession>>["state"];
       let checked: string | undefined;
       try {
-        // The stored session as it was before the check: the page may replace only that one
         ({ state, snapshot: checked } = await checkStoredSession());
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // No page is open yet, so not HUMAN.error ("the page offers a retry")
         if (opts.json) {
           emit({ event: "error", message });
         } else {
@@ -157,7 +149,6 @@ export const onboardCommand = new Command("onboard")
 
       await session.done;
       clearTimeout(timer);
-      // Let the page see "done" on its next poll before the server goes away
       await new Promise((r) => setTimeout(r, 2500));
       session.close();
       process.exit(0);

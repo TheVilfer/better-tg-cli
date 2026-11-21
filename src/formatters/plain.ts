@@ -191,8 +191,6 @@ export function formatMediaLabel(media: MediaInfo): string {
   return `${icon} ${parts.join(" ")}${metaStr}`;
 }
 
-// --- Compact (non-TTY) output: one line per item, IDs first, for agents and pipes ---
-
 /** The local time zone the plain output uses, once per header: "Europe/Moscow, UTC+3". */
 export function timeZoneLabel(now = new Date()): string {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local time";
@@ -211,7 +209,6 @@ export function truncate(text: string, max?: number): string {
   if (!max || text.length <= max) {
     return text;
   }
-  // Slice by code points so emoji surrogate pairs are never split (invalid JSON otherwise)
   const chars = [...text];
   return chars.length <= max ? text : `${chars.slice(0, max).join("")}…`;
 }
@@ -237,7 +234,6 @@ function compactMessage(
   maxText?: number,
   chatTitle?: string
 ): string {
-  // Channel posts: the sender is the channel itself, so don't repeat its name
   const rawSender = msg.isOutgoing ? "You" : msg.sender;
   const sender =
     rawSender === (msg.chatTitle ?? chatTitle) ? "" : ` ${rawSender}`;
@@ -247,7 +243,6 @@ function compactMessage(
     : "";
   const topic = msg.topicId ? ` [topic ${msg.topicId}]` : "";
   const media = msg.media ? `[${formatMediaLabel(msg.media)}] ` : "";
-  // Collapse blank lines and indent continuation lines under the header
   const text = truncate(msg.text, maxText)
     .replaceAll(/\n\s*\n/g, "\n")
     .trim()
@@ -311,7 +306,6 @@ export function formatMessages(
   chatTitle?: string,
   maxText?: number
 ): string {
-  // Times are local: the header names the zone once, so a reader elsewhere does not misread them
   const zone = `(times in ${timeZoneLabel()})`;
   if (!isTTY) {
     const body = messages
@@ -500,7 +494,6 @@ export function formatInbox(
     chalk.bold(`\n${unreadChats.length} chats with unread messages:\n`)
   );
 
-  // The order the inbox command chose (unmuted first)
   for (const chat of unreadChats) {
     const typeIcon = getTypeIcon(chat.type);
     const muted = chat.muted ? chalk.gray(" (muted)") : "";

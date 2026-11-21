@@ -10,11 +10,6 @@ import type { ModeResult, OnboardSession, SavedMode } from "../src/onboard.js";
 import { parseForDuration } from "../src/write-state.js";
 import type { WriteMode } from "../src/write-state.js";
 
-/**
- * The onboarding page's own script, run in node:vm against a tiny fake DOM and the real local
- * server: what the person actually reads in each language, not only which strings are shipped.
- */
-
 type Lang = keyof typeof STRINGS;
 const LANGS = Object.keys(STRINGS) as Lang[];
 
@@ -61,7 +56,6 @@ class El {
   }
 }
 
-/** Every opening tag of the page as an element; enough for the selectors the script uses. */
 function fakeDocument(html: string) {
   const els: El[] = [];
   for (const m of html.matchAll(/<([a-z][a-z0-9]*)\b([^>]*)>/g)) {
@@ -110,7 +104,6 @@ function fakeDocument(html: string) {
   return { document, byId: (id: string) => document.getElementById(id)! };
 }
 
-/** The real server at `url`, with the Origin a browser sends on a POST */
 function direct(url: string): typeof fetch {
   const { origin } = new URL(url);
   return (input, init = {}) =>
@@ -122,7 +115,6 @@ function direct(url: string): typeof fetch {
     );
 }
 
-/** A response whose body breaks off after `start`, as when the connection drops after the headers */
 const broken = (status: number, start = "") =>
   new Response(
     new ReadableStream({
@@ -136,10 +128,6 @@ const broken = (status: number, start = "") =>
     { status }
   );
 
-/**
- * Loads the page in one language. `fetchImpl` defaults to the real server. `html`: the page as the
- * server sent it, instead of one rendered here.
- */
 function openPage(
   url: string,
   lang: string,
@@ -156,7 +144,6 @@ function openPage(
     }
     return fetchImpl(input, init);
   };
-  // The test fires the timer itself (tick); clearInterval really stops it
   let interval: (() => unknown) | undefined;
   const ctx = vm.createContext({
     document,
@@ -187,7 +174,6 @@ function openPage(
     ].filter((id) => !byId(id).hidden);
   return {
     poll: () => run("poll()"),
-    /** One timer tick, as the browser would fire it; false once the page stopped polling */
     tick: async () => {
       if (!interval) {
         return false;
@@ -197,7 +183,6 @@ function openPage(
     },
     stateCalls: () => stateCalls,
     checked: () => document.querySelector("input[name=mode]:checked")?.value,
-    // The handlers return act()'s promise: wait for it, not for a fixed time
     click: async (id: string) => {
       await byId(id).onclick!();
     },
@@ -233,7 +218,6 @@ const driver: LoginDriver = {
 let session: OnboardSession | undefined;
 afterEach(() => session?.close());
 
-/** A server whose store refuses (`refuse`), or says ok but keeps the old value (`lie`). */
 async function server(
   plan: {
     refuse?: boolean;
@@ -259,7 +243,6 @@ async function server(
       if (plan.refuse) {
         return { ok: false, error: "store_failed" };
       }
-      // A secret store and no terminal or dialog: "on" is refused, like applyModeChoice
       if (
         plan.needsTerminal &&
         (c.mode === "on" ||
@@ -325,7 +308,6 @@ describe("every code the server sends has a text", () => {
     for (const c of codes) {
       expect(errors[c], `${lang}: ${c}`).toMatch(/\S/);
     }
-    // No leftover English in the other languages
     if (lang !== "en") {
       for (const c of codes) {
         expect(errors[c], `${lang}: ${c}`).not.toBe(
@@ -343,8 +325,6 @@ describe("the hints name a command that does what they say", () => {
       ...Object.values(L),
       ...Object.values(L.errors as object),
     ].filter((t): t is string => typeof t === "string");
-    // `telegram write-access` alone only prints the status: a hint to change the mode says which one,
-    // and the status is named only as such ("with nothing after it")
     const status =
       /telegram write-access (with nothing after it|sin nada más|без аргументов)/;
     for (const t of texts) {
@@ -356,11 +336,9 @@ describe("the hints name a command that does what they say", () => {
         );
       }
     }
-    // Where the mode may have changed out of sight, the hint says how to see it
     for (const k of ["goneSaved", "goneMode", "notSentMode"]) {
       expect(L[k], `${lang}: ${k}`).toMatch(status);
     }
-    // Only the hint before the login sends the person back to onboard
     for (const k of ["goneSaved", "goneMode"]) {
       expect(L[k], `${lang}: ${k}`).not.toMatch(
         /telegram onboard (again|de nuevo|ещё|заново)|vuelva a ejecutar telegram onboard|запустить telegram onboard/
@@ -388,7 +366,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
       text: `${E.store_failed} ${L.inEffect.replace("{mode}", L.roName)}`,
       small: "",
     });
-    // The radio shows what is saved (read-only), not the default that failed
     expect(page.checked()).toBe("read-only");
     await expect((await fetch(`${s.url}state`)).json()).resolves.toMatchObject({
       step: "mode",
@@ -410,8 +387,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
     );
   });
 
-  // The person picks "on" (a new end for it, too) where only a terminal can confirm it: the page
-  // names the mode that stays, as read back, never a guess
   it.each([
     ["on", "onName"],
     ["ask", "askName"],
@@ -438,14 +413,12 @@ describe.each(LANGS)("the page in %s", (lang) => {
         text: `${E.needs_terminal.replace("{cmd}", "telegram write-access on --for 1d")} ${L.inEffect.replace("{mode}", L[name])}`,
         small: "",
       });
-      // No promise of a mode that may not be the one in effect
       expect(E.needs_terminal).not.toMatch(
         /before each|antes de cada|перед каждой/
       );
     }
   );
 
-  // A telegram_setup page: "ask" needs the person too, and the hint names "ask", never "on"
   it('"ask" needs a terminal (a page opened over MCP): the hint names write-access ask, with the term', async () => {
     const s = await server({
       modeOnly: true,
@@ -466,7 +439,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
     expect(fresh.msg().text).toBe(text);
   });
 
-  // The command in the hint asks for the term the person picked: plain "on" would grant it with no end
   it.each([
     ["1h", " --for 1h"],
     ["1d", " --for 1d"],
@@ -490,19 +462,15 @@ describe.each(LANGS)("the page in %s", (lang) => {
       expect(text).toBe(
         `${E.needs_terminal.replace("{cmd}", cmd)} ${L.inEffect.replace("{mode}", L.roName)}`
       );
-      // The literal command, then the end of the sentence: a plain "on" in place of a timed one fails
       expect(text).toMatch(new RegExp(`${cmd}[.\\s]`));
       if (span) {
         expect(parseForDuration(span)).toBe(
           { "1h": 3600, "1d": 86_400, "1w": 604_800 }[span]
         );
-      }
-      // The flag is one `write-access --for` takes, for the same term the page offered
-      else {
+      } else {
         expect(text).not.toContain("--for");
       }
       expect(text).not.toContain("{cmd}");
-      // The term is read from the state too, so a reloaded page names it as well
       const fresh = openPage(s.url, lang);
       await fresh.poll();
       expect(fresh.msg().text).toBe(text);
@@ -526,7 +494,7 @@ describe.each(LANGS)("the page in %s", (lang) => {
   it("a known code from a POST is translated, with no raw code on screen", async () => {
     const s = await server();
     const page = openPage(s.url, lang);
-    await page.click("pwgo"); // no password was asked for
+    await page.click("pwgo");
     expect(page.msg()).toEqual({
       hidden: false,
       text: E.not_waiting_for_password,
@@ -566,7 +534,7 @@ describe.each(LANGS)("the page in %s", (lang) => {
     expect(page.msg()).toEqual({ hidden: false, text: L.gone, small: "" });
     expect(L.gone).toContain("telegram onboard");
     down = false;
-    await page.poll(); // still polling: the message goes once the server answers
+    await page.poll();
     expect(page.msg().hidden).toBe(true);
     expect(page.visible()).toEqual(["invite"]);
   });
@@ -594,7 +562,7 @@ describe.each(LANGS)("the page in %s", (lang) => {
     expect(page.msg()).toEqual({ hidden: false, text: E.not_found, small: "" });
     expect(page.visible()).toEqual([]);
     const calls = page.stateCalls();
-    await expect(page.tick()).resolves.toBe(false); // the timer is cleared
+    await expect(page.tick()).resolves.toBe(false);
     expect(page.stateCalls()).toBe(calls);
   });
 
@@ -609,7 +577,7 @@ describe.each(LANGS)("the page in %s", (lang) => {
     await page.poll();
     expect(page.msg()).toEqual({ hidden: false, text: L.gone, small: "" });
     cut = false;
-    await expect(page.tick()).resolves.toBe(true); // still polling
+    await expect(page.tick()).resolves.toBe(true);
     expect(page.msg().hidden).toBe(true);
     expect(page.visible()).toEqual(["invite"]);
   });
@@ -645,7 +613,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
   });
 
   it("a click lost in a longer drop still says to try again once the server is back", async () => {
-    // The POST and the poll right after it both fail; a later poll gets through
     const s = await server();
     let down = false;
     const page = openPage(s.url, lang, (input, init) =>
@@ -678,7 +645,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
   });
 
   it("done clears the error of the step before it", async () => {
-    // The store refuses, nobody picks, the step times out: "done" with read-only and no stale "in effect: …" line
     const s = await server({ refuse: true, modeWaitMs: 400 });
     const page = openPage(s.url, lang);
     await s.post("invite", { invite: "tok" });
@@ -712,7 +678,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
   });
 
   it("a click on the mode lost on the way does not claim it never arrived: the result is unknown", async () => {
-    // The server may have taken it (and be showing a dialog); the page says how to check
     const s = await server();
     const real = direct(s.url);
     const page = openPage(s.url, lang, (input, init) =>
@@ -735,7 +700,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
   });
 
   it("after done, a late answer to a click changes nothing", async () => {
-    // The GET sees "done" and stops polling; the POST that did it loses its answer afterwards
     const s = await server();
     const real = direct(s.url);
     let lose!: () => void;
@@ -778,7 +742,7 @@ describe.each(LANGS)("the page in %s", (lang) => {
         return res;
       }
       hold = false;
-      const body = await res.text(); // the "mode" state, as it was when the poll was sent
+      const body = await res.text();
       return new Promise<Response>((r) => {
         release = () => r(new Response(body, { status: 200 }));
       });
@@ -800,7 +764,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
   });
 
   it("write-access on a page: a drop on the very first poll already names that command", async () => {
-    // The page the server sends knows it is write-access alone before any /state answer
     const s = await server({ modeOnly: true });
     const html = await (await fetch(s.url)).text();
     const page = openPage(
@@ -811,7 +774,7 @@ describe.each(LANGS)("the page in %s", (lang) => {
     );
     await page.poll();
     expect(page.msg().text).toBe(L.goneMode);
-    expect(page.heading()).toBe(L.modeTitle); // not the login heading
+    expect(page.heading()).toBe(L.modeTitle);
   });
 
   it("a 404 whose body is cut short is still an old link: polling stops", async () => {
@@ -822,7 +785,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
     await expect(page.tick()).resolves.toBe(false);
   });
 
-  /** A fetch whose answers the test hands out by hand, in any order */
   const manual = () => {
     const pending: {
       route: string;
@@ -855,20 +817,17 @@ describe.each(LANGS)("the page in %s", (lang) => {
   it("a password POST whose answer is lost after the page moved on to the mode says nothing about the mode", async () => {
     const f = manual();
     const page = openPage("http://127.0.0.1:1/s/x/", lang, f.fetchImpl);
-    // The poll the page sends as it loads
     (await f.next("state")).answer(state({ step: "password", hint: "h" }));
     await settle();
     expect(page.visible()).toEqual(["password"]);
     const clicked = page.click("pwgo");
     const pw = await f.next("password");
-    // The server took the password: the next poll shows the mode step
     const tick = page.tick();
     (await f.next("state")).answer(state({ step: "mode", mode: "ask" }));
     await tick;
     expect(page.visible()).toEqual(["mode"]);
-    // Only now the answer to the password POST is lost
     pw.answer(new TypeError("Failed to fetch"));
-    (await f.next("state")).answer(state({ step: "mode", mode: "ask" })); // act() polls after it
+    (await f.next("state")).answer(state({ step: "mode", mode: "ask" }));
     await clicked;
     expect(page.visible()).toEqual(["mode"]);
     expect(page.msg().hidden).toBe(true);
@@ -878,7 +837,6 @@ describe.each(LANGS)("the page in %s", (lang) => {
     it(`after an old link stopped polling, ${late} on a poll still on its way keeps the old-link text`, async () => {
       const f = manual();
       const page = openPage("http://127.0.0.1:1/s/x/", lang, f.fetchImpl);
-      // The poll the page sends as it loads, and a timer tick while it is still on its way
       const ra = await f.next("state");
       const b = page.tick();
       const rb = await f.next("state");

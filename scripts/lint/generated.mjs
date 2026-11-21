@@ -1,8 +1,11 @@
-export const generatedFiles = [
+export const generatedCode = [
   "src/version.ts",
   "src/skill-files.ts",
   "src/plugins/manifest-schemas.ts",
   "src/generated/**",
+];
+
+export const generatedData = [
   "plugin/.claude-plugin/**",
   "plugin/.codex-plugin/**",
   "plugin/.cursor-plugin/**",
@@ -17,5 +20,6 @@ export const generatedFiles = [
   "docs/compatibility.md",
   "schemas/**",
   "scripts/data/**",
-  "test/fixtures/**",
 ];
+
+export const fixtures = ["test/fixtures/**"];

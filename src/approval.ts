@@ -46,20 +46,11 @@ interface Pending {
   hash: string;
   expiresAt: number;
   via: ApprovedVia;
-  /** The account the approval was given for: a fingerprint of the profile's session, never the session itself */
   session: string;
-  /** HMAC over the record with a key from the secret store: a file dropped in by hand doesn't verify */
   mac: string;
 }
 
-/**
- * The signing key lives in the secret store, next to the write mode, so writing a file into the
- * profile is not enough to forge an approval (or a fake "elicitation" in the audit log). An agent
- * with a shell that can read the store could still sign one; this raises the bar, it is not a wall.
- * Without a store the key sits in the profile like everything else there (unprotected).
- */
 function signingKey(): Buffer {
-  // A mock profile never touches the secret store (TG_MOCK_ASK rehearses approvals with a file key)
   if (!isMock() && isSecretStoreAvailable()) {
     let key = secretGet("approvalKey");
     if (!key) {
@@ -88,13 +79,6 @@ function sign(key: Buffer, code: string, p: Omit<Pending, "mac">): string {
     .digest("hex");
 }
 
-/**
- * Which account an approval belongs to: an HMAC of the stored session under the signing key, so the
- * record names the session without revealing it. A logout and a login as someone else in the same
- * profile change it, and a code given for the old account no longer matches. The caller passes the
- * session it read when the action was shown (the MCP server reads it before opening the dialog), so
- * a login as someone else while the user is still answering does not move the approval to them.
- */
 function sessionFingerprint(key: Buffer, session: string | undefined): string {
   return createHmac("sha256", key)
     .update(`tg-approval-session\0${session ?? ""}`)
@@ -140,9 +124,8 @@ export function clearApprovals(): void {
 export const APPROVAL_TTL_MS = 10 * 60_000;
 /** Exit code of a write that is waiting for approval (distinct from errors, which exit 1). */
 export const EXIT_NEEDS_APPROVAL = 3;
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I
+const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-/** One file per pending code, so using one up is a single atomic unlink (no double use in a race). */
 function storeDir(): string {
   return configFile("approvals");
 }
@@ -157,13 +140,9 @@ function prune(now: number): void {
         if (!(p.expiresAt > now)) {
           unlinkSync(join(storeDir(), name));
         }
-      } catch {
-        /* a broken or vanished entry: skip */
-      }
+      } catch {}
     }
-  } catch {
-    /* no store yet */
-  }
+  } catch {}
 }
 
 /**
@@ -216,7 +195,6 @@ function fileDigests(values: string[]): string[] {
     return candidates
       .map((c) => {
         try {
-          // The same snapshot an upload of this file sends (src/file-snapshot.ts)
           return snapshotDigest(fileSnapshot(c));
         } catch {
           return "";
@@ -266,7 +244,6 @@ export function createApproval(
     const code = newCode();
     const record = { hash, expiresAt: now + APPROVAL_TTL_MS, via, session };
     try {
-      // wx: never overwrite another pending code
       writeFileSync(
         join(storeDir(), `${code}.json`),
         JSON.stringify({ ...record, mac: sign(key, code, record) }),
@@ -310,7 +287,6 @@ export function consumeApproval(
   let pending: Pending;
   try {
     pending = JSON.parse(readFileSync(file, "utf-8")) as Pending;
-    // Whoever unlinks first owns the code; a second, concurrent use fails here
     unlinkSync(file);
   } catch {
     return unknown;

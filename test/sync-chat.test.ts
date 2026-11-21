@@ -15,8 +15,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MockWorld } from "../src/mock/world.js";
 
-// sync over MCP in mock mode is refused by the guard, so the guard is lifted here and the mock
-// account is served straight to the command; nothing reaches Telegram.
 const state = vi.hoisted(() => ({
   world: undefined as MockWorld | undefined,
   realDownload: false,
@@ -33,7 +31,6 @@ vi.mock(import("../src/client.js"), async (orig) => {
     getClient: async () => {
       const client = new MockClient(state.world!);
       if (state.failTitle) {
-        // One chat whose history Telegram refuses to give (e.g. CHANNEL_PRIVATE after a kick)
         const getMessages = client.getMessages.bind(client);
         client.getMessages = (async (
           entity: { title?: string },
@@ -48,8 +45,6 @@ vi.mock(import("../src/client.js"), async (orig) => {
         }) as never;
       }
       if (state.realDownload) {
-        // teleproto's own downloadMedia (its path choice and the write) on a photo with a cached
-        // size, which it writes without any network request
         const { Api } = await import("teleproto");
         const downloads = await import("teleproto/client/downloads.js");
         const bigInt = (await import("big-integer")).default;
@@ -105,11 +100,9 @@ async function sync(...args: string[]) {
   });
 }
 
-/** The IDs `getDialogs` gives the mock chats 4001 and 4002 (supergroups). */
 const A = "-1004001";
 const B = "-1004002";
 
-/** The seeded account with chats 4001 and 4002 renamed. */
 async function world(a: string, b: string): Promise<MockWorld> {
   const { seedWorld } = await import("../src/mock/world.js");
   const w = seedWorld();
@@ -199,7 +192,6 @@ describe("sync --chat over MCP when the dialog list was cut", () => {
     process.env.TG_MCP = "1";
   });
 
-  /** 500 more chats (older than the seed), and a second "Team A" whose last message is older than all, beyond the first 500. */
   async function crowded(): Promise<MockWorld> {
     const w = await world("Team A", "Team B");
     for (let i = 0; i < 500; i++) {
@@ -250,7 +242,6 @@ describe("sync --chat over MCP when the dialog list was cut", () => {
     expect(
       (selectSyncChats(chats, "Team A", true, false) as Error).message
     ).toMatch(/list was cut/);
-    // In a terminal the user picks the name and sees what was exported
     expect(selectSyncChats(chats, "Team A", false, false)).toEqual([chats[0]]);
   });
 });
@@ -279,7 +270,7 @@ describe("sync --media stays inside the output directory", () => {
       ".sync-meta.json",
       "media",
     ]);
-    expect(readdirSync(root)).toEqual(["export"]); // nothing next to the export folder
+    expect(readdirSync(root)).toEqual(["export"]);
     expect(existsSync(join(root, "media"))).toBe(false);
     const [chatDir] = readdirSync(join(out, "media"));
     expect(chatDir).toMatch(/^-?\d+$/);
@@ -289,7 +280,7 @@ describe("sync --media stays inside the output directory", () => {
   it("insideDir refuses a path that is the folder itself or leaves it", async () => {
     const { insideDir } = await import("../src/commands/sync.js");
     expect(insideDir("/x/out", "/x/out/media/1")).toBe("/x/out/media/1");
-    expect(insideDir("/x/out", "/x/out/...md")).toBe("/x/out/...md"); // the markdown of a chat titled ".."
+    expect(insideDir("/x/out", "/x/out/...md")).toBe("/x/out/...md");
     expect(() => insideDir("/x/out", "/x/out")).toThrow(/outside/);
     expect(() => insideDir("/x/out", "/x/out/../media")).toThrow(/outside/);
     expect(() => insideDir("/x/out", "/x/outside")).toThrow(/outside/);
@@ -310,7 +301,6 @@ describe("sync --chat: an empty or numeric name never widens the export", () => 
         expect(err.join("\n")).toMatch(/--chat needs a chat/);
         expect(existsSync(out)).toBe(false);
       }
-      // A usage error everywhere, not a silent 0 in a terminal
       expect(exits).toEqual([2, 2]);
     }
   );
@@ -322,7 +312,7 @@ describe("sync --chat: an empty or numeric name never widens the export", () => 
     "a numeric --chat matches only an ID, never a title (%s)",
     async (_where, mcp) => {
       process.env.TG_MCP = mcp;
-      state.world = await world("123", "1001"); // 1001 is also the ID of the user Alice
+      state.world = await world("123", "1001");
       await sync("--chat", "123");
       expect(err.join("\n")).toMatch(/No chat has the ID 123/);
       expect(existsSync(out)).toBe(false);
@@ -336,7 +326,6 @@ describe("sync --chat: an empty or numeric name never widens the export", () => 
   );
 });
 
-// A file symlink needs a privilege on Windows; the check itself (lstat) is the same there
 describe.skipIf(process.platform === "win32")(
   "sync never writes through a symbolic link in the export folder",
   () => {
@@ -486,7 +475,6 @@ describe("sync names each Markdown file by chat ID", () => {
         from: 1002,
         text: "fresh news",
       } as never);
-    // A marker only an append keeps: a full re-export would drop it
     writeFileSync(
       fileA,
       `${readFileSync(fileA, "utf-8")}\nMARKER kept by append\n`
@@ -499,8 +487,6 @@ describe("sync names each Markdown file by chat ID", () => {
     expect(resumed.match(/CI is green again/g)).toHaveLength(1);
     expect(resumed.match(/^# Team$/gm)).toHaveLength(1);
     expect(readFileSync(fileB, "utf-8")).toBe(before);
-    // A's file name holding someone else's export: resume replaces it instead of appending, still
-    // with only the messages after A's checkpoint (the checkpoint bounds the fetch either way)
     writeFileSync(fileA, before);
     state.world.chats
       .find((c) => c.id === 4001)!
@@ -522,7 +508,6 @@ describe("sync names each Markdown file by chat ID", () => {
 
   it("--resume after the file name changed fetches the whole gap since the checkpoint into the new file", async () => {
     state.world = await world("Team A", "Team B");
-    // 1200 messages over 60 days; an older version exported up to #100 into "Team A.md"
     const DAY = 86_400;
     state.world.chats.find((c) => c.id === 4001)!.messages = Array.from(
       { length: 1200 },
@@ -548,7 +533,6 @@ describe("sync names each Markdown file by chat ID", () => {
         },
       })
     );
-    // No --all: the default 7-day window and the 1000-message cap must not apply to the gap
     vi.resetModules();
     const { syncCommand } = await import("../src/commands/sync.js");
     await syncCommand.parseAsync(["--chat", A, "--resume", "--output", out], {

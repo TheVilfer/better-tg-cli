@@ -50,7 +50,6 @@ export const searchCommand = new Command("search")
   .option("--json", "Output as JSON")
   .option("--markdown", "Output as Markdown")
   .action(async (query, options) => {
-    // A wrong command line is exit 2 before any connection (a profile not logged in would say 5)
     if (options.from && !options.chat) {
       fail(
         usageError(

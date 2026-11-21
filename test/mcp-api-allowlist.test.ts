@@ -13,8 +13,6 @@ import {
   vi,
 } from "vitest";
 
-// Write mode "on" for the in-process runs: the guard lets every write through, so only a refusal
-// can stop a call before the (mocked) client is reached.
 const assertWriteEnabled = vi.hoisted(() => vi.fn());
 const getClient = vi.hoisted(() => vi.fn(async () => ({})));
 const invokeApi = vi.hoisted(() =>
@@ -49,14 +47,12 @@ import { classifyCall, planCall } from "../src/mcp.js";
 import { cliArgs } from "./cli.js";
 
 const ALLOWED = MCP_API_ALLOWLIST.flatMap((g) => g.methods);
-/** className → [namespaceKebab, methodKebab] of its generated command. */
 const GENERATED = new Map(
   TL_METHODS.map(([ns, method, className]) => [
     className,
     [ns, method] as const,
   ])
 );
-/** The argv of the generated command for a TL method (`["messages","get-history"]`, `["ping"]`). */
 const generatedArgs = (className: string): string[] => {
   const [ns, method] = GENERATED.get(className)!;
   return ns ? [ns, method] : [method];
@@ -97,7 +93,6 @@ describe("the MCP allowlist data", () => {
       expect(g.reason).not.toMatch(/[\n']/);
       expect(g.methods.length).toBeGreaterThan(0);
     }
-    // scripts/api-coverage.mjs parses this file as text; it must see exactly the same groups
     const r = spawnSync(
       process.execPath,
       ["scripts/api-coverage.mjs", "--allowlist-json"],
@@ -115,7 +110,6 @@ describe("the MCP allowlist data", () => {
   });
 });
 
-/** One or more dangerous methods per category that is deliberately off the list. */
 const DANGEROUS: [string, string][] = [
   ["payments", "payments.GetStarsStatus"],
   ["payments", "payments.SendStarsForm"],
@@ -151,7 +145,6 @@ const DANGEROUS: [string, string][] = [
   ["plumbing", "help.GetConfig"],
   ["plumbing", "upload.GetFile"],
   ["plumbing", "Ping"],
-  // Removed after review: profiles, chat internals, invite links, who read what, blocked list
   ["sensitive reads", "users.GetFullUser"],
   ["sensitive reads", "channels.GetFullChannel"],
   ["sensitive reads", "messages.GetFullChat"],
@@ -164,9 +157,7 @@ const DANGEROUS: [string, string][] = [
   ["sensitive reads", "contacts.GetStatuses"],
   ["sensitive reads", "messages.GetMessageReadParticipants"],
   ["sensitive reads", "messages.GetOutboxReadDate"],
-  // An inline result is sent by ID, so its geo or contact content cannot be checked
   ["inline result", "messages.SendInlineBotResult"],
-  // Adding a contact widens who sees the phone number; the curated add-contact stays
   ["phone visibility", "contacts.AddContact"],
 ];
 
@@ -181,7 +172,6 @@ describe("over MCP, a method off the allowlist never runs", () => {
   it.each(DANGEROUS)(
     '%s: %s is "never" in the classifier, in both forms, on both tools',
     (_cat, m) => {
-      // The denylist message wins when there is one; otherwise the allowlist message
       const reason = apiRefusalReason(m)
         ? /^Refused/
         : /not available over MCP; run it in a terminal/;
@@ -214,7 +204,6 @@ describe("over MCP, a method off the allowlist never runs", () => {
   });
 });
 
-/** Allowed reads and writes in both forms, with params a run needs. */
 const ALLOWED_READS: [string, Record<string, unknown>, string[]][] = [
   [
     "messages.GetHistory",
@@ -453,7 +442,6 @@ describe("the CLI refuses an off-list method before anything runs, and runs an a
   });
 });
 
-// The whole CLI on the mock account, as the MCP read tool starts it (TG_MCP + TG_READ_ONLY)
 describe("end to end on the mock account", () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-allowlist-"));
 
@@ -541,16 +529,11 @@ describe("no allowlisted method can carry another request", () => {
       paramsOf(m)
         .filter((p) => p.type === "X" || p.type === "!X")
         .map((p) => `${m}.${p.name}`);
-    // The check sees the type: a wrapper has one
     expect(generic("InvokeWithLayer")).toEqual(["InvokeWithLayer.query"]);
     expect(ALLOWED.flatMap(generic)).toEqual([]);
   });
 });
 
-/**
- * Params of allowed methods that MCP refuses: [method, raw params, generated argv, reason]. Each is
- * refused on the parsed params (both forms) and on the built request.
- */
 const STAKE = {
   _: "inputMediaStakeDice",
   gameHash: "h",
@@ -615,8 +598,6 @@ const REFUSED_PARAMS: [string, Record<string, unknown>, string[], RegExp][] = [
     ],
     /suggested post with a price/,
   ],
-  // Only the safe input media go through: a MessageMedia* object is converted into InputMedia by
-  // teleproto inside client.invoke (a contact card keeps its phone number), so it is refused before
   [
     "messages.SendMedia",
     { peer: "@c", message: "", media: CONTACT_MEDIA },
@@ -708,7 +689,6 @@ const REFUSED_PARAMS: [string, Record<string, unknown>, string[], RegExp][] = [
     ["--peer", "@c", "--message", "x", "--allow-paid-floodskip"],
     /allowPaidFloodskip/,
   ],
-  // An empty string still sets the bit of a `true` flag
   [
     "messages.SendMessage",
     { peer: "@c", message: "x", allowPaidFloodskip: "" },
@@ -909,7 +889,6 @@ describe("over MCP, risky params of allowed methods are refused", () => {
         },
       })
     ).toMatch(/geographic/);
-    // A suggested post without a price, false flags and an empty referer pass
     expect(
       mcpParamRefusal("messages.SendMessage", {
         suggestedPost: { _: "suggestedPost" },
@@ -943,7 +922,6 @@ describe("over MCP a raw result hides phones, birthdays, notes and locations", (
     process.env = { ...saved };
   });
 
-  /** A synthetic users.UserFull plus a history page with contact, geo and venue media. */
   const response = async () => {
     const { Api } = await import("teleproto");
     return {
@@ -1031,7 +1009,6 @@ describe("over MCP a raw result hides phones, birthdays, notes and locations", (
       address: "[redacted]",
       title: "Cafe",
     });
-    // What the agent needs stays
     expect(j.users[0].firstName).toBe("Ann");
     expect(j.messages[0].message).toBe("call me");
     expect(out).not.toMatch(/1555|Main St|Old Town|owes me|1990/);
@@ -1086,7 +1063,6 @@ describe("--help and schema show MCP access from the allowlist", () => {
         cls
       ).toMatchObject({ access: terminal, mcpAccess: mcp });
     }
-    // The same table as the server: every method agrees with the allowlist
     for (const [, , cls] of TL_METHODS) {
       if (mcpAccess(cls) !== "refused") {
         expect(isMcpApiAllowed(cls), cls).toBe(true);

@@ -58,11 +58,6 @@ export const DESCRIBE_MARK = "TG_APPROVAL_DESCRIPTION ";
 /** Exit code of a describe run: never 0, so a caller can't mistake it for a write that ran. */
 export const EXIT_DESCRIBED = 4;
 
-/**
- * Every stop of the guard short of an approval: with --json one error line on stdout
- * ({"error":{"code","message","hint"?}}, as fail() prints), and the prose on stderr in any case,
- * since the person or the agent reads it there. The exit code is the error's own.
- */
 function stop(
   error: CliError,
   argv: string[] = process.argv.slice(2),
@@ -99,7 +94,6 @@ export async function assertWriteEnabled(
   argv: string[] = process.argv.slice(2),
   opts: GuardOptions = {}
 ): Promise<void> {
-  // Set by the MCP read tool: a hard stop even if a write command was misclassified as a read
   if (process.env.TG_READ_ONLY) {
     stop(
       new CliError(
@@ -110,15 +104,11 @@ export async function assertWriteEnabled(
       argv
     );
   }
-  // Writes match chats strictly, and so does the lookup of the recipients below
   setStrictChatResolution(true);
   if (process.env[DESCRIBE_ENV] === "1") {
     return describeAndExit(argv, opts);
   }
   if (isMock()) {
-    // A mock write only changes a local file: getClient() hands out the mock under the same check,
-    // so there is nothing for a human to approve, unless TG_MOCK_ASK=1 rehearses the "ask" flow.
-    // A code given for this call still has to hold, as in mode "on".
     if (isMockAsk()) {
       await requireApproval(argv, opts);
     } else if (process.env.TG_APPROVE) {
@@ -141,7 +131,6 @@ export async function assertWriteEnabled(
   }
   const state = parseWriteState(getWriteValue());
   if (!state.enabled) {
-    // A code of its own (4) and, with --json, one JSON line: the agent's next step is to ask the user
     if (wantsJson(argv)) {
       console.log(
         errorJson({
@@ -179,8 +168,6 @@ export async function assertWriteEnabled(
   if (state.mode === "ask") {
     await requireApproval(argv, opts);
   } else {
-    // A code given for this call (the MCP dialog's yes) still binds it to the action and the
-    // account it was approved for, even if the mode turned "on" meanwhile
     if (process.env.TG_APPROVE) {
       await requireGivenCode(argv, opts);
     }
@@ -230,7 +217,6 @@ export async function assertLocalWriteAllowed(
   await assertWriteEnabled(argv, opts.readsStdin ? { readsStdin: true } : {});
 }
 
-// The mock account has no store to ask about (and must not probe the real one)
 const unprotectedFlag = () =>
   isMock() || isWriteModeProtected() ? {} : { unprotected: true as const };
 
@@ -243,11 +229,6 @@ interface Scope {
   hash: string;
 }
 
-/**
- * A write that is certain to fail (a recipient, file, message or button that cannot be read) gets
- * no code. It keeps the code and exit code of the error behind it (an ambiguous name stays a usage
- * error, exit 2), or `nothing_to_approve`, exit 1.
- */
 interface Why {
   code?: string;
   exitCode?: number;
@@ -263,8 +244,6 @@ const nothingToApprove = (
   why: Why = {}
 ): never => {
   const known = why.code && why.code !== "error";
-  // JSON: the error's own message, candidates and hint as fields; the prose: the whole text as one
-  // line, since it may quote what was typed and must never act on the terminal
   const error = new CliError(
     `Not sent, nothing to approve: ${oneLine(why.message ?? text)}`,
     known ? why.code! : "nothing_to_approve",
@@ -273,7 +252,6 @@ const nothingToApprove = (
       ...(why.candidates ? { candidates: why.candidates } : {}),
       ...(why.hint ? { hint: why.hint } : {}),
       ...(why.command ? { command: why.command } : {}),
-      // A rate limit says how long to wait, as any other failed command does
       ...(why.retryAfterSeconds === undefined
         ? {}
         : { retryAfterSeconds: why.retryAfterSeconds }),
@@ -282,23 +260,17 @@ const nothingToApprove = (
   return stop(error, argv, `Not sent, nothing to approve: ${oneLine(text)}`);
 };
 
-/**
- * What an approval for this call covers: the parsed action with its recipients looked up, and stdin
- * when anything reads it. A failure to connect for the lookup stops here: the write could not run.
- */
 async function approvalScope(
   argv: string[],
   opts: GuardOptions
 ): Promise<Scope> {
   const action = parsedAction(argv);
-  // A curated command covers stdin only where it reads it (`set-bio -` sets the bio to "-")
   const declared = declaredReadsStdin(action);
   const covered =
     opts.readsStdin === true ||
     (declared ?? readsStdin(argv)) ||
     stdinWasRead() ||
     process.env[STDIN_IN_APPROVAL_ENV] === "1";
-  // The body as the command sends it (readTextArg): what the person sees and the hash covers
   const stdin = covered ? stdinBody(readStdinOnce()) : undefined;
   if (opts.apiParams && action.parsed) {
     action.apiPeers = apiChatRefs(opts.apiParams);
@@ -307,11 +279,9 @@ async function approvalScope(
   try {
     peers = await lookupPeers(peerArgs(action));
   } catch (error) {
-    // A process.exit() already on its way (installDrainingExit) keeps its code
     if (error instanceof ExitSignal) {
       throw error;
     }
-    // Not logged in (5), no network (1) …: the write could not run either
     const { code, exitCode, message, hint, command, retryAfterSeconds } =
       errorDetails(error);
     stop(
@@ -328,8 +298,6 @@ async function approvalScope(
       argv
     );
   }
-  // Every recipient is approved as the ID it resolves to; one that does not resolve (the write
-  // would fail, or find someone else) gets no code
   for (const info of peers.values()) {
     if (!info.ok) {
       nothingToApprove(argv, info.error, info);
@@ -342,7 +310,6 @@ async function approvalScope(
     if (error instanceof ExitSignal) {
       throw error;
     }
-    // Its lines (a hint, a list of buttons) joined into one, as the recipient lookup does
     const text = (error instanceof Error ? error.message : String(error))
       .split("\n")
       .map((l) => l.trim())
@@ -360,15 +327,9 @@ async function approvalScope(
   };
 }
 
-/** The account an approval binds to: the profile's stored session (a fixed one for the mock account). */
 const currentAccount = (): string | undefined =>
   isMock() ? MOCK_ACCOUNT : getSessionString();
 
-/**
- * A code given for this call outside mode "ask" (the mode turned "on" while the user answered the
- * MCP dialog, or the mock account): it must still be a valid approval of exactly this action in this
- * account. Any refusal stops the write: a "yes" to an older version of it is no "yes" to this one.
- */
 async function requireGivenCode(
   argv: string[],
   opts: GuardOptions
@@ -399,7 +360,6 @@ async function requireGivenCode(
   }
 }
 
-/** The body as the person should see it: an empty stdin the MCP server always hands over says nothing. */
 function shownStdin(
   scope: Scope,
   argv: string[],
@@ -411,7 +371,6 @@ function shownStdin(
   return scope.stdin === "" && !reads ? undefined : scope.stdin;
 }
 
-/** The action for the JSON answer: what the person reads, and the parts an agent may want on their own. */
 function actionJson(
   scope: Scope,
   shown: string | undefined,
@@ -436,7 +395,6 @@ function actionJson(
   };
 }
 
-/** MCP describe run: print the description and the hash, never write, never create or use a code. */
 async function describeAndExit(
   argv: string[],
   opts: GuardOptions
@@ -465,12 +423,10 @@ const shellQuote = (a: string) =>
 const psQuote = (a: string) =>
   /^[\w@./:=+,-]+$/.test(a) ? a : `'${a.replaceAll("'", `''`)}'`;
 
-/** Write mode "ask": go on only with a matching approval code, otherwise print the action and stop. */
 async function requireApproval(
   argv: string[],
   opts: GuardOptions
 ): Promise<void> {
-  // One read of the account for both the check and a new code; getClient() connects with it only
   const session = currentAccount();
   const scope = await approvalScope(argv, opts);
   const given = process.env.TG_APPROVE;
@@ -486,7 +442,6 @@ async function requireApproval(
         ...unprotectedFlag(),
       });
       scope.prepared.onApproved();
-      // Nothing read from stdin after this point can be part of the write: it was not approved
       if (!scope.covered) {
         sealStdin();
       }
@@ -502,8 +457,6 @@ async function requireApproval(
   const minutes = APPROVAL_TTL_MS / 60_000;
   const shown = shownStdin(scope, argv, opts);
   const mcp = !!process.env.TG_MCP;
-  // Over MCP this description goes to the model only (the user's dialog comes from the describe run):
-  // every value masked before it is escaped, as the MCP server could not do on the finished text
   const description = mcp
     ? describeParsedAction(
         scope.action,
@@ -519,9 +472,8 @@ async function requireApproval(
         scope.prepared.lines
       );
   const retry = mcp
-    ? undefined // the MCP server knows the exact tool call and adds it
+    ? undefined
     : { argv: ["telegram", ...argv], env: { TG_APPROVE: code } };
-  // Over MCP the server reads this line in any case and builds a structured result from it
   if (argv.includes("--json") || mcp) {
     console.log(
       JSON.stringify({
@@ -558,8 +510,6 @@ async function requireApproval(
     );
   } else {
     const stdinNote = scope.covered ? " with the same text on stdin" : "";
-    // A quoted argument keeps its line breaks and escape sequences, which the terminal would act on
-    // when this is printed: such a command is not repeated, the exact one is retry.argv in JSON
     const printable = argv.every((a) => oneLine(a) === a);
     const lines = printable
       ? `  TG_APPROVE=${code} telegram ${argv.map(shellQuote).join(" ")}\n` +

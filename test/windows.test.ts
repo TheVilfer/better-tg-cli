@@ -11,7 +11,6 @@ import type { Runner } from "../src/confirm.js";
 import { dpapiStore, encodedCommand } from "../src/dpapi.js";
 import type { Crypter } from "../src/dpapi.js";
 
-// Stands in for DPAPI on any OS: reversible, but the file must not contain the plaintext
 const fake: Crypter & { calls: number } = {
   calls: 0,
   protect(b64) {
@@ -40,12 +39,12 @@ describe("DPAPI secret store", () => {
     fake.calls = 0;
     expect(fresh.get("sessionString")).toBe("SESSION-ÄЖ-😀");
     expect(fresh.get("writeEnabled")).toBe("1");
-    expect(fake.calls).toBe(1); // cached after the first read
+    expect(fake.calls).toBe(1);
 
     expect(fresh.delete("writeEnabled")).toBe(true);
     expect(dpapiStore(() => file, fake).get("writeEnabled")).toBeNull();
     expect(fresh.delete("sessionString")).toBe(true);
-    expect(existsSync(file)).toBe(false); // nothing left, no file
+    expect(existsSync(file)).toBe(false);
   });
 
   it("a strict read tells a missing key from a file it cannot decrypt (loadConfig needs it)", () => {
@@ -56,7 +55,7 @@ describe("DPAPI secret store", () => {
     expect(dpapiStore(() => file, fake).getStrict("k")).toEqual({
       ok: true,
       value: null,
-    }); // no file yet
+    });
     dpapiStore(() => file, fake).set("k", "v");
     expect(dpapiStore(() => file, fake).getStrict("k")).toEqual({
       ok: true,
@@ -77,7 +76,6 @@ describe("DPAPI secret store", () => {
     const reason =
       "Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed";
     expect(broken.getStrict("k")).toEqual({ ok: false, reason });
-    // Decrypted but damaged JSON: JSON.parse would quote the content; the reason must not
     const damaged = dpapiStore(() => file, {
       protect: (b64) => b64,
       unprotect: () =>
@@ -89,7 +87,6 @@ describe("DPAPI secret store", () => {
   });
 
   it("a fresh read sees what another process wrote since; a plain one keeps the cache", () => {
-    // The onboard page reads the write mode back at the end; `write-access off` may have run meanwhile
     const file = join(
       mkdtempSync(join(tmpdir(), "tg-dpapi-")),
       "secrets.dpapi"
@@ -97,15 +94,13 @@ describe("DPAPI secret store", () => {
     const page = dpapiStore(() => file, fake);
     expect(page.set("writeEnabled", "ask")).toBe(true);
     expect(page.get("writeEnabled")).toBe("ask");
-    expect(dpapiStore(() => file, fake).delete("writeEnabled")).toBe(true); // the other process
-    expect(page.get("writeEnabled")).toBe("ask"); // cached
+    expect(dpapiStore(() => file, fake).delete("writeEnabled")).toBe(true);
+    expect(page.get("writeEnabled")).toBe("ask");
     expect(page.get("writeEnabled", true)).toBeNull();
-    expect(page.get("writeEnabled")).toBeNull(); // and the cache follows the fresh read
+    expect(page.get("writeEnabled")).toBeNull();
   });
 
   it("set and delete start from the file as it is now, not from a stale cache", () => {
-    // The MCP server caches writeEnabled=ask, `write-access off` deletes it in another process,
-    // then the server stores its first approvalKey: that must not bring `ask` back
     const file = join(
       mkdtempSync(join(tmpdir(), "tg-dpapi-")),
       "secrets.dpapi"
@@ -113,7 +108,7 @@ describe("DPAPI secret store", () => {
     const a = dpapiStore(() => file, fake);
     expect(a.set("writeEnabled", "ask")).toBe(true);
     expect(a.set("other", "x")).toBe(true);
-    expect(a.get("writeEnabled")).toBe("ask"); // cached in A
+    expect(a.get("writeEnabled")).toBe("ask");
     const b = dpapiStore(() => file, fake);
     expect(b.delete("writeEnabled")).toBe(true);
     expect(a.set("approvalKey", "k1")).toBe(true);
@@ -122,7 +117,6 @@ describe("DPAPI secret store", () => {
     expect(now.get("writeEnabled")).toBeNull();
     expect(now.get("other")).toBe("x");
 
-    // Same for delete: B adds a key A has not seen, A deletes another one
     expect(b.set("sessionString", "s")).toBe(true);
     expect(a.delete("other")).toBe(true);
     const after = dpapiStore(() => file, fake);
@@ -179,7 +173,6 @@ describe("DPAPI secret store", () => {
 
 describe("Windows write-access confirmation", () => {
   const cjk = "確".repeat(200);
-  /** A plugin summary as long as the schema allows: 20 triggers of 200 CJK characters each */
   const longText = Array.from(
     { length: 20 },
     (_, i) => `    Trigger t${i}: ${cjk}`
@@ -193,7 +186,6 @@ describe("Windows write-access confirmation", () => {
     expect(windowsConfirmInput("It's «ok»?")).toBe(
       Buffer.from("It's «ok»?", "utf-8").toString("base64")
     );
-    // Base64 has no quote of any kind, typographic ones included
     expect(
       windowsConfirmInput(
         "x\u2019); Remove-Item C:\\ -Recurse; (\u2018\u201A\u201B'"
@@ -208,7 +200,6 @@ describe("Windows write-access confirmation", () => {
       return { ok: true, stdout: "ALLOW" };
     };
     await expect(confirmOnWindows(longText, runner)).resolves.toBe(true);
-    // CreateProcessW takes at most 32 767 characters; the text no longer travels there
     expect(seen!.args.join(" ").length).toBeLessThan(4000);
     expect(seen!.args.join(" ")).toBe(
       await (async () => {
