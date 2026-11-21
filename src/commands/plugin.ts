@@ -13,13 +13,13 @@ import { VERSION } from '../version.js';
 import { DEFAULT_QUOTA_BYTES, markdownSection, type Manifest } from '../plugins/manifest.js';
 import { fetchGithubSnapshot, parseSource, readLocalSnapshot, type Fetch, type Snapshot } from '../plugins/source.js';
 import {
-  assertApprovedInstall, assertCanSign, commitInstall, dataDelete, dataGet, dataKeyProblem, dataList, dataSet, findEntry, loadPlugin,
-  onboardingState, own, readLock, removeInstall,
+  assertApprovedInstall, assertCanSign, commitInstall, cursorLoad, cursorSave, dataDelete, dataDeleteGuarded, dataGet, dataKeyProblem, dataList,
+  dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, readLock, removeInstall,
 } from '../plugins/store.js';
 import { humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, type Confirm } from '../plugins/human.js';
 import { listPlugins, PLUGIN_NOTICE, pluginSource } from '../plugins/catalog.js';
-import { assertRunnable, checkInput, devLog, findCommand, memoryStorage, parseInput, parseTarget, runPluginCommand, type RunOutcome } from '../plugins/run.js';
-import type { StorageBackend } from '../plugins/host.js';
+import { assertRunnable, checkInput, devLog, findCommand, memoryCursors, memoryStorage, parseInput, parseTarget, runPluginCommand, type RunOutcome } from '../plugins/run.js';
+import type { CursorStore, StorageBackend } from '../plugins/host.js';
 import type { LockEntry } from '../plugins/store.js';
 
 /**
@@ -344,7 +344,11 @@ function cancellation(): { signal: AbortSignal; cancelled?: () => boolean } {
   return { signal: ac.signal, ...(shared ? { cancelled: () => Atomics.load(shared, 0) === 1 } : {}) };
 }
 
-/** The installation's data for this Telegram account, through the same store as `plugin data`. */
+/**
+ * The installation's data for this Telegram account, through the same store as `plugin data`. A
+ * plugin run's writes hold to its deadline and cancellation, while waiting for the lock and right
+ * before the file changes.
+ */
 function installStorage(entry: LockEntry, m: Manifest, userId: string): StorageBackend {
   return {
     get: key => {
@@ -352,14 +356,41 @@ function installStorage(entry: LockEntry, m: Manifest, userId: string): StorageB
       return v === undefined ? undefined : new TextDecoder().decode(v);
     },
     list: () => dataList(entry, userId),
-    set: (key, value) => dataSet(entry, m, userId, key, new TextEncoder().encode(value)),
-    delete: key => dataDelete(entry, userId, key),
+    set: (key, value, guard) => dataSetGuarded(entry, m, userId, key, new TextEncoder().encode(value), guard),
+    delete: (key, guard) => dataDeleteGuarded(entry, userId, key, guard),
   };
 }
 
-function printOutcome(outcome: RunOutcome, asJson: boolean | undefined): void {
-  // JSON with null kept, as the output schema sees it: never formatJson()
-  console.log(asJson ? outcome.json : JSON.stringify(outcome.envelope, null, 2));
+/** The installation's cursor state: a private folder of the host, not plugin data. */
+function installCursors(entry: LockEntry): CursorStore {
+  return { save: state => cursorSave(entry, state), load: id => cursorLoad(entry, id) };
+}
+
+/**
+ * Prints exactly the JSON whose length was checked against the output limit (null kept, as the
+ * output schema sees it): never re-serialized, never formatJson(). The same line with or without
+ * --json, so an indented copy can never outgrow the limit.
+ */
+/**
+ * Over MCP the server names the installation it classified `plugin run` by (TG_PLUGIN_EXPECT,
+ * installId and revision). Another one installed meanwhile under the same name is refused before
+ * anything of it runs: its command may have other effects than the ones the call was routed and
+ * approved for. A call over MCP without the variable is refused too (the server always sets it
+ * when it found the plugin; when it did not, nothing was classified to run).
+ */
+function assertExpectedInstall(entry: LockEntry): void {
+  const expected = process.env.TG_PLUGIN_EXPECT;
+  const overMcp = !!(process.env.TG_MCP || process.env.TG_READ_ONLY);
+  if (expected === undefined && !overMcp) return;
+  if (expected !== `${entry.installId} ${entry.revision}`) {
+    throw new CliError(`Plugin "${entry.name}" changed after this call was checked (installation ${entry.installId}); nothing was run`, 'plugin_changed', EXIT.ERROR, {
+      hint: 'Call the command again: it is checked against the plugin installed now.',
+    });
+  }
+}
+
+function printOutcome(outcome: RunOutcome): void {
+  console.log(outcome.json);
 }
 
 interface RunOptions { input?: string; target?: string; thread?: boolean; json?: boolean }
@@ -369,7 +400,7 @@ function runOptions(c: Command): Command {
     .option('--input <json>', 'The command\'s input: a JSON object, or "-" to read it from stdin')
     .option('--target <ref>', 'What the plugin may read (messages:read-target): <chat>:<msgId>, or <chat>@<topic>; chat is an ID or @username')
     .option('--thread', 'With --target <chat>:<msgId>: that message\'s thread instead of the message alone')
-    .option('--json', 'Output as one JSON line');
+    .option('--json', 'Output as one JSON line (the output is that line with or without it)');
 }
 
 const runCommand = runOptions(new Command('run')
@@ -385,6 +416,8 @@ const runCommand = runOptions(new Command('run')
       // The verified snapshot, read once: these bytes run, whatever happens to the folder meanwhile
       const loaded = loadPlugin(name, cliVersion());
       entry = loaded.entry;
+      // Over MCP: only the installation this call was classified (and approved) by, whatever its effects now
+      assertExpectedInstall(entry);
       const m = loaded.manifest;
       const c = findCommand(m, cmd);
       assertRunnable(m, c);
@@ -401,7 +434,6 @@ const runCommand = runOptions(new Command('run')
         await assertLocalWriteAllowed(undefined, { fixedDestination: true, readsStdin: fromStdin });
         assertApprovedInstall(entry);
       }
-      const perms = new Set(m.permissions ?? []);
       let client: Promise<TelegramClient> | undefined;
       const telegram = () => (client ??= getClient().then(tg => {
         // A plugin call never sleeps through a FLOOD_WAIT: it gets the error with its cursor
@@ -409,16 +441,18 @@ const runCommand = runOptions(new Command('run')
         return tg;
       }));
       let me: Promise<string> | undefined;
+      // Fetched on first use, inside the run and its deadline: connecting and getMe count against it
       const account = () => (me ??= telegram().then(tg => getMe(tg)).then(u => u.id.toString()));
-      const userId = perms.has('storage:read') || perms.has('storage:write') ? await account() : undefined;
+      const installed = entry;
       const outcome = await runPluginCommand({
         manifest: m, command: c, code: new TextDecoder().decode(loaded.files.get(m.main!)), filename: m.main!, input,
-        client: telegram, account, storage: () => installStorage(entry!, m, userId!), target,
+        client: telegram, account, storage: async () => installStorage(installed, m, await account()),
+        cursors: installCursors(installed), installId: installed.installId, target,
         mcp: !!(process.env.TG_MCP || process.env.TG_READ_ONLY), ...cancellation(),
       }, calls);
       proposals = outcome.envelope.proposals.map(p => p.type);
       error = undefined;
-      printOutcome(outcome, options.json);
+      printOutcome(outcome);
       await done();
     } catch (e) {
       // The write guard's own exits (describe run, approval_required, writes off): no run happened
@@ -462,10 +496,11 @@ const devCommand = runOptions(new Command('dev')
       const log = devLog(m.name);
       const outcome = await runPluginCommand({
         manifest: m, command: c, code: new TextDecoder().decode(snap.files.get(m.main!)), filename: m.main!, input,
-        client: async () => client, account: async () => String(world.me), storage: () => storage, target,
+        client: async () => client, account: async () => String(world.me), storage: async () => storage,
+        cursors: memoryCursors(), installId: 'plugin-dev', target,
         mcp: false, log: log.write, ...cancellation(),
       });
-      printOutcome(outcome, options.json);
+      printOutcome(outcome);
     } catch (e) {
       fail(e);
     }

@@ -5,9 +5,13 @@ import { isSecretStoreAvailable, secretGet, secretSet } from './secrets.js';
 
 /**
  * `telegram mcp --http`: the same MCP server over Streamable HTTP (one POST /mcp endpoint, JSON
- * responses, stateless), for hosts that can't start a local process: Grok Bot runs its connectors
- * in a cloud sandbox, so it reaches this Mac through a tunnel. The session, the write guard and
- * the audit log stay here. Every request needs the bearer token from `telegram mcp --token`.
+ * responses), for hosts that can't start a local process: Grok Bot runs its connectors in a cloud
+ * sandbox, so it reaches this Mac through a tunnel. The session, the write guard and the audit log
+ * stay here. Every request needs the bearer token from `telegram mcp --token`.
+ *
+ * `initialize` hands out an `Mcp-Session-Id`; a client sends it back with its later requests. It
+ * scopes only the cancellation of plugin runs (JSON-RPC ids are per session, so two clients may
+ * both use id 1): a request without one is answered as before, in a scope of its own kind.
  */
 
 const TOKEN_KEY = 'mcpToken';
@@ -77,23 +81,63 @@ function logCall(msg: Json, status: string): void {
   console.error(`${new Date().toISOString()} ${what} ${status}`);
 }
 
-export type RpcReply = { status: number; body?: unknown };
+export type RpcReply = { status: number; body?: unknown; headers?: Record<string, string> };
+
+/** A session id as the transport allows it (visible ASCII), and short. */
+const SESSION_RE = /^[\x21-\x7e]{1,128}$/;
 
 /**
- * One MCP request body in, one HTTP-style answer out.
+ * Plugin runs by MCP session: a cancellation reaches only the runs of the session that sent it.
+ * A session's registry lives while it has calls in flight, so the map holds no idle sessions.
+ */
+class SessionRuns {
+  private readonly map = new Map<string, { runs: PluginRuns; calls: number }>();
+
+  /** The registry of a session, held for one call until `release`. */
+  acquire(session: string): PluginRuns {
+    let s = this.map.get(session);
+    if (!s) this.map.set(session, (s = { runs: new PluginRuns(), calls: 0 }));
+    s.calls++;
+    return s.runs;
+  }
+
+  release(session: string): void {
+    const s = this.map.get(session);
+    if (s && --s.calls <= 0) this.map.delete(session);
+  }
+
+  /** A cancellation: only within its own session; nothing in flight there, nothing to cancel. */
+  cancel(session: string, id: unknown): void {
+    this.map.get(session)?.runs.cancel(id);
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+}
+
+/**
+ * One MCP request body in, one HTTP-style answer out. `session` is the request's Mcp-Session-Id.
  * Calls run one at a time, like over stdio: parallel sessions steal updates and invite FLOOD_WAIT.
  */
 export function createRpcProcessor(options: { readOnly?: boolean } = {}, run?: Parameters<typeof handleMessage>[1]) {
   let queue: Promise<unknown> = Promise.resolve();
-  // Streamable HTTP: only the client's notification cancels a plugin run (a closed request does not)
-  const runs = new PluginRuns();
+  // Streamable HTTP: only the client's notification cancels a plugin run (a closed request does
+  // not), and only one of its own session
+  const sessions = new SessionRuns();
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
     const next = queue.then(fn, fn);
     queue = next.catch(() => undefined);
     return next;
   };
 
-  return async (text: string): Promise<RpcReply> => {
+  const processRpc = async (text: string, sessionId?: string): Promise<RpcReply> => {
+    if (sessionId !== undefined && !SESSION_RE.test(sessionId)) {
+      return { status: 400, body: { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Mcp-Session-Id' } } };
+    }
+    // Requests without a session id share one scope of their own, never a named session's
+    const scope = sessionId === undefined ? '' : `s:${sessionId}`;
+    let issued: string | undefined;
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
@@ -109,11 +153,14 @@ export function createRpcProcessor(options: { readOnly?: boolean } = {}, run?: P
         continue;
       }
       if (msg.method === 'notifications/cancelled') {
-        // Past the queue, as over stdio: the run it names may be in progress
-        runs.cancel((msg.params as { requestId?: unknown } | undefined)?.requestId);
+        // Past the queue, as over stdio: the run it names may be in progress (in this session only)
+        sessions.cancel(scope, (msg.params as { requestId?: unknown } | undefined)?.requestId);
         continue;
       }
+      // A new session: its id goes back in the Mcp-Session-Id header of this answer
+      if (msg.method === 'initialize' && msg.id != null) issued ??= randomBytes(24).toString('base64url');
       const call = msg.method === 'tools/call' && msg.id != null;
+      const runs = sessions.acquire(scope);
       if (call) runs.arrived(msg.id);
       try {
         const reply = await serial(() => handleMessage(msg, run, { readOnly: options.readOnly, runs }).finally(() => { if (call) runs.settled(msg.id); }));
@@ -121,11 +168,15 @@ export function createRpcProcessor(options: { readOnly?: boolean } = {}, run?: P
         if (reply) replies.push(reply);
       } catch (e) {
         replies.push({ jsonrpc: '2.0', id: (msg.id as string | number | undefined) ?? null, error: { code: -32603, message: internalError(e) } });
+      } finally {
+        sessions.release(scope);
       }
     }
-    if (!replies.length) return { status: 202 };
-    return { status: 200, body: batch ? replies : replies[0] };
+    const headers = issued ? { 'Mcp-Session-Id': issued } : undefined;
+    if (!replies.length) return { status: 202, ...(headers ? { headers } : {}) };
+    return { status: 200, body: batch ? replies : replies[0], ...(headers ? { headers } : {}) };
   };
+  return Object.assign(processRpc, { sessionCount: () => sessions.size });
 }
 
 export function createMcpHttpHandler(token: string, options: { readOnly?: boolean } = {}, run?: Parameters<typeof handleMessage>[1]) {
@@ -147,8 +198,9 @@ export function createMcpHttpHandler(token: string, options: { readOnly?: boolea
     } catch {
       return send(res, 413, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Request too large' } });
     }
-    const reply = await processRpc(text);
-    send(res, reply.status, reply.body);
+    const header = req.headers['mcp-session-id'];
+    const reply = await processRpc(text, Array.isArray(header) ? header[0] : header);
+    send(res, reply.status, reply.body, reply.headers);
   };
 }
 

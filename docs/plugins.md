@@ -136,7 +136,11 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
   resource and `doneWhen.storage`, a declared storage key; onboarding is done once that key holds
   data for the current Telegram account.
 - **`input`/`output` schemas**: JSON Schema 2020-12, self-contained: `$defs` inside their own schema,
-  no external `$ref`, no `$id`, no `$schema` other than 2020-12. `input` is an object. Only the
+  no external `$ref`, no `$id`, no `$schema` other than 2020-12. A `$ref` may point only at a
+  subschema position (`#`, `#/$defs/…`, `#/properties/…`, `#/items`, `#/allOf/0` and so on), never
+  into an annotation or any other value (`#/default`, `#/examples/0`, `#/properties/a/const`): the
+  manifest is refused at install, and such a schema is refused again when it checks a value. A
+  `$ref` cycle that never descends into the value ends the check with `plugin_error`. `input` is an object. Only the
   keywords the host implements are allowed (an unknown one makes the manifest invalid), and no
   regular expressions (`pattern`, `patternProperties`): the host checks plugin values on its own
   thread, where a runaway expression could not be stopped; check such values in the plugin's code.
@@ -168,6 +172,10 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
 - **Deadline.** 60 s for the whole run, waiting for Telegram included. When it passes or the run is
   cancelled (MCP cancel, a closed channel, SIGTERM/SIGINT in a terminal), the host interrupts the
   engine, aborts the operations in flight, starts no new ones and drops late results (no late writes).
+  Connecting to Telegram and looking up the account happen on first use inside the run, so they
+  count against the same 60 s. A storage write waits for the store's lock only until the deadline
+  and checks the deadline and the cancellation once more under the lock, right before the file
+  changes: a write that would land after them changes nothing.
 - **Default limits:** 64 MB memory; 256 KB of guest stack; 200 host calls per run, at most 4 at a
   time (a fifth concurrent call ends the run); up to 1 MB of arguments per call and 1 MB of result
   handed into the sandbox; 1,000,000 promise jobs between two host operations; the whole output
@@ -179,7 +187,9 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
 - **Output envelope.** The host prints `{"data": <the plugin's result>, "proposals": [...]}`. Only the
   host builds `proposals` (section 7); a `proposals` field inside the plugin's result stays in `data`.
 - **Lossless JSON.** Plugin output keeps `null` and empty values (it is never passed through the
-  CLI's `formatJson()`); `--json` prints one line, without it the same JSON indented.
+  CLI's `formatJson()`). The output is always one line of compact JSON, with or without `--json`:
+  exactly the string whose length was checked against the 60,000-character limit, so no other
+  serialization can outgrow it.
 
 ```js
 export const commands = {
@@ -229,12 +239,20 @@ forwards, replies that quote another chat's message from 777000/489000, messages
 is an ISO date or Unix seconds. Each message has its text, date and chat type, no other
 participants. Chats are walked by last activity (the first 100 that match, fixed on the first page),
 each from newest to oldest. A page is capped by serialized size (about 40,000 characters) and by 20
-Telegram requests, and returns `{messages, count, cursor, done}`; `cursor` is opaque, bound to the
-account, checked strictly and never trusted: every filter is applied again whatever it says. The
-last page has `done: true` and `cursor: null`.
+Telegram requests (every one counts: the dialog list, the account, resolving each chat, each history
+batch), and returns `{messages, count, cursor, done}`. `cursor` is an opaque random id (128 bits,
+base64url): the walk itself (the chats, the position, the filters, the account and the installation)
+stays with the host, in a private folder of the installation (`plugin-state/<installId>/`, never
+plugin data, so `plugin data` does not show it; removed with the plugin), so the plugin never sees
+which chats were walked and cannot change them. A cursor lasts 24 hours, an installation keeps the
+latest 64, and each page hands out a new one (an earlier cursor still repeats its page). An unknown,
+expired or malformed id, or one of another account or installation, fails with `invalid_cursor`. In
+`plugin dev` cursors live in memory, so one never continues in the next `plugin dev` run. The last
+page has `done: true` and `cursor: null`. A cancelled or timed-out run starts no further request.
 
 **Masking before the sandbox**, for every read API, in the shell and over MCP alike: messages from
-777000/489000, forwards of them and replies quoting them get the `service` mask and `service: true`
+777000/489000, forwards of them, messages saved from their chats (`savedFromPeer`/`savedFromId` of
+the forward or quote header) and replies quoting them get the `service` mask and `service: true`
 (`mine` drops them); ordinary messages the `echo` mask (codes after "code:", gift links). Over MCP
 the plugin's `data` and the proposal texts are masked with `maskForModel` (`echo`) as well.
 
@@ -246,7 +264,7 @@ the host's own record of the call, never from what the plugin threw.
 
 **Errors** reach the plugin as thrown `Error`s with `code`, `message` (masked) and their other fields
 (`retryAfterSeconds`, `cursor`, `partial`): the CLI's codes plus `permission_denied`,
-`invalid_argument`, `no_target`, `not_available` (the target is a message, not a thread, or the
+`invalid_argument`, `invalid_cursor`, `no_target`, `not_available` (the target is a message, not a thread, or the
 reverse), `not_found`, `invalid_proposal`. An error the command does not catch ends the run with
 `plugin_error`. **Logs**: `host.log(...)` exists only in `plugin dev` and appends to
 `<tmp>/better-tg-cli-plugin-dev/<name>.log`, never to the command's output or MCP.
@@ -315,7 +333,9 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   bytes. `--input` is the command's input as a JSON object (`-` reads it from stdin; absent: `{}`).
   Over MCP `telegram_read` passes no stdin, so a read command takes its input inline
   (`["plugin","run","x","collect","--input","{\"limit\":300}"]`); `telegram_write` passes `stdin`.
-  `--target` is for plugins with `messages:read-target` only. `plugin list --json` lists each command
+  `--target` is for plugins with `messages:read-target` only; the message, topic or thread ID in it
+  is an integer from 1 to 2147483647 (anything else is exit 2), and `host.target.thread()` reads that
+  topic or thread only, never the rest of the chat. `plugin list --json` lists each command
   with `access` (`read`, `local write`), its `input` schema and the `argv` to run.
 - **`plugin dev <dir> <cmd> --mock`** checks the folder as `validate` does and runs a command against
   the built-in mock account in memory: no confirmations, nothing installed or written, no profile,
@@ -351,9 +371,18 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **Cancellation over MCP.** `notifications/cancelled` is handled as soon as it arrives, past the
   request queue: a plugin run in progress is stopped (the child CLI gets SIGTERM, a worker thread a
   message and a flag in shared memory its sandbox polls; either is killed if it has not stopped
-  after 2 s), a run still waiting in the queue never starts, and neither gets a response. Over stdio
-  a closed channel cancels the plugin runs too; over Streamable HTTP only the client's notification
-  does. Other commands are not cancelled this way.
+  after 2 s), a run still waiting in the queue never starts, and neither gets a response. A plugin
+  run is cancellable from the moment it leaves the queue, approval included: a cancel while its
+  describe run or approval dialog is open ends the wait at once (the server tells the client its
+  dialog is cancelled and ignores a late answer), nothing runs and the next call is answered. Over
+  stdio a closed channel cancels the plugin runs too; over Streamable HTTP only the client's
+  notification does, and only within its own session: `initialize` answers with an
+  `Mcp-Session-Id`, and a cancellation reaches only the runs of the session it was sent with
+  (requests without the header share a scope of their own). Other commands are not cancelled this way.
+- **The installation a call was checked by.** For `plugin run` the server passes the child the
+  installation ID and revision it classified (and, in mode `ask`, approved) the call by, in an
+  environment variable the model cannot set. The child refuses any other installation of the same
+  name (`plugin_changed`) before anything of it runs, whatever effects its command has now.
 - **MCP.** `telegram_read` runs exactly `plugin list`, `plugin show`, `plugin data get` and
   `plugin data list`, and `plugin run` for commands without effects (known from the installed
   manifest before the run). Everything else goes through `telegram_write` or is refused (`validate`

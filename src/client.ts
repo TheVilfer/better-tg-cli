@@ -724,9 +724,19 @@ function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFro
  * that quotes or replies to such a message in another chat (the reply header names its source).
  */
 export function isServiceSource(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown; replyTo?: unknown }): boolean {
-  if (isLoginServiceMessage(msg)) return true;
-  const reply = msg.replyTo as { replyFrom?: { fromId?: unknown } | null; replyToPeerId?: unknown } | null | undefined;
-  return isLoginServicePeer(reply?.replyFrom?.fromId) || isLoginServicePeer(reply?.replyToPeerId);
+  if (isLoginServiceMessage(msg) || fwdNamesService(msg.fwdFrom)) return true;
+  const reply = msg.replyTo as { replyFrom?: unknown; replyToPeerId?: unknown } | null | undefined;
+  return fwdNamesService(reply?.replyFrom) || isLoginServicePeer(reply?.replyToPeerId);
+}
+
+/**
+ * A forward (or quote) header that names a login-code service anywhere: as the author, or as the
+ * chat a message saved to Saved Messages came from (`savedFromPeer`, `savedFromId`), where the
+ * author may be someone else.
+ */
+function fwdNamesService(header: unknown): boolean {
+  const h = header as { fromId?: unknown; savedFromPeer?: unknown; savedFromId?: unknown } | null | undefined;
+  return isLoginServicePeer(h?.fromId) || isLoginServicePeer(h?.savedFromPeer) || isLoginServicePeer(h?.savedFromId);
 }
 
 export { LOGIN_CODE_HIDDEN };

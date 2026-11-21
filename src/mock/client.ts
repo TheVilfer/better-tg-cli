@@ -148,6 +148,9 @@ export class MockClient {
 
   async getMe(): Promise<Api.User> {
     mockFailure();
+    // TG_MOCK_SLOW_ME=<ms> (tests): a slow account lookup, as on a slow connection
+    const slow = Number(process.env.TG_MOCK_SLOW_ME ?? 0);
+    if (slow > 0) await new Promise(resolve => setTimeout(resolve, slow));
     return this.user(this.findUser(this.world.me)!);
   }
 
@@ -268,7 +271,11 @@ export class MockClient {
       fromId: from ? new Api.PeerUser({ userId: bigInt(from) }) : undefined,
       replyTo: m.quoteFrom
         ? new Api.MessageReplyHeader(args({
-          replyFrom: new Api.MessageFwdHeader({ date: this.date(m), fromId: this.peerOf(this.chat(bigInt(m.quoteFrom))) }),
+          replyFrom: new Api.MessageFwdHeader(args({
+            date: this.date(m),
+            fromId: m.savedFrom ? undefined : this.peerOf(this.chat(bigInt(m.quoteFrom))),
+            savedFromPeer: m.savedFrom ? this.peerOf(this.chat(bigInt(m.savedFrom))) : undefined,
+          })),
           quote: true, quoteText: m.quoteText,
         }))
         : m.replyTo || m.thread
@@ -286,7 +293,14 @@ export class MockClient {
       ttlPeriod: m.ttlPeriod,
       pinned: m.pinned,
       editDate: m.edited ? this.date(m) : undefined,
-      fwdFrom: m.forwardedFrom ? new Api.MessageFwdHeader({ date: this.date(m), fromId: this.peerOf(this.chat(bigInt(m.forwardedFrom))) }) : undefined,
+      fwdFrom: m.forwardedFrom || m.savedFrom && !m.quoteFrom
+        ? new Api.MessageFwdHeader(args({
+          date: this.date(m),
+          fromId: m.forwardedFrom ? this.peerOf(this.chat(bigInt(m.forwardedFrom))) : undefined,
+          savedFromPeer: m.savedFrom && !m.quoteFrom ? this.peerOf(this.chat(bigInt(m.savedFrom))) : undefined,
+          savedFromMsgId: m.savedFrom && !m.quoteFrom ? 1 : undefined,
+        }))
+        : undefined,
     }));
   }
 

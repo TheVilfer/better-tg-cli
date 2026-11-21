@@ -30,13 +30,37 @@ const MINE_CHATS = 100;
 const MINE_MAX = 2000;
 const READ_MAX = 100;
 const SERVICE_IDS = new Set(['777000', '489000']);
+/** Message, topic and thread IDs are positive 32-bit integers. */
+export const MAX_MESSAGE_ID = 2_147_483_647;
+export const isMessageId = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_MESSAGE_ID;
+
+/**
+ * What a storage write must still hold when it changes the file: the run's absolute deadline and
+ * its cancellation (see WriteGuard in store.ts).
+ */
+export interface WriteGuard {
+  deadline: number;
+  aborted: () => boolean;
+}
 
 /** Where the plugin's data lives: the installation's store, or memory in `plugin dev`. */
 export interface StorageBackend {
   get(key: string): string | undefined;
   list(): { key: string; bytes: number; updatedAt: string }[];
-  set(key: string, value: string): { bytes: number; usedBytes: number; quotaBytes: number };
-  delete(key: string): boolean;
+  /** Waits for the store's lock within `guard` and checks it again right before the file changes. */
+  set(key: string, value: string, guard: WriteGuard): Promise<{ bytes: number; usedBytes: number; quotaBytes: number }>;
+  delete(key: string, guard: WriteGuard): Promise<boolean>;
+}
+
+/**
+ * The host's walk state behind `messages.mine` cursors: kept by the host (a private folder of the
+ * installation, or memory in `plugin dev`), never by the plugin; the plugin holds only a random id.
+ */
+export interface CursorStore {
+  /** Keeps `state` and returns a fresh random id for it. */
+  save(state: unknown): string;
+  /** The state behind an id; undefined when unknown, expired, or another installation's. */
+  load(id: string): unknown;
 }
 
 /** `--target`: one message (`chat:msgId`), or a thread (`chat:msgId --thread`) or topic (`chat@topic`). */
@@ -51,9 +75,17 @@ export interface HostContext {
   manifest: Manifest;
   command: PluginCommand;
   client: () => Promise<TelegramClient>;
-  /** The owner's Telegram user ID (data and cursors are bound to it). */
+  /** The owner's Telegram user ID (data and cursors are bound to it); fetched on first use, inside the run. */
   account: () => Promise<string>;
-  storage: () => StorageBackend;
+  /** The data of this installation and account, opened on first use (it needs the account). */
+  storage: () => Promise<StorageBackend>;
+  cursors: CursorStore;
+  /** The installation cursors are bound to (`plugin dev`: a fixed name; its cursors live in memory). */
+  installId: string;
+  /** The run's absolute deadline (ms since the epoch): storage writes hold to it. */
+  deadline: number;
+  /** The MCP server's shared cancel flag, readable while the thread is busy. */
+  cancelled?: () => boolean;
   target?: Target;
   /** Proposal texts masked at `echo` before the host builds the command (over MCP). */
   maskProposals: boolean;
@@ -151,9 +183,15 @@ function bounded<T>(items: T[]): T[] {
 type MineType = 'private' | 'group';
 const MINE_TYPES: readonly MineType[] = ['private', 'group'];
 
+/**
+ * The walk behind a cursor, kept by the host (CursorStore): the plugin gets a random id only, so it
+ * never sees the chats walked and cannot swap them.
+ */
 interface MineCursor {
   /** Account tag: a cursor of another account is refused. */
   a: string;
+  /** The installation that listed the chats. */
+  n: string;
   t: MineType[];
   s: number;
   /** The chats to walk, fixed on the first page. */
@@ -165,26 +203,22 @@ interface MineCursor {
 
 const accountTag = (userId: string) => createHash('sha256').update(`tg-plugin-cursor:${userId}`).digest('base64url').slice(0, 12);
 
-const encodeCursor = (c: MineCursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
+const badCursor = (message: string) => new HostError('invalid_cursor', message);
 
-function decodeCursor(text: string, account: string): MineCursor {
-  const bad = () => invalid('cursor is not one this host returned');
-  if (text.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(text)) throw bad();
-  let raw: unknown;
-  try {
-    raw = JSON.parse(Buffer.from(text, 'base64url').toString('utf8'));
-  } catch {
-    throw bad();
-  }
-  if (!isObject(raw)) throw bad();
-  const { a, t, s, c, i, o } = raw;
-  if (a !== accountTag(account)) throw invalid('cursor belongs to another account or another listing');
-  if (!Array.isArray(t) || !t.length || !t.every(x => MINE_TYPES.includes(x as MineType))) throw bad();
-  if (!Array.isArray(c) || c.length > MINE_CHATS || !c.every(x => typeof x === 'string' && /^-?\d{1,20}$/.test(x))) throw bad();
-  if (typeof s !== 'number' || !Number.isInteger(s) || s < 0) throw bad();
-  if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i > c.length) throw bad();
-  if (typeof o !== 'number' || !Number.isInteger(o) || o < 0) throw bad();
-  return { a, t: [...new Set(t as MineType[])], s, c: c as string[], i, o };
+function loadCursor(ctx: HostContext, id: string, account: string): MineCursor {
+  if (!/^[A-Za-z0-9_-]{22}$/.test(id)) throw badCursor('cursor is not one this host returned');
+  const raw = ctx.cursors.load(id);
+  if (!isObject(raw)) throw badCursor('cursor is unknown or expired (cursors last 24 hours); start again without one');
+  const { a, n, t, s, c, i, o } = raw;
+  if (n !== ctx.installId) throw badCursor('cursor belongs to another installation');
+  if (a !== accountTag(account)) throw badCursor('cursor belongs to another account');
+  // Host-written, but read back from disk: checked all the same
+  if (!Array.isArray(t) || !t.length || !t.every(x => MINE_TYPES.includes(x as MineType))) throw badCursor('cursor is damaged');
+  if (!Array.isArray(c) || c.length > MINE_CHATS || !c.every(x => typeof x === 'string' && /^-?\d{1,20}$/.test(x))) throw badCursor('cursor is damaged');
+  if (typeof s !== 'number' || !Number.isInteger(s) || s < 0) throw badCursor('cursor is damaged');
+  if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i > c.length) throw badCursor('cursor is damaged');
+  if (typeof o !== 'number' || !Number.isInteger(o) || o < 0) throw badCursor('cursor is damaged');
+  return { a, n, t: t as MineType[], s, c: c as string[], i, o };
 }
 
 /** The own-message type of a chat, or undefined for one `messages.mine` never reads. */
@@ -228,7 +262,7 @@ export function grantedApi(ctx: HostContext, state: HostState): Record<string, H
     });
   }
 
-  if (perms.has('messages:read-own')) api['messages.mine'] = ([o]) => mine(ctx, state, opts(o, 'messages.mine'));
+  if (perms.has('messages:read-own')) api['messages.mine'] = ([o], signal) => mine(ctx, state, opts(o, 'messages.mine'), signal);
 
   if (perms.has('chats:read')) {
     api['chats.list'] = ([o]) => tg(async () => {
@@ -252,29 +286,30 @@ export function grantedApi(ctx: HostContext, state: HostState): Record<string, H
     api['messages.read'] = ([chat, o]) => tg(async () => {
       const p = opts(o, 'messages.read');
       const limit = int(p.limit, 'limit', 1, READ_MAX, 20);
-      const before = optInt(p.before, 'before', 1, 2 ** 31);
-      const topic = optInt(p.topic, 'topic', 1, 2 ** 31);
-      const thread = optInt(p.thread, 'thread', 1, 2 ** 31);
-      if (topic && thread) throw invalid('pass topic or thread, not both');
-      return history(await ctx.client(), chatRef(chat), { limit, before, topic, thread });
+      const before = optInt(p.before, 'before', 1, MAX_MESSAGE_ID);
+      const topic = optInt(p.topic, 'topic', 1, MAX_MESSAGE_ID);
+      const thread = optInt(p.thread, 'thread', 1, MAX_MESSAGE_ID);
+      if (topic !== undefined && thread !== undefined) throw invalid('pass topic or thread, not both');
+      const mode: HistoryMode = topic !== undefined ? { kind: 'topic', root: topic } : thread !== undefined ? { kind: 'thread', root: thread } : { kind: 'chat' };
+      return history(await ctx.client(), chatRef(chat), mode, { limit, before });
     });
     api['messages.search'] = ([query, o]) => tg(async () => {
       const q = str(query, 'query', 256);
       const p = opts(o, 'messages.search');
       const limit = int(p.limit, 'limit', 1, READ_MAX, 20);
-      const topic = optInt(p.topic, 'topic', 1, 2 ** 31);
+      const topic = optInt(p.topic, 'topic', 1, MAX_MESSAGE_ID);
       const client = await ctx.client();
       if (p.chat === undefined || p.chat === null) {
-        if (topic) throw invalid('topic needs chat');
+        if (topic !== undefined) throw invalid('topic needs chat');
         const res = await client.invoke(new Api.messages.SearchGlobal({ q, filter: new Api.InputMessagesFilterEmpty(), minDate: 0, maxDate: 0, offsetRate: 0, offsetPeer: new Api.InputPeerEmpty(), offsetId: 0, limit }));
         const msgs = 'messages' in res ? res.messages.filter((m): m is Api.Message => m instanceof Api.Message) : [];
         return { messages: bounded(msgs.map(m => ({ chatId: utils.getPeerId(m.peerId).toString(), ...readMessage(m) }))) };
       }
       const entity = await resolveChat(client, chatRef(p.chat));
-      if (topic && !hasTopics(entity)) throw invalid('this chat has no topics');
+      if (topic !== undefined && !hasTopics(entity)) throw invalid('this chat has no topics');
       const res = await client.invoke(new Api.messages.Search({
         peer: entity, q, filter: new Api.InputMessagesFilterEmpty(), minDate: 0, maxDate: 0, offsetId: 0, addOffset: 0, limit, maxId: 0, minId: 0, hash: bigInt(0),
-        ...(topic ? { topMsgId: topic } : {}),
+        ...(topic !== undefined ? { topMsgId: topic } : {}),
       }));
       const chatId = utils.getPeerId(entity).toString();
       const msgs = 'messages' in res ? res.messages.filter((m): m is Api.Message => m instanceof Api.Message) : [];
@@ -285,9 +320,11 @@ export function grantedApi(ctx: HostContext, state: HostState): Record<string, H
   if (perms.has('messages:read-target')) {
     const target = ctx.target;
     const noTarget = () => new HostError('no_target', 'This run has no --target; the agent passes one with the command');
+    const badTarget = () => new HostError('invalid_argument', `The target's message, topic or thread ID is not from 1 to ${MAX_MESSAGE_ID}`);
     api['target.message'] = () => tg(async () => {
       if (!target) throw noTarget();
       if (target.msgId === undefined || target.thread) throw new HostError('not_available', 'The target is a thread or topic: use host.target.thread()');
+      if (!isMessageId(target.msgId)) throw badTarget();
       const client = await ctx.client();
       const entity = await resolveChat(client, target.chat);
       const [msg] = await client.getMessages(entity, { ids: [target.msgId] });
@@ -299,30 +336,48 @@ export function grantedApi(ctx: HostContext, state: HostState): Record<string, H
       if (!target.thread && target.topic === undefined) throw new HostError('not_available', 'The target is one message: use host.target.message()');
       const p = opts(o, 'target.thread');
       const limit = int(p.limit, 'limit', 1, READ_MAX, 20);
-      const before = optInt(p.before, 'before', 1, 2 ** 31);
-      return history(await ctx.client(), target.chat, target.topic !== undefined ? { limit, before, topic: target.topic } : { limit, before, thread: target.msgId });
+      const before = optInt(p.before, 'before', 1, MAX_MESSAGE_ID);
+      // The target's own root only, never the whole chat: a root outside 1…2^31-1 is refused
+      const mode: HistoryMode | undefined = target.topic !== undefined
+        ? (isMessageId(target.topic) ? { kind: 'topic', root: target.topic } : undefined)
+        : isMessageId(target.msgId) ? { kind: 'thread', root: target.msgId } : undefined;
+      if (!mode) throw badTarget();
+      return history(await ctx.client(), target.chat, mode, { limit, before });
     });
   }
 
+  // The store is opened on first use: the account it is bound to is fetched then, inside the run's deadline
   if (perms.has('storage:read')) {
-    api['storage.get'] = ([key]) => {
-      const v = ctx.storage().get(storageKey(ctx, key));
+    api['storage.get'] = async ([key]) => {
+      const k = storageKey(ctx, key);
+      const v = (await ctx.storage()).get(k);
       return v === undefined ? null : v;
     };
-    api['storage.list'] = () => ({ items: ctx.storage().list() });
+    api['storage.list'] = async () => ({ items: (await ctx.storage()).list() });
   }
   if (perms.has('storage:write') && effects.has('storage')) {
-    api['storage.set'] = ([key, value], signal) => {
+    /** The run's deadline and cancellation, checked before, after every wait, and under the store's lock. */
+    const guard = (signal: AbortSignal): WriteGuard => ({ deadline: ctx.deadline, aborted: () => signal.aborted || !!ctx.cancelled?.() });
+    const ended = (g: WriteGuard) => {
+      if (g.aborted() || Date.now() >= g.deadline) throw new HostError('cancelled', 'The run ended; nothing was written');
+    };
+    api['storage.set'] = async ([key, value], signal) => {
       const k = storageKey(ctx, key);
       if (typeof value !== 'string') throw invalid('storage.set takes a string value (JSON.stringify an object first)');
       if (!value) throw invalid('the value is empty; use storage.delete');
-      if (signal.aborted) throw new HostError('cancelled', 'The run ended');
-      return ctx.storage().set(k, value);
+      const g = guard(signal);
+      ended(g);
+      const store = await ctx.storage();
+      ended(g);
+      return store.set(k, value, g);
     };
-    api['storage.delete'] = ([key], signal) => {
+    api['storage.delete'] = async ([key], signal) => {
       const k = storageKey(ctx, key);
-      if (signal.aborted) throw new HostError('cancelled', 'The run ended');
-      return { deleted: ctx.storage().delete(k) };
+      const g = guard(signal);
+      ended(g);
+      const store = await ctx.storage();
+      ended(g);
+      return { deleted: await store.delete(k, g) };
     };
   }
 
@@ -361,15 +416,19 @@ function storageKey(ctx: HostContext, key: unknown): string {
   return key;
 }
 
+/** What `history` reads: the whole chat, or only the messages under one topic or thread root. */
+type HistoryMode = { kind: 'chat' } | { kind: 'topic' | 'thread'; root: number };
+
 /** History of a chat, a forum topic or a comment thread: newest first, size-bounded. */
-async function history(client: TelegramClient, chat: string, p: { limit: number; before?: number; topic?: number; thread?: number }) {
+async function history(client: TelegramClient, chat: string, mode: HistoryMode, p: { limit: number; before?: number }) {
+  // A topic or thread with no valid root is refused, never read as the whole chat
+  if (mode.kind !== 'chat' && !isMessageId(mode.root)) throw invalid(`the ${mode.kind} ID must be from 1 to ${MAX_MESSAGE_ID}`);
   const entity = await resolveChat(client, chat);
-  if (p.topic && !hasTopics(entity)) throw invalid('this chat has no topics');
-  const root = p.topic ?? p.thread;
+  if (mode.kind === 'topic' && !hasTopics(entity)) throw invalid('this chat has no topics');
   let raw: Api.TypeMessage[];
-  if (root) {
+  if (mode.kind !== 'chat') {
     const res = await client.invoke(new Api.messages.GetReplies({
-      peer: entity, msgId: root, offsetId: p.before ?? 0, offsetDate: 0, addOffset: 0, limit: p.limit, maxId: 0, minId: 0, hash: bigInt(0),
+      peer: entity, msgId: mode.root, offsetId: p.before ?? 0, offsetDate: 0, addOffset: 0, limit: p.limit, maxId: 0, minId: 0, hash: bigInt(0),
     }));
     raw = 'messages' in res ? res.messages : [];
   } else {
@@ -386,47 +445,90 @@ async function history(client: TelegramClient, chat: string, p: { limit: number;
   };
 }
 
-/** `messages.mine`: the owner's own text, chat by chat (latest activity first), newest first. */
-async function mine(ctx: HostContext, state: HostState, p: Record<string, unknown>) {
+/** The run ended (cancelled, timed out): a host call stops at once and its result is dropped. */
+const runEnded = () => new HostError('cancelled', 'The run ended');
+
+/** `promise`, or a rejection as soon as `signal` aborts (the request itself cannot be withdrawn). */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    promise.catch(() => {});
+    return Promise.reject(runEnded());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(runEnded());
+    signal.addEventListener('abort', stop, { once: true });
+    promise.then(
+      v => { signal.removeEventListener('abort', stop); resolve(v); },
+      e => { signal.removeEventListener('abort', stop); reject(e); },
+    );
+  });
+}
+
+/**
+ * `messages.mine`: the owner's own text, chat by chat (latest activity first), newest first.
+ * Every Telegram request of the call (the dialog list, the account, getMe, resolving each chat,
+ * each history batch) goes through `rpc`: counted against MINE_REQUESTS, never started after the
+ * run ended, and abandoned the moment it ends.
+ */
+async function mine(ctx: HostContext, state: HostState, p: Record<string, unknown>, signal: AbortSignal) {
   const limit = int(p.limit, 'limit', 1, MINE_MAX, 100);
-  const account = await ctx.account();
+  let requests = 0;
+  const rpc = async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (signal.aborted) throw runEnded();
+    requests++;
+    const r = await untilAborted(fn(), signal);
+    if (signal.aborted) throw runEnded();
+    return r;
+  };
   let cur: MineCursor | undefined;
   const messages: { text: string; date: string; chatType: MineType }[] = [];
   let size = 2;
-  const page = (done: boolean) => ({ messages, count: messages.length, cursor: done || !cur ? null : encodeCursor(cur), done });
-  const client = await ctx.client();
+  /** A cursor for where the walk stands: the state stays with the host, the plugin gets its id. */
+  const cursorOf = (c: MineCursor | undefined) => {
+    if (!c || signal.aborted) return null;
+    return ctx.cursors.save(c);
+  };
+  const page = (done: boolean) => {
+    if (signal.aborted) throw runEnded();
+    return { messages, count: messages.length, cursor: done ? null : cursorOf(cur), done };
+  };
   try {
+    if (p.cursor !== undefined && p.cursor !== null && typeof p.cursor !== 'string') throw badCursor('cursor must be a string from a previous page');
+    const typesIn = p.types === undefined || p.types === null ? ['private'] : p.types;
+    if (typeof p.cursor !== 'string' && (!Array.isArray(typesIn) || !typesIn.length || !typesIn.every(t => MINE_TYPES.includes(t as MineType)))) {
+      throw invalid('types must be a list of private, group');
+    }
+    const since = typeof p.cursor === 'string' ? 0 : sinceSeconds(p.since);
+    const account = await rpc(() => ctx.account());
+    const client = await ctx.client();
     if (typeof p.cursor === 'string') {
-      cur = decodeCursor(p.cursor, account);
-    } else if (p.cursor !== undefined && p.cursor !== null) {
-      throw invalid('cursor must be a string from a previous page');
+      cur = loadCursor(ctx, p.cursor, account);
     } else {
-      const typesIn = p.types === undefined || p.types === null ? ['private'] : p.types;
-      if (!Array.isArray(typesIn) || !typesIn.length || !typesIn.every(t => MINE_TYPES.includes(t as MineType))) throw invalid('types must be a list of private, group');
       const types = [...new Set(typesIn as MineType[])];
-      const dialogs = await client.getDialogs({ limit: 200 });
+      const dialogs = await rpc(() => client.getDialogs({ limit: 200 }));
       const chats: string[] = [];
       for (const d of dialogs) {
         const t = d.entity ? mineType(d.entity as ResolvedEntity) : undefined;
         if (t && types.includes(t) && d.id) chats.push(d.id.toString());
         if (chats.length >= MINE_CHATS) break;
       }
-      cur = { a: accountTag(account), t: types, s: sinceSeconds(p.since), c: chats, i: 0, o: 0 };
+      cur = { a: accountTag(account), n: ctx.installId, t: types, s: since, c: chats, i: 0, o: 0 };
     }
-    const me = await client.getMe();
-    let requests = 0;
+    const me = await rpc(() => client.getMe());
     while (cur.i < cur.c.length && messages.length < limit) {
-      if (requests >= MINE_REQUESTS) return page(false);
-      // Every filter again, whatever the cursor says: the chat's type and that it is no service chat
-      const entity = await resolveChat(client, cur.c[cur.i]);
+      // A chat takes two requests (resolve, history): stop with a cursor before the budget runs out
+      if (requests + 2 > MINE_REQUESTS) return page(false);
+      // The type again (the list is the host's own, but a chat may have changed): never a service chat
+      const chatId: string = cur.c[cur.i];
+      const entity: ResolvedEntity = await rpc(() => resolveChat(client, chatId));
       const type = mineType(entity);
       if (!type || !cur.t.includes(type)) {
         cur = { ...cur, i: cur.i + 1, o: 0 };
         continue;
       }
       const want = Math.min(100, limit - messages.length + 20);
-      requests++;
-      const batch = await client.getMessages(entity, { limit: want, fromUser: me, ...(cur.o ? { offsetId: cur.o } : {}) });
+      const offset: number = cur.o;
+      const batch: Api.Message[] = await rpc(() => client.getMessages(entity, { limit: want, fromUser: me, ...(offset ? { offsetId: offset } : {}) }));
       let chatDone = batch.length < want;
       let full = false;
       for (const msg of batch) {
@@ -464,9 +566,9 @@ async function mine(ctx: HostContext, state: HostState, p: Record<string, unknow
     return page(cur.i >= cur.c.length);
   } catch (e) {
     const wait = floodSeconds(e);
-    if (wait === undefined) throw hostFailure(e);
+    if (wait === undefined || signal.aborted) throw hostFailure(e);
     // The point to continue from and what this call had collected before Telegram said wait
-    const cursor = cur ? encodeCursor(cur) : null;
+    const cursor = cursorOf(cur);
     const partial = { messages, count: messages.length };
     state.flood = { retryAfterSeconds: wait, cursor, partial };
     throw new HostError('flood_wait', `Telegram rate limit: retry after ${wait} s`, { retryAfterSeconds: wait, cursor, partial });

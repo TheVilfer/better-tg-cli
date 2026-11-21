@@ -34,6 +34,8 @@ export interface SandboxRun {
   /** Plain values put on `host` as they are (frozen), e.g. `{ dev: true }`. */
   constants?: Record<string, unknown>;
   limits?: Partial<SandboxLimits>;
+  /** The run's absolute deadline when the caller shares it with the host (default: now + timeoutMs). */
+  deadline?: number;
   signal?: AbortSignal;
   /** Told the name of each host call as it is made (the audit wants them for a failed run too). */
   onCall?: (name: string) => void;
@@ -106,7 +108,7 @@ const bytes = (text: string) => Buffer.byteLength(text, 'utf8');
 export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
   const limits = { ...DEFAULT_LIMITS, ...run.limits };
   const started = Date.now();
-  const deadline = started + limits.timeoutMs;
+  const deadline = run.deadline ?? started + limits.timeoutMs;
   const abort = new AbortController();
   /** Why the run must stop now (a limit, cancellation, the deadline); checked by the interrupt handler. */
   let failure: SandboxError | undefined;

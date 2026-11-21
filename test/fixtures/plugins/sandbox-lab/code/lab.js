@@ -27,6 +27,8 @@ const ops = {
   big: () => { const a = []; for (;;) a.push('x'.repeat(1 << 16) + a.length); },
   bigArgs: host => host.storage.get('x'.repeat(1100000)),
   hugeOutput: () => 'y'.repeat(70000),
+  // About 40 000 characters compact, far more if it were printed indented
+  zeros: () => new Array(20000).fill(0),
   proto: () => { Object.prototype.polluted = 1; Array.prototype.push = () => 0; return { ok: [].push(1) }; },
 };
 

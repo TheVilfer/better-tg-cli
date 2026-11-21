@@ -15,7 +15,7 @@ const env = await vi.hoisted(async () => {
   return { root };
 });
 
-import { classifyCall, childEnv, handleMessage, planCall, PluginRuns, result, setKnownCommands, type RunOutput } from '../src/mcp.js';
+import { classifyCall, childEnv, describeWithCli, handleMessage, planCall, PluginRuns, result, setKnownCommands, type RunOutput } from '../src/mcp.js';
 import { commandPaths } from '../src/mcp.js';
 import { devLog } from '../src/plugins/run.js';
 
@@ -137,7 +137,8 @@ describe('plugin run: the reference Tone of Voice collect', { timeout: 120_000 }
 
 describe('plugin run: input, output, target, proposals', { timeout: 120_000 }, () => {
   const h = newHome();
-  it('installs the lab', () => { install(h, LAB); });
+  let labInstall: { installId: string; revision: string };
+  it('installs the lab', () => { labInstall = install(h, LAB); });
 
   it('input is checked by the schema (exit 2) before anything runs; --input - reads stdin', () => {
     const bad = lab(h, ['probe', '--input', '{"op":1}']);
@@ -197,7 +198,7 @@ describe('plugin run: input, output, target, proposals', { timeout: 120_000 }, (
   it('effects storage: a local write in the shell, refused on the MCP read tool (TG_READ_ONLY) with nothing saved', () => {
     expect(lab(h, ['save', '--input', '{"value":"first"}']).json.data).toEqual({ saved: 5 });
     expect(probe(h, 'get').json.data.result).toBe('first');
-    const refused = lab(h, ['save', '--input', '{"value":"second"}'], { TG_MCP: '1', TG_READ_ONLY: '1' });
+    const refused = lab(h, ['save', '--input', '{"value":"second"}'], { TG_MCP: '1', TG_READ_ONLY: '1', TG_PLUGIN_EXPECT: `${labInstall.installId} ${labInstall.revision}` });
     expect(refused.code).toBe(1);
     expect(refused.json.error.code).toBe('write_on_read_tool');
     expect(probe(h, 'get').json.data.result).toBe('first');
@@ -264,6 +265,97 @@ describe('plugin run over MCP: classification, approval, snapshot binding', { ti
     expect(cli(h, ['plugin', 'data', 'list', 'sandbox-lab', '--json']).json.items).toEqual([]);
     // The guard's own exits (describe runs, approval_required) are no runs: only the approved one is audited
     expect(audit(h).filter(e => e.command === 'plugin run').map(e => e.result)).toEqual([{ success: true }]);
+  });
+});
+
+describe('plugin run: review fixes for the account (#10) and the output limit (#12)', { timeout: 120_000 }, () => {
+  it('#10 a slow account lookup does not hold up a command that never touches storage', () => {
+    const h = newHome();
+    install(h, LAB);
+    const t = Date.now();
+    const r = probe(h, 'awaitZero', [], { TG_MOCK_SLOW_ME: '20000' });
+    expect(r.code, r.err).toBe(0);
+    expect(r.json.data.result).toBe('ok');
+    expect(Date.now() - t).toBeLessThan(15_000);
+  });
+
+  it('#10 fetching the account counts against the run deadline', async () => {
+    const { runPluginCommand, runDeps, memoryStorage, memoryCursors } = await import('../src/plugins/run.js');
+    const manifest = JSON.parse(readFileSync(join(LAB, 'tg-plugin.json'), 'utf8'));
+    const command = manifest.commands.find((c: { name: string }) => c.name === 'probe');
+    const code = readFileSync(join(LAB, 'code', 'lab.js'), 'utf8');
+    const never = () => new Promise<string>(() => {});
+    runDeps.limits = { timeoutMs: 500 };
+    try {
+      const t = Date.now();
+      await expect(runPluginCommand({
+        manifest, command, code, filename: 'code/lab.js', input: { op: 'get' }, client: never as never, account: never,
+        storage: async () => { await never(); return memoryStorage(manifest); }, cursors: memoryCursors(), installId: 'x', mcp: false,
+      })).rejects.toMatchObject({ code: 'plugin_limit' });
+      expect(Date.now() - t).toBeLessThan(3000);
+    } finally {
+      runDeps.limits = undefined;
+    }
+  });
+
+  it('#12 the printed output is the exact checked string, with or without --json', () => {
+    const h = newHome();
+    install(h, LAB);
+    for (const json of [true, false]) {
+      const r = cli(h, ['plugin', 'run', 'sandbox-lab', 'probe', '--input', '{"op":"zeros"}', ...(json ? ['--json'] : [])]);
+      expect(r.code, r.err).toBe(0);
+      const line = r.out.trimEnd();
+      expect(line).not.toContain('\n');
+      expect(line.length).toBeLessThanOrEqual(60_000);
+      expect(JSON.parse(line).data.result).toHaveLength(20_000);
+    }
+  });
+});
+
+describe('plugin run over MCP: the installation the call was classified by (#5)', { timeout: 120_000 }, () => {
+  it('reinstalled while the approval dialog is open, with effects [] now: refused, the new code never runs', async () => {
+    const h = newHome();
+    const dir = join(h, 'lab');
+    cpSync(LAB, dir, { recursive: true });
+    const first = install(h, dir);
+    await asServer(h, { TG_MOCK_ASK: '1' }, async run => {
+      const spawnRun = async (plan: Parameters<typeof childEnv>[0]): Promise<RunOutput> => {
+        const r = spawnSync(process.execPath, [...cliArgs(), ...plan.argv], { encoding: 'utf8', input: plan.stdin ?? '', env: childEnv(plan) });
+        return { code: r.status, timedOut: false, out: r.stdout, err: r.stderr };
+      };
+      const plan = planCall('telegram_write', { args: ['plugin', 'run', 'sandbox-lab', 'save', '--input', '{"value":"x"}', '--json'] });
+      expect(plan).toMatchObject({ plugin: { installId: first.installId, revision: first.revision } });
+      expect(childEnv(plan as Parameters<typeof childEnv>[0]).TG_PLUGIN_EXPECT).toBe(`${first.installId} ${first.revision}`);
+      let asked = 0;
+      const elicit = async () => {
+        asked++;
+        // While the user looks at the dialog: the plugin is replaced, its "save" now has no effects
+        expect(cli(h, ['plugin', 'remove', 'sandbox-lab', '--json'], { TG_MOCK_HUMAN: 'yes' }).json).toMatchObject({ ok: true });
+        const manifest = JSON.parse(readFileSync(join(dir, 'tg-plugin.json'), 'utf8'));
+        manifest.commands.find((c: { name: string }) => c.name === 'save').effects = [];
+        writeFileSync(join(dir, 'tg-plugin.json'), JSON.stringify(manifest, null, 2));
+        writeFileSync(join(dir, 'code', 'lab.js'), readFileSync(join(dir, 'code', 'lab.js'), 'utf8').replace("await host.storage.set('notes', value);", 'return { saved: -424242 };'));
+        install(h, dir);
+        return true;
+      };
+      const r = await handleMessage(call('telegram_write', { args: ['plugin', 'run', 'sandbox-lab', 'save', '--input', '{"value":"x"}', '--json'] }), run, {
+        elicit, describe: p => describeWithCli(p, spawnRun),
+      }) as Reply;
+      expect(asked).toBe(1);
+      expect(r.result.isError).toBe(true);
+      expect(r.result.content[0].text).toContain('plugin_changed');
+      expect(r.result.content[0].text).not.toContain('-424242');
+    });
+    // Neither the old code (no data) nor the new one ran
+    expect(cli(h, ['plugin', 'data', 'list', 'sandbox-lab', '--json']).json.items).toEqual([]);
+    expect(audit(h).filter(e => e.command === 'plugin run' && e.result.success)).toEqual([]);
+    // The env var is the server's: one the server inherited never reaches a child
+    process.env.TG_PLUGIN_EXPECT = 'forged';
+    try {
+      expect(childEnv({ argv: ['plugin', 'list'], readOnly: true }).TG_PLUGIN_EXPECT).toBeUndefined();
+    } finally {
+      delete process.env.TG_PLUGIN_EXPECT;
+    }
   });
 });
 
@@ -345,6 +437,51 @@ describe('plugin run over MCP: cancellation', { timeout: 120_000 }, () => {
       }
     });
   }
+
+  /** Waits until the server has sent something with this id (a request of its own, such as a dialog). */
+  async function sent(s: { got: Set<unknown> }, id: unknown, ms = 30_000) {
+    const until = Date.now() + ms;
+    while (!s.got.has(id)) {
+      if (Date.now() > until) throw new Error(`the server never sent ${String(id)}`);
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+  const saveCall = { method: 'tools/call', params: { name: 'telegram_write', arguments: { args: ['plugin', 'run', 'sandbox-lab', 'save', '--input', '{"value":"never"}', '--json'] } } };
+
+  it('#7 cancelled while its approval dialog is open: no reply, nothing saved, the next call is answered at once', async () => {
+    const h = newHome();
+    install(h, LAB);
+    const s = server(h, { TG_MOCK_ASK: '1' });
+    await s.request(0, { method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: {} } } });
+    void s.request(1, saveCall);
+    await sent(s, 'tg-elicit-1');
+    const t = Date.now();
+    s.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } });
+    const next = await s.request(2, { method: 'tools/call', params: { name: 'telegram_read', arguments: { args: ['plugin', 'list', '--json'] } } });
+    expect(next.result.isError).toBeUndefined();
+    expect(Date.now() - t).toBeLessThan(10_000);
+    // The user's late yes to the closed dialog changes nothing and gets no answer
+    s.send({ jsonrpc: '2.0', id: 'tg-elicit-1', result: { action: 'accept', content: { approve: true } } });
+    await new Promise(r => setTimeout(r, 500));
+    expect(s.got.has(1)).toBe(false);
+    s.p.stdin.end();
+    await s.exited;
+    expect(cli(h, ['plugin', 'data', 'list', 'sandbox-lab', '--json']).json.items).toEqual([]);
+  });
+
+  it('#7 stdio closed while an approval dialog is open: the server exits promptly', async () => {
+    const h = newHome();
+    install(h, LAB);
+    const s = server(h, { TG_MOCK_ASK: '1' });
+    await s.request(0, { method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: { elicitation: {} } } });
+    void s.request(1, saveCall);
+    await sent(s, 'tg-elicit-1');
+    const t = Date.now();
+    s.p.stdin.end();
+    await s.exited;
+    expect(Date.now() - t).toBeLessThan(10_000);
+    expect(s.got.has(1)).toBe(false);
+  });
 
   it('closing stdio cancels a run in progress', async () => {
     const h = newHome();

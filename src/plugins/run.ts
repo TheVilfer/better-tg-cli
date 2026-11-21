@@ -10,9 +10,10 @@ import { join } from 'node:path';
 import type { TelegramClient } from 'teleproto';
 import { CliError, EXIT, usageError } from '../errors.js';
 import { maskDeep } from '../mcp-output.js';
-import { validate, SchemaTimeoutError, type SchemaIssue } from './json-schema.js';
+import { validate, SchemaTimeoutError, UnsupportedSchemaError, type SchemaIssue } from './json-schema.js';
 import type { Manifest, PluginCommand } from './manifest.js';
-import { grantedApi, type HostContext, type HostState, type StorageBackend, type Target } from './host.js';
+import { grantedApi, isMessageId, MAX_MESSAGE_ID, type CursorStore, type HostContext, type HostState, type StorageBackend, type Target, type WriteGuard } from './host.js';
+import { randomBytes } from 'node:crypto';
 import { DEFAULT_LIMITS, SandboxError, type SandboxLimits } from './sandbox-types.js';
 import type { Proposal } from './proposals.js';
 
@@ -75,6 +76,8 @@ function schemaIssues(schema: Record<string, unknown>, value: unknown): SchemaIs
     return validate(schema, value, 20, SCHEMA_MS);
   } catch (e) {
     if (e instanceof SchemaTimeoutError) throw new CliError('Checking the value against the command\'s schema took too long', 'plugin_limit', EXIT.ERROR, { fields: { limit: 'schema' } });
+    // A schema this version refuses (a $ref outside the subschema positions, a $ref cycle)
+    if (e instanceof UnsupportedSchemaError) throw new CliError(`The command's schema cannot be used: ${e.message}`, 'plugin_error', EXIT.ERROR);
     throw e;
   }
 }
@@ -98,11 +101,14 @@ export function parseTarget(text: string | undefined, thread: boolean): Target |
   const m = /^(-?\d{1,20}|@[A-Za-z0-9_]{3,64})(?::(\d{1,10})|@(\d{1,10}))$/.exec(text);
   if (!m) throw usageError(`--target must be <chat>:<msgId> or <chat>@<topic>, where chat is an ID or @username (got "${text}")`);
   const [, chat, msg, topic] = m;
+  // A message, topic or thread ID is a positive 32-bit integer: 0 would read as "no root" (the whole chat)
+  const id = Number(topic ?? msg);
+  if (!isMessageId(id)) throw usageError(`--target: the ${topic !== undefined ? 'topic' : 'message'} ID must be from 1 to ${MAX_MESSAGE_ID} (got "${text}")`);
   if (topic !== undefined) {
     if (thread) throw usageError('--thread goes with <chat>:<msgId>; <chat>@<topic> is a topic already');
-    return { chat, topic: Number(topic), thread: false };
+    return { chat, topic: id, thread: false };
   }
-  return { chat, msgId: Number(msg), thread };
+  return { chat, msgId: id, thread };
 }
 
 export interface RunRequest {
@@ -112,8 +118,11 @@ export interface RunRequest {
   filename: string;
   input: unknown;
   client: () => Promise<TelegramClient>;
+  /** Fetched on first use (storage, messages.mine), inside the run's deadline. */
   account: () => Promise<string>;
-  storage: () => StorageBackend;
+  storage: () => Promise<StorageBackend>;
+  cursors: CursorStore;
+  installId: string;
   target?: Target;
   /** Over MCP: the output and proposal texts get maskForModel (`echo`). */
   mcp: boolean;
@@ -125,17 +134,20 @@ export interface RunRequest {
 /** Runs one command in a fresh sandbox and builds the envelope; every failure is a CliError. */
 export async function runPluginCommand(req: RunRequest, calls: string[] = []): Promise<RunOutcome> {
   const state: HostState = { proposals: [] };
+  const limits = { ...DEFAULT_LIMITS, ...runDeps.limits };
+  // One deadline for the sandbox and for the host's own waits (the store's lock, the write)
+  const deadline = Date.now() + limits.timeoutMs;
   const ctx: HostContext = {
     manifest: req.manifest, command: req.command, client: req.client, account: req.account, storage: req.storage,
+    cursors: req.cursors, installId: req.installId, deadline, cancelled: req.cancelled,
     target: req.target, maskProposals: req.mcp, log: req.log,
   };
   const api = grantedApi(ctx, state);
   // Loaded on demand: a CLI call that runs no plugin never instantiates the engine
   const { runInSandbox } = await import('./runtime.js');
-  const limits = { ...DEFAULT_LIMITS, ...runDeps.limits };
   let json: string;
   try {
-    const r = await runInSandbox({ code: req.code, filename: req.filename, command: req.command.name, input: req.input, api, limits, signal: req.signal, cancelled: req.cancelled, onCall: n => calls.push(n) });
+    const r = await runInSandbox({ code: req.code, filename: req.filename, command: req.command.name, input: req.input, api, limits, deadline, signal: req.signal, cancelled: req.cancelled, onCall: n => calls.push(n) });
     json = r.json;
   } catch (e) {
     if (!(e instanceof SandboxError)) throw e;
@@ -172,14 +184,44 @@ export function memoryStorage(m: Manifest): StorageBackend {
   return {
     get: key => items.get(key)?.value,
     list: () => [...items.entries()].map(([key, i]) => ({ key, bytes: Buffer.byteLength(i.value), updatedAt: i.updatedAt })),
-    set: (key, value) => {
+    set: async (key, value, guard) => {
       const bytes = Buffer.byteLength(value);
       const usedBytes = used() - (items.has(key) ? Buffer.byteLength(items.get(key)!.value) : 0) + bytes;
       if (usedBytes > quota) throw new CliError(`Saving "${key}" would use ${usedBytes} of ${quota} bytes`, 'plugin_limit', EXIT.ERROR);
+      assertMemoryGuard(guard);
       items.set(key, { value, updatedAt: new Date().toISOString() });
       return { bytes, usedBytes, quotaBytes: quota };
     },
-    delete: key => items.delete(key),
+    delete: async (key, guard) => {
+      assertMemoryGuard(guard);
+      return items.delete(key);
+    },
+  };
+}
+
+function assertMemoryGuard(guard: WriteGuard): void {
+  if (guard.aborted() || Date.now() >= guard.deadline) throw new CliError('The plugin run ended before the write; nothing was written', 'cancelled', EXIT.ERROR);
+}
+
+/**
+ * Cursor state in memory, for `plugin dev` and tests: the same random ids, expiry and bound as the
+ * installation's folder, but gone with the process (a cursor never continues in the next run).
+ */
+export function memoryCursors(max = 64, ttlMs = 24 * 3600e3, now = () => Date.now()): CursorStore {
+  const items = new Map<string, { state: string; createdAt: number }>();
+  return {
+    save: state => {
+      for (const [id, v] of items) if (now() - v.createdAt > ttlMs) items.delete(id);
+      while (items.size >= max) items.delete(items.keys().next().value!);
+      const id = randomBytes(16).toString('base64url');
+      items.set(id, { state: JSON.stringify(state), createdAt: now() });
+      return id;
+    },
+    load: id => {
+      const v = items.get(id);
+      if (!v || now() - v.createdAt > ttlMs) return undefined;
+      return JSON.parse(v.state) as unknown;
+    },
   };
 }
 

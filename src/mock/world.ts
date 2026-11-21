@@ -130,6 +130,11 @@ export interface MockMessage {
   /** Comment count shown on a channel post or thread root. */
   replies?: number;
   forwardedFrom?: number;
+  /**
+   * Saved to Saved Messages from this user's chat (`fwdFrom.savedFromPeer`); with `forwardedFrom`
+   * the author, with `quoteFrom` the quote header's saved-from chat instead of its author.
+   */
+  savedFrom?: number;
   /** A reply that quotes a message of this user's chat elsewhere (the reply header names it as its source). */
   quoteFrom?: number;
   quoteText?: string;

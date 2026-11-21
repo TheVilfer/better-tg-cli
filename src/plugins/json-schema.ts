@@ -4,8 +4,11 @@
  *
  * Only the keywords in SUPPORTED are implemented. A schema that uses any other keyword is refused
  * when it is compiled (`UnsupportedSchemaError`), never silently treated as "anything goes".
- * `$ref` resolves only inside the same schema (`#`, `#/$defs/…`, JSON Pointer); schemas are
- * self-contained by the plugin spec.
+ * `$ref` resolves only inside the same schema (`#`, `#/$defs/…`, JSON Pointer), and only to a
+ * position this validator walks as a subschema (`$defs`, `properties`, `items`, `allOf/0`, …): a
+ * pointer into an annotation (`default`, `examples`, `const`, `enum`) or any other value is refused
+ * when the schema is checked and again when a value is validated, so whatever a `$ref` reaches was
+ * checked by the same rules as the rest of the schema. Schemas are self-contained by the plugin spec.
  */
 
 export interface SchemaIssue {
@@ -82,6 +85,56 @@ export function* subschemas(schema: unknown, pointer = ''): Generator<{ pointer:
 const escapePointer = (s: string) => s.replace(/~/g, '~0').replace(/\//g, '~1');
 const unescapePointer = (s: string) => s.replace(/~1/g, '/').replace(/~0/g, '~');
 
+/** Every position of a schema that is a subschema (object or boolean), as escaped JSON Pointers. */
+function schemaPointers(schema: unknown, pointer = '', out = new Set<string>()): Set<string> {
+  if (typeof schema === 'boolean') {
+    out.add(pointer);
+    return out;
+  }
+  if (!isObject(schema)) return out;
+  out.add(pointer);
+  for (const k of ONE_SCHEMA) if (k in schema) schemaPointers(schema[k], `${pointer}/${k}`, out);
+  for (const k of SCHEMA_LIST) {
+    const list = schema[k];
+    if (Array.isArray(list)) for (let i = 0; i < list.length; i++) schemaPointers(list[i], `${pointer}/${k}/${i}`, out);
+  }
+  for (const k of SCHEMA_MAP) {
+    const map = schema[k];
+    if (isObject(map)) for (const [name, sub] of Object.entries(map)) schemaPointers(sub, `${pointer}/${k}/${escapePointer(name)}`, out);
+  }
+  return out;
+}
+
+/** The subschema positions of a root, computed once per root object. */
+const positionsOf = new WeakMap<object, Set<string>>();
+function positions(root: Schema): Set<string> {
+  if (typeof root === 'boolean') return new Set(['']);
+  let set = positionsOf.get(root);
+  if (!set) positionsOf.set(root, (set = schemaPointers(root)));
+  return set;
+}
+
+/** A local `$ref` as the escaped pointer `schemaPointers` uses (`#` is ""), or an error message. */
+function refPointer(ref: string): string | { problem: string } {
+  if (ref === '#') return '';
+  if (!ref.startsWith('#/')) return { problem: `Only local $ref ("#" or "#/…") is supported, got ${JSON.stringify(ref)}` };
+  try {
+    return ref.slice(1).split('/').slice(1).map(p => `/${escapePointer(unescapePointer(decodeURIComponent(p)))}`).join('');
+  } catch {
+    return { problem: `$ref ${JSON.stringify(ref)} is not a valid JSON Pointer` };
+  }
+}
+
+/** Why a `$ref` of `root` is refused (it points outside the subschema positions), or undefined. */
+function refProblem(root: Schema, ref: string): string | undefined {
+  const pointer = refPointer(ref);
+  if (typeof pointer !== 'string') return pointer.problem;
+  if (!positions(root).has(pointer)) {
+    return `$ref ${JSON.stringify(ref)} does not point at a subschema (only "#", "#/$defs/…", "#/properties/…" and other schema positions)`;
+  }
+  return undefined;
+}
+
 /** Throws UnsupportedSchemaError for a keyword this validator does not implement or a non-local $ref. */
 export function assertSupported(schema: unknown): void {
   if (typeof schema === 'boolean') return;
@@ -90,8 +143,11 @@ export function assertSupported(schema: unknown): void {
     for (const key of Object.keys(s)) {
       if (!SUPPORTED.has(key)) throw new UnsupportedSchemaError(`Unsupported JSON Schema keyword "${key}" at ${pointer || '/'}`);
     }
-    if ('$ref' in s && (typeof s.$ref !== 'string' || !s.$ref.startsWith('#'))) {
-      throw new UnsupportedSchemaError(`Only local $ref ("#/…") is supported, at ${pointer || '/'}`);
+    if ('$ref' in s) {
+      if (typeof s.$ref !== 'string') throw new UnsupportedSchemaError(`$ref must be a string, at ${pointer || '/'}`);
+      // Every reachable target is itself one of the subschemas walked here, so it passed the same rules
+      const problem = refProblem(schema, s.$ref);
+      if (problem) throw new UnsupportedSchemaError(`${problem}, at ${pointer || '/'}`);
     }
     if ('pattern' in s) compilePattern(s.pattern, pointer);
   }
@@ -113,12 +169,16 @@ function compilePattern(p: unknown, pointer = ''): RegExp {
 }
 
 function resolveRef(root: Schema, ref: string): Schema {
+  // Only a position the checker walked as a subschema: never a value inside an annotation
+  const problem = refProblem(root, ref);
+  if (problem) throw new UnsupportedSchemaError(problem);
   if (ref === '#') return root;
-  if (!ref.startsWith('#/')) throw new UnsupportedSchemaError(`Unsupported $ref ${ref}`);
   let cur: unknown = root;
   for (const part of ref.slice(2).split('/').map(p => unescapePointer(decodeURIComponent(p)))) {
-    if (!isObject(cur) || !(part in cur)) throw new UnsupportedSchemaError(`$ref ${ref} points nowhere`);
-    cur = cur[part];
+    // A list position (`allOf/0`, `prefixItems/1`) is an index into an array
+    if (Array.isArray(cur) && /^(0|[1-9]\d*)$/.test(part) && Number(part) < cur.length) cur = cur[Number(part)];
+    else if (isObject(cur) && Object.hasOwn(cur, part)) cur = cur[part];
+    else throw new UnsupportedSchemaError(`$ref ${ref} points nowhere`);
   }
   if (typeof cur !== 'boolean' && !isObject(cur)) throw new UnsupportedSchemaError(`$ref ${ref} is not a schema`);
   return cur as Schema;
@@ -172,7 +232,21 @@ export function validate(schema: Schema, value: unknown, limit = 20, timeoutMs =
   return issues.slice(0, limit);
 }
 
+/** Nested checks of one validation: a `$ref` cycle that never descends into the value ends here. */
+const MAX_DEPTH = 500;
+let depth = 0;
+
 function check(root: Schema, schema: Schema, value: unknown, path: string, out: SchemaIssue[], limit: number): void {
+  if (depth >= MAX_DEPTH) throw new UnsupportedSchemaError(`The schema nests deeper than ${MAX_DEPTH} levels at ${path || '/'} (a $ref cycle?)`);
+  depth++;
+  try {
+    checkOne(root, schema, value, path, out, limit);
+  } finally {
+    depth--;
+  }
+}
+
+function checkOne(root: Schema, schema: Schema, value: unknown, path: string, out: SchemaIssue[], limit: number): void {
   tick();
   if (out.length >= limit) return;
   if (schema === true) return;

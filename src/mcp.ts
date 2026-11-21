@@ -124,7 +124,7 @@ const isWriteGroup = (cmd: string): boolean => [...WRITE_SUBCOMMANDS].some(p => 
  * `write-access`.
  */
 export type CallClass =
-  | { group: 'read' | 'write'; label: string; help?: boolean }
+  | { group: 'read' | 'write'; label: string; help?: boolean; plugin?: PluginExpectation }
   | { group: 'never' | 'unknown' | 'invalid'; reason: string };
 
 export function classifyCall(args: string[]): CallClass {
@@ -212,20 +212,33 @@ function classifyPlugin(args: string[]): CallClass {
   }
   if (!kind || !knownCommands.has(path)) return unknown(path);
   if (kind === 'human') return { group: 'never', reason: pluginManagementRefusal(path, args.slice(i)) };
-  if (kind === 'run') return { group: pluginRunGroup(args.slice(i)), label: path };
+  if (kind === 'run') {
+    const run = pluginRunGroup(args.slice(i));
+    return { group: run.group, label: path, ...(run.plugin ? { plugin: run.plugin } : {}) };
+  }
   return { group: kind, label: path };
 }
 
 /** Options of `plugin run` that take a value (the rest are flags). */
 const RUN_VALUED = new Set(['--input', '--target']);
 
+/** The installation a `plugin run` was classified by: the child runs only that one (PLUGIN_EXPECT_ENV). */
+export interface PluginExpectation { installId: string; revision: string }
+
+/**
+ * The environment variable that tells a `plugin run` child which installation its call was
+ * classified (and, in mode "ask", approved) by. Set by this server only, from the classification,
+ * never from the model's arguments; the child refuses any other installation before running it.
+ */
+export const PLUGIN_EXPECT_ENV = 'TG_PLUGIN_EXPECT';
+
 /**
  * `plugin run <name> <command>`: a read when the installed manifest gives that command no effects,
- * a (local) write otherwise. Only a route: the run itself loads the verified snapshot again and
- * refuses a write on the read tool, so a lookup that fails here (no such plugin, a tampered one)
- * is left to it and reported by it.
+ * a (local) write otherwise, together with the installation that decided it. Only a route: the run
+ * itself loads the verified snapshot again and refuses a write on the read tool, so a lookup that
+ * fails here (no such plugin, a tampered one) is left to it and reported by it.
  */
-function pluginRunGroup(rest: string[]): 'read' | 'write' {
+function pluginRunGroup(rest: string[]): { group: 'read' | 'write'; plugin?: PluginExpectation } {
   const operands: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -235,12 +248,13 @@ function pluginRunGroup(rest: string[]): 'read' | 'write' {
     operands.push(a);
   }
   const [name, command] = operands;
-  if (!name || !command) return 'read';
+  if (!name || !command) return { group: 'read' };
   try {
-    const { manifest } = loadPlugin(name);
-    return (manifest.commands ?? []).find(c => c.name === command)?.effects.length ? 'write' : 'read';
+    const { manifest, entry } = loadPlugin(name);
+    const group = (manifest.commands ?? []).find(c => c.name === command)?.effects.length ? 'write' : 'read';
+    return { group, plugin: { installId: entry.installId, revision: entry.revision } };
   } catch {
-    return 'read';
+    return { group: 'read' };
   }
 }
 
@@ -457,7 +471,7 @@ type ToolResult = {
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) });
 
 /** Validates a tool call and returns the CLI argv, or an error message for the model. */
-export function planCall(tool: string, input: Record<string, unknown>): { argv: string[]; readOnly: boolean; stdin?: string } | string {
+export function planCall(tool: string, input: Record<string, unknown>): { argv: string[]; readOnly: boolean; stdin?: string; plugin?: PluginExpectation } | string {
   if (tool === 'telegram_help') {
     const grep = typeof input.grep === 'string' && input.grep.trim() ? ['-g', input.grep.trim()] : [];
     return { argv: ['help-all', ...grep], readOnly: true };
@@ -471,14 +485,16 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   const argv = args as string[];
   const call = classifyCall(argv);
   if ('reason' in call) return call.reason;
+  // A plugin run carries the installation it was classified by down to the child
+  const plugin = call.plugin ? { plugin: call.plugin } : {};
   if (tool === 'telegram_read') {
-    return call.group === 'read' ? { argv, readOnly: true } : `"${call.label}" changes something; use telegram_write`;
+    return call.group === 'read' ? { argv, readOnly: true, ...plugin } : `"${call.label}" changes something; use telegram_write`;
   }
   if (call.group === 'read') {
     return call.help ? `"${argv[0]} --help" only prints help; use telegram_read` : `"${call.label}" is read-only; use telegram_read`;
   }
   const stdin = typeof input.stdin === 'string' ? input.stdin : undefined;
-  return { argv, readOnly: false, stdin };
+  return { argv, readOnly: false, stdin, ...plugin };
 }
 
 /**
@@ -520,7 +536,11 @@ function cliBase(): string[] {
  * `refusedExit`: set by gateWrite when the describe run failed, so the refusal keeps the CLI's exit
  * code; `refusedRun`: that run's output, answered like any failed CLI run (cliResult).
  */
-type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean; refusedExit?: number; refusedRun?: RunOutput; signal?: AbortSignal };
+type Plan = {
+  argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean; refusedExit?: number; refusedRun?: RunOutput; signal?: AbortSignal;
+  /** `plugin run`: the installation the call was classified by (PLUGIN_EXPECT_ENV). */
+  plugin?: PluginExpectation;
+};
 
 /**
  * Every output the model gets, raw or curated, text or JSON, error or not: masked (maskOutput; JSON
@@ -542,6 +562,9 @@ export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   delete env[STDIN_IN_APPROVAL_ENV];
   // Only this server asks for a describe run, never an environment it inherited
   delete env[DESCRIBE_ENV];
+  // The installation a plugin run was classified by: from this call's plan only, never inherited
+  delete env[PLUGIN_EXPECT_ENV];
+  if (plan.plugin) env[PLUGIN_EXPECT_ENV] = `${plan.plugin.installId} ${plan.plugin.revision}`;
   if (plan.describe && !plan.readOnly) env[DESCRIBE_ENV] = '1';
   if (plan.approval && !plan.readOnly && !plan.describe) env.TG_APPROVE = plan.approval;
   // The write guard then hashes stdin into the approval, as gateWrite did
@@ -825,7 +848,7 @@ export interface McpOptions {
    * Asks the user through the client (MCP elicitation), outside the model's reach; resolves true
    * only for an explicit approval. Set when the client advertised the elicitation capability.
    */
-  elicit?: (message: string) => Promise<boolean>;
+  elicit?: (message: string, signal?: AbortSignal) => Promise<boolean>;
   /** The describe run before a dialog (tests replace it); a CLI run by default */
   describe?: (plan: Plan) => Promise<Described>;
   /** Answers telegram_setup (tests replace it); the server's own setup page by default */
@@ -867,7 +890,8 @@ export async function gateWrite(plan: Plan, input: Record<string, unknown>, elic
     plan.refusedRun = described.run;
     return `Nothing was sent: ${described.error}`;
   }
-  const approved = await elicit(`The agent wants to change something in your Telegram:\n${described.description}\n\nApprove this one action?`);
+  // A cancelled plugin run (plan.signal) closes the dialog's wait at once
+  const approved = await elicit(`The agent wants to change something in your Telegram:\n${described.description}\n\nApprove this one action?`, plan.signal);
   if (!approved) return 'The user did not approve this write. Nothing was sent.';
   plan.approval = createApproval(described.hash, account, 'elicitation');
   return undefined;
@@ -906,33 +930,37 @@ export async function handleMessage(msg: RpcMessage, run = runCli, options: McpO
       if (options.readOnly && name === 'telegram_write') return reply(text('This server is read-only (started with --read-only)', true));
       const input = (msg.params?.arguments ?? {}) as Record<string, unknown>;
       if (name === 'telegram_setup') return reply(await (options.setup ?? (() => runSetup({ readOnly: options.readOnly })))());
-      const plan = planCall(name, input);
+      const plan: Plan | string = planCall(name, input);
       // An unknown tool or command may be quoted in the refusal: masked like every output
       if (typeof plan === 'string') return reply(text(maskForModel(plan, 'echo'), true));
-      if (!plan.readOnly) {
-        const refused = await gateWrite(plan, input, options.elicit, options.describe);
-        if (refused) {
-          // A failed describe run answers as the CLI run would have: a --json error stays one JSON
-          // text (stderr such as the MOCK MODE banner apart), with the CLI's exit code
-          const failed = (plan as Plan).refusedRun;
-          if (failed && failed.code !== null && failed.code !== 0) return reply(describeFailure(failed));
-          // Masked like every output; a failed describe run keeps the CLI's exit code
-          const exitCode = (plan as Plan).refusedExit;
-          return reply({ ...text(cap(refused, 'echo'), true), ...(exitCode !== undefined ? { structuredContent: { exitCode } } : {}) });
+      // A plugin run is cancellable from the moment it is taken off the queue: through its
+      // approval (the describe run, the dialog) as well as the run itself
+      const runs = options.runs && isPluginRun(plan.argv) ? options.runs : undefined;
+      const signal = runs?.begin(msg.id);
+      try {
+        // Cancelled while it waited in the queue: no response (MCP cancellation)
+        if (signal?.aborted) return undefined;
+        if (signal) plan.signal = signal;
+        if (!plan.readOnly) {
+          const refused = await gateWrite(plan, input, options.elicit, options.describe);
+          // Cancelled during the approval: the dialog's wait is over, nothing runs, no response
+          if (signal?.aborted) return undefined;
+          if (refused) {
+            // A failed describe run answers as the CLI run would have: a --json error stays one JSON
+            // text (stderr such as the MOCK MODE banner apart), with the CLI's exit code
+            const failed = plan.refusedRun;
+            if (failed && failed.code !== null && failed.code !== 0) return reply(describeFailure(failed));
+            // Masked like every output; a failed describe run keeps the CLI's exit code
+            const exitCode = plan.refusedExit;
+            return reply({ ...text(cap(refused, 'echo'), true), ...(exitCode !== undefined ? { structuredContent: { exitCode } } : {}) });
+          }
         }
+        const out = await run(plan);
+        // Cancelled while it ran: no response
+        return signal?.aborted ? undefined : reply(out);
+      } finally {
+        if (signal) runs!.end(msg.id);
       }
-      if (options.runs && isPluginRun(plan.argv)) {
-        const signal = options.runs.begin(msg.id);
-        try {
-          // Cancelled while it waited in the queue, or while it ran: no response (MCP cancellation)
-          if (signal.aborted) return undefined;
-          const out = await run({ ...plan, signal });
-          return signal.aborted ? undefined : reply(out);
-        } finally {
-          options.runs.end(msg.id);
-        }
-      }
-      return reply(await run(plan));
     }
     default:
       return fail(-32601, `Method not found: ${msg.method}`);
@@ -1035,13 +1063,24 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
   // Requests this server sends to the client (elicitation), waiting for their answers
   const waiting = new Map<string, (msg: RpcMessage) => void>();
   let nextId = 0;
-  const elicit = (message: string) => new Promise<boolean>(resolve => {
+  const elicit = (message: string, signal?: AbortSignal) => new Promise<boolean>(resolve => {
+    if (signal?.aborted) return resolve(false);
     const id = `tg-elicit-${++nextId}`;
-    const timer = setTimeout(() => { waiting.delete(id); resolve(false); }, ELICIT_TIMEOUT_MS);
-    waiting.set(id, answer => {
+    const finish = (approved: boolean) => {
       clearTimeout(timer);
-      resolve(elicitApproved(answer.result));
-    });
+      waiting.delete(id);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(approved);
+    };
+    // The call was cancelled (or stdio closed) while the dialog is open: stop waiting at once and
+    // tell the client its dialog is moot; a late answer to it is ignored
+    const onAbort = () => {
+      finish(false);
+      send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'The tool call was cancelled' } });
+    };
+    const timer = setTimeout(() => finish(false), ELICIT_TIMEOUT_MS);
+    waiting.set(id, answer => finish(elicitApproved(answer.result)));
+    signal?.addEventListener('abort', onAbort, { once: true });
     send({
       jsonrpc: '2.0', id, method: 'elicitation/create',
       params: {
@@ -1071,6 +1110,8 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
       answer(msg);
       return;
     }
+    // A late answer to a dialog nobody waits for any more (cancelled, timed out): not a request
+    if (msg.method === undefined && typeof msg.id === 'string' && msg.id.startsWith('tg-elicit-')) return;
     // Past the queue: the call it cancels may be running (or waiting) right now
     if (msg.method === 'notifications/cancelled') {
       runs.cancel((msg.params as { requestId?: unknown } | undefined)?.requestId);
