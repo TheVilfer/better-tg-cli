@@ -34,6 +34,14 @@ vi.mock('node:child_process', async () => {
   return { ...actual, spawn: trap('spawn'), spawnSync: trap('spawnSync'), execFile: trap('execFile'), execFileSync: trap('execFileSync'), exec: trap('exec'), execSync: trap('execSync') };
 });
 
+// `plugin remove` asks the human through the injected pluginDeps.confirm, but humanConfirms first
+// checks that a human channel exists: a TTY, or the dialog that only macOS and Windows have. A
+// headless Linux CI run has neither, so the channel is declared here instead of taken from the OS.
+vi.mock('../src/write-store.js', async () => {
+  const real = await vi.importActual<typeof import('../src/write-store.js')>('../src/write-store.js');
+  return { ...real, hasHumanChannel: () => true };
+});
+
 import { pluginCommand, pluginDeps } from '../src/commands/plugin.js';
 import { storeDeps, commitInstall, pendingSecrets, pluginHome, readLock, removeInstall } from '../src/plugins/store.js';
 import { readLocalSnapshot } from '../src/plugins/source.js';
