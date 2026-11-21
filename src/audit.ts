@@ -29,6 +29,12 @@ export interface AuditEntry {
     command?: string; apis?: string[]; proposals?: string[];
     /** `plugin run` that sent requests: how many and to which origins (never a URL, path, query, header or body) */
     network?: { requests: number; origins: string[] };
+    /** `plugin update`: the revision it left, what the human accepted anew, the secret names it deleted (never a value) */
+    fromVersion?: string; fromRevision?: string;
+    newlyAccepted?: { permissions: string[]; effects: string[]; network: string[]; secrets: string[] };
+    secretsReset?: string[];
+    /** How the human was asked: a terminal or system dialog, or the MCP client's dialog */
+    via?: 'terminal' | 'mcp';
   };
 }
 

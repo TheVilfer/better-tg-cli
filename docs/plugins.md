@@ -17,7 +17,7 @@ Plugin support lands in steps. Parts marked **(coming)** are specified here but 
 | P1 | Manifest, install by snapshot, `list`, `show`, `data`, `remove`, `validate`, human confirmation | **available** |
 | P2 | Sandboxed plugin code (QuickJS-WASM), host API, `plugin run`, `plugin dev --mock` ([#153](https://github.com/TheVilfer/better-tg-cli/issues/153)) | **available** |
 | P3 | Network access and secrets the plugin never sees ([#154](https://github.com/TheVilfer/better-tg-cli/issues/154)) | **available** |
-| P4 | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155)) | coming |
+| P4 | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155)) | available |
 | P5 | SDK and template repository ([#156](https://github.com/TheVilfer/better-tg-cli/issues/156)) | coming |
 | P6 | The official Tone of Voice plugin ([#157](https://github.com/TheVilfer/better-tg-cli/issues/157)) | coming |
 | P7 | Live checks in Claude Code, Grok Bot and Aside ([#158](https://github.com/TheVilfer/better-tg-cli/issues/158)) | coming |
@@ -77,7 +77,7 @@ dist/plugin.js        optional code: one ES2023 module without imports, run in t
 `tg-plugin.json` and `SKILL.md` must be in `files`. The host reads only the files of the installed
 snapshot (section 9). `resources` and `storage` give **logical names**, never paths. `plugin
 validate` checks that the `name` in the frontmatter of `SKILL.md` equals the plugin name, and the
-host puts the snapshot in a folder with that name (`plugins/<installId>/<name>/`), as Agent Skills
+host puts the snapshot in a folder with that name (`plugins/<snapshot>/<name>/`), as Agent Skills
 requires.
 
 Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files and 5 MB together.
@@ -437,7 +437,7 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 | `plugin show <name> [--trigger <id> \| --onboarding \| --resource <key>] [--json]` | read | anyone | available (no flag: network, secrets set or not, settings) |
 | `plugin data get\|list <name> [key] [--json]` | read | anyone | available |
 | `plugin data set <name> <key> [-]`, `plugin data delete <name> <key>` | local write | anyone | available |
-| `plugin install <github:owner/repo[@ref] \| ./dir [--expect sha256-…]>` | management | human | available |
+| `plugin install <github:owner/repo[@ref] \| ./dir> [--expect <revision>]` | management | human | available |
 | `plugin remove <name> [--keep-data]` | management | human | available |
 | `plugin validate <dir> [--json]` | for authors | anyone (not over MCP) | available |
 | `plugin run <name> <cmd> [--input <json> \| -] [--target <ref> [--thread]] [--json]`, command with `effects: []` | read | anyone | available |
@@ -446,7 +446,7 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 | `plugin settings get <name> [key] [--json]` | read | anyone | available |
 | `plugin settings set <name> <key> <json>` | local write | anyone | available |
 | `plugin secret set <plugin> <secret>`, `plugin secret rm <plugin> <secret>` | human's terminal only (hidden input) | human | available |
-| `plugin update [name]` | management | human | coming, P4 |
+| `plugin update [name] [--expect <revision>]` | management | human | available |
 | `plugin dev <dir> <cmd> --mock [--input …] [--target …] [--json]` | for authors | anyone (not over MCP) | available |
 
 - **`plugin run`** loads the installed snapshot once (checked against the lock) and runs those
@@ -483,19 +483,46 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   time in `ask` (the approval shows the plugin, the key and the full value, and covers exactly that
   value). `telegram_read` refuses them, and the CLI stops a write that arrives as a read
   (`write_on_read_tool`).
-- **The human**: install and remove ask for a y/N in a real terminal or a system dialog (macOS,
+- **The human**: install, update and remove ask for a y/N in a real terminal or a system dialog (macOS,
   Windows). No write mode skips it (`on` included), and a `TG_APPROVE` code never stands in for it.
   Without a terminal or dialog the command is refused (`no_human_channel`); a "no" is
-  `not_confirmed`. Over MCP both are refused **before anything is fetched** (`human_required`) with the
-  exact command for the human's terminal on the server's machine, with the profile:
-  `TG_PROFILE=dev telegram plugin install github:owner/repo@v1`. The arguments are parsed as the CLI
-  parses them: `--expect sha256-…` (checked) stays in the command, so it still installs only the
-  content that was validated; anything else unexpected gives no command at all. A mock server's
-  command carries its `TG_MOCK=…` (and mock `TG_PROFILE`), so running it never touches the
-  terminal's real profile. On Windows the dialog's text reaches a fixed PowerShell script on stdin, so
-  no summary is too long for it. The MCP dialog for this, with
-  elicitation, is **coming (P4)**; it will refuse on a `--read-only` server and pin the CLI version
-  (`npx better-tg-cli@X.Y.Z …`) where there is no `telegram` binary.
+  `not_confirmed`. On Windows the dialog's text reaches a fixed PowerShell script on stdin, so no
+  summary is too long for it. `--expect <revision>` pins what is installed or updated to: a folder's
+  `sha256-…` content hash (as `plugin validate` prints it), or a GitHub commit SHA (the ref named in
+  the source must resolve to it; the ref itself is what is recorded, so a later update follows it);
+  anything else is `plugin_revision_mismatch`.
+- **Over MCP: the management handler.** `plugin install|update|remove` on `telegram_write` never run a
+  CLI child and never take the write-approval path: the server handles them itself. It parses the
+  arguments as the CLI does (an unknown option, a malformed revision or a second operand is refused
+  and never echoed), prepares the change (fetches and checks the snapshot, nothing written) and
+  shows the human, in the client's elicitation dialog, the same summary a terminal shows: the
+  operation, source, revision, profile, permissions, effects, where data may go with what may go
+  there, and secrets. After Accept it applies exactly the prepared snapshot, bound by a digest of
+  what was shown: a folder whose content changed meanwhile, or a registry where that installation
+  was removed, updated or installed again, is refused (`plugin_changed`) and nothing changes.
+  Decline, cancel, an unticked box, no answer within 10 minutes or a cancelled call change nothing
+  (install and update audit the "no"). A client that shows the request as a plain Allow with empty
+  content (Hermes Agent) counts as Accept, by the same rule as write approvals. The write mode plays
+  no part (`on` does not skip the dialog), an `approval` code or anything the model says is never
+  read, and write access is never touched. A `--read-only` server, or one started with
+  `TG_READ_ONLY`, refuses it before anything is fetched. `plugin update` without a name asks once per
+  plugin that has a new revision. A folder the model names is read before the human sees anything,
+  so whatever is wrong with it (missing, not a plugin, unreadable) gives one and the same answer
+  (`plugin_invalid`, "could not be read as a plugin"), never its content or which case it was.
+  Nothing is written before the human's Accept, not even the registry key. The CLI itself, run as a child of the server (`TG_MCP`), still
+  refuses these commands with `human_required`.
+- **Without a dialog** (Streamable HTTP, a client without form elicitation) the model gets the exact
+  command for the human's terminal **on the server's computer**, built after the same prepare step
+  and pinned to the revision it found: `telegram plugin install /abs/dir --expect sha256-…`,
+  `telegram plugin install github:owner/repo@v1 --expect <commit>`, `telegram plugin update x
+  --expect <revision>`, `telegram plugin remove x`. `telegram` is used when it is on the server's
+  PATH, otherwise the CLI pinned to the server's version, `npx better-tg-cli@X.Y.Z …` (an `.mcpb`
+  has no `telegram`). The profile goes along (`TG_PROFILE=dev …`; a mock server's command carries its
+  `TG_MOCK=…`), quoted for POSIX sh, or for PowerShell on Windows
+  (`$env:TG_PROFILE='dev'; telegram …; Remove-Item Env:TG_PROFILE`). Only printable ASCII is put
+  into a command: a path with anything else (a line break, a look-alike quote, a control character)
+  gives no command, and the human types the folder themselves. The result has
+  `structuredContent: {status: "human_required", commands: [{operation, name, argv, command}]}`.
 - **Binding to the snapshot.** The approval of a `plugin run` (in mode `ask`: the MCP dialog,
   `approval_required` or `TG_APPROVE`) shows the plugin, the command, the installation and revision,
   the effects and the input, and its hash covers the `installId`, the revision, the command's effects
@@ -522,8 +549,10 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **MCP.** `telegram_read` runs exactly `plugin list`, `plugin show`, `plugin data get`,
   `plugin data list`, `plugin settings get`, and `plugin run` for commands without effects (known from
   the installed manifest before the run). `plugin data set|delete`, `plugin settings set` and
-  `plugin run` with effects (`network` included) go through `telegram_write`. `plugin secret set|rm`,
-  install and remove are refused with the command for the human's terminal (a secret's command is
+  `plugin run` with effects (`network` included) go through `telegram_write`. `plugin install`,
+  `update` and `remove` go through `telegram_write` to the management handler above (a group of
+  their own: never a read, never a write approval). `plugin secret set|rm` are refused with the
+  command for the human's terminal (a secret's command is
   built only from a plugin and secret name that parse strictly, so a value the model added is never
   echoed); `validate` and `dev` read a folder and stay in the terminal; a new subcommand is refused
   until it is classified.
@@ -548,14 +577,15 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   repositories only. For a local folder the revision is the content hash: `sha256-<base64>` of the
   sorted lines `<path> NUL <file hash> LF`; `plugin validate` prints it, and
   `plugin install ./dir --expect sha256-…` installs only that content. The files are written to a
-  temp folder, checked and moved into `plugins/<installId>/<name>/` with one rename.
+  temp folder, checked and moved into `plugins/<snapshot>/<name>/` with one rename (`<snapshot>` is
+  the `installId` for a first install and a fresh UUID for each update, recorded in the lock entry).
 - **The summary** the human confirms starts with what the host computed (source, revision, official,
   profile, size), then the permissions in plain words, the effects, where data may go, secrets, and
   last the plugin's own words (description, author, triggers), one line each.
 - **Lock file** `plugins/plugin.lock.json` (the install registry): per plugin the source and
   revision, the `sha256-<base64>` hash of the manifest and of every file (the same set the manifest
   lists), the accepted permissions, effects, origins and secret names, `official`, `installId` (a
-  UUID) and the spec version. The registry is **signed**: an HMAC-SHA256 over its canonical JSON
+  UUID), the snapshot folder after an update (`snapshot`, `updatedAt`) and the spec version. The registry is **signed**: an HMAC-SHA256 over its canonical JSON
   (sorted keys) with a 256-bit key kept in the profile's secret store, the one that holds the session
   (Keychain, Secret Service, DPAPI, 1Password; one key per profile, created at the first install).
   Its signature is checked before anything in it is used. Without a secret store nothing is installed
@@ -583,7 +613,7 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   the file is opened with `O_NOFOLLOW` and read from its descriptor only after the descriptor and
   every folder on the way are checked to be the ones the walk saw (device and inode). A local plugin
   folder is read the same way. Data `get` refuses a file with more than one hard link.
-- **One change at a time.** Install, remove and `data set/delete` (the quota check and the write
+- **One change at a time.** Install, update, remove and `data set/delete` (the quota check and the write
   together) run under the lock file `.plugins.lock` (created with `O_EXCL`; a lock left by a process
   that is gone, or older than 10 minutes, is taken over; otherwise `plugin_busy` after 15 s). It is
   never held across the human's dialog or a download: under the lock, `remove` checks that the
@@ -595,9 +625,24 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   logical names `^[a-z0-9][a-z0-9._-]{0,63}$`, declared in `storage.keys`) and secrets are bound to the
   `installId`. After `remove --keep-data`, installing the same name again (from any source) is a new
   installation: the old data is not attached.
-- **Update** (coming, P4) is a new snapshot. Permissions, effects, origins and secrets not accepted
-  before need a new confirmation; without it the old snapshot stays. Until then, installing a name
-  that is installed is refused (`plugin_exists`).
+- **Update** (`plugin update [name]`, every installed plugin without a name) is a new snapshot from
+  the recorded source: GitHub at the ref named at install (the default branch when none was), a
+  folder at the same path. The same revision is "up to date": nothing is asked or written. A folder
+  whose content changed needs `--expect` with the new hash (`expect_required` otherwise; `plugin
+  validate` prints it). The summary shows the revision it moves from and to and lists apart what was
+  **not accepted before**: new permissions, effects, network origins, and secrets that are new or
+  whose destination (origin, paths, header or format) changed. The human confirms every update, also
+  one that only changes code or texts (the summary then says nothing new is asked for); without a yes
+  the old snapshot stays. A name of another plugin in the source is refused (`plugin_invalid`); a
+  tampered installation is not updated (`plugin_tampered`: remove and install it again).
+  The installation keeps its `installId`, so its data, settings and secrets stay; an approval bound to
+  the old revision no longer holds. A secret whose destination changed, or that the plugin no longer
+  declares, is deleted from the secret store (the result lists those to set again as `mustSetAgain`).
+  That deletion runs under the plugin lock before the switch; if the store fails, nothing is updated.
+  The switch is atomic: the new snapshot is written beside the old one and the signed registry write
+  is the one commit point, so a failure or a crash before it leaves the old snapshot registered and
+  working (a stray folder is never read); the old folder is deleted after it. Installing a name that
+  is installed is refused (`plugin_exists`, with the update command in the hint).
 - **Official plugins**: a list of owners inside the CLI (`TheVilfer`), matched against the canonical
   owner GitHub returns, and only for a commit that repository published itself: the ref named at
   install is one of its branches or tags (annotated tags peeled) pointing at the commit, or the
@@ -605,7 +650,9 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   GitHub serves every fork's commits through the upstream repository too, so a commit pinned by SHA
   from a fork installs as a third-party plugin, and the summary says why. The mark grants nothing:
   install still asks the human.
-- **Audit** (`audit.jsonl` of the profile): install (also a declined one), remove, `data set` and
+- **Audit** (`audit.jsonl` of the profile): install and update (also a declined one; an update with
+  the revision and version it left, what was newly accepted and the names of the secrets it reset),
+  remove, each with `via: "terminal"|"mcp"`, `data set` and
   `data delete` with the plugin, version, revision, installation ID, key and size; every `run` with
   the plugin, revision, installation, command, the names of the host APIs it called, the types of the
   proposals it returned and the outcome (an error code), and for a run that sent requests
@@ -626,7 +673,8 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   (a sandbox limit or the storage quota, named in `limit`), `plugin_error` (the command failed, or
   its result broke the output schema), `cancelled`, `flood_wait`, `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
   `dialog_failed` (the Windows dialog could not be shown; not the same as the human's No),
-  `human_required`, `no_human_channel`, `not_confirmed`, `rate_limited` (GitHub API), `secret_missing`
+  `human_required`, `no_human_channel`, `not_confirmed`, `expect_required` (`plugin update` of a
+  folder whose content changed, without `--expect`), `rate_limited` (GitHub API), `secret_missing`
   (a request needs a secret the human has not set; `command` sets it), `settings_too_large`
   (`plugin settings set` past 256 KB in all). Inside the sandbox
   `http.fetch` also gives `network_denied`, `ambiguous_path`, `request_too_large`, `response_too_large`, `timeout`,

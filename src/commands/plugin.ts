@@ -8,17 +8,20 @@ import { auditLog } from '../audit.js';
 import { assertLocalWriteAllowed, assertWriteEnabled } from '../guard.js';
 import { promptHidden } from '../prompt.js';
 import { readStdinOnce, stdinBody } from '../text.js';
-import { CliError, EXIT, ExitSignal, fail, shellCommand, usageError } from '../errors.js';
+import { CliError, errorDetails, EXIT, ExitSignal, fail, shellCommand, usageError } from '../errors.js';
+import {
+  applyPrepared, cleanupPendingSecrets, declined, prepareInstall, prepareRemove, prepareUpdate, type Prepared, type PrepareOptions,
+} from '../plugins/manage.js';
 import chalk from '../colors.js';
 import { VERSION } from '../version.js';
 import { DEFAULT_QUOTA_BYTES, markdownSection, type Manifest } from '../plugins/manifest.js';
-import { fetchGithubSnapshot, parseSource, readLocalSnapshot, type Fetch, type Snapshot } from '../plugins/source.js';
+import { readLocalSnapshot, type Fetch } from '../plugins/source.js';
 import {
-  assertApprovedInstall, assertCanSign, commitInstall, cursorLoad, cursorSave, dataDelete, dataDeleteGuarded, dataGet, dataKeyProblem, dataList,
-  dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, pendingSecrets, readLock, removeInstall, settingsRead, settingsWrite,
-  settlePendingSecrets, withCurrentInstall,
+  assertApprovedInstall, cursorLoad, cursorSave, dataDelete, dataDeleteGuarded, dataGet, dataKeyProblem, dataList,
+  dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, pendingSecrets, readLock, settingsRead, settingsWrite,
+  withCurrentInstall,
 } from '../plugins/store.js';
-import { humanCommand, humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, secretPathsLabel, type Confirm } from '../plugins/human.js';
+import { humanCommand, humanConfirms, humanRequired, originLabel, revisionLabel, secretPathsLabel, type Confirm } from '../plugins/human.js';
 import { deletePluginSecret, getPluginSecret, getPluginSecretAsync, secretStates, setPluginSecret } from '../plugins/secrets.js';
 import { devBackend, runBackend } from '../plugins/http-backend.js';
 import { validate } from '../plugins/json-schema.js';
@@ -65,72 +68,95 @@ async function done(): Promise<void> {
   await disconnectClient();
 }
 
-// ---------- install ----------
+// ---------- install / update ----------
 
-async function takeSnapshot(sourceText: string, expect: string | undefined): Promise<Snapshot> {
-  const source = parseSource(sourceText);
-  if (source.type === 'github') {
-    if (expect) throw usageError('--expect is for a local folder; pin a GitHub plugin with @<commit>');
-    return fetchGithubSnapshot(source, pluginDeps.fetch, cliVersion());
-  }
-  const snap = readLocalSnapshot(source.path, cliVersion());
-  if (expect && expect !== snap.revision) {
-    throw new CliError(`The folder changed: its content is ${snap.revision}, not the expected ${expect}`, 'plugin_revision_mismatch', EXIT.ERROR, {
-      hint: 'Check what changed in the folder, then install again.',
-    });
-  }
-  return snap;
+const manageOpts = (): PrepareOptions => ({ fetch: pluginDeps.fetch, cliVersion: cliVersion(), via: 'terminal' });
+
+/** Asks the human about a prepared change and applies exactly it; the human's "no" is not_confirmed. */
+async function confirmAndApply(p: Prepared): Promise<Record<string, unknown>> {
+  if (!(await humanConfirms(p.question, p.argv, pluginDeps.confirm))) throw declined(p);
+  return applyPrepared(p, manageOpts());
 }
 
 const installCommand = new Command('install')
   .description('Install a plugin from github:owner/repo[@ref] or a local folder; the user confirms in a terminal or dialog')
   .argument('<source>', 'github:owner/repo, github:owner/repo@tag-or-commit, or a folder such as ./my-plugin')
-  .option('--expect <revision>', 'Local folder only: install only if its content hash is this sha256-… (from `plugin validate`)')
+  .option('--expect <revision>', 'Install only this revision: a folder\'s sha256-… (from `plugin validate`), or a GitHub commit SHA')
   .option('--json', 'Output as JSON')
   .action(async (sourceText: string, options: { expect?: string; json?: boolean }) => {
     const argv = ['plugin', 'install', sourceText, ...(options.expect ? ['--expect', options.expect] : [])];
     try {
-      // Refused over MCP before anything is fetched (the classifier refuses it there too)
+      // Refused over MCP before anything is fetched: the MCP server asks the human itself (its own dialog)
       if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw humanRequired(argv);
-      if (options.expect !== undefined && !/^sha256-[A-Za-z0-9+/]{43}=$/.test(options.expect)) throw usageError('--expect must be a sha256-… revision as `plugin validate` prints it');
-      const snap = await takeSnapshot(sourceText, options.expect);
-      const plugins = readLock().plugins;
-      const existing = own(plugins, snap.manifest.name) ? plugins[snap.manifest.name] : undefined;
-      if (existing) {
-        throw new CliError(`Plugin "${snap.manifest.name}" is already installed (${existing.version}, ${originLabel(existing.source)})`, 'plugin_exists', EXIT.ERROR, {
-          hint: `Updating is coming in a later version. To replace it now: telegram plugin remove ${snap.manifest.name}, then install again.`,
-        });
-      }
-      // No unsigned installs: without the secret store the human is not even asked
-      assertCanSign();
-      const summary = installSummary(snap);
-      const yes = await humanConfirms(summary, argv, pluginDeps.confirm);
-      if (!yes) {
-        auditLog({ timestamp: new Date().toISOString(), command: 'plugin install', target: snap.manifest.name, plugin: { name: snap.manifest.name, version: snap.manifest.version, revision: snap.revision }, result: { success: false, error: 'not_confirmed' } });
-        throw new CliError('Not confirmed by the user. Nothing was installed.', 'not_confirmed', EXIT.ERROR);
-      }
-      const entry = commitInstall(snap);
-      auditLog({
-        timestamp: new Date().toISOString(), command: 'plugin install', target: entry.name,
-        plugin: { name: entry.name, version: entry.version, revision: entry.revision, installId: entry.installId, source: originLabel(entry.source) },
-        result: { success: true },
-      });
-      const m = snap.manifest;
-      const next = m.onboarding ? ['plugin', 'show', m.name, '--onboarding'] : ['plugin', 'list'];
-      if (options.json) {
-        console.log(json({
-          ok: true, action: 'plugin install', name: entry.name, version: entry.version, source: pluginSource(entry.name, entry.version),
-          origin: originLabel(entry.source), revision: entry.revision, official: entry.official,
-          ...(snap.officialNote ? { officialNote: snap.officialNote } : {}), installId: entry.installId, next,
-        }));
-      } else {
-        console.log(chalk.green(`✓ Installed ${entry.name} ${entry.version} (${revisionLabel(entry.source, entry.revision)})`));
-        console.log(`Next: telegram ${next.join(' ')}`);
+      const prepared = await prepareInstall(sourceText, options.expect, manageOpts());
+      const r = await confirmAndApply(prepared);
+      if (options.json) console.log(json(r));
+      else {
+        console.log(chalk.green(`✓ Installed ${r.name} ${r.version} (${revisionLabel(prepared.snapshot.source, String(r.revision))})`));
+        console.log(`Next: telegram ${(r.next as string[]).join(' ')}`);
       }
     } catch (error) {
       fail(error);
     }
   });
+
+const updateCommand = new Command('update')
+  .description('Update a plugin (all when no name) to the newest revision of its source; new permissions, effects, destinations and secrets are listed apart; the user confirms')
+  .argument('[name]', 'Plugin name (all installed plugins when left out)')
+  .option('--expect <revision>', 'Update only to this revision: a folder\'s new sha256-… (required for a folder that changed), or a GitHub commit SHA')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string | undefined, options: { expect?: string; json?: boolean }) => {
+    const argv = ['plugin', 'update', ...(name ? [name] : []), ...(options.expect ? ['--expect', options.expect] : [])];
+    try {
+      if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw humanRequired(argv);
+      if (options.expect !== undefined && !name) throw usageError('--expect pins one plugin\'s revision: name the plugin');
+      if (name) {
+        const prepared = await prepareUpdate(name, options.expect, manageOpts());
+        if (prepared.op === 'up-to-date') {
+          const r = { ok: true, action: 'plugin update', name, upToDate: true, version: prepared.entry.version, revision: prepared.entry.revision };
+          if (options.json) console.log(json(r));
+          else console.log(`${name} ${prepared.entry.version} is up to date (${revisionLabel(prepared.entry.source, prepared.entry.revision)})`);
+          return;
+        }
+        const r = await confirmAndApply(prepared);
+        if (options.json) console.log(json(r));
+        else printUpdated(r);
+        return;
+      }
+      // Every installed plugin, one question each; one that fails or is declined does not stop the rest
+      const results: Record<string, unknown>[] = [];
+      for (const n of Object.keys(readLock().plugins).sort()) {
+        try {
+          const prepared = await prepareUpdate(n, undefined, manageOpts());
+          if (prepared.op === 'up-to-date') {
+            results.push({ name: n, upToDate: true, version: prepared.entry.version, revision: prepared.entry.revision });
+            if (!options.json) console.log(`${n} ${prepared.entry.version} is up to date`);
+            continue;
+          }
+          const r = await confirmAndApply(prepared);
+          results.push(r);
+          if (!options.json) printUpdated(r);
+        } catch (e) {
+          if (e instanceof ExitSignal) throw e;
+          const d = errorDetails(e);
+          results.push({ name: n, error: { code: d.code, message: d.message, ...(d.hint ? { hint: d.hint } : {}) } });
+          if (!options.json) console.error(chalk.yellow(`${n}: ${d.message}${d.hint ? `\n  ${d.hint}` : ''}`));
+        }
+      }
+      const failed = results.some(r => r.error && (r.error as { code: string }).code !== 'not_confirmed');
+      if (options.json) console.log(json({ ok: !failed, action: 'plugin update', results }));
+      else if (!results.length) console.log('No plugins installed');
+      if (failed) process.exit(EXIT.ERROR);
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+function printUpdated(r: Record<string, unknown>): void {
+  const from = r.from as { version: string };
+  console.log(chalk.green(`✓ Updated ${r.name} ${from.version} -> ${r.version}`));
+  for (const argv of (r.mustSetAgain as string[][] | undefined) ?? []) console.log(`Set again: telegram ${argv.join(' ')}`);
+}
 
 // ---------- list / show ----------
 
@@ -675,35 +701,6 @@ function declaredSecret(m: Manifest, secret: string) {
   return d;
 }
 
-/**
- * Deletes the secrets of removed installations that `plugin remove` recorded (its own, and any an
- * earlier remove could not delete); returns, per installation, the names still in the store. A
- * name is settled only once the store said it is gone.
- */
-function cleanupPendingSecrets(only?: (p: { name: string; installId: string }) => boolean): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  const installed = new Set(Object.values(readLock().plugins).map(e => e.installId));
-  for (const p of pendingSecrets()) {
-    if (only && !only(p)) continue;
-    // Still installed (its removal did not complete): its secrets are live, the record is dropped
-    if (installed.has(p.installId)) {
-      settlePendingSecrets(p.installId, []);
-      continue;
-    }
-    const left: string[] = [];
-    for (const secret of p.secrets) {
-      try {
-        if (getPluginSecret(p.installId, secret) !== null && !deletePluginSecret(p.installId, secret)) left.push(secret);
-      } catch {
-        left.push(secret);
-      }
-    }
-    settlePendingSecrets(p.installId, left);
-    out.set(p.installId, left);
-  }
-  return out;
-}
-
 /** Before every plugin command: finish a secret cleanup an earlier `plugin remove` left; silent, never fails the command. */
 function retryPendingSecrets(): void {
   try {
@@ -802,20 +799,9 @@ const removeCommand = new Command('remove')
     const argv = ['plugin', 'remove', name, ...(options.keepData ? ['--keep-data'] : [])];
     try {
       if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw humanRequired(argv);
-      const entry = findEntry(name);
-      const question = removeQuestion(entry, !!options.keepData);
-      if (!(await humanConfirms(question, argv, pluginDeps.confirm))) throw new CliError('Not confirmed by the user. Nothing was removed.', 'not_confirmed', EXIT.ERROR);
-      // Under the lock, and only if this is still the installation the human was shown
-      removeInstall(entry, !!options.keepData);
-      // Its secrets go with it (they belong to this installation, kept data or not); removeInstall
-      // recorded them first, so what the store fails to delete now is retried by the next command
-      const secretsLeft = cleanupPendingSecrets(p => p.installId === entry.installId).get(entry.installId) ?? [];
-      auditLog({
-        timestamp: new Date().toISOString(), command: 'plugin remove', target: name,
-        plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, keepData: !!options.keepData },
-        result: { success: true },
-      });
-      if (options.json) console.log(json({ ok: true, action: 'plugin remove', name, keepData: !!options.keepData, ...(secretsLeft.length ? { secretsNotRemoved: secretsLeft } : {}) }));
+      const r = await confirmAndApply(prepareRemove(name, !!options.keepData));
+      const secretsLeft = (r.secretsNotRemoved as string[] | undefined) ?? [];
+      if (options.json) console.log(json(r));
       else {
         console.log(chalk.green(`✓ Removed ${name}${options.keepData ? ' (data kept)' : ''}`));
         if (secretsLeft.length) console.error(chalk.yellow(`Could not remove its secrets from the secret store yet: ${secretsLeft.join(', ')} (the next plugin command tries again; or: telegram plugin secret rm ${name} <secret>)`));
@@ -851,7 +837,7 @@ const validateCommand = new Command('validate')
   });
 
 export const pluginCommand = new Command('plugin')
-  .description('Plugins: instructions and resources that extend the agent (install and remove are the user\'s)')
+  .description('Plugins: instructions and resources that extend the agent (install, update and remove are the user\'s)')
   .hook('preAction', retryPendingSecrets)
   .addCommand(listCommand)
   .addCommand(showCommand)
@@ -860,6 +846,7 @@ export const pluginCommand = new Command('plugin')
   .addCommand(secretCommand)
   .addCommand(runCommand)
   .addCommand(installCommand)
+  .addCommand(updateCommand)
   .addCommand(removeCommand)
   .addCommand(validateCommand)
   .addCommand(devCommand);

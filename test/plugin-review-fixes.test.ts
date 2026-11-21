@@ -13,7 +13,8 @@ import {
 } from '../src/plugins/store.js';
 import { installSummary, removeQuestion } from '../src/plugins/human.js';
 import { safeFsHooks } from '../src/plugins/safe-fs.js';
-import { pluginManagementRefusal } from '../src/mcp.js';
+import { manageRequest } from '../src/mcp.js';
+import { terminalCommand } from '../src/plugins/manage.js';
 
 /**
  * One test (or more) per finding of the review of the plugin core (review-p1.md, #1-#11; #12 is in
@@ -371,21 +372,25 @@ describe('#10 the questions show every field as one line', { skip: !canSymlink }
   });
 });
 
-describe('#8 the command handed to the human keeps --expect and the mock context', () => {
+describe('#8 the MCP request keeps --expect and the mock context (P4: install/update/remove go through handleManage)', () => {
   const hash = `sha256-${'A'.repeat(43)}=`;
-  it('parses the options: --expect in any position, = form; a malformed hash or an unknown option gives no command', () => {
-    expect(pluginManagementRefusal('plugin install', ['./demo', '--expect', hash])).toContain(`telegram plugin install ./demo --expect ${hash}`);
-    expect(pluginManagementRefusal('plugin install', ['--expect', hash, './demo'])).toContain(`telegram plugin install ./demo --expect ${hash}`);
-    expect(pluginManagementRefusal('plugin install', [`--expect=${hash}`, './demo', '--json'])).toContain(`telegram plugin install ./demo --expect ${hash}`);
-    for (const rest of [['./demo', '--expect', 'sha256-bad'], ['./demo', '--expect'], ['./demo', '--force'], ['./demo', './other'], ['github:a/b', '--expect', hash]]) {
-      expect(pluginManagementRefusal('plugin install', rest), rest.join(' ')).not.toMatch(/run this in a terminal on this computer: /);
+  it('parses the options: --expect in any position, = form; a malformed hash or an unknown option gives no request', () => {
+    const want = { op: 'install', source: './demo', expect: hash };
+    expect(manageRequest('plugin install', ['./demo', '--expect', hash])).toEqual(want);
+    expect(manageRequest('plugin install', ['--expect', hash, './demo'])).toEqual(want);
+    expect(manageRequest('plugin install', [`--expect=${hash}`, './demo', '--json'])).toEqual(want);
+    // A GitHub source pins a commit (P4); a content hash is a folder's
+    expect(manageRequest('plugin install', ['github:a/b', '--expect', 'a'.repeat(40)])).toEqual({ op: 'install', source: 'github:a/b', expect: 'a'.repeat(40) });
+    for (const rest of [['./demo', '--expect', 'sha256-bad'], ['./demo', '--expect'], ['./demo', '--force'], ['./demo', './other'], ['github:a/b', '--expect', hash], ['./demo', '--expect', 'a'.repeat(40)]]) {
+      expect(manageRequest('plugin install', rest), rest.join(' ')).toBeUndefined();
     }
   });
 
   it('a mock server suggests the command for the same mock state', () => {
     process.env.TG_MOCK = join(root, 'my state.json');
     try {
-      expect(pluginManagementRefusal('plugin remove', ['tone-of-voice'])).toContain(`TG_MOCK='${join(root, 'my state.json')}' TG_PROFILE=plugin-fixes telegram plugin remove tone-of-voice`);
+      expect(terminalCommand(['plugin', 'remove', 'tone-of-voice'], { onPath: () => true, platform: 'linux' }))
+        .toBe(`TG_MOCK='${join(root, 'my state.json')}' TG_PROFILE=plugin-fixes telegram plugin remove tone-of-voice`);
     } finally {
       delete process.env.TG_MOCK;
     }

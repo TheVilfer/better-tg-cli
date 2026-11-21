@@ -21,7 +21,11 @@ import { openBrowser } from './commands/onboard.js';
 import type { OnboardSession } from './onboard.js';
 import { parseSource } from './plugins/source.js';
 import { humanCommand } from './plugins/human.js';
-import { loadPlugin } from './plugins/store.js';
+import { loadPlugin, readLock } from './plugins/store.js';
+import {
+  applyPrepared, declined, expectProblem, manageDeps, prepareInstall, prepareRemove, prepareUpdate, terminalCommand, type Prepared, type PrepareOptions,
+} from './plugins/manage.js';
+import { CliError, errorDetails, errorJson, EXIT } from './errors.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -72,12 +76,13 @@ export const PER_CALL_COMMANDS = new Set(['api', 'help', 'plugin']);
 
 /**
  * `plugin` runs over MCP only through these full paths (docs/plugins.md, "CLI commands"): reads on
- * telegram_read, local writes (`assertLocalWriteAllowed`) on telegram_write, and the management
- * commands a human runs are refused with that command. Any other path (`validate`, which reads a
+ * telegram_read, local writes (`assertLocalWriteAllowed`) on telegram_write, install, update and
+ * remove (`manage`) on telegram_write through the server's own handler that asks the human
+ * (handleManage), and plugin secrets, which a human types, refused with their command. Any other path (`validate`, which reads a
  * folder the model would name, and every later one) is refused until it is listed here. `plugin run`
  * is classified per call by the effects its installed manifest declares for that command (`run`).
  */
-export const PLUGIN_PATHS: Readonly<Record<string, 'read' | 'write' | 'human' | 'run'>> = {
+export const PLUGIN_PATHS: Readonly<Record<string, 'read' | 'write' | 'human' | 'run' | 'manage'>> = {
   'plugin list': 'read',
   'plugin show': 'read',
   'plugin data get': 'read',
@@ -87,8 +92,9 @@ export const PLUGIN_PATHS: Readonly<Record<string, 'read' | 'write' | 'human' | 
   'plugin settings get': 'read',
   'plugin settings set': 'write',
   'plugin run': 'run',
-  'plugin install': 'human',
-  'plugin remove': 'human',
+  'plugin install': 'manage',
+  'plugin update': 'manage',
+  'plugin remove': 'manage',
   'plugin secret set': 'human',
   'plugin secret rm': 'human',
 };
@@ -129,6 +135,7 @@ const isWriteGroup = (cmd: string): boolean => [...WRITE_SUBCOMMANDS].some(p => 
  */
 export type CallClass =
   | { group: 'read' | 'write'; label: string; help?: boolean; plugin?: PluginExpectation }
+  | { group: 'manage'; label: string; manage: ManageRequest }
   | { group: 'never' | 'unknown' | 'invalid'; reason: string };
 
 export function classifyCall(args: string[]): CallClass {
@@ -216,6 +223,14 @@ function classifyPlugin(args: string[]): CallClass {
   }
   if (!kind || !knownCommands.has(path)) return unknown(path);
   if (kind === 'human') return { group: 'never', reason: pluginManagementRefusal(path, args.slice(i)) };
+  if (kind === 'manage') {
+    const manage = manageRequest(path, args.slice(i));
+    return manage ? { group: 'manage', label: path, manage } : {
+      group: 'invalid',
+      reason: `"${path}" takes ${path === 'plugin install' ? 'one source (github:owner/repo[@ref] or a folder) and optionally --expect <revision>'
+        : path === 'plugin update' ? 'an optional plugin name and, with a name, optionally --expect <revision>' : 'one plugin name and optionally --keep-data'}; nothing else`,
+    };
+  }
   if (kind === 'run') {
     const run = pluginRunGroup(args.slice(i));
     return { group: run.group, label: path, ...(run.plugin ? { plugin: run.plugin } : {}) };
@@ -263,9 +278,9 @@ function pluginRunGroup(rest: string[]): { group: 'read' | 'write'; plugin?: Plu
 }
 
 /**
- * Installing and removing plugins is the human's (docs/plugins.md): the refusal names the command for
- * their own terminal, with this server's profile, built only from a source or name that parses
- * strictly; anything else is not echoed back as a command.
+ * Plugin secrets are typed by a human (docs/plugins.md): the refusal names the command for their own
+ * terminal, with this server's profile, built only from names that parse strictly; anything else is
+ * not echoed back as a command.
  */
 export function pluginManagementRefusal(path: string, rest: string[]): string {
   if (path === 'plugin secret set' || path === 'plugin secret rm') {
@@ -275,11 +290,7 @@ export function pluginManagementRefusal(path: string, rest: string[]): string {
       ? `${lead} Ask the user to run this in a terminal on this computer and type the value there: ${humanCommand(argv)}`
       : `${lead} Ask the user to run it in a terminal on this computer (telegram ${path} <plugin> <secret>).`;
   }
-  const lead = `"${path}" is the user's to run, not over MCP: plugins are installed and removed only by a human, who sees what the plugin may do.`;
-  const argv = path === 'plugin install' ? installArgv(rest) : path === 'plugin remove' ? removeArgv(rest) : undefined;
-  return argv
-    ? `${lead} Ask the user to run this in a terminal on this computer: ${humanCommand(argv)}`
-    : `${lead} Ask the user to run it in a terminal on this computer (telegram ${path} github:owner/repo[@ref] | <folder> | <name>).`;
+  return `"${path}" is not available over MCP.`;
 }
 
 /**
@@ -294,56 +305,62 @@ function secretArgv(path: string, rest: string[]): string[] | undefined {
   return [...path.split(' '), plugin, secret];
 }
 
-const REVISION_RE = /^sha256-[A-Za-z0-9+/]{43}=$/;
+/** A plugin install, update or remove over MCP, as parsed from its argv (the CLI's options only). */
+export type ManageRequest =
+  | { op: 'install'; source: string; expect?: string }
+  | { op: 'update'; name?: string; expect?: string }
+  | { op: 'remove'; name: string; keepData: boolean };
+
+const NAME_ONLY = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /**
- * The arguments of `plugin install` with their options, as the CLI parses them: one source and an
- * optional `--expect <sha256-…>` (kept, so the command still pins the content the model validated).
- * Anything else (an unknown option, a malformed hash, a second operand) gives no command at all.
+ * The arguments of `plugin install|update|remove` as the CLI parses them: operands and the options
+ * each command has (`--expect v`, `--expect=v`, `--keep-data`, `--json`, `--`). Anything else (an
+ * unknown option, a malformed revision, a second operand, a source that does not parse) is no
+ * request at all, so nothing the model added is ever echoed into a command.
  */
-function installArgv(rest: string[]): string[] | undefined {
-  let operand: string | undefined;
+export function manageRequest(path: string, rest: string[]): ManageRequest | undefined {
+  const operands: string[] = [];
   let expect: string | undefined;
+  let keepData = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--json') continue;
-    if (a === '--expect' || a.startsWith('--expect=')) {
+    if (path !== 'plugin remove' && (a === '--expect' || a.startsWith('--expect='))) {
       if (expect !== undefined) return undefined;
       expect = a === '--expect' ? rest[++i] : a.slice('--expect='.length);
-      if (expect === undefined) return undefined;
+      if (expect === undefined || expectProblem(expect)) return undefined;
       continue;
     }
+    if (path === 'plugin remove' && a === '--keep-data') { keepData = true; continue; }
     if (a === '--') {
-      if (operand !== undefined || rest.length !== i + 2) return undefined;
-      operand = rest[i + 1];
+      operands.push(...rest.slice(i + 1));
       break;
     }
-    if (a.startsWith('-') || operand !== undefined) return undefined;
-    operand = a;
+    if (a.startsWith('-')) return undefined;
+    operands.push(a);
   }
-  if (!operand || operand.startsWith('-')) return undefined;
-  if (expect !== undefined && !REVISION_RE.test(expect)) return undefined;
-  let source: ReturnType<typeof parseSource>;
-  try {
-    source = parseSource(operand);
-  } catch {
-    return undefined;
+  if (operands.some(o => o.startsWith('-'))) return undefined;
+  if (path === 'plugin install') {
+    if (operands.length !== 1) return undefined;
+    const [operand] = operands;
+    let source: ReturnType<typeof parseSource>;
+    try {
+      source = parseSource(operand);
+    } catch {
+      return undefined;
+    }
+    // A GitHub source pins a commit, a folder its content hash; a folder path stays plain text
+    if (source.type === 'github' ? expect !== undefined && !/^[0-9a-f]{40}$/.test(expect) : !/^[\w./~ :\\-]{1,200}$/.test(operand) || (expect !== undefined && !expect.startsWith('sha256-'))) return undefined;
+    return { op: 'install', source: operand, ...(expect ? { expect } : {}) };
   }
-  if (source.type === 'github' ? expect !== undefined : !/^[\w./~ -]{1,200}$/.test(operand)) return undefined;
-  return ['plugin', 'install', operand, ...(expect ? ['--expect', expect] : [])];
-}
-
-function removeArgv(rest: string[]): string[] | undefined {
-  let name: string | undefined;
-  let keep = false;
-  for (const a of rest) {
-    if (a === '--json') continue;
-    if (a === '--keep-data') keep = true;
-    else if (a.startsWith('-') || name !== undefined) return undefined;
-    else name = a;
+  if (operands.length > 1 || (operands[0] !== undefined && (!NAME_ONLY.test(operands[0]) || operands[0].length > 64))) return undefined;
+  if (path === 'plugin update') {
+    if (expect !== undefined && !operands.length) return undefined;
+    return { op: 'update', ...(operands[0] ? { name: operands[0] } : {}), ...(expect ? { expect } : {}) };
   }
-  if (!name || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) return undefined;
-  return ['plugin', 'remove', name, ...(keep ? ['--keep-data'] : [])];
+  if (path === 'plugin remove' && operands.length === 1) return { op: 'remove', name: operands[0], keepData };
+  return undefined;
 }
 
 /** What the user does instead, for the setup commands MCP refuses: the model passes it on. */
@@ -494,7 +511,7 @@ type ToolResult = {
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError } : {}) });
 
 /** Validates a tool call and returns the CLI argv, or an error message for the model. */
-export function planCall(tool: string, input: Record<string, unknown>): { argv: string[]; readOnly: boolean; stdin?: string; plugin?: PluginExpectation } | string {
+export function planCall(tool: string, input: Record<string, unknown>): { argv: string[]; readOnly: boolean; stdin?: string; plugin?: PluginExpectation; manage?: ManageRequest } | string {
   if (tool === 'telegram_help') {
     const grep = typeof input.grep === 'string' && input.grep.trim() ? ['-g', input.grep.trim()] : [];
     return { argv: ['help-all', ...grep], readOnly: true };
@@ -508,6 +525,10 @@ export function planCall(tool: string, input: Record<string, unknown>): { argv: 
   const argv = args as string[];
   const call = classifyCall(argv);
   if ('reason' in call) return call.reason;
+  // Install, update and remove: the server's own handler asks the human; `approval` is never read
+  if (call.group === 'manage') {
+    return tool === 'telegram_read' ? `"${call.label}" changes something; use telegram_write` : { argv, readOnly: false, manage: call.manage };
+  }
   // A plugin run carries the installation it was classified by down to the child
   const plugin = call.plugin ? { plugin: call.plugin } : {};
   if (tool === 'telegram_read') {
@@ -563,6 +584,8 @@ type Plan = {
   argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean; refusedExit?: number; refusedRun?: RunOutput; signal?: AbortSignal;
   /** `plugin run`: the installation the call was classified by (PLUGIN_EXPECT_ENV). */
   plugin?: PluginExpectation;
+  /** `plugin install|update|remove`: handled by this server (handleManage), never by a CLI run */
+  manage?: ManageRequest;
 };
 
 /**
@@ -764,6 +787,112 @@ export class PluginRuns {
 
 const isPluginRun = (argv: string[]) => argv[0] === 'plugin' && argv[1] === 'run';
 
+const DONE_BY_USER = { install: 'installed', update: 'updated', remove: 'removed' } as const;
+
+/** A thrown error as the CLI would print it with --json: one JSON text, its exit code apart. */
+function errorResult(e: unknown, extra: Record<string, unknown> = {}): ToolResult {
+  const d = errorDetails(e);
+  return { ...text(cap(errorJson(d), 'echo'), true), structuredContent: { exitCode: d.exitCode, code: d.code, ...extra } };
+}
+
+/**
+ * `plugin install|update|remove` over MCP (docs/plugins.md §8 "The human"): never a CLI run and
+ * never the write-approval path. This server prepares the change itself (fetches and checks the
+ * snapshot), shows the human what it is (the same summary a terminal shows) in the client's dialog,
+ * and after their Accept applies exactly that snapshot (bound by its digest; a registry, folder or
+ * snapshot that changed meanwhile is refused). The write mode plays no part ("on" does not skip the
+ * dialog), an approval code or anything the model says is never read, and write access is never
+ * touched. A read-only server refuses it. Without a dialog (Streamable HTTP, a client without
+ * elicitation) the model gets the exact command for the human's terminal on this computer.
+ */
+export async function handleManage(req: ManageRequest, options: Pick<McpOptions, 'readOnly' | 'elicit'>, signal?: AbortSignal): Promise<ToolResult | undefined> {
+  if (options.readOnly || process.env.TG_READ_ONLY) {
+    return text(`This server is read-only: plugins are not installed, updated or removed through it. The user can run "telegram plugin ${req.op} …" in their own terminal.`, true);
+  }
+  const opts: PrepareOptions = { fetch: manageDeps.fetch, cliVersion: manageDeps.cliVersion, via: 'mcp' };
+  // What the human will be asked about, prepared before anything is shown; update without a name: every plugin
+  const prepared: Prepared[] = [];
+  const upToDate: { name: string; version: string; revision: string }[] = [];
+  const failed: Record<string, unknown>[] = [];
+  // A folder the model named is read here before any human saw anything: whatever goes wrong with
+  // it gives one answer, so a call cannot probe which paths exist or what is in them
+  const modelFolder = req.op === 'install' && parseSource(req.source).type === 'local';
+  try {
+    if (req.op === 'install') prepared.push(await prepareInstall(req.source, req.expect, opts));
+    else if (req.op === 'remove') prepared.push(prepareRemove(req.name, req.keepData));
+    else {
+      for (const name of req.name ? [req.name] : Object.keys(readLock().plugins).sort()) {
+        try {
+          const p = await prepareUpdate(name, req.expect, opts);
+          if (p.op === 'up-to-date') upToDate.push({ name, version: p.entry.version, revision: p.entry.revision });
+          else prepared.push(p);
+        } catch (e) {
+          if (req.name) throw e;
+          const d = errorDetails(e);
+          failed.push({ name, error: { code: d.code, message: d.message, ...(d.hint ? { hint: d.hint } : {}) } });
+        }
+      }
+    }
+  } catch (e) {
+    if (modelFolder && !['plugin_exists', 'secret_store_unavailable', 'plugin_busy', 'plugin_lock_invalid'].includes(errorDetails(e).code)) {
+      return errorResult(new CliError('That folder could not be read as a plugin; nothing was installed', 'plugin_invalid', EXIT.ERROR, {
+        hint: 'Ask the user to check it in a terminal on this computer: telegram plugin validate <folder>',
+      }));
+    }
+    return errorResult(e);
+  }
+  if (signal?.aborted) return undefined;
+  const extra = { ...(upToDate.length ? { upToDate } : {}), ...(failed.length ? { failed } : {}) };
+  if (!prepared.length) {
+    const lines = [
+      ...upToDate.map(u => `${u.name} ${u.version} is up to date.`),
+      ...failed.map(f => `${String(f.name)}: ${String((f.error as { message: string }).message)}`),
+    ];
+    return { ...text(cap(lines.join('\n') || 'No plugins are installed.', 'echo'), failed.length > 0), structuredContent: { status: 'nothing_to_do', ...extra } };
+  }
+  if (!options.elicit) {
+    // No dialog here: the exact command for the human's own terminal, pinned to the revision prepared
+    const commands = prepared.map(p => ({ operation: p.op, name: p.name, argv: p.argv, command: terminalCommand(p.argv) }));
+    if (commands.some(c => c.command === undefined)) {
+      return text('This MCP client cannot show the user a dialog, and the plugin\'s folder path has characters that are not put into a command. Ask the user to run "telegram plugin install <the folder> --expect <its revision from telegram plugin validate>" in a terminal on this computer, typing the folder themselves.', true);
+    }
+    const lines = [
+      `Plugins are ${DONE_BY_USER[req.op]} only by the user, and this MCP client cannot show them a dialog. Ask the user to run ${commands.length > 1 ? 'these commands' : 'this command'} in a terminal on the computer this server runs on; it shows them what the plugin may do and asks them to confirm:`,
+      ...commands.map(c => c.command),
+      ...upToDate.map(u => `(${u.name} ${u.version} is up to date.)`),
+    ];
+    return {
+      ...text(cap(lines.join('\n'), 'echo')),
+      structuredContent: { status: 'human_required', commands, ...extra },
+    };
+  }
+  const results: Record<string, unknown>[] = [];
+  let refused = false;
+  for (const p of prepared) {
+    const approved = await options.elicit(`The agent asks to change your Better-TG-CLI plugins. Only you can approve this; nothing else does.\n\n${p.question}\n\nApprove exactly this change?`, signal);
+    // Cancelled while the dialog was open: nothing changes, no response
+    if (signal?.aborted) return undefined;
+    try {
+      if (!approved) throw declined(p, 'mcp');
+      results.push(applyPrepared(p, opts));
+    } catch (e) {
+      const d = errorDetails(e);
+      refused = true;
+      results.push({ name: p.name, operation: p.op, error: { code: d.code, message: d.message, ...(d.hint ? { hint: d.hint } : {}) } });
+    }
+  }
+  if (prepared.length === 1 && !upToDate.length && !failed.length) {
+    const [r] = results;
+    if (r.error) {
+      const err = r.error as { code: string; message: string; hint?: string };
+      return { ...text(cap(errorJson({ code: err.code, message: err.message, ...(err.hint ? { hint: err.hint } : {}) }), 'echo'), true), structuredContent: { exitCode: 1, code: err.code } };
+    }
+    return { ...text(cap(JSON.stringify(r), 'echo')), structuredContent: { status: 'done', ...r } };
+  }
+  const all = { ok: !refused && !failed.length, action: `plugin ${req.op}`, results, ...extra };
+  return { ...text(cap(JSON.stringify(all), 'echo'), refused || failed.length > 0), structuredContent: { status: 'done', ...all } };
+}
+
 function runChild(plan: Plan): Promise<RunOutput> {
   return new Promise(resolve => {
     const [bin, ...pre] = cliBase();
@@ -958,12 +1087,17 @@ export async function handleMessage(msg: RpcMessage, run = runCli, options: McpO
       if (typeof plan === 'string') return reply(text(maskForModel(plan, 'echo'), true));
       // A plugin run is cancellable from the moment it is taken off the queue: through its
       // approval (the describe run, the dialog) as well as the run itself
-      const runs = options.runs && isPluginRun(plan.argv) ? options.runs : undefined;
+      const runs = options.runs && (isPluginRun(plan.argv) || plan.manage) ? options.runs : undefined;
       const signal = runs?.begin(msg.id);
       try {
         // Cancelled while it waited in the queue: no response (MCP cancellation)
         if (signal?.aborted) return undefined;
         if (signal) plan.signal = signal;
+        // Plugin management: this server asks the human itself; no CLI run, no write approval
+        if (plan.manage) {
+          const out = await handleManage(plan.manage, options, signal);
+          return out && !signal?.aborted ? reply(out) : undefined;
+        }
         if (!plan.readOnly) {
           const refused = await gateWrite(plan, input, options.elicit, options.describe);
           // Cancelled during the approval: the dialog's wait is over, nothing runs, no response
@@ -1077,13 +1211,13 @@ export function elicitApproved(result: unknown): boolean {
   return 'approve' in content ? content.approve === true : Object.keys(content).length === 0;
 }
 
-export function startMcpServer(commands: Iterable<string>, options: { readOnly?: boolean } = {}): void {
-  setKnownCommands(commands);
-  let queue: Promise<void> = Promise.resolve();
-  const send = (obj: object) => process.stdout.write(JSON.stringify(obj) + '\n');
-  const runs = new PluginRuns();
-  const opts: McpOptions = { ...options, runs };
-  // Requests this server sends to the client (elicitation), waiting for their answers
+/**
+ * The server's dialogs through the client (MCP elicitation/create): `elicit` sends one and resolves
+ * true only for an approval (elicitApproved), false on a decline, a cancel, an error, the timeout or
+ * a cancelled call (`signal`, which also tells the client its dialog is moot). `answer` takes the
+ * client's response to one of them and says whether it was one; a late answer is ignored.
+ */
+export function createElicitor(send: (obj: object) => void, timeoutMs = ELICIT_TIMEOUT_MS) {
   const waiting = new Map<string, (msg: RpcMessage) => void>();
   let nextId = 0;
   const elicit = (message: string, signal?: AbortSignal) => new Promise<boolean>(resolve => {
@@ -1101,7 +1235,7 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
       finish(false);
       send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'The tool call was cancelled' } });
     };
-    const timer = setTimeout(() => finish(false), ELICIT_TIMEOUT_MS);
+    const timer = setTimeout(() => finish(false), timeoutMs);
     waiting.set(id, answer => finish(elicitApproved(answer.result)));
     signal?.addEventListener('abort', onAbort, { once: true });
     send({
@@ -1116,6 +1250,28 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
       },
     });
   });
+  const answer = (msg: RpcMessage): boolean => {
+    if (msg.method !== undefined || msg.id == null) return false;
+    const done = waiting.get(String(msg.id));
+    if (done) {
+      waiting.delete(String(msg.id));
+      done(msg);
+      return true;
+    }
+    // A late answer to a dialog nobody waits for any more (cancelled, timed out): not a request either
+    return typeof msg.id === 'string' && msg.id.startsWith('tg-elicit-');
+  };
+  return { elicit, answer };
+}
+
+export function startMcpServer(commands: Iterable<string>, options: { readOnly?: boolean } = {}): void {
+  setKnownCommands(commands);
+  let queue: Promise<void> = Promise.resolve();
+  const send = (obj: object) => process.stdout.write(JSON.stringify(obj) + '\n');
+  const runs = new PluginRuns();
+  const opts: McpOptions = { ...options, runs };
+  // Requests this server sends to the client (elicitation), waiting for their answers
+  const { elicit, answer } = createElicitor(send);
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   rl.on('line', line => {
     if (!line.trim()) return;
@@ -1127,14 +1283,7 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
       return;
     }
     // An answer to our own request: handled at once, since the call that asked is still in the queue
-    if (msg.method === undefined && msg.id != null && waiting.has(String(msg.id))) {
-      const answer = waiting.get(String(msg.id))!;
-      waiting.delete(String(msg.id));
-      answer(msg);
-      return;
-    }
-    // A late answer to a dialog nobody waits for any more (cancelled, timed out): not a request
-    if (msg.method === undefined && typeof msg.id === 'string' && msg.id.startsWith('tg-elicit-')) return;
+    if (answer(msg)) return;
     // Past the queue: the call it cancels may be running (or waiting) right now
     if (msg.method === 'notifications/cancelled') {
       runs.cancel((msg.params as { requestId?: unknown } | undefined)?.requestId);

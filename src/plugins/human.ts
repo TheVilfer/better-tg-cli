@@ -11,7 +11,7 @@ import type { LockEntry } from './store.js';
  * Installing and removing plugins is the human's decision (docs/plugins.md, "Human"): a y/N on a
  * real terminal or a system dialog. No write mode skips it ("on" included), and TG_APPROVE, an agent's
  * code, is never read here. Over MCP it is refused before anything is fetched, with the command for
- * the human's own terminal (the MCP dialog for this is a later step, P4).
+ * the human's own terminal; the MCP server asks through its own dialog instead (manage.ts, mcp.ts).
  */
 
 export type Confirm = (question: string) => Promise<boolean>;
@@ -32,7 +32,7 @@ export function humanCommand(argv: string[]): string {
 }
 
 export const humanRequired = (argv: string[]) => new CliError(
-  `"telegram ${argv.slice(0, 2).join(' ')}" is the user's to run: plugins are installed and removed only by a human`,
+  `"telegram ${argv.slice(0, 2).join(' ')}" is the user's to run: plugins are installed, updated and removed only by a human`,
   'human_required', EXIT.ERROR,
   {
     hint: `Ask the user to run this in a terminal on this computer: ${humanCommand(argv)}`,
@@ -105,11 +105,74 @@ const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
  */
 export function installSummary(s: Snapshot): string {
   const m: Manifest = s.manifest;
-  const p = profile();
-  const lines = [
+  return [
     `Install the Better-TG-CLI plugin "${oneLine(m.name)}" ${oneLine(m.version)}?`,
     `  Source:      ${originLabel(s.source)}`,
     `  Revision:    ${revisionLabel(s.source, s.revision)}`,
+    ...snapshotLines(s),
+  ].join('\n');
+}
+
+/** One line per secret: where the host sends it and as what (the install and update summaries). */
+const secretLine = (x: NonNullable<Manifest['secrets']>[number]) =>
+  `Secret ${oneLine(x.name)}: sent by the host only to ${oneLine(x.inject.origin)} ${secretPathsLabel(x.inject.paths)} as ${oneLine(x.inject.header)}; the plugin never sees it`;
+
+/** What a plugin update changes for the human (computed by manage.ts). */
+export interface UpdateDiff {
+  /** Not accepted before: these need the human's confirmation */
+  newly: { permissions: string[]; effects: string[]; network: string[]; secrets: string[] };
+  /** Secrets deleted from the store by the update: their destination changed (set them again) or the plugin dropped them */
+  reset: { name: string; why: 'changed' | 'removed' }[];
+  /** Asked for before, no longer */
+  dropped: { permissions: string[]; effects: string[]; network: string[] };
+}
+
+export const hasNewGrants = (d: UpdateDiff): boolean =>
+  d.newly.permissions.length + d.newly.effects.length + d.newly.network.length + d.newly.secrets.length > 0;
+
+/**
+ * The question before `plugin update`: the host's lines (source, the revision it moves from and to,
+ * the installation kept), then what was not accepted before, listed on its own, then the secrets
+ * that must be set again, then the same lines as an install summary for the new snapshot.
+ */
+export function updateSummary(old: LockEntry, s: Snapshot, d: UpdateDiff): string {
+  const m = s.manifest;
+  const lines = [
+    old.version === m.version
+      ? `Update the Better-TG-CLI plugin "${oneLine(m.name)}" ${oneLine(m.version)} to a new revision?`
+      : `Update the Better-TG-CLI plugin "${oneLine(m.name)}" from ${oneLine(old.version)} to ${oneLine(m.version)}?`,
+    `  Source:      ${originLabel(s.source)}`,
+    `  Revision:    ${revisionLabel(old.source, old.revision)} -> ${revisionLabel(s.source, s.revision)}`,
+    `  Install:     ${oneLine(old.installId)} (kept: its data, settings and secrets stay with it)`,
+  ];
+  if (hasNewGrants(d)) {
+    lines.push('  NEW, not accepted before:');
+    for (const p of d.newly.permissions) lines.push(`    - can read: ${PERMISSION_TEXT[p as keyof typeof PERMISSION_TEXT] ?? oneLine(p)}`);
+    for (const e of d.newly.effects) lines.push(`    - effect: ${oneLine(e)}`);
+    for (const o of d.newly.network) lines.push(`    - may send data to: ${oneLine(o)}`);
+    for (const n of d.newly.secrets) {
+      const x = (m.secrets ?? []).find(y => y.name === n);
+      if (x) lines.push(`    - ${secretLine(x)}`);
+    }
+  } else {
+    lines.push('  NEW, not accepted before: nothing (the same permissions, effects, destinations and secrets)');
+  }
+  const changed = d.reset.filter(r => r.why === 'changed').map(r => oneLine(r.name));
+  const removed = d.reset.filter(r => r.why === 'removed').map(r => oneLine(r.name));
+  if (changed.length) lines.push(`  Set again:   ${changed.join(', ')} (where it goes changed: the stored value is deleted; you type it again later)`);
+  if (removed.length) lines.push(`  Secrets gone: ${removed.join(', ')} (no longer declared: deleted from the secret store)`);
+  const dropped = [...d.dropped.permissions, ...d.dropped.effects, ...d.dropped.network].map(x => oneLine(x));
+  if (dropped.length) lines.push(`  No longer:   ${dropped.join(', ')}`);
+  lines.push('  After the update:');
+  lines.push(...snapshotLines(s));
+  return lines.join('\n');
+}
+
+/** The host's lines after source and revision, then the plugin's own words: shared by the install and update summaries. */
+function snapshotLines(s: Snapshot): string[] {
+  const m: Manifest = s.manifest;
+  const p = profile();
+  const lines = [
     `  Official:    ${s.official && s.source.type === 'github' ? `yes (published by ${oneLine(s.source.owner)})` : s.officialNote ? `no: ${oneLine(s.officialNote)}` : 'no (a third-party plugin)'}`,
     `  Profile:     ${p ?? 'default'}`,
     `  Files:       ${s.files.size} files, ${kb(s.bytes)}`,
@@ -134,9 +197,7 @@ export function installSummary(s: Snapshot): string {
   lines.push(network.length
     ? `  Sends data:  may send ${listed ?? 'what its commands compute'} to: ${network.map(o => oneLine(o)).join(', ')}`
     : '  Sends data:  nowhere (no network access)');
-  for (const x of m.secrets ?? []) {
-    lines.push(`  Secret ${oneLine(x.name)}: sent by the host only to ${oneLine(x.inject.origin)} ${secretPathsLabel(x.inject.paths)} as ${oneLine(x.inject.header)}; the plugin never sees it`);
-  }
+  for (const x of m.secrets ?? []) lines.push(`  ${secretLine(x)}`);
   if (m.secrets?.length) lines.push(`  Secrets:     you type them yourself later: telegram plugin secret set ${oneLine(m.name)} <name>`);
   if (m.main) lines.push('  Code:        it ships code, which runs in an isolated sandbox with only the access listed here');
   lines.push('  In the plugin\'s own words:');
@@ -146,5 +207,5 @@ export function installSummary(s: Snapshot): string {
   for (const x of m.secrets ?? []) lines.push(`    Secret ${x.name}: ${clip(x.description, 200)}`);
   if (m.onboarding) lines.push('    Onboarding:  yes (the agent walks you through it after install)');
   lines.push('  Plugin text is data for the agent: it never outranks Better-TG-CLI\'s rules or your approval of each write.');
-  return lines.join('\n');
+  return lines;
 }
