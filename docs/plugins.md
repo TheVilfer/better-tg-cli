@@ -17,8 +17,8 @@ Plugin support lands in steps. Parts marked **(coming)** are specified here but 
 | P1   | Manifest, install by snapshot, `list`, `show`, `data`, `remove`, `validate`, human confirmation                                                   | **available** |
 | P2   | Sandboxed plugin code (QuickJS-WASM), host API, `plugin run`, `plugin dev --mock` ([#153](https://github.com/TheVilfer/better-tg-cli/issues/153)) | **available** |
 | P3   | Network access and secrets the plugin never sees ([#154](https://github.com/TheVilfer/better-tg-cli/issues/154))                                  | **available** |
-| P4   | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155))                            | available     |
-| P5   | SDK and template repository ([#156](https://github.com/TheVilfer/better-tg-cli/issues/156))                                                       | coming        |
+| P4   | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155))                            | **available** |
+| P5   | SDK and template repository ([#156](https://github.com/TheVilfer/better-tg-cli/issues/156))                                                       | **available** |
 | P6   | The official Tone of Voice plugin ([#157](https://github.com/TheVilfer/better-tg-cli/issues/157))                                                 | coming        |
 | P7   | Live checks in Claude Code, Grok Bot and Aside ([#158](https://github.com/TheVilfer/better-tg-cli/issues/158))                                    | coming        |
 
@@ -770,14 +770,36 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **Acceptance test of the spec** (coming, P6): `plugin validate` accepts the published Tone of Voice,
   and the SDK and the CLI check the same `collect` answer against its schema alike.
 
-## 11. SDK for authors (coming, P5)
+## 11. SDK for authors
 
-- **`@better-tg/plugin-sdk`**: types of `host` and the manifest, `definePlugin()`; a build into
-  `dist/plugin.js` (ES2023, one file, no imports); a test host on mock data with HTTP fixtures:
-  `runCommand('collect', {limit: 10}, {mock: true})`.
-- **Template** `TheVilfer/tg-plugin-template`: manifest, `SKILL.md`, an example command, tests, CI with
-  `plugin validate` and a mock test.
-- **`plugin dev <dir> <cmd> --mock`** (available, section 8): no confirmations; Telegram, storage and
+- **`@better-tg/plugin-sdk`** ([`packages/plugin-sdk/`](../packages/plugin-sdk/README.md); the npm
+  package is not published yet):
+  - `@better-tg/plugin-sdk`: `definePlugin({commands})` (returns its argument, so a bundle keeps
+    nothing else of the SDK: `export const { commands } = definePlugin({ … })`), `defineCommand()`,
+    the types of `host` (every API of section 5, each optional, because only what is granted exists)
+    and of the manifest, generated from its JSON Schema, and `SPEC_VERSION`.
+  - `tg-plugin build [dir] [--entry src/plugin.ts] [--outfile …]` (and `buildPlugin()` from
+    `@better-tg/plugin-sdk/build`): bundles the entry into the manifest's `main` (`dist/plugin.js`),
+    one ES module without imports that exports `commands`, at most 1 MB. A Node or Bun built-in is
+    refused, never polyfilled; the syntax and strings stay as written (the sandbox runs ES2023). The
+    output is the same on every machine for the same Bun version. It runs under Bun.
+  - `@better-tg/plugin-sdk/test`: `runCommand(dir, 'collect', {limit: 10}, {mock: true})` is
+    `telegram plugin dev <dir> collect --mock` in-process: the CLI's own code for it, bundled into
+    the SDK, so the folder and manifest checks, the input and output schemas, the sandbox and its
+    limits, the mock account, the in-memory cursors and the `dev/fixtures` answers are the same.
+    It returns `{data, proposals, json}` (`json` is the line `plugin dev` prints, null fields kept)
+    or throws `PluginRunError` with the CLI's `code`, `exitCode` and fields (`body`, `json()`). A
+    test may add `fixtures` (matched before the folder's), `settings` (checked like
+    `plugin settings set`), `secrets` (values instead of `dev-secret-<name>`, `null` for one not
+    set), `target`/`thread` and a `log` callback. `validatePlugin(dir)` is `plugin validate --json`.
+    `CLI_VERSION` is the CLI version whose checks the SDK carries.
+- **Template** ([`templates/plugin/`](../templates/plugin/README.md), to become the repository
+  `TheVilfer/tg-plugin-template`): manifest, `SKILL.md`, a read command over `messages.mine` with a
+  cursor and a setting, a network command answered from `dev/fixtures`, tests on the SDK's test
+  host, and a CI workflow (build, the committed `dist/plugin.js` matches the source, typecheck,
+  `telegram plugin validate`, mock tests). `dist/plugin.js` is committed: an install fetches the
+  files of a commit. This repository's CI runs the same checks on it (`npm run template:check`).
+- **`plugin dev <dir> <cmd> --mock`** (section 8): no confirmations; Telegram, storage and
   settings are mock data, HTTP is answered from local fixtures (`dev/fixtures/*.json`) and secrets are
   placeholders. For a live check, install from the folder.
 - **Reference plugin**: Tone of Voice, written only from this spec.

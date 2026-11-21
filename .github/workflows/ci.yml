@@ -56,6 +56,10 @@ jobs:
         run: npm run coverage:api
       # Offline tests only: no Telegram session or network is ever used in CI
       - run: npm test
+      - name: Plugin SDK and template
+        # Builds packages/plugin-sdk, links it into templates/plugin (no npm install), rebuilds the
+        # template's dist/plugin.js (it must not change), runs plugin validate, typecheck and its mock tests
+        run: npm run template:check
       - name: Versioned files match package.json
         # package.json is the only place the version is edited; gen-version copies it everywhere else
         run: |

@@ -260,3 +260,34 @@ if (skillCurrent !== skillOut) {
     writeFileSync(url, out);
   }
 }
+
+{
+  const { manifestTypesSource } = await import("./plugin-sdk-types.mjs");
+  const SDK_SPEC = readdirSync(
+    new URL("../schemas/tg-plugin/", import.meta.url)
+  )
+    .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
+    .sort()
+    .at(-1)
+    .slice(0, -5);
+  const schema = JSON.parse(
+    readFileSync(
+      new URL(`../schemas/tg-plugin/${SDK_SPEC}.json`, import.meta.url),
+      "utf-8"
+    )
+  );
+  const url = new URL(
+    "../packages/plugin-sdk/src/generated/manifest.ts",
+    import.meta.url
+  );
+  const out = manifestTypesSource(schema, SDK_SPEC);
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(new URL(".", url), { recursive: true });
+  let cur = "";
+  try {
+    cur = readFileSync(url, "utf-8");
+  } catch {}
+  if (cur !== out) {
+    writeFileSync(url, out);
+  }
+}
