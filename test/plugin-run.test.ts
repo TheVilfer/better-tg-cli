@@ -534,7 +534,7 @@ describe(
       const refused = lab(h, ["save", "--input", '{"value":"second"}'], {
         TG_MCP: "1",
         TG_READ_ONLY: "1",
-        TG_PLUGIN_EXPECT: `${labInstall.installId} ${labInstall.revision}`,
+        TG_PLUGIN_EXPECT: `${labInstall.installId} ${labInstall.revision} ${labInstall.installId}`,
       });
       expect(refused.code).toBe(1);
       expect(refused.json.error.code).toBe("write_on_read_tool");
@@ -865,7 +865,7 @@ describe(
         });
         expect(
           childEnv(plan as Parameters<typeof childEnv>[0]).TG_PLUGIN_EXPECT
-        ).toBe(`${first.installId} ${first.revision}`);
+        ).toBe(`${first.installId} ${first.revision} ${first.installId}`);
         let asked = 0;
         const elicit = async () => {
           asked++;
@@ -1075,11 +1075,20 @@ describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
     });
   }
 
-  async function sent(s: { got: Set<unknown> }, id: unknown, ms = 30_000) {
+  async function sentDialog(
+    s: { got: Set<unknown> },
+    ms = 30_000
+  ): Promise<string> {
     const until = Date.now() + ms;
-    while (!s.got.has(id)) {
+    for (;;) {
+      const id = [...s.got].find(
+        (x) => typeof x === "string" && /^tg-elicit-[0-9a-f]{16}-1$/.test(x)
+      );
+      if (id) {
+        return id as string;
+      }
       if (Date.now() > until) {
-        throw new Error(`the server never sent ${String(id)}`);
+        throw new Error("the server never sent a dialog");
       }
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -1114,7 +1123,7 @@ describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
       },
     });
     void s.request(1, saveCall);
-    await sent(s, "tg-elicit-1");
+    const dialog = await sentDialog(s);
     const t = Date.now();
     s.send({
       jsonrpc: "2.0",
@@ -1132,7 +1141,7 @@ describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
     expect(Date.now() - t).toBeLessThan(10_000);
     s.send({
       jsonrpc: "2.0",
-      id: "tg-elicit-1",
+      id: dialog,
       result: { action: "accept", content: { approve: true } },
     });
     await new Promise((r) => setTimeout(r, 500));
@@ -1156,7 +1165,7 @@ describe("plugin run over MCP: cancellation", { timeout: 120_000 }, () => {
       },
     });
     void s.request(1, saveCall);
-    await sent(s, "tg-elicit-1");
+    await sentDialog(s);
     const t = Date.now();
     s.p.stdin.end();
     await s.exited;

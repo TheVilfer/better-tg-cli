@@ -18,7 +18,7 @@ import {
   snapshotDigest,
 } from "./file-snapshot.js";
 import { revisionLabel } from "./plugins/human.js";
-import { expectInstall, loadPlugin } from "./plugins/store.js";
+import { expectInstall, loadPlugin, snapshotId } from "./plugins/store.js";
 import { readStdinOnce, stdinBody } from "./text.js";
 
 /**
@@ -156,7 +156,12 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     action.command === "plugin settings set"
   ) {
     const { entry } = loadPlugin(arg(action, "name") ?? "");
-    prepared.bound.push(["plugin", entry.installId, entry.revision]);
+    prepared.bound.push([
+      "plugin",
+      entry.installId,
+      entry.revision,
+      snapshotId(entry),
+    ]);
     prepared.lines.push(
       `  Installation: ${entry.installId} (${revisionLabel(entry.source, entry.revision)})`
     );
@@ -191,6 +196,7 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
       "plugin",
       entry.installId,
       entry.revision,
+      snapshotId(entry),
       command?.name ?? arg(action, "command"),
       effects,
       origins,

@@ -82,3 +82,19 @@ export function choiceOption(
 ): Option {
   return new Option(flags, description).choices(values);
 }
+
+/** A command's full path below the program (`plugin update`, `update`), as typed. */
+export function commandPath(command: {
+  name(): string;
+  parent: { name(): string; parent: unknown } | null;
+}): string {
+  const names: string[] = [];
+  for (
+    let c: typeof command | null = command;
+    c?.parent;
+    c = c.parent as typeof command | null
+  ) {
+    names.unshift(c.name());
+  }
+  return names.join(" ");
+}

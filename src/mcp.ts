@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline";
 import { Worker } from "node:worker_threads";
@@ -18,6 +19,7 @@ import {
 import { paramsOf } from "./commands/generated.js";
 import { openBrowser } from "./commands/onboard.js";
 import { getSessionString } from "./config.js";
+import { CliError, errorDetails, errorJson, EXIT } from "./errors.js";
 import {
   isGeneratedNamespace,
   resolveGeneratedCommand,
@@ -35,8 +37,20 @@ import type { MaskLevel } from "./mcp-output.js";
 import type { OnboardSession } from "./onboard.js";
 import { isMock, isMockAsk } from "./paths.js";
 import { humanCommand } from "./plugins/human.js";
+import {
+  applyPrepared,
+  declined,
+  EXPECT_INSTALL_RE,
+  expectProblem,
+  manageDeps,
+  prepareInstall,
+  prepareRemove,
+  prepareUpdate,
+  terminalCommand,
+} from "./plugins/manage.js";
+import type { Prepared, PrepareOptions } from "./plugins/manage.js";
 import { parseSource } from "./plugins/source.js";
-import { loadPlugin } from "./plugins/store.js";
+import { loadPlugin, readLock, snapshotId } from "./plugins/store.js";
 import { checkStoredSession, openSetupPage } from "./setup.js";
 import { isCompiledBinary } from "./update.js";
 import { VERSION } from "./version.js";
@@ -172,13 +186,14 @@ export const PER_CALL_COMMANDS = new Set(["api", "help", "plugin"]);
 
 /**
  * `plugin` runs over MCP only through these full paths (docs/plugins.md, "CLI commands"): reads on
- * telegram_read, local writes (`assertLocalWriteAllowed`) on telegram_write, and the management
- * commands a human runs are refused with that command. Any other path (`validate`, which reads a
+ * telegram_read, local writes (`assertLocalWriteAllowed`) on telegram_write, install, update and
+ * remove (`manage`) on telegram_write through the server's own handler that asks the human
+ * (handleManage), and plugin secrets, which a human types, refused with their command. Any other path (`validate`, which reads a
  * folder the model would name, and every later one) is refused until it is listed here. `plugin run`
  * is classified per call by the effects its installed manifest declares for that command (`run`).
  */
 export const PLUGIN_PATHS: Readonly<
-  Record<string, "read" | "write" | "human" | "run">
+  Record<string, "read" | "write" | "human" | "run" | "manage">
 > = {
   "plugin list": "read",
   "plugin show": "read",
@@ -189,8 +204,9 @@ export const PLUGIN_PATHS: Readonly<
   "plugin settings get": "read",
   "plugin settings set": "write",
   "plugin run": "run",
-  "plugin install": "human",
-  "plugin remove": "human",
+  "plugin install": "manage",
+  "plugin update": "manage",
+  "plugin remove": "manage",
   "plugin secret set": "human",
   "plugin secret rm": "human",
 };
@@ -245,6 +261,7 @@ export type CallClass =
       help?: boolean;
       plugin?: PluginExpectation;
     }
+  | { group: "manage"; label: string; manage: ManageRequest }
   | { group: "never" | "unknown" | "invalid"; reason: string };
 
 export function classifyCall(args: string[]): CallClass {
@@ -396,6 +413,21 @@ function classifyPlugin(args: string[]): CallClass {
       reason: pluginManagementRefusal(path, args.slice(i)),
     };
   }
+  if (kind === "manage") {
+    const manage = manageRequest(path, args.slice(i));
+    return manage
+      ? { group: "manage", label: path, manage }
+      : {
+          group: "invalid",
+          reason: `"${path}" takes ${
+            path === "plugin install"
+              ? "one source (github:owner/repo[@ref] or a folder) and optionally --expect <revision>"
+              : path === "plugin update"
+                ? "an optional plugin name and, with a name, optionally --expect <revision>"
+                : "one plugin name and optionally --keep-data"
+          }; nothing else`,
+        };
+  }
   if (kind === "run") {
     const run = pluginRunGroup(args.slice(i));
     return {
@@ -409,11 +441,16 @@ function classifyPlugin(args: string[]): CallClass {
 
 const RUN_VALUED = new Set(["--input", "--target"]);
 
-/** The installation a `plugin run` was classified by: the child runs only that one (PLUGIN_EXPECT_ENV). */
+/** The installation and snapshot a `plugin run` was classified by: the child runs only that one (PLUGIN_EXPECT_ENV). */
 export interface PluginExpectation {
   installId: string;
   revision: string;
+  snapshot: string;
 }
+
+/** The value of PLUGIN_EXPECT_ENV for an installation: installId, revision and snapshot (an update back to a revision is another snapshot). */
+export const pluginExpectation = (e: PluginExpectation): string =>
+  `${e.installId} ${e.revision} ${e.snapshot}`;
 
 /**
  * The environment variable that tells a `plugin run` child which installation its call was
@@ -454,7 +491,11 @@ function pluginRunGroup(rest: string[]): {
       : "read";
     return {
       group,
-      plugin: { installId: entry.installId, revision: entry.revision },
+      plugin: {
+        installId: entry.installId,
+        revision: entry.revision,
+        snapshot: snapshotId(entry),
+      },
     };
   } catch {
     return { group: "read" };
@@ -462,9 +503,9 @@ function pluginRunGroup(rest: string[]): {
 }
 
 /**
- * Installing and removing plugins is the human's (docs/plugins.md): the refusal names the command for
- * their own terminal, with this server's profile, built only from a source or name that parses
- * strictly; anything else is not echoed back as a command.
+ * Plugin secrets are typed by a human (docs/plugins.md): the refusal names the command for their own
+ * terminal, with this server's profile, built only from names that parse strictly; anything else is
+ * not echoed back as a command.
  */
 export function pluginManagementRefusal(path: string, rest: string[]): string {
   if (path === "plugin secret set" || path === "plugin secret rm") {
@@ -474,16 +515,7 @@ export function pluginManagementRefusal(path: string, rest: string[]): string {
       ? `${lead} Ask the user to run this in a terminal on this computer and type the value there: ${humanCommand(argv)}`
       : `${lead} Ask the user to run it in a terminal on this computer (telegram ${path} <plugin> <secret>).`;
   }
-  const lead = `"${path}" is the user's to run, not over MCP: plugins are installed and removed only by a human, who sees what the plugin may do.`;
-  const argv =
-    path === "plugin install"
-      ? installArgv(rest)
-      : path === "plugin remove"
-        ? removeArgv(rest)
-        : undefined;
-  return argv
-    ? `${lead} Ask the user to run this in a terminal on this computer: ${humanCommand(argv)}`
-    : `${lead} Ask the user to run it in a terminal on this computer (telegram ${path} github:owner/repo[@ref] | <folder> | <name>).`;
+  return `"${path}" is not available over MCP.`;
 }
 
 function secretArgv(path: string, rest: string[]): string[] | undefined {
@@ -502,84 +534,128 @@ function secretArgv(path: string, rest: string[]): string[] | undefined {
   return [...path.split(" "), plugin, secret];
 }
 
-const REVISION_RE = /^sha256-[A-Za-z0-9+/]{43}=$/;
+/** A plugin install, update or remove over MCP, as parsed from its argv (the CLI's options only). */
+export type ManageRequest =
+  | { op: "install"; source: string; expect?: string }
+  | { op: "update"; name?: string; expect?: string }
+  | { op: "remove"; name: string; keepData: boolean; expectInstall?: string };
 
-function installArgv(rest: string[]): string[] | undefined {
-  let operand: string | undefined;
+const NAME_ONLY = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/**
+ * The arguments of `plugin install|update|remove` as the CLI parses them: operands and the options
+ * each command has (`--expect v`, `--expect=v`, `--keep-data`, `--json`, `--`). Anything else (an
+ * unknown option, a malformed revision, a second operand, a source that does not parse) is no
+ * request at all, so nothing the model added is ever echoed into a command.
+ */
+export function manageRequest(
+  path: string,
+  rest: string[]
+): ManageRequest | undefined {
+  const operands: string[] = [];
   let expect: string | undefined;
+  let expectInstall: string | undefined;
+  let keepData = false;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--json") {
       continue;
     }
-    if (a === "--expect" || a.startsWith("--expect=")) {
+    if (
+      path === "plugin remove" &&
+      (a === "--expect-install" || a.startsWith("--expect-install="))
+    ) {
+      if (expectInstall !== undefined) {
+        return undefined;
+      }
+      expectInstall =
+        a === "--expect-install"
+          ? rest[++i]
+          : a.slice("--expect-install=".length);
+      if (
+        expectInstall === undefined ||
+        !EXPECT_INSTALL_RE.test(expectInstall)
+      ) {
+        return undefined;
+      }
+      continue;
+    }
+    if (
+      path !== "plugin remove" &&
+      (a === "--expect" || a.startsWith("--expect="))
+    ) {
       if (expect !== undefined) {
         return undefined;
       }
       expect = a === "--expect" ? rest[++i] : a.slice("--expect=".length);
-      if (expect === undefined) {
+      if (expect === undefined || expectProblem(expect)) {
         return undefined;
       }
+      continue;
+    }
+    if (path === "plugin remove" && a === "--keep-data") {
+      keepData = true;
       continue;
     }
     if (a === "--") {
-      if (operand !== undefined || rest.length !== i + 2) {
-        return undefined;
-      }
-      operand = rest[i + 1];
+      operands.push(...rest.slice(i + 1));
       break;
     }
-    if (a.startsWith("-") || operand !== undefined) {
+    if (a.startsWith("-")) {
       return undefined;
     }
-    operand = a;
+    operands.push(a);
   }
-  if (!operand || operand.startsWith("-")) {
+  if (operands.some((o) => o.startsWith("-"))) {
     return undefined;
   }
-  if (expect !== undefined && !REVISION_RE.test(expect)) {
-    return undefined;
-  }
-  let source: ReturnType<typeof parseSource>;
-  try {
-    source = parseSource(operand);
-  } catch {
-    return undefined;
+  if (path === "plugin install") {
+    if (operands.length !== 1) {
+      return undefined;
+    }
+    const [operand] = operands;
+    let source: ReturnType<typeof parseSource>;
+    try {
+      source = parseSource(operand);
+    } catch {
+      return undefined;
+    }
+    if (
+      source.type === "github"
+        ? expect !== undefined && !/^[0-9a-f]{40}$/.test(expect)
+        : !/^[\w./~ :\\-]{1,200}$/.test(operand) ||
+          (expect !== undefined && !expect.startsWith("sha256-"))
+    ) {
+      return undefined;
+    }
+    return { op: "install", source: operand, ...(expect ? { expect } : {}) };
   }
   if (
-    source.type === "github"
-      ? expect !== undefined
-      : !/^[\w./~ -]{1,200}$/.test(operand)
+    operands.length > 1 ||
+    (operands[0] !== undefined &&
+      (!NAME_ONLY.test(operands[0]) || operands[0].length > 64))
   ) {
     return undefined;
   }
-  return [
-    "plugin",
-    "install",
-    operand,
-    ...(expect ? ["--expect", expect] : []),
-  ];
-}
-
-function removeArgv(rest: string[]): string[] | undefined {
-  let name: string | undefined;
-  let keep = false;
-  for (const a of rest) {
-    if (a === "--json") {
-      continue;
-    }
-    if (a === "--keep-data") {
-      keep = true;
-    } else if (a.startsWith("-") || name !== undefined) {
+  if (path === "plugin update") {
+    if (expect !== undefined && !operands.length) {
       return undefined;
-    } else {
-      name = a;
     }
+    return {
+      op: "update",
+      ...(operands[0] ? { name: operands[0] } : {}),
+      ...(expect ? { expect } : {}),
+    };
   }
-  if (!name || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) {
-    return undefined;
+  if (path === "plugin remove" && operands.length === 1) {
+    return {
+      op: "remove",
+      name: operands[0],
+      keepData,
+      ...(expectInstall ? { expectInstall } : {}),
+    };
   }
-  return ["plugin", "remove", name, ...(keep ? ["--keep-data"] : [])];
+  return undefined;
 }
 
 const SETUP_BY_USER =
@@ -796,6 +872,7 @@ export function planCall(
       readOnly: boolean;
       stdin?: string;
       plugin?: PluginExpectation;
+      manage?: ManageRequest;
     }
   | string {
   if (tool === "telegram_help") {
@@ -820,6 +897,11 @@ export function planCall(
   const call = classifyCall(argv);
   if ("reason" in call) {
     return call.reason;
+  }
+  if (call.group === "manage") {
+    return tool === "telegram_read"
+      ? `"${call.label}" changes something; use telegram_write`
+      : { argv, readOnly: false, manage: call.manage };
   }
   const plugin = call.plugin ? { plugin: call.plugin } : {};
   if (tool === "telegram_read") {
@@ -892,6 +974,7 @@ interface Plan {
   refusedRun?: RunOutput;
   signal?: AbortSignal;
   plugin?: PluginExpectation;
+  manage?: ManageRequest;
 }
 
 const cap = (raw: string, level: MaskLevel) => {
@@ -916,7 +999,7 @@ export function childEnv(plan: Plan): NodeJS.ProcessEnv {
   delete env[DESCRIBE_ENV];
   delete env[PLUGIN_EXPECT_ENV];
   if (plan.plugin) {
-    env[PLUGIN_EXPECT_ENV] = `${plan.plugin.installId} ${plan.plugin.revision}`;
+    env[PLUGIN_EXPECT_ENV] = pluginExpectation(plan.plugin);
   }
   if (plan.describe && !plan.readOnly) {
     env[DESCRIBE_ENV] = "1";
@@ -1180,6 +1263,235 @@ export class PluginRuns {
 const isPluginRun = (argv: string[]) =>
   argv[0] === "plugin" && argv[1] === "run";
 
+const DONE_BY_USER = {
+  install: "installed",
+  update: "updated",
+  remove: "removed",
+} as const;
+
+function errorResult(
+  e: unknown,
+  extra: Record<string, unknown> = {}
+): ToolResult {
+  const d = errorDetails(e);
+  return {
+    ...text(cap(errorJson(d), "echo"), true),
+    structuredContent: { exitCode: d.exitCode, code: d.code, ...extra },
+  };
+}
+
+/**
+ * `plugin install|update|remove` over MCP (docs/plugins.md §8 "The human"): never a CLI run and
+ * never the write-approval path. This server prepares the change itself (fetches and checks the
+ * snapshot), shows the human what it is (the same summary a terminal shows) in the client's dialog,
+ * and after their Accept applies exactly that snapshot (bound by its digest; a registry, folder or
+ * snapshot that changed meanwhile is refused). The write mode plays no part ("on" does not skip the
+ * dialog), an approval code or anything the model says is never read, and write access is never
+ * touched. A read-only server refuses it. Without a dialog (Streamable HTTP, a client without
+ * elicitation) the model gets the exact command for the human's terminal on this computer.
+ */
+export async function handleManage(
+  req: ManageRequest,
+  options: Pick<McpOptions, "readOnly" | "elicit">,
+  signal?: AbortSignal
+): Promise<ToolResult | undefined> {
+  if (options.readOnly || process.env.TG_READ_ONLY) {
+    return text(
+      `This server is read-only: plugins are not installed, updated or removed through it. The user can run "telegram plugin ${req.op} …" in their own terminal.`,
+      true
+    );
+  }
+  const opts: PrepareOptions = {
+    fetch: manageDeps.fetch,
+    cliVersion: manageDeps.cliVersion,
+    via: "mcp",
+    ...(signal ? { signal } : {}),
+  };
+  const prepared: Prepared[] = [];
+  const upToDate: { name: string; version: string; revision: string }[] = [];
+  const failed: Record<string, unknown>[] = [];
+  let modelFolder = false;
+  try {
+    modelFolder =
+      req.op === "install" && parseSource(req.source).type === "local";
+    if (req.op === "install") {
+      prepared.push(await prepareInstall(req.source, req.expect, opts));
+    } else if (req.op === "remove") {
+      prepared.push(prepareRemove(req.name, req.keepData, req.expectInstall));
+    } else {
+      for (const name of req.name
+        ? [req.name]
+        : Object.keys(readLock().plugins).sort()) {
+        if (signal?.aborted) {
+          return undefined;
+        }
+        try {
+          const p = await prepareUpdate(name, req.expect, opts);
+          if (p.op === "up-to-date") {
+            upToDate.push({
+              name,
+              version: p.entry.version,
+              revision: p.entry.revision,
+            });
+          } else {
+            prepared.push(p);
+          }
+        } catch (error) {
+          if (signal?.aborted) {
+            return undefined;
+          }
+          if (req.name) {
+            throw error;
+          }
+          const d = errorDetails(error);
+          failed.push({
+            name,
+            error: {
+              code: d.code,
+              message: d.message,
+              ...(d.hint ? { hint: d.hint } : {}),
+            },
+          });
+        }
+      }
+    }
+  } catch (error) {
+    if (signal?.aborted) {
+      return undefined;
+    }
+    if (
+      modelFolder &&
+      ![
+        "plugin_exists",
+        "secret_store_unavailable",
+        "plugin_busy",
+        "plugin_lock_invalid",
+      ].includes(errorDetails(error).code)
+    ) {
+      return errorResult(
+        new CliError(
+          "That folder could not be read as a plugin; nothing was installed",
+          "plugin_invalid",
+          EXIT.ERROR,
+          {
+            hint: "Ask the user to check it in a terminal on this computer: telegram plugin validate <folder>",
+          }
+        )
+      );
+    }
+    return errorResult(error);
+  }
+  if (signal?.aborted) {
+    return undefined;
+  }
+  const extra = {
+    ...(upToDate.length ? { upToDate } : {}),
+    ...(failed.length ? { failed } : {}),
+  };
+  if (!prepared.length) {
+    const lines = [
+      ...upToDate.map((u) => `${u.name} ${u.version} is up to date.`),
+      ...failed.map(
+        (f) =>
+          `${String(f.name)}: ${String((f.error as { message: string }).message)}`
+      ),
+    ];
+    return {
+      ...text(
+        cap(lines.join("\n") || "No plugins are installed.", "echo"),
+        failed.length > 0
+      ),
+      structuredContent: { status: "nothing_to_do", ...extra },
+    };
+  }
+  if (!options.elicit) {
+    const commands = prepared.map((p) => ({
+      operation: p.op,
+      name: p.name,
+      argv: p.argv,
+      command: terminalCommand(p.argv),
+    }));
+    if (commands.some((c) => c.command === undefined)) {
+      return text(
+        'This MCP client cannot show the user a dialog, and the plugin\'s folder path has characters that are not put into a command. Ask the user to run "telegram plugin install <the folder> --expect <its revision from telegram plugin validate>" in a terminal on this computer, typing the folder themselves.',
+        true
+      );
+    }
+    const lines = [
+      `Plugins are ${DONE_BY_USER[req.op]} only by the user, and this MCP client cannot show them a dialog. Ask the user to run ${commands.length > 1 ? "these commands" : "this command"} in a terminal on the computer this server runs on; it shows them what the plugin may do and asks them to confirm:`,
+      ...commands.map((c) => c.command),
+      ...upToDate.map((u) => `(${u.name} ${u.version} is up to date.)`),
+    ];
+    return {
+      ...text(cap(lines.join("\n"), "echo")),
+      structuredContent: { status: "human_required", commands, ...extra },
+    };
+  }
+  const results: Record<string, unknown>[] = [];
+  let refused = false;
+  for (const p of prepared) {
+    const approved = await options.elicit(
+      `The agent asks to change your Better-TG-CLI plugins. Only you can approve this; nothing else does.\n\n${p.question}\n\nApprove exactly this change?`,
+      signal
+    );
+    if (signal?.aborted) {
+      return undefined;
+    }
+    try {
+      if (!approved) {
+        throw declined(p, "mcp");
+      }
+      results.push(applyPrepared(p, opts));
+    } catch (error) {
+      const d = errorDetails(error);
+      refused = true;
+      results.push({
+        name: p.name,
+        operation: p.op,
+        error: {
+          code: d.code,
+          message: d.message,
+          ...(d.hint ? { hint: d.hint } : {}),
+        },
+      });
+    }
+  }
+  if (prepared.length === 1 && !upToDate.length && !failed.length) {
+    const [r] = results;
+    if (r.error) {
+      const err = r.error as { code: string; message: string; hint?: string };
+      return {
+        ...text(
+          cap(
+            errorJson({
+              code: err.code,
+              message: err.message,
+              ...(err.hint ? { hint: err.hint } : {}),
+            }),
+            "echo"
+          ),
+          true
+        ),
+        structuredContent: { exitCode: 1, code: err.code },
+      };
+    }
+    return {
+      ...text(cap(JSON.stringify(r), "echo")),
+      structuredContent: { status: "done", ...r },
+    };
+  }
+  const all = {
+    ok: !refused && !failed.length,
+    action: `plugin ${req.op}`,
+    results,
+    ...extra,
+  };
+  return {
+    ...text(cap(JSON.stringify(all), "echo"), refused || failed.length > 0),
+    structuredContent: { status: "done", ...all },
+  };
+}
+
 function runChild(plan: Plan): Promise<RunOutput> {
   return new Promise((resolve) => {
     const [bin, ...pre] = cliBase();
@@ -1357,6 +1669,7 @@ interface RpcMessage {
   method?: string;
   params?: Record<string, unknown>;
   result?: unknown;
+  error?: unknown;
 }
 
 /**
@@ -1490,7 +1803,9 @@ export async function handleMessage(
         return reply(text(maskForModel(plan, "echo"), true));
       }
       const runs =
-        options.runs && isPluginRun(plan.argv) ? options.runs : undefined;
+        options.runs && (isPluginRun(plan.argv) || plan.manage)
+          ? options.runs
+          : undefined;
       const signal = runs?.begin(msg.id);
       try {
         if (signal?.aborted) {
@@ -1498,6 +1813,10 @@ export async function handleMessage(
         }
         if (signal) {
           plan.signal = signal;
+        }
+        if (plan.manage) {
+          const out = await handleManage(plan.manage, options, signal);
+          return out && !signal?.aborted ? reply(out) : undefined;
         }
         if (!plan.readOnly) {
           const refused = await gateWrite(
@@ -1697,24 +2016,32 @@ export function elicitApproved(result: unknown): boolean {
     : Object.keys(content).length === 0;
 }
 
-export function startMcpServer(
-  commands: Iterable<string>,
-  options: { readOnly?: boolean } = {}
-): void {
-  setKnownCommands(commands);
-  let queue: Promise<void> = Promise.resolve();
-  const send = (obj: object) =>
-    process.stdout.write(`${JSON.stringify(obj)}\n`);
-  const runs = new PluginRuns();
-  const opts: McpOptions = { ...options, runs };
+/**
+ * The server's dialogs through the client (MCP elicitation/create): `elicit` sends one and resolves
+ * true only for an approval (elicitApproved), false on a decline, a cancel, an error, the timeout or
+ * a cancelled call (`signal`, which also tells the client its dialog is moot). `answer` takes the
+ * client's response to one of them and says whether it was one; a late answer is ignored.
+ *
+ * Dialog ids are `tg-elicit-<random per instance>-<n>`, so a late answer from before a server
+ * restart never matches a dialog of this instance. Only a well-formed JSON-RPC response (jsonrpc
+ * "2.0", a string id, exactly one of result and error, no method) whose id is exactly one this
+ * instance sent and still waits for settles a dialog: a numeric or otherwise coerced id never does,
+ * and an error response is not an approval. Any other `tg-elicit-` response is swallowed, never
+ * read as a request.
+ */
+export function createElicitor(
+  send: (obj: object) => void,
+  timeoutMs = ELICIT_TIMEOUT_MS
+) {
   const waiting = new Map<string, (msg: RpcMessage) => void>();
+  const instance = randomBytes(8).toString("hex");
   let nextId = 0;
   const elicit = (message: string, signal?: AbortSignal) =>
     new Promise<boolean>((resolve) => {
       if (signal?.aborted) {
         return resolve(false);
       }
-      const id = `tg-elicit-${++nextId}`;
+      const id = `tg-elicit-${instance}-${++nextId}`;
       const finish = (approved: boolean) => {
         clearTimeout(timer);
         waiting.delete(id);
@@ -1729,7 +2056,7 @@ export function startMcpServer(
           params: { requestId: id, reason: "The tool call was cancelled" },
         });
       };
-      const timer = setTimeout(() => finish(false), ELICIT_TIMEOUT_MS);
+      const timer = setTimeout(() => finish(false), timeoutMs);
       waiting.set(id, (answer) => finish(elicitApproved(answer.result)));
       signal?.addEventListener("abort", onAbort, { once: true });
       send({
@@ -1753,6 +2080,34 @@ export function startMcpServer(
         },
       });
     });
+  const answer = (msg: RpcMessage): boolean => {
+    if (msg.method !== undefined || typeof msg.id !== "string") {
+      return false;
+    }
+    const m = msg;
+    const wellFormed = m.jsonrpc === "2.0" && "result" in m !== "error" in m;
+    const done = wellFormed ? waiting.get(msg.id) : undefined;
+    if (done) {
+      waiting.delete(msg.id);
+      done(msg);
+      return true;
+    }
+    return msg.id.startsWith("tg-elicit-");
+  };
+  return { elicit, answer };
+}
+
+export function startMcpServer(
+  commands: Iterable<string>,
+  options: { readOnly?: boolean } = {}
+): void {
+  setKnownCommands(commands);
+  let queue: Promise<void> = Promise.resolve();
+  const send = (obj: object) =>
+    process.stdout.write(`${JSON.stringify(obj)}\n`);
+  const runs = new PluginRuns();
+  const opts: McpOptions = { ...options, runs };
+  const { elicit, answer } = createElicitor(send);
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   rl.on("line", (line) => {
     if (!line.trim()) {
@@ -1769,21 +2124,7 @@ export function startMcpServer(
       });
       return;
     }
-    if (
-      msg.method === undefined &&
-      msg.id != null &&
-      waiting.has(String(msg.id))
-    ) {
-      const answer = waiting.get(String(msg.id))!;
-      waiting.delete(String(msg.id));
-      answer(msg);
-      return;
-    }
-    if (
-      msg.method === undefined &&
-      typeof msg.id === "string" &&
-      msg.id.startsWith("tg-elicit-")
-    ) {
+    if (answer(msg)) {
       return;
     }
     if (msg.method === "notifications/cancelled") {

@@ -93,6 +93,7 @@ import {
   pluginSecretKey,
   secretStates,
   setPluginSecret,
+  slotIn,
 } from "../src/plugins/secrets.js";
 import type { PluginSecretStore } from "../src/plugins/secrets.js";
 import { readLocalSnapshot } from "../src/plugins/source.js";
@@ -106,6 +107,8 @@ import {
 } from "../src/plugins/store.js";
 
 const LAB = resolve("test/fixtures/plugins/net-lab");
+const labManifest = readLocalSnapshot(LAB, "99.0.0").manifest as Manifest;
+const slot = (name: string) => slotIn(labManifest, name);
 
 afterAll(() => rmSync(env.root, { recursive: true, force: true }));
 
@@ -198,16 +201,18 @@ afterEach(() => {
 describe("plugin secrets under VITEST never reach the real secret store", () => {
   it("get, set, delete and the states are refused without TG_MOCK or an injected store", () => {
     const id = "11111111-2222-4333-8444-555555555555";
-    expect(() => getPluginSecret(id, "apikey")).toThrow(
+    expect(() => getPluginSecret(id, slot("apikey"))).toThrow(
       /tests never use the real secret store/
     );
-    expect(() => setPluginSecret(id, "apikey", "long-enough-value")).toThrow(
+    expect(() =>
+      setPluginSecret(id, slot("apikey"), "long-enough-value")
+    ).toThrow(/tests never use the real secret store/);
+    expect(() => deletePluginSecret(id, slot("apikey"))).toThrow(
       /tests never use the real secret store/
     );
-    expect(() => deletePluginSecret(id, "apikey")).toThrow(
-      /tests never use the real secret store/
-    );
-    expect(secretStates(id, ["apikey"])).toEqual({ apikey: "unknown" });
+    expect(secretStates(id, labManifest.secrets!.slice(0, 1))).toEqual({
+      apikey: "unknown",
+    });
   });
 
   it("a run that needs a secret gets secret_store_unavailable, and nothing is sent", async () => {
@@ -238,7 +243,7 @@ describe("plugin secrets under VITEST never reach the real secret store", () => 
       network: {
         backend: networkBackend(net),
         secret: (n) =>
-          getPluginSecret("11111111-2222-4333-8444-555555555555", n),
+          getPluginSecret("11111111-2222-4333-8444-555555555555", slot(n)),
         setCommand: (n) => ["plugin", "secret", "set", "net-lab", n],
       },
     });
@@ -329,10 +334,10 @@ describe("plugin secret set / rm / show with an injected store", () => {
     );
     expect(ok.out + ok.err).not.toContain("never-used-value");
     expect([...store.items]).toEqual([
-      [pluginSecretKey(entry.installId, "apikey"), "never-used-value"],
+      [pluginSecretKey(entry.installId, slot("apikey")), "never-used-value"],
     ]);
-    expect(pluginSecretKey(entry.installId, "apikey")).toBe(
-      `plugin-secret-plugin-secrets-${entry.installId}-apikey`
+    expect(pluginSecretKey(entry.installId, slot("apikey"))).toBe(
+      `plugin-secret-plugin-secrets-${entry.installId}-apikey-g${slot("apikey").gen}`
     );
     const show = await cli(["show", "net-lab", "--json"]);
     const o = JSON.parse(show.out);
@@ -363,7 +368,10 @@ describe("plugin secret set / rm / show with an injected store", () => {
       )
     ).toMatchObject({ ok: true, existed: true });
     expect(store.items.size).toBe(0);
-    store.set(pluginSecretKey(entry.installId, "other"), "other-value-123");
+    store.set(
+      pluginSecretKey(entry.installId, slot("other")),
+      "other-value-123"
+    );
     pluginDeps.confirm = async () => true;
     try {
       expect((await cli(["remove", "net-lab", "--json"])).code).toBe(0);
@@ -389,7 +397,9 @@ describe("plugin secret set / rm / show with an injected store", () => {
       /the secret was not stored/
     );
     expect(store.items.size).toBe(0);
-    expect(store.get(pluginSecretKey(entry.installId, "apikey"))).toBeNull();
+    expect(
+      store.get(pluginSecretKey(entry.installId, slot("apikey")))
+    ).toBeNull();
     installLab();
     pluginDeps.readSecret = async () => {
       removeInstall(readLock().plugins["net-lab"], false);
@@ -418,7 +428,10 @@ describe("plugin secret set / rm / show with an injected store", () => {
       },
     };
     const entry = installLab();
-    store.set(pluginSecretKey(entry.installId, "apikey"), "stored-value-12345");
+    store.set(
+      pluginSecretKey(entry.installId, slot("apikey")),
+      "stored-value-12345"
+    );
     pluginDeps.confirm = async () => true;
     try {
       const rm = await cli(["remove", "net-lab", "--json"]);
@@ -432,7 +445,11 @@ describe("plugin secret set / rm / show with an injected store", () => {
     }
     expect(store.items.size).toBe(1);
     expect(pendingSecrets()).toEqual([
-      { name: "net-lab", installId: entry.installId, secrets: ["apikey"] },
+      {
+        name: "net-lab",
+        installId: entry.installId,
+        secrets: [`apikey:${slot("apikey").gen}`],
+      },
     ]);
     const list = await cli(["list", "--json"]);
     expect(list.code).toBe(0);
@@ -445,17 +462,24 @@ describe("plugin secret set / rm / show with an injected store", () => {
     const store = memoryStore();
     pluginSecretDeps.store = store;
     const entry = installLab();
-    store.set(pluginSecretKey(entry.installId, "apikey"), "live-value-123456");
+    store.set(
+      pluginSecretKey(entry.installId, slot("apikey")),
+      "live-value-123456"
+    );
     mkdirSync(join(pluginHome(), "plugin-state"), { recursive: true });
     writeFileSync(
       join(pluginHome(), "plugin-state", "pending-secret-cleanup.json"),
       JSON.stringify([
-        { name: "net-lab", installId: entry.installId, secrets: ["apikey"] },
+        {
+          name: "net-lab",
+          installId: entry.installId,
+          secrets: [`apikey:${slot("apikey").gen}`],
+        },
       ])
     );
     expect(pendingSecrets()).toHaveLength(1);
     expect((await cli(["settings", "get", "net-lab", "--json"])).code).toBe(0);
-    expect(store.get(pluginSecretKey(entry.installId, "apikey"))).toBe(
+    expect(store.get(pluginSecretKey(entry.installId, slot("apikey")))).toBe(
       "live-value-123456"
     );
     expect(pendingSecrets()).toEqual([]);
@@ -475,7 +499,10 @@ describe("plugin secret set / rm / show with an injected store", () => {
       },
     };
     const entry = installLab();
-    store.set(pluginSecretKey(entry.installId, "apikey"), "stored-value-12345");
+    store.set(
+      pluginSecretKey(entry.installId, slot("apikey")),
+      "stored-value-12345"
+    );
     pluginDeps.confirm = async () => true;
     try {
       expect(

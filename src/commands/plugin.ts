@@ -1,6 +1,6 @@
 import { isMainThread, parentPort, workerData } from "node:worker_threads";
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import type { TelegramClient } from "teleproto";
 
 import { oneLine } from "../approval-action.js";
@@ -10,6 +10,7 @@ import chalk from "../colors.js";
 import { isConfigured, loadConfig } from "../config.js";
 import {
   CliError,
+  errorDetails,
   EXIT,
   ExitSignal,
   fail,
@@ -29,14 +30,21 @@ import {
   humanCommand,
   humanConfirms,
   humanRequired,
-  installSummary,
   originLabel,
-  removeQuestion,
   revisionLabel,
   secretPathsLabel,
 } from "../plugins/human.js";
 import type { Confirm } from "../plugins/human.js";
 import { validate } from "../plugins/json-schema.js";
+import {
+  applyPrepared,
+  cleanupPendingSecrets,
+  declined,
+  prepareInstall,
+  prepareRemove,
+  prepareUpdate,
+} from "../plugins/manage.js";
+import type { Prepared, PrepareOptions } from "../plugins/manage.js";
 import { DEFAULT_QUOTA_BYTES, markdownSection } from "../plugins/manifest.js";
 import type { Manifest } from "../plugins/manifest.js";
 import {
@@ -51,22 +59,19 @@ import {
 } from "../plugins/run.js";
 import type { NetworkStats, RunOutcome } from "../plugins/run.js";
 import {
-  deletePluginSecret,
+  erasePluginSecret,
   getPluginSecret,
   getPluginSecretAsync,
+  parseSlotText,
   secretStates,
   setPluginSecret,
+  slotIn,
+  slotOf,
 } from "../plugins/secrets.js";
-import {
-  fetchGithubSnapshot,
-  parseSource,
-  readLocalSnapshot,
-} from "../plugins/source.js";
-import type { Fetch, Snapshot } from "../plugins/source.js";
+import { readLocalSnapshot } from "../plugins/source.js";
+import type { Fetch } from "../plugins/source.js";
 import {
   assertApprovedInstall,
-  assertCanSign,
-  commitInstall,
   cursorLoad,
   cursorSave,
   dataDelete,
@@ -82,10 +87,9 @@ import {
   own,
   pendingSecrets,
   readLock,
-  removeInstall,
   settingsRead,
   settingsWrite,
-  settlePendingSecrets,
+  snapshotId,
   withCurrentInstall,
 } from "../plugins/store.js";
 import type { LockEntry } from "../plugins/store.js";
@@ -133,31 +137,17 @@ async function done(): Promise<void> {
   await disconnectClient();
 }
 
-async function takeSnapshot(
-  sourceText: string,
-  expect: string | undefined
-): Promise<Snapshot> {
-  const source = parseSource(sourceText);
-  if (source.type === "github") {
-    if (expect) {
-      throw usageError(
-        "--expect is for a local folder; pin a GitHub plugin with @<commit>"
-      );
-    }
-    return fetchGithubSnapshot(source, pluginDeps.fetch, cliVersion());
+const manageOpts = (): PrepareOptions => ({
+  fetch: pluginDeps.fetch,
+  cliVersion: cliVersion(),
+  via: "terminal",
+});
+
+async function confirmAndApply(p: Prepared): Promise<Record<string, unknown>> {
+  if (!(await humanConfirms(p.question, p.argv, pluginDeps.confirm))) {
+    throw declined(p);
   }
-  const snap = readLocalSnapshot(source.path, cliVersion());
-  if (expect && expect !== snap.revision) {
-    throw new CliError(
-      `The folder changed: its content is ${snap.revision}, not the expected ${expect}`,
-      "plugin_revision_mismatch",
-      EXIT.ERROR,
-      {
-        hint: "Check what changed in the folder, then install again.",
-      }
-    );
-  }
-  return snap;
+  return applyPrepared(p, manageOpts());
 }
 
 const installCommand = new Command("install")
@@ -170,7 +160,7 @@ const installCommand = new Command("install")
   )
   .option(
     "--expect <revision>",
-    "Local folder only: install only if its content hash is this sha256-… (from `plugin validate`)"
+    "Install only this revision: a folder's sha256-… (from `plugin validate`), or a GitHub commit SHA"
   )
   .option("--json", "Output as JSON")
   .action(
@@ -188,97 +178,160 @@ const installCommand = new Command("install")
         if (process.env.TG_MCP || process.env.TG_READ_ONLY) {
           throw humanRequired(argv);
         }
-        if (
-          options.expect !== undefined &&
-          !/^sha256-[A-Za-z0-9+/]{43}=$/.test(options.expect)
-        ) {
-          throw usageError(
-            "--expect must be a sha256-… revision as `plugin validate` prints it"
-          );
-        }
-        const snap = await takeSnapshot(sourceText, options.expect);
-        const { plugins } = readLock();
-        const existing = own(plugins, snap.manifest.name)
-          ? plugins[snap.manifest.name]
-          : undefined;
-        if (existing) {
-          throw new CliError(
-            `Plugin "${snap.manifest.name}" is already installed (${existing.version}, ${originLabel(existing.source)})`,
-            "plugin_exists",
-            EXIT.ERROR,
-            {
-              hint: `Updating is coming in a later version. To replace it now: telegram plugin remove ${snap.manifest.name}, then install again.`,
-            }
-          );
-        }
-        assertCanSign();
-        const summary = installSummary(snap);
-        const yes = await humanConfirms(summary, argv, pluginDeps.confirm);
-        if (!yes) {
-          auditLog({
-            timestamp: new Date().toISOString(),
-            command: "plugin install",
-            target: snap.manifest.name,
-            plugin: {
-              name: snap.manifest.name,
-              version: snap.manifest.version,
-              revision: snap.revision,
-            },
-            result: { success: false, error: "not_confirmed" },
-          });
-          throw new CliError(
-            "Not confirmed by the user. Nothing was installed.",
-            "not_confirmed",
-            EXIT.ERROR
-          );
-        }
-        const entry = commitInstall(snap);
-        auditLog({
-          timestamp: new Date().toISOString(),
-          command: "plugin install",
-          target: entry.name,
-          plugin: {
-            name: entry.name,
-            version: entry.version,
-            revision: entry.revision,
-            installId: entry.installId,
-            source: originLabel(entry.source),
-          },
-          result: { success: true },
-        });
-        const m = snap.manifest;
-        const next = m.onboarding
-          ? ["plugin", "show", m.name, "--onboarding"]
-          : ["plugin", "list"];
+        const prepared = await prepareInstall(
+          sourceText,
+          options.expect,
+          manageOpts()
+        );
+        const r = await confirmAndApply(prepared);
         if (options.json) {
-          console.log(
-            json({
-              ok: true,
-              action: "plugin install",
-              name: entry.name,
-              version: entry.version,
-              source: pluginSource(entry.name, entry.version),
-              origin: originLabel(entry.source),
-              revision: entry.revision,
-              official: entry.official,
-              ...(snap.officialNote ? { officialNote: snap.officialNote } : {}),
-              installId: entry.installId,
-              next,
-            })
-          );
+          console.log(json(r));
         } else {
           console.log(
             chalk.green(
-              `✓ Installed ${entry.name} ${entry.version} (${revisionLabel(entry.source, entry.revision)})`
+              `✓ Installed ${r.name} ${r.version} (${revisionLabel(prepared.snapshot.source, String(r.revision))})`
             )
           );
-          console.log(`Next: telegram ${next.join(" ")}`);
+          console.log(`Next: telegram ${(r.next as string[]).join(" ")}`);
         }
       } catch (error) {
         fail(error);
       }
     }
   );
+
+const updateCommand = new Command("update")
+  .description(
+    "Update a plugin (all when no name) to the newest revision of its source; new permissions, effects, destinations and secrets are listed apart; the user confirms"
+  )
+  .argument("[name]", "Plugin name (all installed plugins when left out)")
+  .option(
+    "--expect <revision>",
+    "Update only to this revision: a folder's new sha256-… (required for a folder that changed), or a GitHub commit SHA"
+  )
+  .option("--json", "Output as JSON")
+  .action(
+    async (
+      name: string | undefined,
+      options: { expect?: string; json?: boolean }
+    ) => {
+      const argv = [
+        "plugin",
+        "update",
+        ...(name ? [name] : []),
+        ...(options.expect ? ["--expect", options.expect] : []),
+      ];
+      try {
+        if (process.env.TG_MCP || process.env.TG_READ_ONLY) {
+          throw humanRequired(argv);
+        }
+        if (options.expect !== undefined && !name) {
+          throw usageError(
+            "--expect pins one plugin's revision: name the plugin"
+          );
+        }
+        if (name) {
+          const prepared = await prepareUpdate(
+            name,
+            options.expect,
+            manageOpts()
+          );
+          if (prepared.op === "up-to-date") {
+            const r = {
+              ok: true,
+              action: "plugin update",
+              name,
+              upToDate: true,
+              version: prepared.entry.version,
+              revision: prepared.entry.revision,
+            };
+            if (options.json) {
+              console.log(json(r));
+            } else {
+              console.log(
+                `${name} ${prepared.entry.version} is up to date (${revisionLabel(prepared.entry.source, prepared.entry.revision)})`
+              );
+            }
+            return;
+          }
+          const r = await confirmAndApply(prepared);
+          if (options.json) {
+            console.log(json(r));
+          } else {
+            printUpdated(r);
+          }
+          return;
+        }
+        const results: Record<string, unknown>[] = [];
+        for (const n of Object.keys(readLock().plugins).sort()) {
+          try {
+            const prepared = await prepareUpdate(n, undefined, manageOpts());
+            if (prepared.op === "up-to-date") {
+              results.push({
+                name: n,
+                upToDate: true,
+                version: prepared.entry.version,
+                revision: prepared.entry.revision,
+              });
+              if (!options.json) {
+                console.log(`${n} ${prepared.entry.version} is up to date`);
+              }
+              continue;
+            }
+            const r = await confirmAndApply(prepared);
+            results.push(r);
+            if (!options.json) {
+              printUpdated(r);
+            }
+          } catch (error) {
+            if (error instanceof ExitSignal) {
+              throw error;
+            }
+            const d = errorDetails(error);
+            results.push({
+              name: n,
+              error: {
+                code: d.code,
+                message: d.message,
+                ...(d.hint ? { hint: d.hint } : {}),
+              },
+            });
+            if (!options.json) {
+              console.error(
+                chalk.yellow(
+                  `${n}: ${d.message}${d.hint ? `\n  ${d.hint}` : ""}`
+                )
+              );
+            }
+          }
+        }
+        const failed = results.some(
+          (r) =>
+            r.error && (r.error as { code: string }).code !== "not_confirmed"
+        );
+        if (options.json) {
+          console.log(json({ ok: !failed, action: "plugin update", results }));
+        } else if (!results.length) {
+          console.log("No plugins installed");
+        }
+        if (failed) {
+          process.exit(EXIT.ERROR);
+        }
+      } catch (error) {
+        fail(error);
+      }
+    }
+  );
+
+function printUpdated(r: Record<string, unknown>): void {
+  const from = r.from as { version: string };
+  console.log(
+    chalk.green(`✓ Updated ${r.name} ${from.version} -> ${r.version}`)
+  );
+  for (const argv of (r.mustSetAgain as string[][] | undefined) ?? []) {
+    console.log(`Set again: telegram ${argv.join(" ")}`);
+  }
+}
 
 const listCommand = new Command("list")
   .description(
@@ -453,10 +506,7 @@ const showCommand = new Command("show")
   );
 
 function showOverview(entry: LockEntry, m: Manifest, asJson: boolean): void {
-  const states = secretStates(
-    entry.installId,
-    (m.secrets ?? []).map((x) => x.name)
-  );
+  const states = secretStates(entry.installId, m.secrets ?? []);
   const stored = settingsRead(entry);
   const secrets = (m.secrets ?? []).map((x) => ({
     name: x.name,
@@ -797,7 +847,9 @@ function assertExpectedInstall(entry: LockEntry): void {
   if (expected === undefined && !overMcp) {
     return;
   }
-  if (expected !== `${entry.installId} ${entry.revision}`) {
+  if (
+    expected !== `${entry.installId} ${entry.revision} ${snapshotId(entry)}`
+  ) {
     throw new CliError(
       `Plugin "${entry.name}" changed after this call was checked (installation ${entry.installId}); nothing was run`,
       "plugin_changed",
@@ -917,7 +969,11 @@ const runCommand = runOptions(
               network: {
                 backend: runBackend(),
                 secret: (secret: string, signal: AbortSignal) =>
-                  getPluginSecretAsync(installed.installId, secret, signal),
+                  getPluginSecretAsync(
+                    installed.installId,
+                    slotIn(m, secret),
+                    signal
+                  ),
                 setCommand: (secret: string) => [
                   "plugin",
                   "secret",
@@ -1215,40 +1271,6 @@ function declaredSecret(m: Manifest, secret: string) {
   return d;
 }
 
-function cleanupPendingSecrets(
-  only?: (p: { name: string; installId: string }) => boolean
-): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  const installed = new Set(
-    Object.values(readLock().plugins).map((e) => e.installId)
-  );
-  for (const p of pendingSecrets()) {
-    if (only && !only(p)) {
-      continue;
-    }
-    if (installed.has(p.installId)) {
-      settlePendingSecrets(p.installId, []);
-      continue;
-    }
-    const left: string[] = [];
-    for (const secret of p.secrets) {
-      try {
-        if (
-          getPluginSecret(p.installId, secret) !== null &&
-          !deletePluginSecret(p.installId, secret)
-        ) {
-          left.push(secret);
-        }
-      } catch {
-        left.push(secret);
-      }
-    }
-    settlePendingSecrets(p.installId, left);
-    out.set(p.installId, left);
-  }
-  return out;
-}
-
 function retryPendingSecrets(): void {
   try {
     if (pendingSecrets().length) {
@@ -1294,7 +1316,7 @@ const secretSetCommand = new Command("set")
         `Value for ${d.name} (input hidden): `
       );
       withCurrentInstall(entry, "the secret was not stored", () =>
-        setPluginSecret(entry.installId, d.name, value)
+        setPluginSecret(entry.installId, slotOf(d), value)
       );
       auditLog({
         timestamp: new Date().toISOString(),
@@ -1347,8 +1369,10 @@ const secretRmCommand = new Command("rm")
         );
       }
       if (!own(readLock().plugins, name)) {
+        const named = (p: { secrets: string[] }) =>
+          p.secrets.some((t) => parseSlotText(t)?.name === secret);
         const orphans = pendingSecrets().filter(
-          (p) => p.name === name && p.secrets.includes(secret)
+          (p) => p.name === name && named(p)
         );
         if (!orphans.length) {
           findEntry(name);
@@ -1382,8 +1406,8 @@ const secretRmCommand = new Command("rm")
       }
       const { entry, manifest: m } = loadPlugin(name, cliVersion());
       const d = declaredSecret(m, secret);
-      const existed = getPluginSecret(entry.installId, d.name) !== null;
-      if (existed && !deletePluginSecret(entry.installId, d.name)) {
+      const existed = getPluginSecret(entry.installId, slotOf(d)) !== null;
+      if (existed && !erasePluginSecret(entry.installId, slotOf(d))) {
         throw new CliError(
           `Could not delete the secret ${d.name} from the secret store`,
           "secret_store_unavailable",
@@ -1443,56 +1467,37 @@ const removeCommand = new Command("remove")
     "--keep-data",
     "Keep its saved data (a new install of the same name does not see it: it is a new installation)"
   )
+  .addOption(
+    new Option(
+      "--expect-install <installId:snapshot>",
+      "Remove only this installation and snapshot"
+    ).hideHelp()
+  )
   .option("--json", "Output as JSON")
   .action(
-    async (name: string, options: { keepData?: boolean; json?: boolean }) => {
+    async (
+      name: string,
+      options: { keepData?: boolean; expectInstall?: string; json?: boolean }
+    ) => {
       const argv = [
         "plugin",
         "remove",
         name,
         ...(options.keepData ? ["--keep-data"] : []),
+        ...(options.expectInstall
+          ? ["--expect-install", options.expectInstall]
+          : []),
       ];
       try {
         if (process.env.TG_MCP || process.env.TG_READ_ONLY) {
           throw humanRequired(argv);
         }
-        const entry = findEntry(name);
-        const question = removeQuestion(entry, !!options.keepData);
-        if (!(await humanConfirms(question, argv, pluginDeps.confirm))) {
-          throw new CliError(
-            "Not confirmed by the user. Nothing was removed.",
-            "not_confirmed",
-            EXIT.ERROR
-          );
-        }
-        removeInstall(entry, !!options.keepData);
-        const secretsLeft =
-          cleanupPendingSecrets((p) => p.installId === entry.installId).get(
-            entry.installId
-          ) ?? [];
-        auditLog({
-          timestamp: new Date().toISOString(),
-          command: "plugin remove",
-          target: name,
-          plugin: {
-            name,
-            version: entry.version,
-            revision: entry.revision,
-            installId: entry.installId,
-            keepData: !!options.keepData,
-          },
-          result: { success: true },
-        });
+        const r = await confirmAndApply(
+          prepareRemove(name, !!options.keepData, options.expectInstall)
+        );
+        const secretsLeft = (r.secretsNotRemoved as string[] | undefined) ?? [];
         if (options.json) {
-          console.log(
-            json({
-              ok: true,
-              action: "plugin remove",
-              name,
-              keepData: !!options.keepData,
-              ...(secretsLeft.length ? { secretsNotRemoved: secretsLeft } : {}),
-            })
-          );
+          console.log(json(r));
         } else {
           console.log(
             chalk.green(
@@ -1553,7 +1558,7 @@ const validateCommand = new Command("validate")
 
 export const pluginCommand = new Command("plugin")
   .description(
-    "Plugins: instructions and resources that extend the agent (install and remove are the user's)"
+    "Plugins: instructions and resources that extend the agent (install, update and remove are the user's)"
   )
   .hook("preAction", retryPendingSecrets)
   .addCommand(listCommand)
@@ -1563,6 +1568,7 @@ export const pluginCommand = new Command("plugin")
   .addCommand(secretCommand)
   .addCommand(runCommand)
   .addCommand(installCommand)
+  .addCommand(updateCommand)
   .addCommand(removeCommand)
   .addCommand(validateCommand)
   .addCommand(devCommand);

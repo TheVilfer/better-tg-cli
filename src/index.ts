@@ -7,6 +7,7 @@ import type { CommanderError } from "commander";
 import { Command } from "commander";
 
 import { trackActiveCommand } from "./approval-action.js";
+import { commandPath } from "./args.js";
 import { generatedSummaryLines } from "./commands/generated.js";
 import {
   authCommand,
@@ -388,15 +389,19 @@ const NOT_IN_MOCK = new Set([
   "update",
 ]);
 program.hook("preAction", (_program, command) => {
-  if (isMock() && NOT_IN_MOCK.has(command.name())) {
+  if (!isMock()) {
+    return;
+  }
+  const path = commandPath(command);
+  if (NOT_IN_MOCK.has(path)) {
     fail(
       new CliError(
-        `"${command.name()}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval`,
+        `"${path}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval`,
         "not_in_mock",
         EXIT.USAGE,
         {
           hint: "Unset TG_MOCK to use a real account.",
-          text: `"${command.name()}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval. Unset TG_MOCK to use a real account.`,
+          text: `"${path}" does nothing in mock mode (TG_MOCK is set): the fake account needs no login and its writes need no approval. Unset TG_MOCK to use a real account.`,
         }
       )
     );

@@ -6,6 +6,9 @@ import { configDir, configFile } from "./paths.js";
  * - `writeMode`: Set by the write guard: the profile's mode and, in "ask" mode, how this write was approved
  * - `unprotected`: No secret store: the mode lives in a plain file the agent could edit (src/write-store.ts)
  * - `plugin`: Plugin management, `plugin data` and `plugin run` (src/commands/plugin.ts): names, revision, sizes, API names and proposal types only, never a value, an input, a result, a body or a secret.
+ * - `result.reason`: a plugin change the human confirmed that did not happen: why, in one line (never a secret).
+ * - `plugin.fromVersion`, `fromRevision`, `newlyAccepted`, `secretsReset`: `plugin update`: the revision it left, what the human accepted anew, the secret names it deleted (never a value).
+ * - `plugin.via`: how the human was asked: a terminal or system dialog, or the MCP client's dialog.
  */
 export interface AuditEntry {
   timestamp: string;
@@ -19,6 +22,7 @@ export interface AuditEntry {
     success: boolean;
     messageId?: number;
     error?: string;
+    reason?: string;
   };
   writeMode?: "ask" | "on";
   approvedVia?: "chat" | "elicitation";
@@ -36,6 +40,16 @@ export interface AuditEntry {
     apis?: string[];
     proposals?: string[];
     network?: { requests: number; origins: string[] };
+    fromVersion?: string;
+    fromRevision?: string;
+    newlyAccepted?: {
+      permissions: string[];
+      effects: string[];
+      network: string[];
+      secrets: string[];
+    };
+    secretsReset?: string[];
+    via?: "terminal" | "mcp";
   };
 }
 

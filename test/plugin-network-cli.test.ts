@@ -39,6 +39,7 @@ import {
   setKnownCommands,
 } from "../src/mcp.js";
 import type { RunOutput } from "../src/mcp.js";
+import { secretGeneration } from "../src/plugins/secret-slots.js";
 
 const LAB = resolve("test/fixtures/plugins/net-lab");
 
@@ -136,7 +137,11 @@ function mockSecret(
 ) {
   const file = join(plugins(home), "plugin-secrets.json");
   const all = existsSync(file) ? JSON.parse(readFileSync(file, "utf-8")) : {};
-  all[`plugin-secret-mock-${installId}-${name}`] = value;
+  const decl = JSON.parse(
+    readFileSync(join(LAB, "tg-plugin.json"), "utf-8")
+  ).secrets.find((d: { name: string }) => d.name === name);
+  all[`plugin-secret-mock-${installId}-${name}-g${secretGeneration(decl)}`] =
+    value;
   writeFileSync(file, JSON.stringify(all), { mode: 0o600 });
 }
 const profileDir = (home: string, name: string) =>
@@ -328,7 +333,7 @@ describe(
       const r = fetch(h, "https://api.example.com/v2/open", {
         TG_READ_ONLY: "1",
         TG_MCP: "1",
-        TG_PLUGIN_EXPECT: `${installId} ${revision}`,
+        TG_PLUGIN_EXPECT: `${installId} ${revision} ${installId}`,
       });
       expect(r.code).toBe(1);
       expect(r.json.error.code).toBe("write_on_read_tool");

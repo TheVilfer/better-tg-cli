@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 
 import { CliError, EXIT } from "../errors.js";
+import type { StrictRead } from "../keychain.js";
 import { isMock, profile } from "../paths.js";
 import {
   isSecretStoreAvailable,
@@ -12,10 +13,15 @@ import {
 import { secretStoreHint } from "../write-store.js";
 import { KEY_RE } from "./manifest.js";
 import { anchor, readRegular, writeRegular } from "./safe-fs.js";
+import { GEN_RE, slotOf } from "./secret-slots.js";
+import type { SecretDecl, SecretSlot } from "./secret-slots.js";
 import { pluginHome, withPluginLock } from "./store.js";
 
+export * from "./secret-slots.js";
+
 /**
- * - `get`: The value, or null when none is set. Throws when the store cannot be read.
+ * - `get`: The value, or null when none is set. Throws when the store cannot be read. Never a copy
+ *   this process cached: what it decides (delete it, say it is set) may have changed in another process.
  * - `getAsync`: get without blocking the event loop, stopped when `signal` aborts (a request's deadline).
  */
 export interface PluginSecretStore {
@@ -48,8 +54,14 @@ export function secretValueProblem(value: string): string | undefined {
   return undefined;
 }
 
-/** The store key of a plugin secret, built by the core only: profile, installation ID, secret name. */
-export function pluginSecretKey(installId: string, name: string): string {
+/**
+ * The store key of a plugin secret, built by the core only: profile, installation ID, secret name
+ * and generation (a slot without one is the key an install before generations used).
+ */
+export function pluginSecretKey(
+  installId: string,
+  slot: SecretSlot | { name: string; gen?: string }
+): string {
   if (!UUID_RE.test(installId) && installId !== "plugin-dev") {
     throw new CliError(
       "Invalid installation ID",
@@ -57,14 +69,21 @@ export function pluginSecretKey(installId: string, name: string): string {
       EXIT.ERROR
     );
   }
-  if (!KEY_RE.test(name)) {
+  if (!KEY_RE.test(slot.name)) {
     throw new CliError(
-      `Invalid secret name "${name}"`,
+      `Invalid secret name "${slot.name}"`,
       "invalid_argument",
       EXIT.USAGE
     );
   }
-  return `plugin-secret-${profile() ?? "default"}-${installId}-${name}`;
+  if (slot.gen !== undefined && !GEN_RE.test(slot.gen)) {
+    throw new CliError(
+      "Invalid secret generation",
+      "plugin_lock_invalid",
+      EXIT.ERROR
+    );
+  }
+  return `plugin-secret-${profile() ?? "default"}-${installId}-${slot.name}${slot.gen ? `-g${slot.gen}` : ""}`;
 }
 
 const unavailable = (why: string) =>
@@ -150,41 +169,61 @@ const testRefusal: PluginSecretStore = {
   },
 };
 
-const systemStore: PluginSecretStore = {
-  get: (key) => {
-    if (!isSecretStoreAvailable()) {
-      throw unavailable(
-        "no macOS Keychain, Secret Service, DPAPI or 1Password here"
-      );
-    }
-    const r = secretGetStrict(key);
-    if (!r.ok) {
-      throw unavailable(r.reason);
-    }
-    return r.value;
-  },
-  getAsync: async (key, signal) => {
-    if (!isSecretStoreAvailable()) {
-      throw unavailable(
-        "no macOS Keychain, Secret Service, DPAPI or 1Password here"
-      );
-    }
-    const r = await secretGetStrictAsync(key, signal);
-    if (!r.ok) {
-      throw unavailable(r.reason);
-    }
-    return r.value;
-  },
-  set: (key, value) => {
-    if (!isSecretStoreAvailable()) {
-      throw unavailable(
-        "no macOS Keychain, Secret Service, DPAPI or 1Password here"
-      );
-    }
-    return secretSet(key, value);
-  },
-  delete: (key) => (isSecretStoreAvailable() ? secretDelete(key) : false),
-};
+/** What the profile's secret store offers this module (src/secrets.ts; a test passes the DPAPI functions over a fake crypter). */
+export interface SecretBackend {
+  available(): boolean;
+  getStrict(key: string, fresh: boolean): StrictRead;
+  getStrictAsync(key: string, signal: AbortSignal): Promise<StrictRead>;
+  set(key: string, value: string): boolean;
+  delete(key: string): boolean;
+}
+
+/**
+ * A PluginSecretStore over a backend. `get` reads afresh (never DPAPI's per-process copy): the MCP
+ * server is long-lived, and a value another process set or deleted since must count. A request's
+ * read (`getAsync`) runs in a fresh `plugin run` process and may use its copy.
+ */
+export function backendStore(b: SecretBackend): PluginSecretStore {
+  const none = () =>
+    unavailable("no macOS Keychain, Secret Service, DPAPI or 1Password here");
+  return {
+    get: (key) => {
+      if (!b.available()) {
+        throw none();
+      }
+      const r = b.getStrict(key, true);
+      if (!r.ok) {
+        throw unavailable(r.reason);
+      }
+      return r.value;
+    },
+    getAsync: async (key, signal) => {
+      if (!b.available()) {
+        throw none();
+      }
+      const r = await b.getStrictAsync(key, signal);
+      if (!r.ok) {
+        throw unavailable(r.reason);
+      }
+      return r.value;
+    },
+    set: (key, value) => {
+      if (!b.available()) {
+        throw none();
+      }
+      return b.set(key, value);
+    },
+    delete: (key) => (b.available() ? b.delete(key) : false),
+  };
+}
+
+const systemStore = backendStore({
+  available: () => isSecretStoreAvailable(),
+  getStrict: (key, fresh) => secretGetStrict(key, false, fresh),
+  getStrictAsync: (key, signal) => secretGetStrictAsync(key, signal),
+  set: (key, value) => secretSet(key, value),
+  delete: (key) => secretDelete(key),
+});
 
 export function pluginSecretStore(): PluginSecretStore {
   if (pluginSecretDeps.store) {
@@ -199,56 +238,75 @@ export function pluginSecretStore(): PluginSecretStore {
   return systemStore;
 }
 
-/** The value of a declared secret of an installation, or null when the human has not set it. */
+/** The value of a declared secret of an installation at one generation, or null when the human has not set it. */
 export function getPluginSecret(
   installId: string,
-  name: string
+  slot: SecretSlot | { name: string; gen?: string }
 ): string | null {
-  return pluginSecretStore().get(pluginSecretKey(installId, name));
+  return pluginSecretStore().get(pluginSecretKey(installId, slot));
 }
 
 /** getPluginSecret for a request: asynchronous where the store can be, stopped when `signal` aborts. */
 export async function getPluginSecretAsync(
   installId: string,
-  name: string,
+  slot: SecretSlot,
   signal: AbortSignal
 ): Promise<string | null> {
-  const key = pluginSecretKey(installId, name);
+  const key = pluginSecretKey(installId, slot);
   const store = pluginSecretStore();
   return store.getAsync ? store.getAsync(key, signal) : store.get(key);
 }
 
 export function setPluginSecret(
   installId: string,
-  name: string,
+  slot: SecretSlot,
   value: string
 ): void {
   const problem = secretValueProblem(value);
   if (problem) {
     throw new CliError(`The secret ${problem}`, "invalid_argument", EXIT.USAGE);
   }
-  const key = pluginSecretKey(installId, name);
+  const key = pluginSecretKey(installId, slot);
   const store = pluginSecretStore();
   if (!store.set(key, value) || store.get(key) !== value) {
     throw unavailable("it did not save the secret");
   }
 }
 
-export function deletePluginSecret(installId: string, name: string): boolean {
-  return pluginSecretStore().delete(pluginSecretKey(installId, name));
+export function deletePluginSecret(
+  installId: string,
+  slot: SecretSlot | { name: string; gen?: string }
+): boolean {
+  return pluginSecretStore().delete(pluginSecretKey(installId, slot));
 }
 
-/** Which declared secrets hold a value (never the values). A store that cannot be read gives `unknown`. */
+/** Gone from the store: not there (a fresh read), or deleted now. False when it is still there or the store failed. */
+export function erasePluginSecret(
+  installId: string,
+  slot: SecretSlot | { name: string; gen?: string }
+): boolean {
+  try {
+    return (
+      getPluginSecret(installId, slot) === null ||
+      deletePluginSecret(installId, slot)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Which declared secrets hold a value at their current generation (never the values). A store that cannot be read gives `unknown`. */
 export function secretStates(
   installId: string,
-  names: string[]
+  decls: readonly SecretDecl[]
 ): Record<string, "set" | "not set" | "unknown"> {
   const out: Record<string, "set" | "not set" | "unknown"> = {};
-  for (const n of names) {
+  for (const d of decls) {
     try {
-      out[n] = getPluginSecret(installId, n) === null ? "not set" : "set";
+      out[d.name] =
+        getPluginSecret(installId, slotOf(d)) === null ? "not set" : "set";
     } catch {
-      out[n] = "unknown";
+      out[d.name] = "unknown";
     }
   }
   return out;

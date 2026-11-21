@@ -254,11 +254,17 @@ file says why.
   in full even into a new file; appending happens only to a file whose header names this chat.
   Messages are ordered by ID, never by date: two in the same second must not swap, and IDs in a
   chat only grow. One failed chat never turns a partial export into a success.
-- **`plugin`.** Installs are refused over MCP before anything is fetched, and never unsigned
-  (without the secret store the human is not even asked). A run reads the verified snapshot once
-  and runs those bytes whatever happens to the folder. Over MCP only the installation the call
-  was classified and approved by may run (`TG_PLUGIN_EXPECT`): another one installed meanwhile
-  under the same name is refused. Network use is a write through the guard in every transport
+- **`plugin`.** `plugin install|update|remove` under `TG_MCP` or `TG_READ_ONLY` is refused
+  before anything is fetched: the MCP server handles those calls itself with its own dialog (see
+  "Plugin management" below). Installs are never unsigned (without the secret store the human is
+  not even asked). `plugin update` without a name asks one question per installed plugin; one that
+  fails or is declined does not stop the rest. A run reads the verified snapshot once and runs
+  those bytes whatever happens to the folder. Over MCP only the installation the call was
+  classified and approved by may run (`TG_PLUGIN_EXPECT` = installId, revision and snapshot
+  folder: an update back to an earlier revision is another snapshot): another one installed or
+  updated meanwhile under the same name is refused, since its command may have other effects than
+  the ones the call was routed and approved for. A run reads its secrets under the generations of
+  its own manifest, so a value set for another inject rule (an update meanwhile) is never read. Network use is a write through the guard in every transport
   (read-only refuses, "ask" binds the approval to installation, command, input and origins); one
   guard call, so an approval code is used once. A plugin call never sleeps through a
   `FLOOD_WAIT`: it gets the error with its cursor. Connecting and `getMe` count against the run's
@@ -268,8 +274,11 @@ file says why.
   `plugin dev` uses the built-in mock account in memory and HTTP from `dev/fixtures/*.json`, with
   fake secret placeholders. Secrets are the human's: over MCP or without a terminal the agent
   gets the command for the human's terminal; a value is stored only for the installation still
-  registered after the prompt. `plugin remove` records the secrets of the installation before it
-  deletes them, so a failed delete is retried silently before the next plugin command.
+  registered after the prompt, under the generation of the inject rule the prompt showed (an
+  update meanwhile is `plugin_changed`). `plugin remove` records the secrets of the installation
+  before it deletes them, so a failed delete is retried silently before the next plugin command.
+  `plugin remove --expect-install <installId>:<snapshot>` (hidden; set in the command made for the
+  human when the MCP client has no dialog) removes only that installation and snapshot.
 - **`update`:** a git checkout may carry unreleased commits, so it is pulled even without a newer
   release; an installed binary is never to be replaced by hand, because `install.json` would no
   longer match it.
@@ -315,8 +324,15 @@ file says why.
 - **Windows DPAPI** (`src/dpapi.ts`): one file `secrets.dpapi`, encrypted for the current user
   through the built-in PowerShell 5.1 with extra entropy (a blob another program made for this
   user does not decrypt as ours). Stdin carries base64 only, because PowerShell 5.1 reads stdin in
-  the OEM code page. The file is decrypted once per process; a change decrypts it again right
-  before writing, so a key another process changed is not written back stale. A parse failure
+  the OEM code page. The file is decrypted once per process and cached for reads; a read that
+  decides something another process may have changed meanwhile (a plugin secret before it is
+  deleted or reported as set, the plugin registry key before one is made) asks for a fresh copy.
+  Every change (set, delete), whoever makes it (the session, write access, plugin secrets), holds
+  `secrets.dpapi.lock` (`src/file-lock.ts`) across its whole read-modify-replace and decrypts the
+  file again under it, so two processes never write back each other's old copy (`write-access
+  off` in one terminal is not undone by a plugin update in another). Lock order: the plugin lock,
+  then the DPAPI lock. The wait is synchronous, up to 20 s, then "busy"; a lock of a dead process
+  on the same host is taken over at once, any lock after 2 minutes. A parse failure
   has a fixed message, because a `JSON.parse` message would quote the decrypted secrets.
 - **Dialog list on disk** (`src/dialog-cache.ts`) is written field by field so nothing else of a
   dialog reaches the file, and holds the whole list (not cut at a read limit), so a title found
@@ -339,10 +355,9 @@ file says why.
   input, result, URL, header, body or secret.
 - A failed secret read throws rather than falling back to the file copy, because that copy may
   belong to another account.
-- DPAPI through PowerShell is slow to start (about 0.3-0.6 s), hence the per-process cache. A
-  change replaces the file atomically (temp file in the same folder, then rename). There is no
-  cross-process lock: two changes that interleave between read and rename lose one (last rename
-  wins), but a value is never brought back from an old cache.
+- DPAPI through PowerShell is slow to start (about 0.3-0.6 s), hence the per-process cache; fresh
+  reads are synchronous spawns, used only on the deciding paths above. A change replaces the file
+  atomically (temp file in the same folder, then rename) under the lock file.
 - The approval signing key in the secret store raises the bar; it is not a wall (an agent with a
   shell that can read the store could still sign). Without a store the key sits in the profile,
   unprotected. The account fingerprint is taken from the session read when the action was shown
@@ -393,7 +408,9 @@ file says why.
   process) commander would read it Electron-style and take the script path for a command.
 - commander's own errors exit 2 (usage) instead of 1; a group run without its subcommand prints
   help to stderr and is a usage error. Mock mode refuses the commands that would create, drop or
-  unlock a session or touch the secret store.
+  unlock a session or touch the secret store (otherwise they would prompt or reach the store).
+  That list holds full command paths, so `plugin update` is not the self-update `update` (nor
+  `auth` a generated `auth …` method).
 - An MCP call in a worker thread: its piped stdin keeps the thread alive, so it is ended when the
   command is done, and fd 0 there is the server's MCP channel, so the worker's own stdin stream
   is read into the shared cache first.
@@ -424,6 +441,11 @@ file says why.
   Approval codes, describe runs and plugin expectations come from this call's plan only, never
   from an environment the server inherited. `elicitation: {}` (2025-06-18) means form; 2025-11-25
   may list modes. A cancelled call closes its dialog at once and a late answer is ignored.
+  Requests the server sends (elicitation) wait in a map of their own, and an answer is handled
+  at once, outside the call queue, since the call that asked is still in it. Dialog ids carry a
+  random prefix per server instance, so an answer delivered late after a restart (the counter
+  began again) never matches; only a well-formed response with exactly that string id settles a
+  dialog (see `createElicitor`), and a stray `tg-elicit-` response is swallowed, never a request.
 - **Output.** Everything the model gets is masked, then capped: gift links always, and login
   codes after a "code:" label in what echoes the model's own call (a send's result, an approval's
   retry). A read shows chat content with gift links masked only. stderr diagnostics (such as the
@@ -452,8 +474,15 @@ file says why.
   a search for that text.
 - `plugin run` is classified as a read when the installed manifest gives the command no effects,
   a local write otherwise; that is only a route, the run itself loads the verified snapshot again.
-  `plugin install` arguments pass only in the exact form the CLI parses (one source, an optional
-  `--expect sha256-…` that keeps the content the model validated pinned).
+  `plugin install|update|remove` are not CLI runs: the server's own handler (`handleManage`) asks
+  the human, and `approval` is never read for them. Their arguments pass only in the exact form
+  the CLI parses (`manageRequest`): operands plus each command's own options (`--expect v`,
+  `--expect=v`, `--keep-data`, `--json`, `--`, and the remove command's `--expect-install`, which
+  only narrows what is removed). Anything else (an unknown option, a malformed revision, a second
+  operand, a source that does not parse) is no request at all, so nothing the model added is ever
+  echoed into a command. A GitHub source may pin only a commit, a folder only its content hash,
+  and a folder path must stay plain text. A `plugin run` carries the installation it was
+  classified by down to the child (`TG_PLUGIN_EXPECT`).
 - Gift links: the host is `t.me`, `telegram.me` or `telegram.dog` (optionally `www.`) as a whole
   name, so `support.me` or `shop.t.me` is not one; the slug ends at the first non-slug character
   (percent-encoding counts), so trailing punctuation stays.
@@ -537,6 +566,13 @@ file says why.
   sizes come from the trees first so nothing large is downloaded; an official owner's repository
   serves commits of every fork in its network, so a source is official only when the commit is on
   one of the owner's own branches or tags (annotated tags peeled) or in its default branch.
+  A local path is refused on every platform when any part is a network or namespace path
+  (`\\server\share`, `//server/share`, mixed slashes, `\\?\`, `//?/`, `\\.\`, `\??\`) or a
+  Windows device name (CON, NUL, COM1, … with an extension or trailing dots or spaces), so a
+  folder named `aux` is refused on macOS and Linux too. The check runs in `parseSource` and again
+  first in `readLocalSnapshot` (an update's recorded path), before any file system call. One
+  GitHub request's signal combines its own 30 s timeout with the caller's cancellation by hand,
+  since Node 20.0 has no `AbortSignal.any`.
 - **Registry and data** (`store.ts`): the registry is MAC-signed with a key from the secret store
   over sorted-key JSON (the form a reader parses back); reads never create the key, so a registry
   without its key is refused instead of signed anew, and an empty registry is read without the
@@ -547,7 +583,11 @@ file says why.
   A run's storage write waits for the lock yielding to the event loop, and the deadline and
   cancellation are checked once more under the lock right before the file changes. Cursor state
   files are named by a hex hash, so ids that differ only in case never meet. Removal checks under
-  the lock that it is still the installation the human confirmed.
+  the lock that it is still the installation (and snapshot) the human confirmed. The lock file
+  code is `src/file-lock.ts`, shared with the DPAPI store. Before the registry key is made the
+  store is read afresh (a key another process made since this one cached "none" is used), and a
+  key is never made while a registry with plugins exists (or one that does not parse): it was
+  signed with a key this process cannot see, and a new key would drop every installation in it.
 - **Semver:** a prerelease matches only a range that names a prerelease of the same version;
   `1.x.3` is not a range.
 - **Every run** gets a WASM module, runtime and context of its own, all dropped afterwards: nothing
@@ -569,11 +609,67 @@ file says why.
   accident), then the network.
 - **Secrets** come from, in order: a store a test injected, a 0600 file of fake values under
   `TG_MOCK`, nothing under Vitest (no test can reach the Keychain, Secret Service, DPAPI or
-  1Password), then the profile's secret store.
+  1Password), then the profile's secret store. The store key is
+  `plugin-secret-<profile>-<installId>-<name>-g<generation>`; the generation is 16 hex of the
+  SHA-256 of the secret's inject rule (origin, paths, header, format), so a value is stored for one
+  rule only. An update that keeps the rule keeps the generation and the value carries over; one
+  that changes it moves the secret to a new, empty generation (the human types it again), and a
+  run still on the old revision reads only the old generation. So a value typed for one
+  destination is never sent to another, whatever runs at the same time. The registry entry pins
+  `secrets: {name: generation}`; an entry without it derives them from its verified manifest.
+  The secret store adapter reads `get` afresh (the MCP server is long-lived, and a value another
+  process set or deleted since must count); a request's read runs in a fresh `plugin run` process
+  and may use its copy.
 - **Proposals** run through the normal write path (guard, approval, mode) as the argv the host
   built.
 - A folder file is read from a descriptor checked to be the file the walk saw, so a folder swapped
   meanwhile is caught.
+- **Plugin management** (`manage.ts`, docs/plugins.md §8-9): install, update and remove are split in
+  two so the terminal and the MCP server run the same steps around their own way of asking.
+  `prepare` fetches and checks the snapshot and computes what the human reads plus a digest
+  (sha256 over that text and the state it was prepared against): no lock, nothing written.
+  `apply`, after the human's yes, writes exactly that snapshot under the lock and refuses when the
+  registry, the folder or the prepared bytes changed meanwhile; a change the human approved that
+  did not happen is audited with `success: false` and a one-line reason. Nothing there prints or
+  exits, because the MCP server runs it in-process, where stdout is the protocol. Tests never reach
+  GitHub: a test that forgot to inject its fetch fails at the guard instead.
+- **Update** judges what changed against the installed manifest, so that manifest must still be
+  the accepted one. A folder is read without `--expect` first: an unchanged folder is simply up to
+  date. A ref recorded at install is followed again (the SHA is not baked into the source).
+  `commitUpdate` writes the new snapshot beside the old one (`plugins/<new folder>/`, the installId
+  stays, so data, settings and secrets whose rule did not change stay attached), then clears the
+  new generations of changed secrets (an update back to an earlier rule could otherwise find an old
+  value there; a generation that cannot be cleared stops the update before the switch), then
+  records the old generations to drop in `pending-secret-cleanup.json`, and the signed registry
+  write is the one commit point. A failure or crash before it leaves the old snapshot registered
+  and working with all its secrets; a new folder left behind is never read. Nothing live is
+  deleted before the switch: `cleanupPendingSecrets` deletes the retired values afterwards under
+  the plugin lock, never a slot a registered entry reads (an installed entry whose slots cannot be
+  told keeps all of them), and what the store fails to delete is retried by the next plugin
+  command. Records are `name:gen` (a bare name: the key of an install made before generations, also
+  deleted on update and remove) and merge per installId, so an update and then a remove both keep
+  theirs.
+- **Snapshot binding:** "the same installation" means installId, revision and snapshot folder
+  (`sameInstall`), so an update back to an earlier revision (A → B → A) is another installation for
+  everything shown or approved before it: the remove dialog, a run approval hash (`snapshotId` is
+  in the hash of `plugin data set/delete`, `plugin settings set` and `plugin run`) and the
+  server's run expectation.
+- **Over MCP** a folder the model named is read before any human saw anything, so whatever goes
+  wrong with it gives one answer (a call cannot probe which paths exist or what is in them).
+  `update` without a name prepares every plugin. A cancelled call fetches no further plugin (the
+  one in flight is stopped through the signal) and changes nothing while its dialog is open; no
+  response is sent. Without a dialog the agent gets the exact command for the human's own
+  terminal, pinned to the revision prepared (`--expect`, `--expect-install` for remove).
+- **The command for the human's terminal** (`terminalCommand`) is built from argv like every
+  command for the human: the binary (`telegram` when it is on PATH and executable, on Windows by
+  PATHEXT, else the pinned `npx better-tg-cli@<version>`), the profile and the mock state set
+  explicitly (`TG_PROFILE`, `TG_MOCK`, empty when unset, so the terminal's own values never win),
+  and the platform's quoting. POSIX uses prefix assignments; PowerShell saves the variables, sets
+  them in `try` and restores them in `finally`. PowerShell takes the typographic quotes ‘ ’ ‚ ‛ as
+  single quotes, so they are doubled too. Only printable ASCII is quoted into a command: anything
+  else (a line break, a look-alike quote, a control or bidi character in a folder name) gives no
+  command, and the human types it. On Windows `telegram` or `npx` may be a `.cmd` shim that cmd.exe
+  parses again, so `" % ^ & | < > !` in an argument gives no command either.
 
 ## Transport, setup and updates
 
