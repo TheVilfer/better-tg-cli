@@ -1,9 +1,20 @@
-import { qrLoginDriver, saveLogin } from './auth.js';
-import { fetchInviteCredentials } from './broker.js';
-import { disconnectClient, getClient, isAuthError, SESSION_EXPIRED } from './client.js';
-import { freshSessionString, getSessionString, isConfigured, loadConfig } from './config.js';
-import { ONBOARD_SITE, startOnboarding, type ModeChoice, type OnboardEvent, type OnboardSession } from './onboard.js';
-import { applyModeChoice, savedMode } from './write-mode.js';
+import { qrLoginDriver, saveLogin } from "./auth.js";
+import { fetchInviteCredentials } from "./broker.js";
+import {
+  disconnectClient,
+  getClient,
+  isAuthError,
+  SESSION_EXPIRED,
+} from "./client.js";
+import {
+  freshSessionString,
+  getSessionString,
+  isConfigured,
+  loadConfig,
+} from "./config.js";
+import { ONBOARD_SITE, startOnboarding } from "./onboard.js";
+import type { ModeChoice, OnboardEvent, OnboardSession } from "./onboard.js";
+import { applyModeChoice, savedMode } from "./write-mode.js";
 
 /**
  * Whether the profile has a login Telegram still accepts. `none`: nothing stored. `expired`: a
@@ -11,7 +22,7 @@ import { applyModeChoice, savedMode } from './write-mode.js';
  * deleted account), so a new login replaces it. Anything else that fails (no network, a store that
  * can't be read) throws: that is not a reason to log in again.
  */
-export async function sessionState(): Promise<'none' | 'alive' | 'expired'> {
+export async function sessionState(): Promise<"none" | "alive" | "expired"> {
   return (await checkStoredSession()).state;
 }
 
@@ -20,18 +31,25 @@ export async function sessionState(): Promise<'none' | 'alive' | 'expired'> {
  * another process while Telegram was being asked is then not taken for the session that was checked.
  * Pass `snapshot` to openSetupPage as `checkedSession`.
  */
-export async function checkStoredSession(): Promise<{ state: 'none' | 'alive' | 'expired'; snapshot: string | undefined }> {
+export async function checkStoredSession(): Promise<{
+  state: "none" | "alive" | "expired";
+  snapshot: string | undefined;
+}> {
   const snapshot = freshSessionString();
-  if (!isConfigured() || !getSessionString()) return { state: 'none', snapshot };
+  if (!isConfigured() || !getSessionString()) {
+    return { state: "none", snapshot };
+  }
   try {
     await getClient();
-    return { state: 'alive', snapshot };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    return { state: "alive", snapshot };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // getClient's answer to an auth error code, or Telegram refusing the stored key while connecting;
     // never a guess from any other failure
-    if (message.startsWith(SESSION_EXPIRED) || isAuthError(e)) return { state: 'expired', snapshot };
-    throw e;
+    if (message.startsWith(SESSION_EXPIRED) || isAuthError(error)) {
+      return { state: "expired", snapshot };
+    }
+    throw error;
   } finally {
     await disconnectClient();
   }
@@ -60,25 +78,47 @@ function profileTestServers(): boolean {
  * checked (`checkedSession`, the snapshot of checkStoredSession, taken before its network check), or else
  * the one found when the page opened, must still be the stored one when the new login is saved.
  */
-export function openSetupPage(options: { emit(e: OnboardEvent): void; modeOnly?: boolean; testDc?: boolean; broker?: string; fromModel?: boolean; readOnly?: boolean; checkedSession?: string }): Promise<OnboardSession> {
-  const notLogin = () => Promise.reject(new Error('not a login'));
+export function openSetupPage(options: {
+  emit(e: OnboardEvent): void;
+  modeOnly?: boolean;
+  testDc?: boolean;
+  broker?: string;
+  fromModel?: boolean;
+  readOnly?: boolean;
+  checkedSession?: string;
+}): Promise<OnboardSession> {
+  const notLogin = () => Promise.reject(new Error("not a login"));
   const testDc = !!options.testDc || profileTestServers();
-  const before = options.modeOnly ? undefined : 'checkedSession' in options ? options.checkedSession : freshSessionString();
+  const before = options.modeOnly
+    ? undefined
+    : "checkedSession" in options
+      ? options.checkedSession
+      : freshSessionString();
   let defaultPending = !options.modeOnly;
   const applyMode = (choice: ModeChoice) => {
     const isDefault = defaultPending;
     defaultPending = false;
-    return applyModeChoice(choice, { fromModel: !!options.fromModel && !isDefault });
+    return applyModeChoice(choice, {
+      fromModel: !!options.fromModel && !isDefault,
+    });
   };
-  const save = (s: string, creds: { apiId: number; apiHash: string }, invite: boolean) => {
+  const save = (
+    s: string,
+    creds: { apiId: number; apiHash: string },
+    invite: boolean
+  ) => {
     if (freshSessionString() !== before) {
-      throw new Error('Another login was saved in this profile while this page was open, so it was not replaced. Close this page; if the account is still not the right one, start the setup again.');
+      throw new Error(
+        "Another login was saved in this profile while this page was open, so it was not replaced. Close this page; if the account is still not the right one, start the setup again."
+      );
     }
     saveLogin(s, creds, invite, testDc);
   };
   return startOnboarding({
     driver: options.modeOnly ? { login: notLogin } : qrLoginDriver(testDc),
-    redeemInvite: options.modeOnly ? notLogin : token => fetchInviteCredentials(token, options.broker),
+    redeemInvite: options.modeOnly
+      ? notLogin
+      : (token) => fetchInviteCredentials(token, options.broker),
     save: options.modeOnly ? () => {} : save,
     emit: options.emit,
     site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
@@ -87,7 +127,7 @@ export function openSetupPage(options: { emit(e: OnboardEvent): void; modeOnly?:
       ? {}
       : options.modeOnly
         ? { modeOnly: true, applyMode }
-        // Writes are possible right away, each one after the user's yes in the chat; the page can change it
-        : { defaultMode: 'ask' as const, applyMode }),
+        : // Writes are possible right away, each one after the user's yes in the chat; the page can change it
+          { defaultMode: "ask" as const, applyMode }),
   });
 }

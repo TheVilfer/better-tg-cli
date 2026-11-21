@@ -1,14 +1,15 @@
-import { Command } from 'commander';
-import { getClient, unmuteChat, disconnectClient } from '../client.js';
-import { assertWriteEnabled } from '../guard.js';
-import ora from '../spinner.js';
-import { formatJson } from '../formatters/json.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-export const unmuteCommand = new Command('unmute')
-  .description('Unmute a chat')
-  .argument('<chat>', 'Chat name, username, or ID')
-  .option('--json', 'Output as JSON')
+import { getClient, unmuteChat, disconnectClient } from "../client.js";
+import { fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import { assertWriteEnabled } from "../guard.js";
+import ora from "../spinner.js";
+
+export const unmuteCommand = new Command("unmute")
+  .description("Unmute a chat")
+  .argument("<chat>", "Chat name, username, or ID")
+  .option("--json", "Output as JSON")
   .action(async (chat, options) => {
     await assertWriteEnabled();
     const spinner = ora(`Unmuting "${chat}"...`).start();
@@ -36,6 +37,6 @@ export const unmuteCommand = new Command('unmute')
 
       await disconnectClient();
     } catch (error) {
-      fail(error, spinner, 'Failed to unmute chat');
+      fail(error, spinner, "Failed to unmute chat");
     }
   });

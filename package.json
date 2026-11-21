@@ -2,35 +2,30 @@
   "name": "better-tg-cli",
   "version": "0.40.0",
   "description": "Telegram CLI and MCP server for AI agents (Claude Code, Codex, Cursor): read, search, send and press bot buttons on your own account, and approve every send.",
-  "mcpName": "io.github.TheVilfer/better-tg-cli",
   "keywords": [
-    "telegram",
-    "telegram-cli",
-    "telegram-client",
-    "mtproto",
+    "agent-skills",
+    "ai-agents",
+    "claude",
+    "claude-code",
     "cli",
-    "terminal",
+    "codex",
+    "cursor",
+    "llm",
     "mcp",
     "mcp-server",
     "model-context-protocol",
-    "ai-agents",
-    "llm",
-    "claude",
-    "claude-code",
-    "cursor",
-    "codex",
-    "agent-skills",
-    "telegram-mcp",
+    "mtproto",
+    "telegram",
     "telegram-bot",
+    "telegram-cli",
+    "telegram-client",
+    "telegram-mcp",
+    "terminal",
     "userbot"
   ],
   "homepage": "https://github.com/TheVilfer/better-tg-cli#readme",
   "bugs": {
     "url": "https://github.com/TheVilfer/better-tg-cli/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/TheVilfer/better-tg-cli.git"
   },
   "license": "MIT",
   "author": {
@@ -43,7 +38,10 @@
       "url": "https://github.com/skillhq/telegram"
     }
   ],
-  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheVilfer/better-tg-cli.git"
+  },
   "bin": {
     "telegram": "dist/telegram.mjs"
   },
@@ -53,9 +51,7 @@
     "LICENSE",
     "README.md"
   ],
-  "engines": {
-    "node": ">=20"
-  },
+  "type": "module",
   "publishConfig": {
     "access": "public",
     "provenance": true
@@ -72,7 +68,10 @@
     "pretest": "node scripts/gen-version.mjs",
     "typecheck": "tsc --noEmit",
     "coverage:api": "node scripts/api-coverage.mjs --check --min 90",
-    "typecheck:watch": "tsc --noEmit --watch --preserveWatchOutput"
+    "typecheck:watch": "tsc --noEmit --watch --preserveWatchOutput",
+    "lint": "oxlint && oxfmt --check",
+    "format": "oxfmt",
+    "fix": "oxlint --fix && oxfmt"
   },
   "devDependencies": {
     "@jitl/quickjs-singlefile-mjs-release-sync": "0.32.0",
@@ -81,12 +80,19 @@
     "@typescript/native": "npm:typescript@^7.0.2",
     "big-integer": "^1.6.52",
     "commander": "^15.0.0",
+    "oxfmt": "0.79.0",
+    "oxlint": "1.94.0",
     "quickjs-emscripten-core": "0.32.0",
     "teleproto": "^1.229.0",
     "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "ultracite": "8.3.1",
     "uqr": "^0.1.3",
     "vitest": "^5.1.1",
     "ws": "^8.22.1"
-  }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "mcpName": "io.github.TheVilfer/better-tg-cli"
 }

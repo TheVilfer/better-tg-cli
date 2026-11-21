@@ -14,7 +14,7 @@
  */
 export type SetupExitCode = 0 | 1 | 2 | 3;
 
-export type Severity = 'error' | 'warning' | 'info';
+export type Severity = "error" | "warning" | "info";
 
 /**
  * A command the agent may run itself. `run` is the argv after the `telegram` binary (never a shell
@@ -23,11 +23,20 @@ export type Severity = 'error' | 'warning' | 'info';
  * agent only a filtered environment. A run fixed the problem only when it exited 0; any other code,
  * 3 (approval needed) included, means it did not.
  */
-export interface RunFix { run: string[]; profile: string | null; expect: { exit: 0 } }
+export interface RunFix {
+  run: string[];
+  profile: string | null;
+  expect: { exit: 0 };
+}
 /** Something only the person can do: a sentence for the agent to pass on, maybe an https page. */
-export interface HumanFix { human: string; url?: string }
+export interface HumanFix {
+  human: string;
+  url?: string;
+}
 /** Nothing can fix it here (platform, policy, offline): the reason, said plainly. */
-export interface UnavailableFix { unavailable: string }
+export interface UnavailableFix {
+  unavailable: string;
+}
 export type Fix = RunFix | HumanFix | UnavailableFix;
 
 export interface Problem {
@@ -57,7 +66,9 @@ export interface SetupResult<D extends object = Record<string, unknown>> {
 }
 
 // Compile-time check (only src/ is type-checked): a plain interface is a valid `D`.
-interface InstallerDataExample { path: string }
+interface InstallerDataExample {
+  path: string;
+}
 type _InterfaceDataCompiles = SetupResult<InstallerDataExample>;
 
 /**
@@ -67,9 +78,12 @@ type _InterfaceDataCompiles = SetupResult<InstallerDataExample>;
  * `done` carries the result.
  */
 export type SetupTerminalEvent =
-  | { schema: 1; event: 'done'; result: SetupResult }
-  | { schema: 1; event: 'error'; message: string }
-  | { schema: 1; event: 'timeout' };
+  | { schema: 1; event: "done"; result: SetupResult }
+  | { schema: 1; event: "error"; message: string }
+  | { schema: 1; event: "timeout" };
 export type SetupEvent<Progress extends string = never> =
   | SetupTerminalEvent
-  | ({ schema: 1; event: Exclude<Progress, SetupTerminalEvent['event']> } & Record<string, unknown>);
+  | ({
+      schema: 1;
+      event: Exclude<Progress, SetupTerminalEvent["event"]>;
+    } & Record<string, unknown>);

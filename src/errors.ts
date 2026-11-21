@@ -1,5 +1,5 @@
-import type { Spinner } from './spinner.js';
-import { loginHint } from './login-hint.js';
+import { loginHint } from "./login-hint.js";
+import type { Spinner } from "./spinner.js";
 
 /**
  * Exit codes of every command (the setup contract, docs/setup-contract.md, keeps its own table
@@ -21,16 +21,16 @@ export const EXIT = {
 
 /** The table printed under `telegram --help`, also in skills/better-tg-cli/setup.md and docs/setup-contract.md. */
 export const EXIT_CODES_HELP = [
-  'Exit codes:',
-  '  0  ok',
-  '  1  runtime error (Telegram refused, network, chat or message not found)',
-  '  2  usage: unknown option, invalid value, ambiguous chat name',
+  "Exit codes:",
+  "  0  ok",
+  "  1  runtime error (Telegram refused, network, chat or message not found)",
+  "  2  usage: unknown option, invalid value, ambiguous chat name",
   '  3  write approval needed (write mode "ask"; see the printed action)',
-  '  4  write access is disabled (telegram write-access)',
-  '  5  not logged in, or the session ended (telegram onboard)',
+  "  4  write access is disabled (telegram write-access)",
+  "  5  not logged in, or the session ended (telegram onboard)",
   'With --json an error is one line on stdout: {"error":{"code","message","hint"?,"command"?,"candidates"?,"listedAt"?}}',
   '(exit 3 prints its own {"error":"approval_required",...} line).',
-].join('\n');
+].join("\n");
 
 /** A chat offered when a name matched several chats or none. */
 export interface ChatCandidate {
@@ -46,7 +46,12 @@ export type Hint = string;
 
 /** A `telegram` argv as one line a POSIX shell runs unchanged (each odd argument single-quoted). */
 export function shellCommand(argv: string[]): string {
-  return ['telegram', ...argv.map(a => /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)].join(' ');
+  return [
+    "telegram",
+    ...argv.map((a) =>
+      /^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replaceAll("'", `'\\''`)}'`
+    ),
+  ].join(" ");
 }
 
 export interface ErrorDetails {
@@ -88,10 +93,18 @@ export class CliError extends Error {
     summary: string,
     code: string,
     exitCode: number = EXIT.ERROR,
-    extra: { hint?: Hint; command?: string[]; candidates?: ChatCandidate[]; retryAfterSeconds?: number; listedAt?: string; text?: string; fields?: Record<string, unknown> } = {},
+    extra: {
+      hint?: Hint;
+      command?: string[];
+      candidates?: ChatCandidate[];
+      retryAfterSeconds?: number;
+      listedAt?: string;
+      text?: string;
+      fields?: Record<string, unknown>;
+    } = {}
   ) {
     super(extra.text ?? humanText(summary, extra.candidates, extra.hint));
-    this.name = 'CliError';
+    this.name = "CliError";
     this.code = code;
     this.exitCode = exitCode;
     this.summary = summary;
@@ -106,17 +119,32 @@ export class CliError extends Error {
 
 /** A value the command line got wrong: exit 2, code `invalid_argument`. */
 export function usageError(message: string, hint?: string): CliError {
-  return new CliError(message, 'invalid_argument', EXIT.USAGE, { hint });
+  return new CliError(message, "invalid_argument", EXIT.USAGE, { hint });
 }
 
-export function formatCandidates(candidates: ChatCandidate[], total = candidates.length): string {
-  const lines = candidates.map(c => `  ${c.id} ${c.type} ${c.title}`);
-  if (total > candidates.length) lines.push(`  … and ${total - candidates.length} more`);
-  return lines.join('\n');
+export function formatCandidates(
+  candidates: ChatCandidate[],
+  total = candidates.length
+): string {
+  const lines = candidates.map((c) => `  ${c.id} ${c.type} ${c.title}`);
+  if (total > candidates.length) {
+    lines.push(`  … and ${total - candidates.length} more`);
+  }
+  return lines.join("\n");
 }
 
-function humanText(summary: string, candidates?: ChatCandidate[], hint?: Hint): string {
-  return [summary, candidates?.length ? formatCandidates(candidates) : '', hint ?? ''].filter(Boolean).join('\n');
+function humanText(
+  summary: string,
+  candidates?: ChatCandidate[],
+  hint?: Hint
+): string {
+  return [
+    summary,
+    candidates?.length ? formatCandidates(candidates) : "",
+    hint ?? "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
@@ -126,75 +154,151 @@ function humanText(summary: string, candidates?: ChatCandidate[], hint?: Hint): 
  * session (onboard/telegram_setup would), so it stays a plain telegram_rpc error, exit 1.
  */
 export const SESSION_ERRORS: ReadonlySet<string> = new Set([
-  'AUTH_KEY_UNREGISTERED', 'AUTH_KEY_INVALID', 'AUTH_KEY_PERM_EMPTY', 'AUTH_KEY_DUPLICATED',
-  'SESSION_EXPIRED', 'SESSION_REVOKED',
-  'USER_DEACTIVATED', 'USER_DEACTIVATED_BAN',
+  "AUTH_KEY_UNREGISTERED",
+  "AUTH_KEY_INVALID",
+  "AUTH_KEY_PERM_EMPTY",
+  "AUTH_KEY_DUPLICATED",
+  "SESSION_EXPIRED",
+  "SESSION_REVOKED",
+  "USER_DEACTIVATED",
+  "USER_DEACTIVATED_BAN",
 ]);
 
 /** The RPC error name of a session that ended, if `error` is one. */
 export function sessionEndedBy(error: unknown): string | undefined {
   const name = (error as { errorMessage?: unknown } | null)?.errorMessage;
-  return typeof name === 'string' && SESSION_ERRORS.has(name) ? name : undefined;
+  return typeof name === "string" && SESSION_ERRORS.has(name)
+    ? name
+    : undefined;
 }
 
-const NETWORK_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE', 'ECONNABORTED']);
+const NETWORK_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EPIPE",
+  "ECONNABORTED",
+]);
 
 /** A failure to reach Telegram at all (no RPC answer): a socket error, a timeout, a dropped connection. */
 export function isNetworkError(error: unknown): boolean {
-  const e = error as { code?: unknown; name?: unknown; message?: unknown } | null;
-  if (!e || typeof e !== 'object') return false;
-  if (typeof e.code === 'string' && NETWORK_CODES.has(e.code)) return true;
-  if (e.name === 'TimeoutError') return true;
-  return typeof e.message === 'string' && /^(Not connected|Disconnect|Connection (closed|refused|timed out)|TIMEOUT$)/i.test(e.message);
+  const e = error as {
+    code?: unknown;
+    name?: unknown;
+    message?: unknown;
+  } | null;
+  if (!e || typeof e !== "object") {
+    return false;
+  }
+  if (typeof e.code === "string" && NETWORK_CODES.has(e.code)) {
+    return true;
+  }
+  if (e.name === "TimeoutError") {
+    return true;
+  }
+  return (
+    typeof e.message === "string" &&
+    /^(Not connected|Disconnect|Connection (closed|refused|timed out)|TIMEOUT$)/i.test(
+      e.message
+    )
+  );
 }
 
 /** What an error says, whatever threw it: our CliError, a Telegram RPC error or anything else. */
-export function errorDetails(error: unknown): ErrorDetails & { exitCode: number } {
+export function errorDetails(
+  error: unknown
+): ErrorDetails & { exitCode: number } {
   if (error instanceof CliError) {
     return {
-      code: error.code, message: error.summary, exitCode: error.exitCode,
+      code: error.code,
+      message: error.summary,
+      exitCode: error.exitCode,
       ...(error.hint ? { hint: error.hint } : {}),
       ...(error.command ? { command: error.command } : {}),
       ...(error.candidates?.length ? { candidates: error.candidates } : {}),
-      ...(error.retryAfterSeconds !== undefined ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+      ...(error.retryAfterSeconds === undefined
+        ? {}
+        : { retryAfterSeconds: error.retryAfterSeconds }),
       ...(error.listedAt ? { listedAt: error.listedAt } : {}),
       ...(error.fields ? { fields: error.fields } : {}),
     };
   }
-  const rpc = error as { errorMessage?: unknown; seconds?: unknown; message?: unknown } | null;
-  if (rpc && typeof rpc.errorMessage === 'string') {
-    const message = typeof rpc.message === 'string' ? rpc.message : rpc.errorMessage;
-    const wait = typeof rpc.seconds === 'number' ? rpc.seconds : /^FLOOD_(PREMIUM_)?WAIT_(\d+)/.exec(rpc.errorMessage)?.[2];
+  const rpc = error as {
+    errorMessage?: unknown;
+    seconds?: unknown;
+    message?: unknown;
+  } | null;
+  if (rpc && typeof rpc.errorMessage === "string") {
+    const message =
+      typeof rpc.message === "string" ? rpc.message : rpc.errorMessage;
+    const wait =
+      typeof rpc.seconds === "number"
+        ? rpc.seconds
+        : /^FLOOD_(PREMIUM_)?WAIT_(\d+)/.exec(rpc.errorMessage)?.[2];
     const ended = sessionEndedBy(rpc);
-    if (ended) return { code: 'session_expired', message: `Telegram ended this session (${ended})`, exitCode: EXIT.NOT_LOGGED_IN, hint: loginHint() };
+    if (ended) {
+      return {
+        code: "session_expired",
+        message: `Telegram ended this session (${ended})`,
+        exitCode: EXIT.NOT_LOGGED_IN,
+        hint: loginHint(),
+      };
+    }
     if (wait !== undefined && /FLOOD/.test(rpc.errorMessage)) {
       const seconds = Number(wait);
-      return { code: 'flood_wait', message, exitCode: EXIT.ERROR, retryAfterSeconds: seconds, hint: `Telegram rate limit: wait ${seconds} s, then run the command again.` };
+      return {
+        code: "flood_wait",
+        message,
+        exitCode: EXIT.ERROR,
+        retryAfterSeconds: seconds,
+        hint: `Telegram rate limit: wait ${seconds} s, then run the command again.`,
+      };
     }
-    return { code: 'telegram_rpc', message, exitCode: EXIT.ERROR };
+    return { code: "telegram_rpc", message, exitCode: EXIT.ERROR };
   }
   const message = error instanceof Error ? error.message : String(error);
-  if (isNetworkError(error)) return { code: 'network', message: `Could not reach Telegram: ${message}`, exitCode: EXIT.ERROR, hint: 'Check the connection, then run the command again.' };
-  return { code: 'error', message, exitCode: EXIT.ERROR };
+  if (isNetworkError(error)) {
+    return {
+      code: "network",
+      message: `Could not reach Telegram: ${message}`,
+      exitCode: EXIT.ERROR,
+      hint: "Check the connection, then run the command again.",
+    };
+  }
+  return { code: "error", message, exitCode: EXIT.ERROR };
 }
 
 /** `--json` on this command line: errors then go to stdout as one JSON line. */
 export function wantsJson(argv: string[] = process.argv.slice(2)): boolean {
-  const end = argv.indexOf('--');
-  return (end === -1 ? argv : argv.slice(0, end)).includes('--json');
+  const end = argv.indexOf("--");
+  return (end === -1 ? argv : argv.slice(0, end)).includes("--json");
 }
 
 /** The one JSON line an error prints with --json. */
 export function errorJson(details: ErrorDetails): string {
-  const { code, message, hint, command, candidates, retryAfterSeconds, listedAt, fields } = details;
+  const {
+    code,
+    message,
+    hint,
+    command,
+    candidates,
+    retryAfterSeconds,
+    listedAt,
+    fields,
+  } = details;
   return JSON.stringify({
     error: {
       ...fields,
-      code, message,
+      code,
+      message,
       ...(hint ? { hint } : {}),
       ...(command ? { command } : {}),
       ...(candidates?.length ? { candidates } : {}),
-      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+      ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
       ...(listedAt ? { listedAt } : {}),
     },
   });
@@ -207,16 +311,23 @@ export function errorJson(details: ErrorDetails): string {
  */
 export function fail(error: unknown, spinner?: Spinner, label?: string): never {
   // A process.exit() already on its way (see installDrainingExit): its code stands
-  if (error instanceof ExitSignal) throw error;
+  if (error instanceof ExitSignal) {
+    throw error;
+  }
   const details = errorDetails(error);
   if (wantsJson()) {
     spinner?.stop();
     console.log(errorJson(details));
   } else {
-    if (spinner && label && !process.env.TG_MCP) spinner.fail(label);
-    else spinner?.stop();
-    const text = error instanceof CliError ? error.message
-      : [details.message, details.hint].filter(Boolean).join('\n');
+    if (spinner && label && !process.env.TG_MCP) {
+      spinner.fail(label);
+    } else {
+      spinner?.stop();
+    }
+    const text =
+      error instanceof CliError
+        ? error.message
+        : [details.message, details.hint].filter(Boolean).join("\n");
     console.error(text);
   }
   process.exit(details.exitCode);
@@ -229,8 +340,8 @@ export function fail(error: unknown, spinner?: Spinner, label?: string): never {
  */
 export class ExitSignal extends Error {
   constructor() {
-    super('exiting');
-    this.name = 'ExitSignal';
+    super("exiting");
+    this.name = "ExitSignal";
   }
 }
 
@@ -247,22 +358,46 @@ export function installDrainingExit(): void {
   process.exit = ((code?: number | string | null) => {
     if (!exiting) {
       exiting = true;
-      if (code !== undefined && code !== null) process.exitCode = Number(code);
-      const waiting = [process.stdout, process.stderr].filter(s => !s.destroyed && !s.writableEnded && s.writableLength > 0);
+      if (code !== undefined && code !== null) {
+        process.exitCode = Number(code);
+      }
+      const waiting = [process.stdout, process.stderr].filter(
+        (s) => !s.destroyed && !s.writableEnded && s.writableLength > 0
+      );
       // Nothing buffered: exit now, as before (a later tick could still load modules and print warnings)
-      if (!waiting.length) realExit();
+      if (!waiting.length) {
+        realExit();
+      }
       let pending = waiting.length;
-      for (const stream of waiting) stream.write('', () => { if (--pending === 0) realExit(); });
+      for (const stream of waiting) {
+        stream.write("", () => {
+          if (--pending === 0) {
+            realExit();
+          }
+        });
+      }
     }
     throw new ExitSignal();
   }) as typeof process.exit;
   // An exit requested from a callback or a promise nobody awaits is not an error
-  process.on('uncaughtException', error => {
-    if (error instanceof ExitSignal) return;
-    try { fail(error); } catch { /* the ExitSignal of fail()'s own exit */ }
+  process.on("uncaughtException", (error) => {
+    if (error instanceof ExitSignal) {
+      return;
+    }
+    try {
+      fail(error);
+    } catch {
+      /* the ExitSignal of fail()'s own exit */
+    }
   });
-  process.on('unhandledRejection', error => {
-    if (error instanceof ExitSignal) return;
-    try { fail(error); } catch { /* the ExitSignal of fail()'s own exit */ }
+  process.on("unhandledRejection", (error) => {
+    if (error instanceof ExitSignal) {
+      return;
+    }
+    try {
+      fail(error);
+    } catch {
+      /* the ExitSignal of fail()'s own exit */
+    }
   });
 }

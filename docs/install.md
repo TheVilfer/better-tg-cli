@@ -121,7 +121,19 @@ modification time as `ls` prints it, to the minute). That narrows, not closes, a
 writer into the folder, which is outside the threat model.
 
 ```json
-{"schema":1,"package":"better-tg-cli","manager":"user-binary","path":"/home/me/.local/bin/telegram","version":"0.39.6","tag":"v0.39.6","target":"linux-x64","archive":"better-tg-cli-0.39.6-linux-x64.tar.gz","sha256":"…","binarySha256":"…","installedAt":"2026-11-19T12:00:00Z"}
+{
+  "schema": 1,
+  "package": "better-tg-cli",
+  "manager": "user-binary",
+  "path": "/home/me/.local/bin/telegram",
+  "version": "0.39.6",
+  "tag": "v0.39.6",
+  "target": "linux-x64",
+  "archive": "better-tg-cli-0.39.6-linux-x64.tar.gz",
+  "sha256": "…",
+  "binarySha256": "…",
+  "installedAt": "2026-11-19T12:00:00Z"
+}
 ```
 
 ## Output
@@ -132,8 +144,28 @@ Progress goes to stderr. Stdout gets exactly one JSON line in the shape of the s
 itself:
 
 ```json
-{"schema":1,"ok":true,"problems":[{"id":"install_dir_not_on_path","severity":"warning","message":"…","fix":{"human":"…"}}],
- "data":{"manager":"user-binary","version":"0.39.6","tag":"v0.39.6","target":"linux-x64","dir":"/home/me/.local/bin","path":"/home/me/.local/bin/telegram","onPath":false,"active":null}}
+{
+  "schema": 1,
+  "ok": true,
+  "problems": [
+    {
+      "id": "install_dir_not_on_path",
+      "severity": "warning",
+      "message": "…",
+      "fix": { "human": "…" }
+    }
+  ],
+  "data": {
+    "manager": "user-binary",
+    "version": "0.39.6",
+    "tag": "v0.39.6",
+    "target": "linux-x64",
+    "dir": "/home/me/.local/bin",
+    "path": "/home/me/.local/bin/telegram",
+    "onPath": false,
+    "active": null
+  }
+}
 ```
 
 - `path` is the absolute path of the installed binary, set only when `ok` is true.
@@ -148,30 +180,30 @@ nothing; only a copy cut inside the first line, `#!/bin/sh`, still exits 0, with
 killed later may already have placed the binary, so no JSON line is an unknown result, not a
 proof that nothing was installed; the check by hand is described at the top of this page.
 
-| `id` | Exit | Meaning |
-|---|---|---|
-| `platform_unsupported` | 1 | No release build for this system or CPU (Windows, FreeBSD, 32-bit, musl). |
-| `old_installer_variable` | 2 | `TG_SKILL_DIR` is set: that belongs to the old developer installer, now `scripts/dev-install.sh`. Nothing is changed. |
-| `install_dir_invalid` | 2 | The folder cannot be created or written; pick another `TG_INSTALL_DIR`. |
-| `install_path_taken` | 2 | Something not installed by this script is there, or a `telegram` whose SHA-256 is not the `binarySha256` in `install.json`; it stays untouched. |
-| `install_in_progress` | 1 | Another run is installing into the same folder right now. |
-| `install_lock_stale` | 2 | A run that was cut short left its lock (its PID is not running); delete that lock and run again. |
-| `install_lock_unknown` | 2 | The lock file is not one this script wrote; it is left as is. |
-| `hard_links_unavailable` | 1 | The folder's file system has no hard links; pick a `TG_INSTALL_DIR` on a local disk. |
-| `downloader_missing` | 1 | No `curl` (`wget` is not used). |
-| `checksum_tool_missing` | 1 | Neither `sha256sum`, `shasum` nor `openssl`. |
-| `tls_failed` | 1 | The HTTPS certificate could not be verified (no CA certificates, or a TLS-intercepting proxy). |
-| `release_not_found` | 1 | The pinned release is not published yet. |
-| `download_failed` | 1 | Any other download error. |
-| `archive_not_listed` | 1 | `SHA256SUMS` lists no archive for this build. |
-| `unpack_tool_missing` | 1 | Only `.tar.xz` is published and the system cannot unpack it. |
-| `checksum_mismatch` | 1 | The archive does not match `SHA256SUMS`; nothing was unpacked. |
-| `unpack_failed`, `install_write_failed` | 1 | Unpacking or writing failed (space, permissions). |
-| `binary_check_failed` | 1 | The new binary does not run here or reports another version; nothing was replaced. |
-| `dev_install_found` | 0 | Warning: a checkout from the old installer is in `~/.agents/skills/telegram`; it is left as is. |
-| `install_stage_left` | 0 | Warning: staging folders of runs that were cut short are in the folder; they are not deleted. |
-| `install_dir_not_on_path` | 0 | Warning: run the binary by its absolute path. |
-| `other_telegram_on_path` | 0 | Warning: other `telegram` copies are on `PATH`, maybe ahead of this one. |
+| `id`                                    | Exit | Meaning                                                                                                                                         |
+| --------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform_unsupported`                  | 1    | No release build for this system or CPU (Windows, FreeBSD, 32-bit, musl).                                                                       |
+| `old_installer_variable`                | 2    | `TG_SKILL_DIR` is set: that belongs to the old developer installer, now `scripts/dev-install.sh`. Nothing is changed.                           |
+| `install_dir_invalid`                   | 2    | The folder cannot be created or written; pick another `TG_INSTALL_DIR`.                                                                         |
+| `install_path_taken`                    | 2    | Something not installed by this script is there, or a `telegram` whose SHA-256 is not the `binarySha256` in `install.json`; it stays untouched. |
+| `install_in_progress`                   | 1    | Another run is installing into the same folder right now.                                                                                       |
+| `install_lock_stale`                    | 2    | A run that was cut short left its lock (its PID is not running); delete that lock and run again.                                                |
+| `install_lock_unknown`                  | 2    | The lock file is not one this script wrote; it is left as is.                                                                                   |
+| `hard_links_unavailable`                | 1    | The folder's file system has no hard links; pick a `TG_INSTALL_DIR` on a local disk.                                                            |
+| `downloader_missing`                    | 1    | No `curl` (`wget` is not used).                                                                                                                 |
+| `checksum_tool_missing`                 | 1    | Neither `sha256sum`, `shasum` nor `openssl`.                                                                                                    |
+| `tls_failed`                            | 1    | The HTTPS certificate could not be verified (no CA certificates, or a TLS-intercepting proxy).                                                  |
+| `release_not_found`                     | 1    | The pinned release is not published yet.                                                                                                        |
+| `download_failed`                       | 1    | Any other download error.                                                                                                                       |
+| `archive_not_listed`                    | 1    | `SHA256SUMS` lists no archive for this build.                                                                                                   |
+| `unpack_tool_missing`                   | 1    | Only `.tar.xz` is published and the system cannot unpack it.                                                                                    |
+| `checksum_mismatch`                     | 1    | The archive does not match `SHA256SUMS`; nothing was unpacked.                                                                                  |
+| `unpack_failed`, `install_write_failed` | 1    | Unpacking or writing failed (space, permissions).                                                                                               |
+| `binary_check_failed`                   | 1    | The new binary does not run here or reports another version; nothing was replaced.                                                              |
+| `dev_install_found`                     | 0    | Warning: a checkout from the old installer is in `~/.agents/skills/telegram`; it is left as is.                                                 |
+| `install_stage_left`                    | 0    | Warning: staging folders of runs that were cut short are in the folder; they are not deleted.                                                   |
+| `install_dir_not_on_path`               | 0    | Warning: run the binary by its absolute path.                                                                                                   |
+| `other_telegram_on_path`                | 0    | Warning: other `telegram` copies are on `PATH`, maybe ahead of this one.                                                                        |
 
 The sums come from the same release as the archive, so they prove the download is intact, not
 who published it.

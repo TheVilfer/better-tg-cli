@@ -1,7 +1,8 @@
-import { Api, utils } from 'teleproto';
-import { getClient, pinPeer, resolveChat } from './client.js';
-import type { PeerInfo } from './approval-action.js';
-import { errorDetails, ExitSignal } from './errors.js';
+import { Api, utils } from "teleproto";
+
+import type { PeerInfo } from "./approval-action.js";
+import { getClient, pinPeer, resolveChat } from "./client.js";
+import { errorDetails, ExitSignal } from "./errors.js";
 
 /**
  * Looks up the chats and users an approval names, so the person sees who gets the message, not a
@@ -11,10 +12,14 @@ import { errorDetails, ExitSignal } from './errors.js';
  * Connecting is not optional: a failure there (not logged in, no network) throws, since the write
  * could not run either. A recipient that does not resolve is reported as such, not thrown.
  */
-export async function lookupPeers(values: string[]): Promise<Map<string, PeerInfo>> {
+export async function lookupPeers(
+  values: string[]
+): Promise<Map<string, PeerInfo>> {
   const out = new Map<string, PeerInfo>();
   const wanted = [...new Set(values)];
-  if (!wanted.length) return out;
+  if (!wanted.length) {
+    return out;
+  }
   const client = await getClient();
   for (const v of wanted) {
     try {
@@ -22,15 +27,36 @@ export async function lookupPeers(values: string[]): Promise<Map<string, PeerInf
       // The write takes this very object (resolveChat returns it), not a second lookup
       pinPeer(v, entity);
       out.set(v, peerInfo(entity));
-    } catch (e) {
-      if (e instanceof ExitSignal) throw e;
+    } catch (error) {
+      if (error instanceof ExitSignal) {
+        throw error;
+      }
       // The whole message (it may list the candidates), as one line
       // and the error's own code and exit code (an ambiguous name is a usage error, exit 2)
-      const { code, exitCode, message, candidates, hint, command, retryAfterSeconds } = errorDetails(e);
+      const {
+        code,
+        exitCode,
+        message,
+        candidates,
+        hint,
+        command,
+        retryAfterSeconds,
+      } = errorDetails(error);
       out.set(v, {
-        ok: false, error: (e instanceof Error ? e.message : String(e)).split('\n').map(l => l.trim()).filter(Boolean).join('; ').replace(/:; /g, ': '),
-        code, exitCode, message, ...(candidates ? { candidates } : {}), ...(hint ? { hint } : {}), ...(command ? { command } : {}),
-        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+        ok: false,
+        error: (error instanceof Error ? error.message : String(error))
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .join("; ")
+          .replaceAll(":; ", ": "),
+        code,
+        exitCode,
+        message,
+        ...(candidates ? { candidates } : {}),
+        ...(hint ? { hint } : {}),
+        ...(command ? { command } : {}),
+        ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
       });
     }
   }
@@ -40,12 +66,32 @@ export async function lookupPeers(values: string[]): Promise<Map<string, PeerInf
 function peerInfo(entity: Api.User | Api.Chat | Api.Channel): PeerInfo {
   const id = utils.getPeerId(entity).toString();
   if (entity instanceof Api.User) {
-    const title = [entity.firstName, entity.lastName].filter(Boolean).join(' ') || entity.username || 'Unknown';
-    return { ok: true, id, title, type: entity.bot ? 'bot' : 'user', username: entity.username ?? undefined, ...(entity.self ? { self: true } : {}) };
+    const title =
+      [entity.firstName, entity.lastName].filter(Boolean).join(" ") ||
+      entity.username ||
+      "Unknown";
+    return {
+      ok: true,
+      id,
+      title,
+      type: entity.bot ? "bot" : "user",
+      username: entity.username ?? undefined,
+      ...(entity.self ? { self: true } : {}),
+    };
   }
   if (entity instanceof Api.Channel) {
-    const type = entity.forum ? 'forum' : entity.megagroup ? 'supergroup' : 'channel';
-    return { ok: true, id, title: entity.title, type, username: entity.username ?? undefined };
+    const type = entity.forum
+      ? "forum"
+      : entity.megagroup
+        ? "supergroup"
+        : "channel";
+    return {
+      ok: true,
+      id,
+      title: entity.title,
+      type,
+      username: entity.username ?? undefined,
+    };
   }
-  return { ok: true, id, title: entity.title, type: 'group' };
+  return { ok: true, id, title: entity.title, type: "group" };
 }

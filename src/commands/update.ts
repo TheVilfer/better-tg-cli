@@ -1,15 +1,23 @@
-import { Command } from 'commander';
-import { formatJson } from '../formatters/json.js';
-import { VERSION } from '../version.js';
-import { CliError, EXIT, fail } from '../errors.js';
-import {
-  compareVersions, detectInstall, fetchLatestVersion, runUpdate, updateCommandFor, writeCache,
-} from '../update.js';
+import { Command } from "commander";
 
-export const updateCommand = new Command('update')
-  .description('Update Better-TG-CLI the way it was installed (brew, npm or a git checkout)')
-  .option('--check', 'Only report whether a newer version exists')
-  .option('--json', 'Output as JSON (with --check)')
+import { CliError, EXIT, fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import {
+  compareVersions,
+  detectInstall,
+  fetchLatestVersion,
+  runUpdate,
+  updateCommandFor,
+  writeCache,
+} from "../update.js";
+import { VERSION } from "../version.js";
+
+export const updateCommand = new Command("update")
+  .description(
+    "Update Better-TG-CLI the way it was installed (brew, npm or a git checkout)"
+  )
+  .option("--check", "Only report whether a newer version exists")
+  .option("--json", "Output as JSON (with --check)")
   .action(async (options) => {
     const method = detectInstall();
     let latest: string;
@@ -17,32 +25,52 @@ export const updateCommand = new Command('update')
       latest = await fetchLatestVersion();
       writeCache({ checkedAt: Date.now(), latest });
     } catch (error) {
-      fail(new CliError(`Could not check for updates: ${error instanceof Error ? error.message : error}`, 'update_check_failed', EXIT.ERROR));
+      fail(
+        new CliError(
+          `Could not check for updates: ${error instanceof Error ? error.message : error}`,
+          "update_check_failed",
+          EXIT.ERROR
+        )
+      );
     }
     const newer = compareVersions(latest, VERSION) > 0;
     const command = updateCommandFor(method);
 
     if (options.check) {
       if (options.json) {
-        console.log(formatJson({ current: VERSION, latest, updateAvailable: newer, install: method.kind, command }));
+        console.log(
+          formatJson({
+            current: VERSION,
+            latest,
+            updateAvailable: newer,
+            install: method.kind,
+            command,
+          })
+        );
       } else {
-        console.log(newer ? `${VERSION} → ${latest} available (${method.kind}): ${command}` : `${VERSION} is up to date (latest ${latest})`);
+        console.log(
+          newer
+            ? `${VERSION} → ${latest} available (${method.kind}): ${command}`
+            : `${VERSION} is up to date (latest ${latest})`
+        );
       }
       return;
     }
 
     // A git checkout may carry unreleased commits, so it is pulled even without a newer release.
-    if (!newer && method.kind !== 'source') {
+    if (!newer && method.kind !== "source") {
       console.log(`${VERSION} is up to date`);
       return;
     }
-    if (method.kind === 'binary') {
+    if (method.kind === "binary") {
       console.error(`This is a standalone binary: ${command}`);
       process.exit(1);
     }
-    if (method.kind === 'script') {
+    if (method.kind === "script") {
       // Never advise replacing it by hand: install.json would no longer match it.
-      console.error(`Installed by install.sh; update it by running the script again: ${command}`);
+      console.error(
+        `Installed by install.sh; update it by running the script again: ${command}`
+      );
       process.exit(1);
     }
     console.error(`Updating via ${method.kind}: ${command}`);

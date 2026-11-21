@@ -1,66 +1,86 @@
-export { authCommand } from './auth.js';
-export { logoutCommand } from './logout.js';
-export { whoamiCommand } from './whoami.js';
-export { checkCommand } from './check.js';
-export { chatsCommand } from './chats.js';
-export { readCommand, getCommand } from './read.js';
-export { searchCommand } from './search.js';
-export { sendCommand } from './send.js';
-export { replyCommand } from './reply.js';
-export { inboxCommand } from './inbox.js';
-export { contactCommand } from './contact.js';
-export { membersCommand, adminsCommand } from './members.js';
-export { groupsCommand } from './groups.js';
-export { syncCommand } from './sync.js';
-export { kickCommand } from './kick.js';
-export { promoteCommand } from './promote.js';
-export { transferOwnerCommand } from './transfer-owner.js';
-export { muteCommand } from './mute.js';
-export { unmuteCommand } from './unmute.js';
-export { foldersCommand } from './folders.js';
-export { folderCommand } from './folder.js';
-export { folderAddCommand } from './folder-add.js';
-export { folderRemoveCommand } from './folder-remove.js';
-export { writeAccessCommand } from './write-access.js';
-export { downloadCommand } from './download.js';
-export { sendFileCommand } from './send-file.js';
-export { buttonsCommand } from './buttons.js';
-export { clickCommand } from './click.js';
-export { reactCommand } from './react.js';
-export { forwardCommand } from './forward.js';
-export { pinCommand, unpinCommand } from './pin.js';
-export { editCommand } from './edit.js';
-export { deleteCommand } from './delete.js';
-export { markReadCommand } from './mark-read.js';
-export { pinnedCommand } from './pinned.js';
-export { pollCommand, voteCommand } from './poll.js';
-export { reactionsCommand } from './reactions.js';
-export { blockCommand, unblockCommand } from './block.js';
-export { addContactCommand, delContactCommand } from './contact-manage.js';
-export { joinCommand, leaveCommand, inviteLinkCommand, archiveCommand, unarchiveCommand } from './membership.js';
-export { createGroupCommand, createChannelCommand } from './create.js';
-export { typingCommand } from './typing.js';
-export { setNameCommand, setBioCommand, setUsernameCommand, setAvatarCommand } from './profile.js';
-export { avatarCommand } from './avatar.js';
-export { inlineCommand } from './inline.js';
-export { storiesCommand } from './stories.js';
-export { watchCommand } from './watch.js';
-export { infoCommand, topicsCommand, linkCommand } from './info.js';
-export { contactsCommand } from './contacts.js';
-export { updateCommand } from './update.js';
-export { skillCommand } from './skill.js';
-export { onboardCommand } from './onboard.js';
-export { apiCommand } from './api.js';
-export { draftsCommand } from './drafts.js';
-export { adminLogCommand } from './admin-log.js';
-export { profilePhotosCommand } from './profile-photos.js';
-export { pinChatCommand, unpinChatCommand, markUnreadCommand, deleteDialogCommand } from './dialog.js';
-export { permissionsCommand } from './permissions.js';
-export { statsCommand } from './stats.js';
-export { scheduledCommand } from './scheduled.js';
-export { sessionsCommand, starsCommand, invitesCommand } from './account-read.js';
-export { editPermissionsCommand } from './edit-permissions.js';
-export { topicCommand } from './topic.js';
-export { registerGeneratedCommands, buildHelpCommand } from './generated.js';
-export { schemaCommand } from './schema.js';
-export { pluginCommand } from './plugin.js';
+export { authCommand } from "./auth.js";
+export { logoutCommand } from "./logout.js";
+export { whoamiCommand } from "./whoami.js";
+export { checkCommand } from "./check.js";
+export { chatsCommand } from "./chats.js";
+export { readCommand, getCommand } from "./read.js";
+export { searchCommand } from "./search.js";
+export { sendCommand } from "./send.js";
+export { replyCommand } from "./reply.js";
+export { inboxCommand } from "./inbox.js";
+export { contactCommand } from "./contact.js";
+export { membersCommand, adminsCommand } from "./members.js";
+export { groupsCommand } from "./groups.js";
+export { syncCommand } from "./sync.js";
+export { kickCommand } from "./kick.js";
+export { promoteCommand } from "./promote.js";
+export { transferOwnerCommand } from "./transfer-owner.js";
+export { muteCommand } from "./mute.js";
+export { unmuteCommand } from "./unmute.js";
+export { foldersCommand } from "./folders.js";
+export { folderCommand } from "./folder.js";
+export { folderAddCommand } from "./folder-add.js";
+export { folderRemoveCommand } from "./folder-remove.js";
+export { writeAccessCommand } from "./write-access.js";
+export { downloadCommand } from "./download.js";
+export { sendFileCommand } from "./send-file.js";
+export { buttonsCommand } from "./buttons.js";
+export { clickCommand } from "./click.js";
+export { reactCommand } from "./react.js";
+export { forwardCommand } from "./forward.js";
+export { pinCommand, unpinCommand } from "./pin.js";
+export { editCommand } from "./edit.js";
+export { deleteCommand } from "./delete.js";
+export { markReadCommand } from "./mark-read.js";
+export { pinnedCommand } from "./pinned.js";
+export { pollCommand, voteCommand } from "./poll.js";
+export { reactionsCommand } from "./reactions.js";
+export { blockCommand, unblockCommand } from "./block.js";
+export { addContactCommand, delContactCommand } from "./contact-manage.js";
+export {
+  joinCommand,
+  leaveCommand,
+  inviteLinkCommand,
+  archiveCommand,
+  unarchiveCommand,
+} from "./membership.js";
+export { createGroupCommand, createChannelCommand } from "./create.js";
+export { typingCommand } from "./typing.js";
+export {
+  setNameCommand,
+  setBioCommand,
+  setUsernameCommand,
+  setAvatarCommand,
+} from "./profile.js";
+export { avatarCommand } from "./avatar.js";
+export { inlineCommand } from "./inline.js";
+export { storiesCommand } from "./stories.js";
+export { watchCommand } from "./watch.js";
+export { infoCommand, topicsCommand, linkCommand } from "./info.js";
+export { contactsCommand } from "./contacts.js";
+export { updateCommand } from "./update.js";
+export { skillCommand } from "./skill.js";
+export { onboardCommand } from "./onboard.js";
+export { apiCommand } from "./api.js";
+export { draftsCommand } from "./drafts.js";
+export { adminLogCommand } from "./admin-log.js";
+export { profilePhotosCommand } from "./profile-photos.js";
+export {
+  pinChatCommand,
+  unpinChatCommand,
+  markUnreadCommand,
+  deleteDialogCommand,
+} from "./dialog.js";
+export { permissionsCommand } from "./permissions.js";
+export { statsCommand } from "./stats.js";
+export { scheduledCommand } from "./scheduled.js";
+export {
+  sessionsCommand,
+  starsCommand,
+  invitesCommand,
+} from "./account-read.js";
+export { editPermissionsCommand } from "./edit-permissions.js";
+export { topicCommand } from "./topic.js";
+export { registerGeneratedCommands, buildHelpCommand } from "./generated.js";
+export { schemaCommand } from "./schema.js";
+export { pluginCommand } from "./plugin.js";

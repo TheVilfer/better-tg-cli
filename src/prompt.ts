@@ -1,5 +1,5 @@
-import { createInterface } from 'node:readline';
-import { Writable } from 'node:stream';
+import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
 
 // Questions go to stderr: stdout is the command's result (one JSON object with --json)
 
@@ -39,7 +39,7 @@ export function promptHidden(question: string): Promise<string> {
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
-      process.stderr.write('\n');
+      process.stderr.write("\n");
       resolve(answer.trim());
     });
     // The question above is written while unmuted; mute now so the

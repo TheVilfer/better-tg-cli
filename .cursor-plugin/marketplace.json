@@ -1,7 +1,9 @@
 {
   "name": "better-tg-cli",
   "owner": { "name": "Sergei Polin", "url": "https://github.com/TheVilfer" },
-  "metadata": { "description": "Telegram for your terminal and your AI agents" },
+  "metadata": {
+    "description": "Telegram for your terminal and your AI agents"
+  },
   "plugins": [
     {
       "name": "better-tg-cli",

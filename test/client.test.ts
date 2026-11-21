@@ -1,20 +1,42 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Api } from 'teleproto';
-import bigInt from 'big-integer';
-import { setStrictChatResolution } from '../src/resolve-mode.js';
-import { errorDetails, EXIT } from '../src/errors.js';
-import { disconnectClient, getMessages, parseTimeOffset, resolveChat, searchMessages } from '../src/client.js';
+import bigInt from "big-integer";
+import { Api } from "teleproto";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  disconnectClient,
+  getMessages,
+  parseTimeOffset,
+  resolveChat,
+  searchMessages,
+} from "../src/client.js";
+import { errorDetails, EXIT } from "../src/errors.js";
+import { setStrictChatResolution } from "../src/resolve-mode.js";
 
 type Fake = Record<string, ReturnType<typeof vi.fn>>;
 
 const user = (id: number, firstName: string, self = false) =>
   new Api.User({ id: bigInt(id), firstName, self, accessHash: bigInt(1) });
 const channel = (id: number, title: string) =>
-  new Api.Channel({ id: bigInt(id), title, photo: new Api.ChatPhotoEmpty(), date: 0, accessHash: bigInt(1) });
-const dialog = (id: string, title: string, entity: unknown) => ({ id: bigInt(id), title, entity });
+  new Api.Channel({
+    id: bigInt(id),
+    title,
+    photo: new Api.ChatPhotoEmpty(),
+    date: 0,
+    accessHash: bigInt(1),
+  });
+const dialog = (id: string, title: string, entity: unknown) => ({
+  id: bigInt(id),
+  title,
+  entity,
+});
 
 const message = (id: number, date: number) =>
-  new Api.Message({ id, date, message: `m${id}`, peerId: new Api.PeerChannel({ channelId: bigInt(5) }) });
+  new Api.Message({
+    id,
+    date,
+    message: `m${id}`,
+    peerId: new Api.PeerChannel({ channelId: bigInt(5) }),
+  });
 const service = (id: number, date: number) =>
   new Api.MessageService({
     id,
@@ -23,17 +45,17 @@ const service = (id: number, date: number) =>
     action: new Api.MessageActionPinMessage(),
   });
 
-const me = user(1, 'Me', true);
-const news = channel(5, 'News');
-const game = channel(6, 'Gamers');
+const me = user(1, "Me", true);
+const news = channel(5, "News");
+const game = channel(6, "Gamers");
 
 function fakeClient(over: Partial<Fake> = {}): Fake {
   return {
     getMe: vi.fn(async () => me),
     getEntity: vi.fn(async () => news),
     getDialogs: vi.fn(async () => [
-      dialog('-1006', 'Gamers', game), // contains "me" as a substring
-      dialog('-1005', 'News', news),
+      dialog("-1006", "Gamers", game), // contains "me" as a substring
+      dialog("-1005", "News", news),
     ]),
     getMessages: vi.fn(async () => []),
     invoke: vi.fn(),
@@ -45,152 +67,203 @@ afterEach(async () => {
   await disconnectClient(); // clears the resolve and dialog caches
 });
 
-describe('parseTimeOffset', () => {
-  it('parses relative offsets including weeks', () => {
+describe(parseTimeOffset, () => {
+  it("parses relative offsets including weeks", () => {
     const now = Date.now();
-    expect(now - parseTimeOffset('30m').getTime()).toBeGreaterThanOrEqual(30 * 60e3 - 50);
-    expect(now - parseTimeOffset('2w').getTime()).toBeGreaterThanOrEqual(14 * 86400e3 - 50);
+    expect(now - parseTimeOffset("30m").getTime()).toBeGreaterThanOrEqual(
+      30 * 60e3 - 50
+    );
+    expect(now - parseTimeOffset("2w").getTime()).toBeGreaterThanOrEqual(
+      14 * 86_400e3 - 50
+    );
   });
 
-  it('parses absolute dates', () => {
-    expect(parseTimeOffset('2026-09-01').toISOString()).toBe('2026-09-01T00:00:00.000Z');
+  it("parses absolute dates", () => {
+    expect(parseTimeOffset("2026-09-01").toISOString()).toBe(
+      "2026-09-01T00:00:00.000Z"
+    );
   });
 
-  it('rejects garbage', () => {
-    expect(() => parseTimeOffset('soon')).toThrow(/Invalid time/);
+  it("rejects garbage", () => {
+    expect(() => parseTimeOffset("soon")).toThrow(/Invalid time/);
   });
 });
 
-describe('resolveChat', () => {
-  it('maps me/Saved Messages/Избранное to our own account, never to a title substring', async () => {
-    for (const alias of ['me', 'ME', 'Saved Messages', 'Избранное', 'self']) {
+describe(resolveChat, () => {
+  it("maps me/Saved Messages/Избранное to our own account, never to a title substring", async () => {
+    for (const alias of ["me", "ME", "Saved Messages", "Избранное", "self"]) {
       const client = fakeClient();
-      expect(await resolveChat(client as never, alias)).toBe(me);
+      await expect(resolveChat(client as never, alias)).resolves.toBe(me);
       expect(client.getDialogs).not.toHaveBeenCalled();
       await disconnectClient();
     }
   });
 
-  it('matches numeric IDs against dialog IDs only', async () => {
+  it("matches numeric IDs against dialog IDs only", async () => {
     const client = fakeClient();
-    expect(await resolveChat(client as never, '-1005')).toBe(news);
+    await expect(resolveChat(client as never, "-1005")).resolves.toBe(news);
   });
 
-  it('prefers exact titles, then substrings', async () => {
-    expect(await resolveChat(fakeClient() as never, 'news')).toBe(news);
+  it("prefers exact titles, then substrings", async () => {
+    await expect(resolveChat(fakeClient() as never, "news")).resolves.toBe(
+      news
+    );
     await disconnectClient();
-    expect(await resolveChat(fakeClient() as never, 'gamer')).toBe(game);
+    await expect(resolveChat(fakeClient() as never, "gamer")).resolves.toBe(
+      game
+    );
   });
 
-  it('fetches the dialog list once per process', async () => {
+  it("fetches the dialog list once per process", async () => {
     const client = fakeClient();
-    await resolveChat(client as never, 'News');
-    await resolveChat(client as never, 'Gamers');
-    await resolveChat(client as never, '-1006');
-    expect(client.getDialogs).toHaveBeenCalledTimes(1);
+    await resolveChat(client as never, "News");
+    await resolveChat(client as never, "Gamers");
+    await resolveChat(client as never, "-1006");
+    expect(client.getDialogs).toHaveBeenCalledOnce();
   });
 });
 
-describe('resolveChat for writes (strict)', () => {
+describe("resolveChat for writes (strict)", () => {
   afterEach(() => setStrictChatResolution(false));
 
-  it('refuses a substring match and lists candidates instead of guessing', async () => {
+  it("refuses a substring match and lists candidates instead of guessing", async () => {
     setStrictChatResolution(true);
     const client = fakeClient();
-    await expect(resolveChat(client as never, 'gamer')).rejects.toThrow(/titled exactly "gamer"[\s\S]*-1006 .*Gamers/);
+    await expect(resolveChat(client as never, "gamer")).rejects.toThrow(
+      /titled exactly "gamer"[\s\S]*-1006 .*Gamers/
+    );
     expect(client.getEntity).not.toHaveBeenCalled();
   });
 
-  it('refuses a title shared by several chats', async () => {
+  it("refuses a title shared by several chats", async () => {
     setStrictChatResolution(true);
-    const twin = channel(7, 'News');
+    const twin = channel(7, "News");
     const client = fakeClient({
-      getDialogs: vi.fn(async () => [dialog('-1005', 'News', news), dialog('-1007', 'News', twin)]),
+      getDialogs: vi.fn(async () => [
+        dialog("-1005", "News", news),
+        dialog("-1007", "News", twin),
+      ]),
     });
-    await expect(resolveChat(client as never, 'news')).rejects.toThrow(/matches 2 chats[\s\S]*-1005[\s\S]*-1007/);
+    await expect(resolveChat(client as never, "news")).rejects.toThrow(
+      /matches 2 chats[\s\S]*-1005[\s\S]*-1007/
+    );
   });
 
-  it('still accepts exact titles, IDs and me', async () => {
+  it("still accepts exact titles, IDs and me", async () => {
     setStrictChatResolution(true);
     const client = fakeClient();
-    expect(await resolveChat(client as never, 'NEWS')).toBe(news);
-    expect(await resolveChat(client as never, '-1006')).toBe(game);
-    expect(await resolveChat(client as never, 'me')).toBe(me);
+    await expect(resolveChat(client as never, "NEWS")).resolves.toBe(news);
+    await expect(resolveChat(client as never, "-1006")).resolves.toBe(game);
+    await expect(resolveChat(client as never, "me")).resolves.toBe(me);
   });
 
-  it('a lenient read resolved earlier in the process is not reused for a write', async () => {
+  it("a lenient read resolved earlier in the process is not reused for a write", async () => {
     const client = fakeClient();
-    expect(await resolveChat(client as never, 'gamer')).toBe(game);
+    await expect(resolveChat(client as never, "gamer")).resolves.toBe(game);
     setStrictChatResolution(true);
-    await expect(resolveChat(client as never, 'gamer')).rejects.toThrow(/titled exactly/);
+    await expect(resolveChat(client as never, "gamer")).rejects.toThrow(
+      /titled exactly/
+    );
   });
 });
 
-describe('getMessages pagination', () => {
-  it('pages by the oldest real message even when a batch ends with a service message', async () => {
+describe("getMessages pagination", () => {
+  it("pages by the oldest real message even when a batch ends with a service message", async () => {
     // 300 messages of history; every full batch ends with a service item (pin/join marker)
     const history = (offsetId: number | undefined, limit: number) => {
       const top = (offsetId ?? 301) - 1;
       const out = [];
       for (let id = top; id > top - limit && id > 0; id--) {
-        out.push(id === top - limit + 1 ? service(id, id * 10) : message(id, id * 10));
+        out.push(
+          id === top - limit + 1 ? service(id, id * 10) : message(id, id * 10)
+        );
       }
       return out;
     };
     const client = fakeClient({
-      getMessages: vi.fn(async (_e: unknown, p: { offsetId?: number; limit: number }) => history(p.offsetId, p.limit)),
+      getMessages: vi.fn(
+        async (_e: unknown, p: { offsetId?: number; limit: number }) =>
+          history(p.offsetId, p.limit)
+      ),
     });
-    const { messages } = await getMessages(client as never, 'News', { limit: 120 });
+    const { messages } = await getMessages(client as never, "News", {
+      limit: 120,
+    });
     expect(messages).toHaveLength(120);
     expect(messages[0].id).toBe(300);
     // Continued past the first batch's trailing service message instead of stopping there
     expect(client.getMessages.mock.calls.length).toBeGreaterThan(1);
-    const firstBatch = history(undefined, client.getMessages.mock.calls[0][1].limit);
-    const oldestReal = [...firstBatch].reverse().find(m => m instanceof Api.Message)!;
+    const firstBatch = history(
+      undefined,
+      client.getMessages.mock.calls[0][1].limit
+    );
+    const oldestReal = [...firstBatch]
+      .reverse()
+      .find((m) => m instanceof Api.Message)!;
     expect(client.getMessages.mock.calls[1][1].offsetId).toBe(oldestReal.id);
   });
 
-  it('stops at minDate and skips messages after maxDate', async () => {
+  it("stops at minDate and skips messages after maxDate", async () => {
     const client = fakeClient({
-      getMessages: vi.fn(async () => [message(5, 500), message(4, 400), message(3, 300), message(2, 200)]),
+      getMessages: vi.fn(async () => [
+        message(5, 500),
+        message(4, 400),
+        message(3, 300),
+        message(2, 200),
+      ]),
     });
-    const { messages } = await getMessages(client as never, 'News', {
+    const { messages } = await getMessages(client as never, "News", {
       limit: 50,
       maxDate: new Date(450 * 1000),
       minDate: new Date(250 * 1000),
     });
-    expect(messages.map(m => m.id)).toEqual([4, 3]);
+    expect(messages.map((m) => m.id)).toEqual([4, 3]);
   });
 
-  it('passes minId through for --after / sync --resume', async () => {
+  it("passes minId through for --after / sync --resume", async () => {
     const client = fakeClient({ getMessages: vi.fn(async () => []) });
-    await getMessages(client as never, 'News', { minId: 42 });
+    await getMessages(client as never, "News", { minId: 42 });
     expect(client.getMessages.mock.calls[0][1].minId).toBe(42);
   });
 });
 
-describe('searchMessages validation', () => {
-  it('rejects unknown --type values', async () => {
-    await expect(searchMessages(fakeClient() as never, 'x', { type: 'pdf' })).rejects.toThrow(/Unknown --type/);
+describe("searchMessages validation", () => {
+  it("rejects unknown --type values", async () => {
+    await expect(
+      searchMessages(fakeClient() as never, "x", { type: "pdf" })
+    ).rejects.toThrow(/Unknown --type/);
   });
 
-  it('refuses --from without --chat (global search cannot filter by sender)', async () => {
-    await expect(searchMessages(fakeClient() as never, 'x', { from: '@a' })).rejects.toThrow(/--from needs --chat/);
+  it("refuses --from without --chat (global search cannot filter by sender)", async () => {
+    await expect(
+      searchMessages(fakeClient() as never, "x", { from: "@a" })
+    ).rejects.toThrow(/--from needs --chat/);
   });
 });
 
-describe('admin requests serialize on TL layer 229', () => {
-  const ch = new Api.InputChannel({ channelId: bigInt(1), accessHash: bigInt(2) });
+describe("admin requests serialize on TL layer 229", () => {
+  const ch = new Api.InputChannel({
+    channelId: bigInt(1),
+    accessHash: bigInt(2),
+  });
   const u = new Api.InputUser({ userId: bigInt(3), accessHash: bigInt(4) });
 
-  it('channels.EditAdmin (promote)', () => {
-    const req = new Api.channels.EditAdmin({ channel: ch, userId: u, adminRights: new Api.ChatAdminRights({}), rank: 'Mod' });
+  it("channels.EditAdmin (promote)", () => {
+    const req = new Api.channels.EditAdmin({
+      channel: ch,
+      userId: u,
+      adminRights: new Api.ChatAdminRights({}),
+      rank: "Mod",
+    });
     expect(req.getBytes().length).toBeGreaterThan(0);
   });
 
-  it('messages.EditChatCreator (transfer-owner)', () => {
+  it("messages.EditChatCreator (transfer-owner)", () => {
     const req = new Api.messages.EditChatCreator({
-      peer: new Api.InputPeerChannel({ channelId: bigInt(1), accessHash: bigInt(2) }),
+      peer: new Api.InputPeerChannel({
+        channelId: bigInt(1),
+        accessHash: bigInt(2),
+      }),
       userId: u,
       password: new Api.InputCheckPasswordEmpty(),
     });
@@ -198,30 +271,79 @@ describe('admin requests serialize on TL layer 229', () => {
   });
 });
 
-describe('session errors: by the reason, at connect and later', () => {
-  const rpc = (errorMessage: string, extra: object = {}) => Object.assign(new Error(errorMessage), { errorMessage, ...extra });
+describe("session errors: by the reason, at connect and later", () => {
+  const rpc = (errorMessage: string, extra: object = {}) =>
+    Object.assign(new Error(errorMessage), { errorMessage, ...extra });
 
-  it.each(['AUTH_KEY_UNREGISTERED', 'SESSION_REVOKED', 'SESSION_EXPIRED', 'USER_DEACTIVATED'])('%s at connect is session_expired, exit 5', async name => {
-    const { checkSession } = await import('../src/client.js');
-    const err = await checkSession({ invoke: async () => { throw rpc(name); } } as never).catch(e => e);
-    expect(errorDetails(err)).toMatchObject({ code: 'session_expired', exitCode: EXIT.NOT_LOGGED_IN });
+  it.each([
+    "AUTH_KEY_UNREGISTERED",
+    "SESSION_REVOKED",
+    "SESSION_EXPIRED",
+    "USER_DEACTIVATED",
+  ])("%s at connect is session_expired, exit 5", async (name) => {
+    const { checkSession } = await import("../src/client.js");
+    const err = await checkSession({
+      invoke: async () => {
+        throw rpc(name);
+      },
+    } as never).catch((error) => error);
+    expect(errorDetails(err)).toMatchObject({
+      code: "session_expired",
+      exitCode: EXIT.NOT_LOGGED_IN,
+    });
   });
 
-  it('a network failure or FLOOD_WAIT at connect is not a logout: exit 1 with its own code', async () => {
-    const { checkSession } = await import('../src/client.js');
-    const net = await checkSession({ invoke: async () => { throw Object.assign(new Error('connect ECONNREFUSED 149.154.167.50:443'), { code: 'ECONNREFUSED' }); } } as never).catch(e => e);
-    expect(errorDetails(net)).toMatchObject({ code: 'network', exitCode: EXIT.ERROR });
-    const timeout = await checkSession({ invoke: async () => { throw new Error('Not connected'); } } as never).catch(e => e);
-    expect(errorDetails(timeout)).toMatchObject({ code: 'network', exitCode: EXIT.ERROR });
-    const flood = await checkSession({ invoke: async () => { throw rpc('FLOOD_WAIT', { seconds: 42 }); } } as never).catch(e => e);
-    expect(errorDetails(flood)).toMatchObject({ code: 'flood_wait', exitCode: EXIT.ERROR, retryAfterSeconds: 42 });
+  it("a network failure or FLOOD_WAIT at connect is not a logout: exit 1 with its own code", async () => {
+    const { checkSession } = await import("../src/client.js");
+    const net = await checkSession({
+      invoke: async () => {
+        throw Object.assign(
+          new Error("connect ECONNREFUSED 149.154.167.50:443"),
+          { code: "ECONNREFUSED" }
+        );
+      },
+    } as never).catch((error) => error);
+    expect(errorDetails(net)).toMatchObject({
+      code: "network",
+      exitCode: EXIT.ERROR,
+    });
+    const timeout = await checkSession({
+      invoke: async () => {
+        throw new Error("Not connected");
+      },
+    } as never).catch((error) => error);
+    expect(errorDetails(timeout)).toMatchObject({
+      code: "network",
+      exitCode: EXIT.ERROR,
+    });
+    const flood = await checkSession({
+      invoke: async () => {
+        throw rpc("FLOOD_WAIT", { seconds: 42 });
+      },
+    } as never).catch((error) => error);
+    expect(errorDetails(flood)).toMatchObject({
+      code: "flood_wait",
+      exitCode: EXIT.ERROR,
+      retryAfterSeconds: 42,
+    });
     // A working session passes
-    await expect(checkSession({ invoke: async () => ({}) } as never)).resolves.toBeUndefined();
+    await expect(
+      checkSession({ invoke: async () => ({}) } as never)
+    ).resolves.toBeUndefined();
   });
 
-  it('SESSION_REVOKED from a later call is session_expired, exit 5, not telegram_rpc', () => {
-    expect(errorDetails(rpc('SESSION_REVOKED'))).toMatchObject({ code: 'session_expired', exitCode: EXIT.NOT_LOGGED_IN });
-    expect(errorDetails(rpc('AUTH_KEY_UNREGISTERED'))).toMatchObject({ code: 'session_expired', exitCode: EXIT.NOT_LOGGED_IN });
-    expect(errorDetails(rpc('CHAT_WRITE_FORBIDDEN'))).toMatchObject({ code: 'telegram_rpc', exitCode: EXIT.ERROR });
+  it("SESSION_REVOKED from a later call is session_expired, exit 5, not telegram_rpc", () => {
+    expect(errorDetails(rpc("SESSION_REVOKED"))).toMatchObject({
+      code: "session_expired",
+      exitCode: EXIT.NOT_LOGGED_IN,
+    });
+    expect(errorDetails(rpc("AUTH_KEY_UNREGISTERED"))).toMatchObject({
+      code: "session_expired",
+      exitCode: EXIT.NOT_LOGGED_IN,
+    });
+    expect(errorDetails(rpc("CHAT_WRITE_FORBIDDEN"))).toMatchObject({
+      code: "telegram_rpc",
+      exitCode: EXIT.ERROR,
+    });
   });
 });

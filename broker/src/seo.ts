@@ -1,19 +1,23 @@
 /** What search engines and AI crawlers read besides the pages: robots, sitemap, llms.txt, JSON-LD, IndexNow. */
-import { LANGS, type Lang } from './i18n';
+import { LANGS } from "./i18n";
+import type { Lang } from "./i18n";
 
-export const SITE = 'https://better-tg-cli.com';
-const REPO = 'https://github.com/TheVilfer/better-tg-cli';
+export const SITE = "https://better-tg-cli.com";
+const REPO = "https://github.com/TheVilfer/better-tg-cli";
 /** The indexable pages; each exists in every language at ?lang= (English at the bare URL) */
-const PAGES = ['/', '/mcp', '/faq', '/compare', '/login'];
+const PAGES = ["/", "/mcp", "/faq", "/compare", "/login"];
 
 /**
  * IndexNow (Bing, Yandex and others): the key is public by design, served at /<key>.txt, and
  * scripts/indexnow.mjs submits the pages with it after a deploy.
  */
-export const INDEXNOW_KEY = '6236b353d57727a820b99d9950bb2abe';
+export const INDEXNOW_KEY = "6236b353d57727a820b99d9950bb2abe";
 
-export const pageUrl = (path: string, lang: Lang) => (lang === 'en' ? `${SITE}${path}` : `${SITE}${path}?lang=${lang}`);
-export const PAGE_URLS = PAGES.flatMap(path => LANGS.map(lang => pageUrl(path, lang)));
+export const pageUrl = (path: string, lang: Lang) =>
+  lang === "en" ? `${SITE}${path}` : `${SITE}${path}?lang=${lang}`;
+export const PAGE_URLS = PAGES.flatMap((path) =>
+  LANGS.map((lang) => pageUrl(path, lang))
+);
 
 export function robotsTxt(): string {
   return `User-agent: *\nAllow: /\nDisallow: /v1/\n\nSitemap: ${SITE}/sitemap.xml\n`;
@@ -21,15 +25,27 @@ export function robotsTxt(): string {
 
 /** Every page in every language, each with its alternates (the same set as the pages' hreflang links). */
 export function sitemapXml(): string {
-  const xml = (s: string) => s.replace(/&/g, '&amp;');
+  const xml = (s: string) => s.replaceAll("&", "&amp;");
   const alternates = (path: string) => [
-    ...LANGS.map(l => `    <xhtml:link rel="alternate" hreflang="${l}" href="${xml(pageUrl(path, l))}"/>`),
-    `    <xhtml:link rel="alternate" hreflang="x-default" href="${xml(pageUrl(path, 'en'))}"/>`,
+    ...LANGS.map(
+      (l) =>
+        `    <xhtml:link rel="alternate" hreflang="${l}" href="${xml(pageUrl(path, l))}"/>`
+    ),
+    `    <xhtml:link rel="alternate" hreflang="x-default" href="${xml(pageUrl(path, "en"))}"/>`,
   ];
-  const urls = PAGES.flatMap(path => LANGS.map(lang => [`  <url>`, `    <loc>${xml(pageUrl(path, lang))}</loc>`, ...alternates(path), `  </url>`].join('\n')));
+  const urls = PAGES.flatMap((path) =>
+    LANGS.map((lang) =>
+      [
+        `  <url>`,
+        `    <loc>${xml(pageUrl(path, lang))}</loc>`,
+        ...alternates(path),
+        `  </url>`,
+      ].join("\n")
+    )
+  );
   return `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
-${urls.join('\n')}
+${urls.join("\n")}
 </urlset>
 `;
 }
@@ -66,48 +82,51 @@ export const LLMS_TXT = `# Better-TG-CLI
 /** schema.org data for the landing page: the app, its source and its author. */
 export function jsonLd(description: string, lang: Lang): string {
   const data = {
-    '@context': 'https://schema.org',
-    '@graph': [
+    "@context": "https://schema.org",
+    "@graph": [
       {
-        '@type': 'SoftwareApplication',
-        '@id': `${SITE}/#app`,
-        name: 'Better-TG-CLI',
-        alternateName: ['better-tg-cli', 'telegram CLI and MCP server for AI agents'],
+        "@type": "SoftwareApplication",
+        "@id": `${SITE}/#app`,
+        name: "Better-TG-CLI",
+        alternateName: [
+          "better-tg-cli",
+          "telegram CLI and MCP server for AI agents",
+        ],
         description,
-        url: pageUrl('/', lang),
+        url: pageUrl("/", lang),
         inLanguage: lang,
-        applicationCategory: 'DeveloperApplication',
-        applicationSubCategory: 'Telegram client, MCP server',
-        operatingSystem: 'macOS, Linux, Windows',
+        applicationCategory: "DeveloperApplication",
+        applicationSubCategory: "Telegram client, MCP server",
+        operatingSystem: "macOS, Linux, Windows",
         downloadUrl: `${REPO}/releases/latest`,
-        installUrl: 'https://www.npmjs.com/package/better-tg-cli',
+        installUrl: "https://www.npmjs.com/package/better-tg-cli",
         image: `${SITE}/og.png`,
         isAccessibleForFree: true,
-        offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-        license: 'https://opensource.org/licenses/MIT',
-        author: { '@id': `${SITE}/#author` },
-        sameAs: [REPO, 'https://www.npmjs.com/package/better-tg-cli'],
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+        license: "https://opensource.org/licenses/MIT",
+        author: { "@id": `${SITE}/#author` },
+        sameAs: [REPO, "https://www.npmjs.com/package/better-tg-cli"],
       },
       {
-        '@type': 'SoftwareSourceCode',
-        '@id': `${REPO}#source`,
-        name: 'better-tg-cli',
+        "@type": "SoftwareSourceCode",
+        "@id": `${REPO}#source`,
+        name: "better-tg-cli",
         codeRepository: REPO,
-        programmingLanguage: 'TypeScript',
-        runtimePlatform: 'Node.js, Bun',
-        license: 'https://opensource.org/licenses/MIT',
-        targetProduct: { '@id': `${SITE}/#app` },
-        author: { '@id': `${SITE}/#author` },
+        programmingLanguage: "TypeScript",
+        runtimePlatform: "Node.js, Bun",
+        license: "https://opensource.org/licenses/MIT",
+        targetProduct: { "@id": `${SITE}/#app` },
+        author: { "@id": `${SITE}/#author` },
       },
       {
-        '@type': 'Person',
-        '@id': `${SITE}/#author`,
-        name: 'Sergei Polin',
-        url: 'https://github.com/TheVilfer',
-        sameAs: ['https://github.com/TheVilfer', 'https://x.com/vilfer_dev'],
+        "@type": "Person",
+        "@id": `${SITE}/#author`,
+        name: "Sergei Polin",
+        url: "https://github.com/TheVilfer",
+        sameAs: ["https://github.com/TheVilfer", "https://x.com/vilfer_dev"],
       },
     ],
   };
   // Inside <script>, "<" must not start "</script>"
-  return JSON.stringify(data).replace(/</g, '\\u003c');
+  return JSON.stringify(data).replaceAll("<", "\\u003c");
 }

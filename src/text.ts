@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync } from "node:fs";
 
 /**
  * Message text argument: "-" reads it from stdin, so agents can pass long or
@@ -9,7 +9,7 @@ import { readFileSync } from 'fs';
  * else. Stringifying an arbitrary thrown value could put a stack trace or an object dump on the wire.
  */
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unexpected error';
+  return error instanceof Error ? error.message : "Unexpected error";
 }
 
 let stdinText: string | undefined;
@@ -25,8 +25,12 @@ export function primeStdin(text: string): void {
 
 export function readStdinOnce(): string {
   // An approval in mode "ask" that did not cover stdin: a body read from it now would be unapproved
-  if (stdinSealed) throw new Error('This command reads stdin, but its approval did not cover stdin. Run it again to get an approval that does.');
-  stdinText ??= readFileSync(0, 'utf-8');
+  if (stdinSealed) {
+    throw new Error(
+      "This command reads stdin, but its approval did not cover stdin. Run it again to get an approval that does."
+    );
+  }
+  stdinText ??= readFileSync(0, "utf-8");
   return stdinText;
 }
 
@@ -46,12 +50,16 @@ export function sealStdin(): void {
  * the sent one.
  */
 export function stdinBody(raw: string): string {
-  return raw.replace(/\r?\n$/, '');
+  return raw.replace(/\r?\n$/, "");
 }
 
 export function readTextArg(value: string): string {
-  if (value !== '-') return value;
+  if (value !== "-") {
+    return value;
+  }
   const text = stdinBody(readStdinOnce());
-  if (!text) throw new Error('Empty message on stdin');
+  if (!text) {
+    throw new Error("Empty message on stdin");
+  }
   return text;
 }

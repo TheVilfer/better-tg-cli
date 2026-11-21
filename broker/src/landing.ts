@@ -1,14 +1,31 @@
 /** The landing page at /: what the tool is, one install command, the way to a login key. No forms, no Turnstile. */
 
-import { a, b, code, d, escape, SCREEN_CSS, terminal } from './guide';
-import { DICT, type Dict, type Lang } from './i18n';
-import { BRAND, cardMeta, footer, langLinks, LOGIN_PATH, TOKENS_CSS } from './page';
-import { jsonLd } from './seo';
+import { a, b, code, d, escape, SCREEN_CSS, terminal } from "./guide";
+import { DICT } from "./i18n";
+import type { Dict, Lang } from "./i18n";
+import {
+  BRAND,
+  cardMeta,
+  footer,
+  langLinks,
+  LOGIN_PATH,
+  TOKENS_CSS,
+} from "./page";
+import { jsonLd } from "./seo";
 
 /** The two ways in: the CLI itself, or the agent skill through skills.sh (it tells the agent to install the CLI). */
-const INSTALL = { cli: 'npm install -g better-tg-cli', skill: 'npx skills add TheVilfer/better-tg-cli' } as const;
-const AGENTS = ['Claude Code', 'Codex', 'Cursor', 'Claude Desktop', 'Gemini CLI'];
-const REPO = 'https://github.com/TheVilfer/better-tg-cli';
+const INSTALL = {
+  cli: "npm install -g better-tg-cli",
+  skill: "npx skills add TheVilfer/better-tg-cli",
+} as const;
+const AGENTS = [
+  "Claude Code",
+  "Codex",
+  "Cursor",
+  "Claude Desktop",
+  "Gemini CLI",
+];
+const REPO = "https://github.com/TheVilfer/better-tg-cli";
 
 export interface LandingOptions {
   lang?: Lang;
@@ -16,27 +33,32 @@ export interface LandingOptions {
   query?: URLSearchParams;
 }
 
-export function landingResponse({ lang = 'en', query = new URLSearchParams() }: LandingOptions): Response {
-  const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+export function landingResponse({
+  lang = "en",
+  query = new URLSearchParams(),
+}: LandingOptions): Response {
+  const nonce = btoa(
+    String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))
+  );
   const csp = [
     "default-src 'none'",
     `script-src 'nonce-${nonce}'`,
     `style-src 'nonce-${nonce}' https://fonts.googleapis.com`,
-    'font-src https://fonts.gstatic.com',
+    "font-src https://fonts.gstatic.com",
     "img-src 'self' data:",
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",
-  ].join('; ');
+  ].join("; ");
   return new Response(landing(nonce, lang, query), {
     headers: {
-      'content-language': lang,
-      vary: 'Accept-Language',
-      'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'no-store',
-      'content-security-policy': csp,
-      'referrer-policy': 'no-referrer',
-      'x-content-type-options': 'nosniff',
+      "content-language": lang,
+      vary: "Accept-Language",
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy": csp,
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
     },
   });
 }
@@ -44,59 +66,73 @@ export function landingResponse({ lang = 'en', query = new URLSearchParams() }: 
 /** An agent answering a question about the inbox: the whole pitch in one picture. */
 function screen(t: Dict): string {
   const s = t.guide.screens;
-  return terminal('claude', [
-    `${d('&gt;')} ${escape(s.claudeAsk)}`,
-    '',
-    `${a('⏺')} ${b('telegram_read')}${d('(inbox -n 5)')}`,
-    `  ${d('⎿')} ${d('12 unread in 4 chats')}`,
-    `${a('⏺')} ${escape(s.claudeAnswer.join(' '))}`,
+  return terminal("claude", [
+    `${d("&gt;")} ${escape(s.claudeAsk)}`,
+    "",
+    `${a("⏺")} ${b("telegram_read")}${d("(inbox -n 5)")}`,
+    `  ${d("⎿")} ${d("12 unread in 4 chats")}`,
+    `${a("⏺")} ${escape(s.claudeAnswer.join(" "))}`,
   ]);
 }
 
 /** The install command under a CLI / Skill switch. */
 function install(t: Dict): string {
-  const ids = ['cli', 'skill'] as const;
-  const tabs = ids.map((id, i) =>
-    `<button type="button" role="tab" id="tab-${id}" aria-controls="how-${id}" aria-selected="${i === 0}"${i ? ' tabindex="-1"' : ''}>${escape(t.landing.installTabs[id])}</button>`).join('');
-  const panels = ids.map((id, i) =>
-    `<div role="tabpanel" id="how-${id}" aria-labelledby="tab-${id}"${i ? ' hidden' : ''}>${code(INSTALL[id], t.client.copy)}</div>`).join('');
+  const ids = ["cli", "skill"] as const;
+  const tabs = ids
+    .map(
+      (id, i) =>
+        `<button type="button" role="tab" id="tab-${id}" aria-controls="how-${id}" aria-selected="${i === 0}"${i ? ' tabindex="-1"' : ""}>${escape(t.landing.installTabs[id])}</button>`
+    )
+    .join("");
+  const panels = ids
+    .map(
+      (id, i) =>
+        `<div role="tabpanel" id="how-${id}" aria-labelledby="tab-${id}"${i ? " hidden" : ""}>${code(INSTALL[id], t.client.copy)}</div>`
+    )
+    .join("");
   return `<div class="pick" role="tablist" aria-label="${escape(t.landing.installLabel)}">${tabs}</div>
 ${panels}`;
 }
 
 /** `stat` is a number shown big above the title, inside the heading, so the heading reads "60+ commands" */
-const tile = (cls: string, f: { title: string; text: string }, extra = '', stat = '') =>
-  `<div class="tile${cls ? ` ${cls}` : ''}">${stat ? `<h3 class="stat"><span class="num">${stat}</span> ${escape(f.title)}</h3>` : `<h3>${escape(f.title)}</h3>`}<p>${escape(f.text)}</p>${extra}</div>`;
+const tile = (
+  cls: string,
+  f: { title: string; text: string },
+  extra = "",
+  stat = ""
+) =>
+  `<div class="tile${cls ? ` ${cls}` : ""}">${stat ? `<h3 class="stat"><span class="num">${stat}</span> ${escape(f.title)}</h3>` : `<h3>${escape(f.title)}</h3>`}<p>${escape(f.text)}</p>${extra}</div>`;
 
 /** The few things that set the tool apart, as a bento grid. */
-function bento(x: Dict['landing']): string {
+function bento(x: Dict["landing"]): string {
   const f = x.features;
-  const chip = (html: string) => `<div class="chip" aria-hidden="true">${html}</div>`;
+  const chip = (html: string) =>
+    `<div class="chip" aria-hidden="true">${html}</div>`;
   return `<h2>${escape(x.featuresTitle)}</h2>
 <div class="bento">
-${tile('wide', f.safe, chip('<span>$</span> telegram write-access <b>ask</b>'))}
-${tile('narrow', f.commands, '', '60+')}
-${tile('narrow', f.deps, '', '0')}
-${tile('wide', f.tokens, chip('<b>1234567890</b> user unread=2 Alice @alice <span>|</span> see you at 7?'))}
-${tile('', f.bots, chip('<span>$</span> telegram click @bot 812 <b>"Confirm"</b>'))}
-${tile('', f.agents, `<div class="agents">${AGENTS.map(n => `<span>${n}</span>`).join('')}</div>`)}
+${tile("wide", f.safe, chip("<span>$</span> telegram write-access <b>ask</b>"))}
+${tile("narrow", f.commands, "", "60+")}
+${tile("narrow", f.deps, "", "0")}
+${tile("wide", f.tokens, chip("<b>1234567890</b> user unread=2 Alice @alice <span>|</span> see you at 7?"))}
+${tile("", f.bots, chip('<span>$</span> telegram click @bot 812 <b>"Confirm"</b>'))}
+${tile("", f.agents, `<div class="agents">${AGENTS.map((n) => `<span>${n}</span>`).join("")}</div>`)}
 </div>`;
 }
 
 /** What the tool can and cannot do with the account, without jargon, and the limits said out loud. */
-function security(x: Dict['landing']): string {
+function security(x: Dict["landing"]): string {
   return `<h2 id="security">${escape(x.securityTitle)}</h2>
 <p class="how">${escape(x.securityLead)}</p>
-<ul class="safe">${x.security.map(s => `<li><h3>${escape(s.title)}</h3><p>${escape(s.text)}</p></li>`).join('')}</ul>
-<div class="limits"><h3>${escape(x.limitsTitle)}</h3><ul>${x.limits.map(l => `<li>${escape(l)}</li>`).join('')}</ul></div>
+<ul class="safe">${x.security.map((s) => `<li><h3>${escape(s.title)}</h3><p>${escape(s.text)}</p></li>`).join("")}</ul>
+<div class="limits"><h3>${escape(x.limitsTitle)}</h3><ul>${x.limits.map((l) => `<li>${escape(l)}</li>`).join("")}</ul></div>
 <p class="own">${escape(x.securityMore)}: <a href="${REPO}/blob/main/SECURITY.md">${escape(x.securityDoc)}</a> · <a href="${REPO}/blob/main/PRIVACY.md">${escape(x.privacyDoc)}</a></p>`;
 }
 
 /** What a login key is and the three steps to one. */
-function login(x: Dict['landing'], href: string): string {
+function login(x: Dict["landing"], href: string): string {
   return `<h2 id="login">${escape(x.loginTitle)}</h2>
 <p class="how">${escape(x.loginLead)}</p>
-<ol class="steps">${x.steps.map(s => `<li><h3>${escape(s.title)}</h3><p>${escape(s.text)}</p></li>`).join('')}</ol>
+<ol class="steps">${x.steps.map((s) => `<li><h3>${escape(s.title)}</h3><p>${escape(s.text)}</p></li>`).join("")}</ol>
 <p class="own">${escape(x.ownKeys)} <code>telegram auth</code>.</p>
 <div class="cta"><a class="btn" href="${href}">${escape(x.cta)}</a></div>`;
 }
@@ -104,13 +140,13 @@ function login(x: Dict['landing'], href: string): string {
 function landing(nonce: string, lang: Lang, query: URLSearchParams): string {
   const t = DICT[lang];
   const x = t.landing;
-  const href = query.has('lang') ? `${LOGIN_PATH}?lang=${lang}` : LOGIN_PATH;
+  const href = query.has("lang") ? `${LOGIN_PATH}?lang=${lang}` : LOGIN_PATH;
 
   return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escape(x.title)}</title>
 <meta name="description" content="${escape(x.description)}">
-${cardMeta(lang, x, '/')}
+${cardMeta(lang, x, "/")}
 <script type="application/ld+json" nonce="${nonce}">${jsonLd(x.description, lang)}</script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono&display=swap">
 <style nonce="${nonce}">
@@ -184,21 +220,21 @@ footer .pages{margin-bottom:8px}
 @media (max-width:620px){h2{margin-top:64px}.bento,.steps,.safe{grid-template-columns:1fr}.tile,.tile.wide,.tile.narrow{grid-column:auto}}
 </style></head><body><main>
 <div class="top">${BRAND}
-${langLinks(lang, query, t, '/')}</div>
+${langLinks(lang, query, t, "/")}</div>
 <h1>${escape(x.h1)}</h1>
 <p class="lead">${escape(x.lead)}</p>
 ${install(t)}
 <div class="cta"><a class="btn" href="${href}">${escape(x.cta)}</a><a class="gh" href="${REPO}">GitHub ↗</a></div>
 <p class="note">${escape(x.ctaNote)}</p>
 ${screen(t)}
-<ul class="facts">${x.facts.map(f => `<li>${escape(f)}</li>`).join('')}</ul>
+<ul class="facts">${x.facts.map((f) => `<li>${escape(f)}</li>`).join("")}</ul>
 ${bento(x)}
 ${security(x)}
 ${login(x, href)}
 ${footer(t.page, lang)}
 </main>
 <script nonce="${nonce}">
-const T = ${JSON.stringify({ copy: t.client.copy, copied: t.client.copied, copyManual: t.client.copyManual }).replace(/</g, '\\u003c')};
+const T = ${JSON.stringify({ copy: t.client.copy, copied: t.client.copied, copyManual: t.client.copyManual }).replaceAll("<", "\\u003c")};
 const tabs = [...document.querySelectorAll('.pick [role="tab"]')];
 const pick = tab => {
   for (const x of tabs) {

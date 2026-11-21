@@ -11,16 +11,39 @@
  * Values from the guest arrive as parsed JSON: every field is read by name with a type check, a
  * cursor is decoded strictly and every filter is applied again whatever it says.
  */
-import { createHash } from 'node:crypto';
-import { Api, utils, type TelegramClient } from 'teleproto';
-import bigInt from 'big-integer';
-import { CHAT_TYPES, getDialogs, hasTopics, isServiceSource, matchesChatType, plainMessageText, resolveChat, type ResolvedEntity } from '../client.js';
-import { errorDetails } from '../errors.js';
-import { maskForModel } from '../mcp-output.js';
-import { HostError, type HostFunction } from './sandbox-types.js';
-import type { Manifest, Permission, PluginCommand } from './manifest.js';
-import { buildProposal, type Proposal } from './proposals.js';
-import { checkRequest, injectMatches, pathProblem, requestDeadline, secretForms, shapeResponse, withTimeout, type Backend } from './http.js';
+import { createHash } from "node:crypto";
+
+import bigInt from "big-integer";
+import { Api, utils } from "teleproto";
+import type { TelegramClient } from "teleproto";
+
+import {
+  CHAT_TYPES,
+  getDialogs,
+  hasTopics,
+  isServiceSource,
+  matchesChatType,
+  plainMessageText,
+  resolveChat,
+} from "../client.js";
+import type { ResolvedEntity } from "../client.js";
+import { errorDetails } from "../errors.js";
+import { maskForModel } from "../mcp-output.js";
+import {
+  checkRequest,
+  injectMatches,
+  pathProblem,
+  requestDeadline,
+  secretForms,
+  shapeResponse,
+  withTimeout,
+} from "./http.js";
+import type { Backend } from "./http.js";
+import type { Manifest, Permission, PluginCommand } from "./manifest.js";
+import { buildProposal } from "./proposals.js";
+import type { Proposal } from "./proposals.js";
+import { HostError } from "./sandbox-types.js";
+import type { HostFunction } from "./sandbox-types.js";
 
 /** Serialized characters a page of messages may take (spec: about 40 000). */
 export const PAGE_CHARS = 40_000;
@@ -30,10 +53,11 @@ const MINE_REQUESTS = 20;
 const MINE_CHATS = 100;
 const MINE_MAX = 2000;
 const READ_MAX = 100;
-const SERVICE_IDS = new Set(['777000', '489000']);
+const SERVICE_IDS = new Set(["777000", "489000"]);
 /** Message, topic and thread IDs are positive 32-bit integers. */
 export const MAX_MESSAGE_ID = 2_147_483_647;
-export const isMessageId = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_MESSAGE_ID;
+export const isMessageId = (n: unknown): n is number =>
+  typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= MAX_MESSAGE_ID;
 
 /**
  * What a storage write must still hold when it changes the file: the run's absolute deadline and
@@ -49,7 +73,11 @@ export interface StorageBackend {
   get(key: string): string | undefined;
   list(): { key: string; bytes: number; updatedAt: string }[];
   /** Waits for the store's lock within `guard` and checks it again right before the file changes. */
-  set(key: string, value: string, guard: WriteGuard): Promise<{ bytes: number; usedBytes: number; quotaBytes: number }>;
+  set(
+    key: string,
+    value: string,
+    guard: WriteGuard
+  ): Promise<{ bytes: number; usedBytes: number; quotaBytes: number }>;
   delete(key: string, guard: WriteGuard): Promise<boolean>;
 }
 
@@ -105,7 +133,10 @@ export interface NetworkContext {
    * The value of a declared secret, or null when the human has not set it. Never handed to the
    * plugin. Read asynchronously: `signal` aborts when the request ends (its deadline, the run's end).
    */
-  secret(name: string, signal: AbortSignal): string | null | Promise<string | null>;
+  secret(
+    name: string,
+    signal: AbortSignal
+  ): string | null | Promise<string | null>;
   /** The command a human runs to set a secret (argv after `telegram`). */
   setCommand(name: string): string[];
 }
@@ -113,7 +144,11 @@ export interface NetworkContext {
 export interface HostState {
   proposals: Proposal[];
   /** The last flood_wait a host call reported, as the host built it (never the guest's copy). */
-  flood?: { retryAfterSeconds: number; cursor: string | null; partial: unknown };
+  flood?: {
+    retryAfterSeconds: number;
+    cursor: string | null;
+    partial: unknown;
+  };
   /** `http.fetch` for the audit: requests made and the origins they went to (never URLs, bodies or secrets). */
   requests?: number;
   origins?: string[];
@@ -121,33 +156,61 @@ export interface HostState {
   secretMissing?: { name: string; command: string[] };
 }
 
-const invalid = (message: string) => new HostError('invalid_argument', message);
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const invalid = (message: string) => new HostError("invalid_argument", message);
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
 const opts = (v: unknown, what: string): Record<string, unknown> => {
-  if (v === undefined || v === null) return {};
-  if (!isObject(v)) throw invalid(`${what}: options must be an object`);
+  if (v === undefined || v === null) {
+    return {};
+  }
+  if (!isObject(v)) {
+    throw invalid(`${what}: options must be an object`);
+  }
   return v;
 };
-const int = (v: unknown, what: string, min: number, max: number, fallback?: number): number => {
+const int = (
+  v: unknown,
+  what: string,
+  min: number,
+  max: number,
+  fallback?: number
+): number => {
   if (v === undefined || v === null) {
-    if (fallback === undefined) throw invalid(`${what} is required`);
+    if (fallback === undefined) {
+      throw invalid(`${what} is required`);
+    }
     return fallback;
   }
-  if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) throw invalid(`${what} must be an integer from ${min} to ${max}`);
+  if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
+    throw invalid(`${what} must be an integer from ${min} to ${max}`);
+  }
   return v;
 };
-const optInt = (v: unknown, what: string, min: number, max: number): number | undefined =>
+const optInt = (
+  v: unknown,
+  what: string,
+  min: number,
+  max: number
+): number | undefined =>
   v === undefined || v === null ? undefined : int(v, what, min, max);
 const str = (v: unknown, what: string, max = 4096): string => {
-  if (typeof v !== 'string' || !v || v.length > max) throw invalid(`${what} must be a non-empty string of at most ${max} characters`);
+  if (typeof v !== "string" || !v || v.length > max) {
+    throw invalid(
+      `${what} must be a non-empty string of at most ${max} characters`
+    );
+  }
   return v;
 };
 
 /** A chat as a plugin names it: an ID or an @username, never a title to match. */
 const CHAT_REF = /^(-?\d{1,20}|@[A-Za-z0-9_]{3,64})$/;
-function chatRef(v: unknown, what = 'chat'): string {
-  if (typeof v === 'number' && Number.isSafeInteger(v)) return String(v);
-  if (typeof v !== 'string' || !CHAT_REF.test(v)) throw invalid(`${what} must be a chat ID or an @username`);
+function chatRef(v: unknown, what = "chat"): string {
+  if (typeof v === "number" && Number.isSafeInteger(v)) {
+    return String(v);
+  }
+  if (typeof v !== "string" || !CHAT_REF.test(v)) {
+    throw invalid(`${what} must be a chat ID or an @username`);
+  }
   return v;
 }
 
@@ -155,7 +218,7 @@ function chatRef(v: unknown, what = 'chat'): string {
 function floodSeconds(e: unknown): number | undefined {
   try {
     const d = errorDetails(e);
-    return d.code === 'flood_wait' ? d.retryAfterSeconds ?? 0 : undefined;
+    return d.code === "flood_wait" ? (d.retryAfterSeconds ?? 0) : undefined;
   } catch {
     return undefined;
   }
@@ -163,27 +226,43 @@ function floodSeconds(e: unknown): number | undefined {
 
 /** Any other host failure as the guest sees it: the CLI's code and a masked message. */
 function hostFailure(e: unknown): HostError {
-  if (e instanceof HostError) return e;
+  if (e instanceof HostError) {
+    return e;
+  }
   const d = errorDetails(e);
-  return new HostError(d.code, d.message, d.retryAfterSeconds !== undefined ? { retryAfterSeconds: d.retryAfterSeconds } : {});
+  return new HostError(
+    d.code,
+    d.message,
+    d.retryAfterSeconds === undefined
+      ? {}
+      : { retryAfterSeconds: d.retryAfterSeconds }
+  );
 }
 
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
-const serviceUser = (entity: ResolvedEntity) => entity instanceof Api.User && SERVICE_IDS.has(entity.id.toString());
+const serviceUser = (entity: ResolvedEntity) =>
+  entity instanceof Api.User && SERVICE_IDS.has(entity.id.toString());
 
 /** A message another person may have written, as the read APIs return it. */
 function readMessage(msg: Api.Message) {
   const service = isServiceSource(msg);
-  const from = msg.fromId instanceof Api.PeerUser ? msg.fromId.userId.toString() : msg.peerId instanceof Api.PeerUser && !msg.out ? msg.peerId.userId.toString() : undefined;
+  const from =
+    msg.fromId instanceof Api.PeerUser
+      ? msg.fromId.userId.toString()
+      : msg.peerId instanceof Api.PeerUser && !msg.out
+        ? msg.peerId.userId.toString()
+        : undefined;
   return {
     id: msg.id,
     date: iso(msg.date),
     out: !!msg.out,
     ...(from ? { senderId: from } : {}),
-    text: maskForModel(plainMessageText(msg), service ? 'service' : 'echo'),
+    text: maskForModel(plainMessageText(msg), service ? "service" : "echo"),
     ...(msg.fwdFrom ? { forwarded: true } : {}),
     ...(service ? { service: true } : {}),
-    ...(msg.replyTo?.replyToMsgId ? { replyToMsgId: msg.replyTo.replyToMsgId } : {}),
+    ...(msg.replyTo?.replyToMsgId
+      ? { replyToMsgId: msg.replyTo.replyToMsgId }
+      : {}),
   };
 }
 
@@ -193,7 +272,9 @@ function bounded<T>(items: T[]): T[] {
   const out: T[] = [];
   for (const item of items) {
     const n = JSON.stringify(item).length + 1;
-    if (out.length && size + n > PAGE_CHARS) break;
+    if (out.length && size + n > PAGE_CHARS) {
+      break;
+    }
     size += n;
     out.push(item);
   }
@@ -202,8 +283,8 @@ function bounded<T>(items: T[]): T[] {
 
 // ---------- the cursor of messages.mine ----------
 
-type MineType = 'private' | 'group';
-const MINE_TYPES: readonly MineType[] = ['private', 'group'];
+type MineType = "private" | "group";
+const MINE_TYPES: readonly MineType[] = ["private", "group"];
 
 /**
  * The walk behind a cursor, kept by the host (CursorStore): the plugin gets a random id only, so it
@@ -223,177 +304,372 @@ interface MineCursor {
   o: number;
 }
 
-const accountTag = (userId: string) => createHash('sha256').update(`tg-plugin-cursor:${userId}`).digest('base64url').slice(0, 12);
+const accountTag = (userId: string) =>
+  createHash("sha256")
+    .update(`tg-plugin-cursor:${userId}`)
+    .digest("base64url")
+    .slice(0, 12);
 
-const badCursor = (message: string) => new HostError('invalid_cursor', message);
+const badCursor = (message: string) => new HostError("invalid_cursor", message);
 
 function loadCursor(ctx: HostContext, id: string, account: string): MineCursor {
-  if (!/^[A-Za-z0-9_-]{22}$/.test(id)) throw badCursor('cursor is not one this host returned');
+  if (!/^[A-Za-z0-9_-]{22}$/.test(id)) {
+    throw badCursor("cursor is not one this host returned");
+  }
   const raw = ctx.cursors.load(id);
-  if (!isObject(raw)) throw badCursor('cursor is unknown or expired (cursors last 24 hours); start again without one');
+  if (!isObject(raw)) {
+    throw badCursor(
+      "cursor is unknown or expired (cursors last 24 hours); start again without one"
+    );
+  }
   const { a, n, t, s, c, i, o } = raw;
-  if (n !== ctx.installId) throw badCursor('cursor belongs to another installation');
-  if (a !== accountTag(account)) throw badCursor('cursor belongs to another account');
+  if (n !== ctx.installId) {
+    throw badCursor("cursor belongs to another installation");
+  }
+  if (a !== accountTag(account)) {
+    throw badCursor("cursor belongs to another account");
+  }
   // Host-written, but read back from disk: checked all the same
-  if (!Array.isArray(t) || !t.length || !t.every(x => MINE_TYPES.includes(x as MineType))) throw badCursor('cursor is damaged');
-  if (!Array.isArray(c) || c.length > MINE_CHATS || !c.every(x => typeof x === 'string' && /^-?\d{1,20}$/.test(x))) throw badCursor('cursor is damaged');
-  if (typeof s !== 'number' || !Number.isInteger(s) || s < 0) throw badCursor('cursor is damaged');
-  if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i > c.length) throw badCursor('cursor is damaged');
-  if (typeof o !== 'number' || !Number.isInteger(o) || o < 0) throw badCursor('cursor is damaged');
+  if (
+    !Array.isArray(t) ||
+    !t.length ||
+    !t.every((x) => MINE_TYPES.includes(x as MineType))
+  ) {
+    throw badCursor("cursor is damaged");
+  }
+  if (
+    !Array.isArray(c) ||
+    c.length > MINE_CHATS ||
+    !c.every((x) => typeof x === "string" && /^-?\d{1,20}$/.test(x))
+  ) {
+    throw badCursor("cursor is damaged");
+  }
+  if (typeof s !== "number" || !Number.isInteger(s) || s < 0) {
+    throw badCursor("cursor is damaged");
+  }
+  if (typeof i !== "number" || !Number.isInteger(i) || i < 0 || i > c.length) {
+    throw badCursor("cursor is damaged");
+  }
+  if (typeof o !== "number" || !Number.isInteger(o) || o < 0) {
+    throw badCursor("cursor is damaged");
+  }
   return { a, n, t: t as MineType[], s, c: c as string[], i, o };
 }
 
 /** The own-message type of a chat, or undefined for one `messages.mine` never reads. */
 function mineType(entity: ResolvedEntity): MineType | undefined {
-  if (entity instanceof Api.User) return entity.bot || serviceUser(entity) ? undefined : 'private';
-  if (entity instanceof Api.Chat) return 'group';
-  if (entity instanceof Api.Channel) return entity.megagroup ? 'group' : undefined;
+  if (entity instanceof Api.User) {
+    return entity.bot || serviceUser(entity) ? undefined : "private";
+  }
+  if (entity instanceof Api.Chat) {
+    return "group";
+  }
+  if (entity instanceof Api.Channel) {
+    return entity.megagroup ? "group" : undefined;
+  }
   return undefined;
 }
 
 function sinceSeconds(v: unknown): number {
-  if (v === undefined || v === null) return 0;
-  const ms = typeof v === 'number' ? v * 1000 : typeof v === 'string' ? Date.parse(v) : NaN;
-  if (!Number.isFinite(ms) || ms < 0) throw invalid('since must be an ISO date or Unix seconds');
+  if (v === undefined || v === null) {
+    return 0;
+  }
+  const ms =
+    typeof v === "number"
+      ? v * 1000
+      : typeof v === "string"
+        ? Date.parse(v)
+        : Number.NaN;
+  if (!Number.isFinite(ms) || ms < 0) {
+    throw invalid("since must be an ISO date or Unix seconds");
+  }
   return Math.floor(ms / 1000);
 }
 
 // ---------- the API ----------
 
 /** The host functions a command gets: its manifest's permissions and its effects together. */
-export function grantedApi(ctx: HostContext, state: HostState): Record<string, HostFunction> {
-  const perms = new Set<Permission>(ctx.manifest.permissions ?? []);
+export function grantedApi(
+  ctx: HostContext,
+  state: HostState
+): Record<string, HostFunction> {
+  const perms = new Set<Permission>(ctx.manifest.permissions);
   const effects = new Set(ctx.command.effects);
-  const api: Record<string, HostFunction> = Object.create(null) as Record<string, HostFunction>;
+  const api: Record<string, HostFunction> = Object.create(null) as Record<
+    string,
+    HostFunction
+  >;
   /** A Telegram read: FLOOD_WAIT and every other failure come back as host errors. */
-  const tg = <T>(fn: () => Promise<T>) => fn().catch((e: unknown) => {
-    const wait = floodSeconds(e);
-    if (wait !== undefined) {
-      state.flood = { retryAfterSeconds: wait, cursor: null, partial: null };
-      throw new HostError('flood_wait', `Telegram rate limit: retry after ${wait} s`, { retryAfterSeconds: wait, cursor: null, partial: null });
-    }
-    throw hostFailure(e);
-  });
-
-  if (perms.has('identity:read')) {
-    api.me = () => tg(async () => {
-      const me = await (await ctx.client()).getMe();
-      if (!(me instanceof Api.User)) throw new HostError('error', 'Telegram did not return the account');
-      const name = [me.firstName, me.lastName].filter(Boolean).join(' ');
-      return { id: me.id.toString(), name: maskForModel(name, 'echo'), ...(me.username ? { username: me.username } : {}) };
-    });
-  }
-
-  if (perms.has('messages:read-own')) api['messages.mine'] = ([o], signal) => mine(ctx, state, opts(o, 'messages.mine'), signal);
-
-  if (perms.has('chats:read')) {
-    api['chats.list'] = ([o]) => tg(async () => {
-      const p = opts(o, 'chats.list');
-      const limit = int(p.limit, 'limit', 1, 500, 100);
-      const types = p.types === undefined ? undefined : p.types;
-      if (types !== undefined && (!Array.isArray(types) || !types.every(t => (CHAT_TYPES as readonly unknown[]).includes(t)))) {
-        throw invalid(`types must be a list of ${CHAT_TYPES.join(', ')}`);
+  const tg = <T>(fn: () => Promise<T>) =>
+    fn().catch((error: unknown) => {
+      const wait = floodSeconds(error);
+      if (wait !== undefined) {
+        state.flood = { retryAfterSeconds: wait, cursor: null, partial: null };
+        throw new HostError(
+          "flood_wait",
+          `Telegram rate limit: retry after ${wait} s`,
+          { retryAfterSeconds: wait, cursor: null, partial: null }
+        );
       }
-      const unreadOnly = p.unreadOnly === true;
-      const chats = await getDialogs(await ctx.client(), limit);
-      const list = chats
-        .filter(c => !types || (types as string[]).some(t => matchesChatType(c, t)))
-        .filter(c => !unreadOnly || c.unreadCount > 0)
-        .map(c => ({ id: c.id, title: maskForModel(c.title, 'echo'), type: c.bot ? 'bot' : c.type, muted: !!c.muted, unreadCount: c.unreadCount }));
-      return { chats: bounded(list) };
+      throw hostFailure(error);
     });
+
+  if (perms.has("identity:read")) {
+    api.me = () =>
+      tg(async () => {
+        const me = await (await ctx.client()).getMe();
+        if (!(me instanceof Api.User)) {
+          throw new HostError("error", "Telegram did not return the account");
+        }
+        const name = [me.firstName, me.lastName].filter(Boolean).join(" ");
+        return {
+          id: me.id.toString(),
+          name: maskForModel(name, "echo"),
+          ...(me.username ? { username: me.username } : {}),
+        };
+      });
   }
 
-  if (perms.has('messages:read')) {
-    api['messages.read'] = ([chat, o]) => tg(async () => {
-      const p = opts(o, 'messages.read');
-      const limit = int(p.limit, 'limit', 1, READ_MAX, 20);
-      const before = optInt(p.before, 'before', 1, MAX_MESSAGE_ID);
-      const topic = optInt(p.topic, 'topic', 1, MAX_MESSAGE_ID);
-      const thread = optInt(p.thread, 'thread', 1, MAX_MESSAGE_ID);
-      if (topic !== undefined && thread !== undefined) throw invalid('pass topic or thread, not both');
-      const mode: HistoryMode = topic !== undefined ? { kind: 'topic', root: topic } : thread !== undefined ? { kind: 'thread', root: thread } : { kind: 'chat' };
-      return history(await ctx.client(), chatRef(chat), mode, { limit, before });
-    });
-    api['messages.search'] = ([query, o]) => tg(async () => {
-      const q = str(query, 'query', 256);
-      const p = opts(o, 'messages.search');
-      const limit = int(p.limit, 'limit', 1, READ_MAX, 20);
-      const topic = optInt(p.topic, 'topic', 1, MAX_MESSAGE_ID);
-      const client = await ctx.client();
-      if (p.chat === undefined || p.chat === null) {
-        if (topic !== undefined) throw invalid('topic needs chat');
-        const res = await client.invoke(new Api.messages.SearchGlobal({ q, filter: new Api.InputMessagesFilterEmpty(), minDate: 0, maxDate: 0, offsetRate: 0, offsetPeer: new Api.InputPeerEmpty(), offsetId: 0, limit }));
-        const msgs = 'messages' in res ? res.messages.filter((m): m is Api.Message => m instanceof Api.Message) : [];
-        return { messages: bounded(msgs.map(m => ({ chatId: utils.getPeerId(m.peerId).toString(), ...readMessage(m) }))) };
-      }
-      const entity = await resolveChat(client, chatRef(p.chat));
-      if (topic !== undefined && !hasTopics(entity)) throw invalid('this chat has no topics');
-      const res = await client.invoke(new Api.messages.Search({
-        peer: entity, q, filter: new Api.InputMessagesFilterEmpty(), minDate: 0, maxDate: 0, offsetId: 0, addOffset: 0, limit, maxId: 0, minId: 0, hash: bigInt(0),
-        ...(topic !== undefined ? { topMsgId: topic } : {}),
-      }));
-      const chatId = utils.getPeerId(entity).toString();
-      const msgs = 'messages' in res ? res.messages.filter((m): m is Api.Message => m instanceof Api.Message) : [];
-      return { messages: bounded(msgs.map(m => ({ chatId, ...readMessage(m) }))) };
-    });
+  if (perms.has("messages:read-own")) {
+    api["messages.mine"] = ([o], signal) =>
+      mine(ctx, state, opts(o, "messages.mine"), signal);
   }
 
-  if (perms.has('messages:read-target')) {
-    const target = ctx.target;
-    const noTarget = () => new HostError('no_target', 'This run has no --target; the agent passes one with the command');
-    const badTarget = () => new HostError('invalid_argument', `The target's message, topic or thread ID is not from 1 to ${MAX_MESSAGE_ID}`);
-    api['target.message'] = () => tg(async () => {
-      if (!target) throw noTarget();
-      if (target.msgId === undefined || target.thread) throw new HostError('not_available', 'The target is a thread or topic: use host.target.thread()');
-      if (!isMessageId(target.msgId)) throw badTarget();
-      const client = await ctx.client();
-      const entity = await resolveChat(client, target.chat);
-      const [msg] = await client.getMessages(entity, { ids: [target.msgId] });
-      if (!(msg instanceof Api.Message)) throw new HostError('not_found', `Message ${target.msgId} was not found in the target chat`);
-      return { chatId: utils.getPeerId(entity).toString(), message: readMessage(msg) };
-    });
-    api['target.thread'] = ([o]) => tg(async () => {
-      if (!target) throw noTarget();
-      if (!target.thread && target.topic === undefined) throw new HostError('not_available', 'The target is one message: use host.target.message()');
-      const p = opts(o, 'target.thread');
-      const limit = int(p.limit, 'limit', 1, READ_MAX, 20);
-      const before = optInt(p.before, 'before', 1, MAX_MESSAGE_ID);
-      // The target's own root only, never the whole chat: a root outside 1…2^31-1 is refused
-      const mode: HistoryMode | undefined = target.topic !== undefined
-        ? (isMessageId(target.topic) ? { kind: 'topic', root: target.topic } : undefined)
-        : isMessageId(target.msgId) ? { kind: 'thread', root: target.msgId } : undefined;
-      if (!mode) throw badTarget();
-      return history(await ctx.client(), target.chat, mode, { limit, before });
-    });
+  if (perms.has("chats:read")) {
+    api["chats.list"] = ([o]) =>
+      tg(async () => {
+        const p = opts(o, "chats.list");
+        const limit = int(p.limit, "limit", 1, 500, 100);
+        const types = p.types === undefined ? undefined : p.types;
+        if (
+          types !== undefined &&
+          (!Array.isArray(types) ||
+            !types.every((t) => (CHAT_TYPES as readonly unknown[]).includes(t)))
+        ) {
+          throw invalid(`types must be a list of ${CHAT_TYPES.join(", ")}`);
+        }
+        const unreadOnly = p.unreadOnly === true;
+        const chats = await getDialogs(await ctx.client(), limit);
+        const list = chats
+          .filter(
+            (c) =>
+              !types || (types as string[]).some((t) => matchesChatType(c, t))
+          )
+          .filter((c) => !unreadOnly || c.unreadCount > 0)
+          .map((c) => ({
+            id: c.id,
+            title: maskForModel(c.title, "echo"),
+            type: c.bot ? "bot" : c.type,
+            muted: !!c.muted,
+            unreadCount: c.unreadCount,
+          }));
+        return { chats: bounded(list) };
+      });
+  }
+
+  if (perms.has("messages:read")) {
+    api["messages.read"] = ([chat, o]) =>
+      tg(async () => {
+        const p = opts(o, "messages.read");
+        const limit = int(p.limit, "limit", 1, READ_MAX, 20);
+        const before = optInt(p.before, "before", 1, MAX_MESSAGE_ID);
+        const topic = optInt(p.topic, "topic", 1, MAX_MESSAGE_ID);
+        const thread = optInt(p.thread, "thread", 1, MAX_MESSAGE_ID);
+        if (topic !== undefined && thread !== undefined) {
+          throw invalid("pass topic or thread, not both");
+        }
+        const mode: HistoryMode =
+          topic === undefined
+            ? thread === undefined
+              ? { kind: "chat" }
+              : { kind: "thread", root: thread }
+            : { kind: "topic", root: topic };
+        return history(await ctx.client(), chatRef(chat), mode, {
+          limit,
+          before,
+        });
+      });
+    api["messages.search"] = ([query, o]) =>
+      tg(async () => {
+        const q = str(query, "query", 256);
+        const p = opts(o, "messages.search");
+        const limit = int(p.limit, "limit", 1, READ_MAX, 20);
+        const topic = optInt(p.topic, "topic", 1, MAX_MESSAGE_ID);
+        const client = await ctx.client();
+        if (p.chat === undefined || p.chat === null) {
+          if (topic !== undefined) {
+            throw invalid("topic needs chat");
+          }
+          const res = await client.invoke(
+            new Api.messages.SearchGlobal({
+              q,
+              filter: new Api.InputMessagesFilterEmpty(),
+              minDate: 0,
+              maxDate: 0,
+              offsetRate: 0,
+              offsetPeer: new Api.InputPeerEmpty(),
+              offsetId: 0,
+              limit,
+            })
+          );
+          const msgs =
+            "messages" in res
+              ? res.messages.filter(
+                  (m): m is Api.Message => m instanceof Api.Message
+                )
+              : [];
+          return {
+            messages: bounded(
+              msgs.map((m) => ({
+                chatId: utils.getPeerId(m.peerId).toString(),
+                ...readMessage(m),
+              }))
+            ),
+          };
+        }
+        const entity = await resolveChat(client, chatRef(p.chat));
+        if (topic !== undefined && !hasTopics(entity)) {
+          throw invalid("this chat has no topics");
+        }
+        const res = await client.invoke(
+          new Api.messages.Search({
+            peer: entity,
+            q,
+            filter: new Api.InputMessagesFilterEmpty(),
+            minDate: 0,
+            maxDate: 0,
+            offsetId: 0,
+            addOffset: 0,
+            limit,
+            maxId: 0,
+            minId: 0,
+            hash: bigInt(0),
+            ...(topic === undefined ? {} : { topMsgId: topic }),
+          })
+        );
+        const chatId = utils.getPeerId(entity).toString();
+        const msgs =
+          "messages" in res
+            ? res.messages.filter(
+                (m): m is Api.Message => m instanceof Api.Message
+              )
+            : [];
+        return {
+          messages: bounded(msgs.map((m) => ({ chatId, ...readMessage(m) }))),
+        };
+      });
+  }
+
+  if (perms.has("messages:read-target")) {
+    const { target } = ctx;
+    const noTarget = () =>
+      new HostError(
+        "no_target",
+        "This run has no --target; the agent passes one with the command"
+      );
+    const badTarget = () =>
+      new HostError(
+        "invalid_argument",
+        `The target's message, topic or thread ID is not from 1 to ${MAX_MESSAGE_ID}`
+      );
+    api["target.message"] = () =>
+      tg(async () => {
+        if (!target) {
+          throw noTarget();
+        }
+        if (target.msgId === undefined || target.thread) {
+          throw new HostError(
+            "not_available",
+            "The target is a thread or topic: use host.target.thread()"
+          );
+        }
+        if (!isMessageId(target.msgId)) {
+          throw badTarget();
+        }
+        const client = await ctx.client();
+        const entity = await resolveChat(client, target.chat);
+        const [msg] = await client.getMessages(entity, { ids: [target.msgId] });
+        if (!(msg instanceof Api.Message)) {
+          throw new HostError(
+            "not_found",
+            `Message ${target.msgId} was not found in the target chat`
+          );
+        }
+        return {
+          chatId: utils.getPeerId(entity).toString(),
+          message: readMessage(msg),
+        };
+      });
+    api["target.thread"] = ([o]) =>
+      tg(async () => {
+        if (!target) {
+          throw noTarget();
+        }
+        if (!target.thread && target.topic === undefined) {
+          throw new HostError(
+            "not_available",
+            "The target is one message: use host.target.message()"
+          );
+        }
+        const p = opts(o, "target.thread");
+        const limit = int(p.limit, "limit", 1, READ_MAX, 20);
+        const before = optInt(p.before, "before", 1, MAX_MESSAGE_ID);
+        // The target's own root only, never the whole chat: a root outside 1…2^31-1 is refused
+        const mode: HistoryMode | undefined =
+          target.topic === undefined
+            ? isMessageId(target.msgId)
+              ? { kind: "thread", root: target.msgId }
+              : undefined
+            : isMessageId(target.topic)
+              ? { kind: "topic", root: target.topic }
+              : undefined;
+        if (!mode) {
+          throw badTarget();
+        }
+        return history(await ctx.client(), target.chat, mode, {
+          limit,
+          before,
+        });
+      });
   }
 
   // The store is opened on first use: the account it is bound to is fetched then, inside the run's deadline
-  if (perms.has('storage:read')) {
-    api['storage.get'] = async ([key]) => {
+  if (perms.has("storage:read")) {
+    api["storage.get"] = async ([key]) => {
       const k = storageKey(ctx, key);
       const v = (await ctx.storage()).get(k);
       return v === undefined ? null : v;
     };
-    api['storage.list'] = async () => ({ items: (await ctx.storage()).list() });
+    api["storage.list"] = async () => ({ items: (await ctx.storage()).list() });
   }
-  if (perms.has('storage:write') && effects.has('storage')) {
+  if (perms.has("storage:write") && effects.has("storage")) {
     /** The run's deadline and cancellation, checked before, after every wait, and under the store's lock. */
-    const guard = (signal: AbortSignal): WriteGuard => ({ deadline: ctx.deadline, aborted: () => signal.aborted || !!ctx.cancelled?.() });
+    const guard = (signal: AbortSignal): WriteGuard => ({
+      deadline: ctx.deadline,
+      aborted: () => signal.aborted || !!ctx.cancelled?.(),
+    });
     const ended = (g: WriteGuard) => {
-      if (g.aborted() || Date.now() >= g.deadline) throw new HostError('cancelled', 'The run ended; nothing was written');
+      if (g.aborted() || Date.now() >= g.deadline) {
+        throw new HostError("cancelled", "The run ended; nothing was written");
+      }
     };
-    api['storage.set'] = async ([key, value], signal) => {
+    api["storage.set"] = async ([key, value], signal) => {
       const k = storageKey(ctx, key);
-      if (typeof value !== 'string') throw invalid('storage.set takes a string value (JSON.stringify an object first)');
-      if (!value) throw invalid('the value is empty; use storage.delete');
+      if (typeof value !== "string") {
+        throw invalid(
+          "storage.set takes a string value (JSON.stringify an object first)"
+        );
+      }
+      if (!value) {
+        throw invalid("the value is empty; use storage.delete");
+      }
       const g = guard(signal);
       ended(g);
       const store = await ctx.storage();
       ended(g);
       return store.set(k, value, g);
     };
-    api['storage.delete'] = async ([key], signal) => {
+    api["storage.delete"] = async ([key], signal) => {
       const k = storageKey(ctx, key);
       const g = guard(signal);
       ended(g);
@@ -403,85 +679,136 @@ export function grantedApi(ctx: HostContext, state: HostState): Record<string, H
     };
   }
 
-  if (perms.has('settings:read')) {
-    api['settings.get'] = ([key]) => {
-      if (typeof key !== 'string' || !Object.hasOwn(ctx.manifest.settings ?? {}, key)) throw invalid(`settings.get: "${String(key)}" is not a setting this plugin declares`);
+  if (perms.has("settings:read")) {
+    api["settings.get"] = ([key]) => {
+      if (
+        typeof key !== "string" ||
+        !Object.hasOwn(ctx.manifest.settings ?? {}, key)
+      ) {
+        throw invalid(
+          `settings.get: "${String(key)}" is not a setting this plugin declares`
+        );
+      }
       // The value `plugin settings set` stored, else the manifest's default
       const stored = ctx.settings?.();
-      if (stored && Object.hasOwn(stored, key)) return stored[key];
+      if (stored && Object.hasOwn(stored, key)) {
+        return stored[key];
+      }
       const d = ctx.manifest.settings![key].default;
       return d === undefined ? null : d;
     };
   }
 
-  if (perms.has('network') && effects.has('network') && ctx.network) {
+  if (perms.has("network") && effects.has("network") && ctx.network) {
     const net = ctx.network;
     /** Every secret value this run put into a request, in each form: stripped from every response. */
     const used: string[] = [];
-    api['http.fetch'] = async ([url, o], signal) => {
+    api["http.fetch"] = async ([url, o], signal) => {
       // One deadline for the whole request, fixed on entry: secret reads, DNS, connect, TLS, response
       const until = requestDeadline(ctx.deadline);
       const req = checkRequest(ctx.manifest, url, o);
-      const matching = (ctx.manifest.secrets ?? []).filter(s => injectMatches(s.inject, req.url));
+      const matching = (ctx.manifest.secrets ?? []).filter((s) =>
+        injectMatches(s.inject, req.url)
+      );
       // A secret limited to some paths goes only with a path every server reads the same way
-      if (matching.some(s => s.inject.paths !== undefined)) {
+      if (matching.some((s) => s.inject.paths !== undefined)) {
         const why = pathProblem(req.rawPath) ?? pathProblem(req.url.pathname);
         if (why) {
-          throw new HostError('ambiguous_path', `The path holds ${why}, which a server may read as another path; a secret of this origin is sent only to some paths, so the request was not sent`);
+          throw new HostError(
+            "ambiguous_path",
+            `The path holds ${why}, which a server may read as another path; a secret of this origin is sent only to some paths, so the request was not sent`
+          );
         }
       }
       // Aborted at the request's deadline or when the run ends: a slow secret store is stopped too
       const ac = new AbortController();
       const stop = () => ac.abort();
-      signal.addEventListener('abort', stop, { once: true });
+      signal.addEventListener("abort", stop, { once: true });
       const timer = setTimeout(stop, Math.max(0, until - Date.now()));
       try {
         const inject: [string, string][] = [];
         for (const s of matching) {
           let value: string | null;
           try {
-            value = await withTimeout(Promise.resolve().then(() => net.secret(s.name, ac.signal)), signal, until);
-          } catch (e) {
-            if (e instanceof HostError) throw e;
-            throw new HostError('secret_store_unavailable', `The secret "${s.name}" could not be read: ${(e as Error).message}`);
+            value = await withTimeout(
+              Promise.resolve().then(() => net.secret(s.name, ac.signal)),
+              signal,
+              until
+            );
+          } catch (error) {
+            if (error instanceof HostError) {
+              throw error;
+            }
+            throw new HostError(
+              "secret_store_unavailable",
+              `The secret "${s.name}" could not be read: ${(error as Error).message}`
+            );
           }
           if (value === null) {
             const command = net.setCommand(s.name);
             state.secretMissing = { name: s.name, command };
-            throw new HostError('secret_missing', `The secret "${s.name}" is not set. Ask the user to run in their own terminal: telegram ${command.join(' ')}`, { secret: s.name, command });
+            throw new HostError(
+              "secret_missing",
+              `The secret "${s.name}" is not set. Ask the user to run in their own terminal: telegram ${command.join(" ")}`,
+              { secret: s.name, command }
+            );
           }
-          const formatted = s.inject.format.split('{value}').join(value);
+          const formatted = s.inject.format.split("{value}").join(value);
           inject.push([s.inject.header, formatted]);
           used.push(value, formatted);
         }
         state.requests = (state.requests ?? 0) + 1;
-        state.origins = [...new Set([...(state.origins ?? []), req.url.origin])];
-        if (signal.aborted) throw new HostError('cancelled', 'The run ended');
-        if (Date.now() >= until) throw new HostError('timeout', 'The request took too long');
+        state.origins = [
+          ...new Set([...(state.origins ?? []), req.url.origin]),
+        ];
+        if (signal.aborted) {
+          throw new HostError("cancelled", "The run ended");
+        }
+        if (Date.now() >= until) {
+          throw new HostError("timeout", "The request took too long");
+        }
         const raw = await net.backend({ ...req, inject }, signal, until);
         // A part of a body (206) could hold a cut secret no form matches: refused where one was sent
-        if (inject.length && raw.status === 206) throw new HostError('bad_response', 'A partial response (206) to a request that carried a secret is not handed in');
+        if (inject.length && raw.status === 206) {
+          throw new HostError(
+            "bad_response",
+            "A partial response (206) to a request that carried a secret is not handed in"
+          );
+        }
         return shapeResponse(raw, secretForms(used), req.responseType);
       } finally {
         clearTimeout(timer);
-        signal.removeEventListener('abort', stop);
+        signal.removeEventListener("abort", stop);
       }
     };
   }
 
-  if (perms.has('actions') && effects.has('actions')) {
-    api['actions.propose'] = ([action]) => {
-      if (state.proposals.length >= 20) throw new HostError('plugin_limit', 'At most 20 proposals in one run', { limit: 'proposals' });
-      const proposal = buildProposal(action, state.proposals.length + 1, ctx.maskProposals);
+  if (perms.has("actions") && effects.has("actions")) {
+    api["actions.propose"] = ([action]) => {
+      if (state.proposals.length >= 20) {
+        throw new HostError("plugin_limit", "At most 20 proposals in one run", {
+          limit: "proposals",
+        });
+      }
+      const proposal = buildProposal(
+        action,
+        state.proposals.length + 1,
+        ctx.maskProposals
+      );
       state.proposals.push(proposal);
       return { id: proposal.id };
     };
   }
 
   if (ctx.log) {
-    const log = ctx.log;
-    api.log = args => {
-      log(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ').slice(0, 10_000));
+    const { log } = ctx;
+    api.log = (args) => {
+      log(
+        args
+          .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+          .join(" ")
+          .slice(0, 10_000)
+      );
       return null;
     };
   }
@@ -489,29 +816,58 @@ export function grantedApi(ctx: HostContext, state: HostState): Record<string, H
 }
 
 function storageKey(ctx: HostContext, key: unknown): string {
-  if (typeof key !== 'string' || !(ctx.manifest.storage?.keys ?? []).includes(key)) {
-    throw invalid(`"${String(key)}" is not a storage key this plugin declares (${(ctx.manifest.storage?.keys ?? []).join(', ') || 'none'})`);
+  if (
+    typeof key !== "string" ||
+    !(ctx.manifest.storage?.keys ?? []).includes(key)
+  ) {
+    throw invalid(
+      `"${String(key)}" is not a storage key this plugin declares (${(ctx.manifest.storage?.keys ?? []).join(", ") || "none"})`
+    );
   }
   return key;
 }
 
 /** What `history` reads: the whole chat, or only the messages under one topic or thread root. */
-type HistoryMode = { kind: 'chat' } | { kind: 'topic' | 'thread'; root: number };
+type HistoryMode =
+  | { kind: "chat" }
+  | { kind: "topic" | "thread"; root: number };
 
 /** History of a chat, a forum topic or a comment thread: newest first, size-bounded. */
-async function history(client: TelegramClient, chat: string, mode: HistoryMode, p: { limit: number; before?: number }) {
+async function history(
+  client: TelegramClient,
+  chat: string,
+  mode: HistoryMode,
+  p: { limit: number; before?: number }
+) {
   // A topic or thread with no valid root is refused, never read as the whole chat
-  if (mode.kind !== 'chat' && !isMessageId(mode.root)) throw invalid(`the ${mode.kind} ID must be from 1 to ${MAX_MESSAGE_ID}`);
+  if (mode.kind !== "chat" && !isMessageId(mode.root)) {
+    throw invalid(`the ${mode.kind} ID must be from 1 to ${MAX_MESSAGE_ID}`);
+  }
   const entity = await resolveChat(client, chat);
-  if (mode.kind === 'topic' && !hasTopics(entity)) throw invalid('this chat has no topics');
+  if (mode.kind === "topic" && !hasTopics(entity)) {
+    throw invalid("this chat has no topics");
+  }
   let raw: Api.TypeMessage[];
-  if (mode.kind !== 'chat') {
-    const res = await client.invoke(new Api.messages.GetReplies({
-      peer: entity, msgId: mode.root, offsetId: p.before ?? 0, offsetDate: 0, addOffset: 0, limit: p.limit, maxId: 0, minId: 0, hash: bigInt(0),
-    }));
-    raw = 'messages' in res ? res.messages : [];
+  if (mode.kind === "chat") {
+    raw = await client.getMessages(entity, {
+      limit: p.limit,
+      ...(p.before ? { offsetId: p.before } : {}),
+    });
   } else {
-    raw = await client.getMessages(entity, { limit: p.limit, ...(p.before ? { offsetId: p.before } : {}) });
+    const res = await client.invoke(
+      new Api.messages.GetReplies({
+        peer: entity,
+        msgId: mode.root,
+        offsetId: p.before ?? 0,
+        offsetDate: 0,
+        addOffset: 0,
+        limit: p.limit,
+        maxId: 0,
+        minId: 0,
+        hash: bigInt(0),
+      })
+    );
+    raw = "messages" in res ? res.messages : [];
   }
   const msgs = raw.filter((m): m is Api.Message => m instanceof Api.Message);
   const page = bounded(msgs.map(readMessage));
@@ -525,7 +881,7 @@ async function history(client: TelegramClient, chat: string, mode: HistoryMode, 
 }
 
 /** The run ended (cancelled, timed out): a host call stops at once and its result is dropped. */
-const runEnded = () => new HostError('cancelled', 'The run ended');
+const runEnded = () => new HostError("cancelled", "The run ended");
 
 /** `promise`, or a rejection as soon as `signal` aborts (the request itself cannot be withdrawn). */
 function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -535,10 +891,16 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   }
   return new Promise<T>((resolve, reject) => {
     const stop = () => reject(runEnded());
-    signal.addEventListener('abort', stop, { once: true });
+    signal.addEventListener("abort", stop, { once: true });
     promise.then(
-      v => { signal.removeEventListener('abort', stop); resolve(v); },
-      e => { signal.removeEventListener('abort', stop); reject(e); },
+      (v) => {
+        signal.removeEventListener("abort", stop);
+        resolve(v);
+      },
+      (error) => {
+        signal.removeEventListener("abort", stop);
+        reject(error);
+      }
     );
   });
 }
@@ -549,14 +911,23 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
  * each history batch) goes through `rpc`: counted against MINE_REQUESTS, never started after the
  * run ended, and abandoned the moment it ends.
  */
-async function mine(ctx: HostContext, state: HostState, p: Record<string, unknown>, signal: AbortSignal) {
-  const limit = int(p.limit, 'limit', 1, MINE_MAX, 100);
+async function mine(
+  ctx: HostContext,
+  state: HostState,
+  p: Record<string, unknown>,
+  signal: AbortSignal
+) {
+  const limit = int(p.limit, "limit", 1, MINE_MAX, 100);
   let requests = 0;
   const rpc = async <T>(fn: () => Promise<T>): Promise<T> => {
-    if (signal.aborted) throw runEnded();
+    if (signal.aborted) {
+      throw runEnded();
+    }
     requests++;
     const r = await untilAborted(fn(), signal);
-    if (signal.aborted) throw runEnded();
+    if (signal.aborted) {
+      throw runEnded();
+    }
     return r;
   };
   let cur: MineCursor | undefined;
@@ -564,23 +935,44 @@ async function mine(ctx: HostContext, state: HostState, p: Record<string, unknow
   let size = 2;
   /** A cursor for where the walk stands: the state stays with the host, the plugin gets its id. */
   const cursorOf = (c: MineCursor | undefined) => {
-    if (!c || signal.aborted) return null;
+    if (!c || signal.aborted) {
+      return null;
+    }
     return ctx.cursors.save(c);
   };
   const page = (done: boolean) => {
-    if (signal.aborted) throw runEnded();
-    return { messages, count: messages.length, cursor: done ? null : cursorOf(cur), done };
+    if (signal.aborted) {
+      throw runEnded();
+    }
+    return {
+      messages,
+      count: messages.length,
+      cursor: done ? null : cursorOf(cur),
+      done,
+    };
   };
   try {
-    if (p.cursor !== undefined && p.cursor !== null && typeof p.cursor !== 'string') throw badCursor('cursor must be a string from a previous page');
-    const typesIn = p.types === undefined || p.types === null ? ['private'] : p.types;
-    if (typeof p.cursor !== 'string' && (!Array.isArray(typesIn) || !typesIn.length || !typesIn.every(t => MINE_TYPES.includes(t as MineType)))) {
-      throw invalid('types must be a list of private, group');
+    if (
+      p.cursor !== undefined &&
+      p.cursor !== null &&
+      typeof p.cursor !== "string"
+    ) {
+      throw badCursor("cursor must be a string from a previous page");
     }
-    const since = typeof p.cursor === 'string' ? 0 : sinceSeconds(p.since);
+    const typesIn =
+      p.types === undefined || p.types === null ? ["private"] : p.types;
+    if (
+      typeof p.cursor !== "string" &&
+      (!Array.isArray(typesIn) ||
+        !typesIn.length ||
+        !typesIn.every((t) => MINE_TYPES.includes(t as MineType)))
+    ) {
+      throw invalid("types must be a list of private, group");
+    }
+    const since = typeof p.cursor === "string" ? 0 : sinceSeconds(p.since);
     const account = await rpc(() => ctx.account());
     const client = await ctx.client();
-    if (typeof p.cursor === 'string') {
+    if (typeof p.cursor === "string") {
       cur = loadCursor(ctx, p.cursor, account);
     } else {
       const types = [...new Set(typesIn as MineType[])];
@@ -588,18 +980,34 @@ async function mine(ctx: HostContext, state: HostState, p: Record<string, unknow
       const chats: string[] = [];
       for (const d of dialogs) {
         const t = d.entity ? mineType(d.entity as ResolvedEntity) : undefined;
-        if (t && types.includes(t) && d.id) chats.push(d.id.toString());
-        if (chats.length >= MINE_CHATS) break;
+        if (t && types.includes(t) && d.id) {
+          chats.push(d.id.toString());
+        }
+        if (chats.length >= MINE_CHATS) {
+          break;
+        }
       }
-      cur = { a: accountTag(account), n: ctx.installId, t: types, s: since, c: chats, i: 0, o: 0 };
+      cur = {
+        a: accountTag(account),
+        n: ctx.installId,
+        t: types,
+        s: since,
+        c: chats,
+        i: 0,
+        o: 0,
+      };
     }
     const me = await rpc(() => client.getMe());
     while (cur.i < cur.c.length && messages.length < limit) {
       // A chat takes two requests (resolve, history): stop with a cursor before the budget runs out
-      if (requests + 2 > MINE_REQUESTS) return page(false);
+      if (requests + 2 > MINE_REQUESTS) {
+        return page(false);
+      }
       // The type again (the list is the host's own, but a chat may have changed): never a service chat
       const chatId: string = cur.c[cur.i];
-      const entity: ResolvedEntity = await rpc(() => resolveChat(client, chatId));
+      const entity: ResolvedEntity = await rpc(() =>
+        resolveChat(client, chatId)
+      );
       const type = mineType(entity);
       if (!type || !cur.t.includes(type)) {
         cur = { ...cur, i: cur.i + 1, o: 0 };
@@ -607,12 +1015,20 @@ async function mine(ctx: HostContext, state: HostState, p: Record<string, unknow
       }
       const want = Math.min(100, limit - messages.length + 20);
       const offset: number = cur.o;
-      const batch: Api.Message[] = await rpc(() => client.getMessages(entity, { limit: want, fromUser: me, ...(offset ? { offsetId: offset } : {}) }));
+      const batch: Api.Message[] = await rpc(() =>
+        client.getMessages(entity, {
+          limit: want,
+          fromUser: me,
+          ...(offset ? { offsetId: offset } : {}),
+        })
+      );
       let chatDone = batch.length < want;
       let full = false;
       for (const msg of batch) {
         if (!(msg instanceof Api.Message)) {
-          if (msg && typeof (msg as { id?: unknown }).id === 'number') cur = { ...cur, o: (msg as { id: number }).id };
+          if (msg && typeof (msg as { id?: unknown }).id === "number") {
+            cur = { ...cur, o: (msg as { id: number }).id };
+          }
           continue;
         }
         if (cur.s && msg.date < cur.s) {
@@ -623,11 +1039,18 @@ async function mine(ctx: HostContext, state: HostState, p: Record<string, unknow
           full = true;
           break;
         }
-        const own = msg.out || (msg.fromId instanceof Api.PeerUser && msg.fromId.userId.equals(me.id));
+        const own =
+          msg.out ||
+          (msg.fromId instanceof Api.PeerUser &&
+            msg.fromId.userId.equals(me.id));
         const text = plainMessageText(msg);
         // Own authored text only: no forwards, nothing from or quoting a service account, no empty media
         if (own && !msg.fwdFrom && !isServiceSource(msg) && text.trim()) {
-          const item = { text: maskForModel(text, 'echo'), date: iso(msg.date), chatType: type };
+          const item = {
+            text: maskForModel(text, "echo"),
+            date: iso(msg.date),
+            chatType: type,
+          };
           const n = JSON.stringify(item).length + 1;
           if (messages.length && size + n > PAGE_CHARS) {
             // Resume at this very message next time (offsetId is exclusive)
@@ -639,17 +1062,27 @@ async function mine(ctx: HostContext, state: HostState, p: Record<string, unknow
         }
         cur = { ...cur, o: msg.id };
       }
-      if (full) return page(false);
-      if (chatDone) cur = { ...cur, i: cur.i + 1, o: 0 };
+      if (full) {
+        return page(false);
+      }
+      if (chatDone) {
+        cur = { ...cur, i: cur.i + 1, o: 0 };
+      }
     }
     return page(cur.i >= cur.c.length);
-  } catch (e) {
-    const wait = floodSeconds(e);
-    if (wait === undefined || signal.aborted) throw hostFailure(e);
+  } catch (error) {
+    const wait = floodSeconds(error);
+    if (wait === undefined || signal.aborted) {
+      throw hostFailure(error);
+    }
     // The point to continue from and what this call had collected before Telegram said wait
     const cursor = cursorOf(cur);
     const partial = { messages, count: messages.length };
     state.flood = { retryAfterSeconds: wait, cursor, partial };
-    throw new HostError('flood_wait', `Telegram rate limit: retry after ${wait} s`, { retryAfterSeconds: wait, cursor, partial });
+    throw new HostError(
+      "flood_wait",
+      `Telegram rate limit: retry after ${wait} s`,
+      { retryAfterSeconds: wait, cursor, partial }
+    );
   }
 }

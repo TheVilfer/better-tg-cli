@@ -39,7 +39,11 @@ export const DEFAULT_LIMITS: SandboxLimits = {
 
 /** An error the host gives the guest (and the guest may catch): `{code, message, ...}`. */
 export class HostError extends Error {
-  constructor(readonly code: string, message: string, readonly extra: Record<string, unknown> = {}) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly extra: Record<string, unknown> = {}
+  ) {
     super(message);
   }
 }
@@ -47,15 +51,18 @@ export class HostError extends Error {
 /** How a run ended when it did not return a result: a code of the CLI's error vocabulary. */
 export class SandboxError extends Error {
   constructor(
-    readonly code: 'plugin_limit' | 'plugin_error' | 'cancelled',
+    readonly code: "plugin_limit" | "plugin_error" | "cancelled",
     message: string,
     readonly limit?: string,
     /** The `code` of the error the command rejected with, when it had a string one (a host error passed on) */
-    readonly guestCode?: string,
+    readonly guestCode?: string
   ) {
     super(message);
   }
 }
 
 /** A host API function: arguments as parsed JSON, a JSON-able result. `signal` aborts with the run. */
-export type HostFunction = (args: unknown[], signal: AbortSignal) => Promise<unknown> | unknown;
+export type HostFunction = (
+  args: unknown[],
+  signal: AbortSignal
+) => Promise<unknown> | unknown;

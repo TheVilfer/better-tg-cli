@@ -99,6 +99,7 @@ CI never deploys this. Tests live in `../test/broker.test.ts`.
 
 `src/docs.ts` serves three answer-first pages in all three languages, each with its own title,
 description, canonical, hreflang and JSON-LD:
+
 - `/mcp`: connect an MCP client (Claude Code, Cursor, Codex, Claude Desktop, Gemini CLI); TechArticle;
 - `/faq`: the questions from the README's FAQ; FAQPage;
 - `/compare`: the comparison table from the README; WebPage.

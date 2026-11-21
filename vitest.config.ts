@@ -1,10 +1,10 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ['test/**/*.test.ts'],
+    include: ["test/**/*.test.ts"],
     // Same Node 25+ localStorage shim the CLI loads first
-    setupFiles: ['src/env.ts'],
-    globalSetup: ['test/global-setup.ts'],
+    setupFiles: ["src/env.ts"],
+    globalSetup: ["test/global-setup.ts"],
   },
 });

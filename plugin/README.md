@@ -40,12 +40,12 @@ The plugin itself reads nothing. The `telegram` CLI it teaches Claude to use rea
 machine. Each one goes only to the service it belongs to, and
 none is sent anywhere else:
 
-| Credential | Read from | Sent to |
-|---|---|---|
-| Telegram session and the app's API hash | macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password (without any of them, the 0600 config file) | Telegram's own servers (MTProto), to act as your Telegram client |
-| Write mode and the signing key for approvals | the same secret store | nowhere: checked locally before each write |
-| 1Password service-account token (`OP_SERVICE_ACCOUNT_TOKEN`, only if you set up 1Password) | the environment | the local `op` CLI, which talks to 1Password |
-| Login key (only while you log in with one) | what you paste on the local login page | the project's login service, which returns the app's API keys |
+| Credential                                                                                 | Read from                                                                                                    | Sent to                                                          |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Telegram session and the app's API hash                                                    | macOS Keychain, Linux Secret Service, Windows DPAPI or 1Password (without any of them, the 0600 config file) | Telegram's own servers (MTProto), to act as your Telegram client |
+| Write mode and the signing key for approvals                                               | the same secret store                                                                                        | nowhere: checked locally before each write                       |
+| 1Password service-account token (`OP_SERVICE_ACCOUNT_TOKEN`, only if you set up 1Password) | the environment                                                                                              | the local `op` CLI, which talks to 1Password                     |
+| Login key (only while you log in with one)                                                 | what you paste on the local login page                                                                       | the project's login service, which returns the app's API keys    |
 
 `telegram mcp --http` (remote MCP for Grok Bot and similar) has a bearer token, but it only checks
 incoming requests against it on your machine and never sends it out. The skill never asks Claude

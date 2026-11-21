@@ -1,17 +1,18 @@
-import { Command } from 'commander';
-import { getClient, getContactInfo, disconnectClient } from '../client.js';
-import { formatJson } from '../formatters/json.js';
-import { formatContact } from '../formatters/plain.js';
-import { formatContactMarkdown } from '../formatters/markdown.js';
-import { getOutputFormat } from '../formatters/index.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-export const contactCommand = new Command('contact')
-  .description('Get contact information')
-  .argument('<user>', 'Username (@user) or phone number')
-  .option('--json', 'Output as JSON')
-  .option('--markdown', 'Output as Markdown')
+import { getClient, getContactInfo, disconnectClient } from "../client.js";
+import { fail } from "../errors.js";
+import { getOutputFormat } from "../formatters/index.js";
+import { formatJson } from "../formatters/json.js";
+import { formatContactMarkdown } from "../formatters/markdown.js";
+import { formatContact } from "../formatters/plain.js";
+import ora from "../spinner.js";
+
+export const contactCommand = new Command("contact")
+  .description("Get contact information")
+  .argument("<user>", "Username (@user) or phone number")
+  .option("--json", "Output as JSON")
+  .option("--markdown", "Output as Markdown")
   .action(async (user, options) => {
     const spinner = ora(`Fetching contact info for "${user}"...`).start();
 
@@ -24,18 +25,21 @@ export const contactCommand = new Command('contact')
       const format = getOutputFormat(options);
 
       switch (format) {
-        case 'json':
+        case "json": {
           console.log(formatJson(contact));
           break;
-        case 'markdown':
+        }
+        case "markdown": {
           console.log(formatContactMarkdown(contact));
           break;
-        default:
+        }
+        default: {
           console.log(formatContact(contact));
+        }
       }
 
       await disconnectClient();
     } catch (error) {
-      fail(error, spinner, 'Failed to fetch contact info');
+      fail(error, spinner, "Failed to fetch contact info");
     }
   });

@@ -66,11 +66,11 @@ folder and contacts.
 
 `TG_PROFILE=<name>` gives each profile its own state:
 
-| State | Default profile | `TG_PROFILE=dev` |
-|---|---|---|
-| Config, audit log, update cache | `~/.config/tg/` | `~/.config/tg-dev/` |
-| Keychain service (session, api_hash, write access) | `tg-cli` | `tg-cli-dev` |
-| 1Password items | `tg-cli-<key>` | `tg-cli-dev-<key>` |
+| State                                              | Default profile | `TG_PROFILE=dev`    |
+| -------------------------------------------------- | --------------- | ------------------- |
+| Config, audit log, update cache                    | `~/.config/tg/` | `~/.config/tg-dev/` |
+| Keychain service (session, api_hash, write access) | `tg-cli`        | `tg-cli-dev`        |
+| 1Password items                                    | `tg-cli-<key>`  | `tg-cli-dev-<key>`  |
 
 `scripts/tg-dev` and every `npm run dev*` script default to `dev`. An empty `TG_PROFILE=` means the
 default profile.
@@ -80,6 +80,7 @@ A profile starts logged out and read-only. Log in with `scripts/tg-dev auth`. Wr
 purpose, there is no way to skip that.
 
 A dev profile can use:
+
 - **A second account (recommended).** Log in with any other number. Writes land on that account
   and cannot touch your real chats.
 - **Telegram's test servers.** Run `scripts/tg-dev auth --test-dc`. The flag is saved in the
@@ -95,13 +96,14 @@ A dev profile can use:
 ## Debugging
 
 - **Cursor / VS Code**: open Run and Debug.
-  - *CLI: telegram \<args\>* asks for the arguments and runs `src/` through tsx under Node, with
+  - _CLI: telegram \<args\>_ asks for the arguments and runs `src/` through tsx under Node, with
     breakpoints in `.ts` and the dev profile.
-  - *…MTProto debug log* is the same with `TG_LOG_LEVEL=debug`.
-  - *Tests: current file* runs vitest on the open file.
-  - *Attach* attaches to `npm run dev:debug -- <args>` on port 9229 (it runs `tsx --inspect-brk`).
+  - _…MTProto debug log_ is the same with `TG_LOG_LEVEL=debug`.
+  - _Tests: current file_ runs vitest on the open file.
+  - _Attach_ attaches to `npm run dev:debug -- <args>` on port 9229 (it runs `tsx --inspect-brk`).
 
   The built-in debugger can't attach to Bun, which is why these entries use Node and tsx.
+
 - `bun --inspect-wait src/index.ts <args>` gives a debug.bun.sh URL, if you prefer Bun's inspector.
 - teleproto logs go to stderr only, so `--json` output stays parseable at any `TG_LOG_LEVEL`.
 - **Chat lookup and the dialog list on disk** (`src/dialog-cache.ts`): with `TG_DEBUG_CACHE=1` (that

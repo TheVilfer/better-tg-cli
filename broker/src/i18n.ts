@@ -4,521 +4,844 @@
  * fails the typecheck. Values ending in `Html` are trusted markup; everything else is plain text.
  */
 
-export const LANGS = ['en', 'es', 'ru'] as const;
+export const LANGS = ["en", "es", "ru"] as const;
 export type Lang = (typeof LANGS)[number];
 
-const isLang = (x: string): x is Lang => (LANGS as readonly string[]).includes(x);
+const isLang = (x: string): x is Lang =>
+  (LANGS as readonly string[]).includes(x);
 
 /** ?lang= wins, then the first Accept-Language tag we support, then English. */
-export function pickLang(query: string | null, acceptLanguage: string | null): Lang {
-  if (query && isLang(query.toLowerCase())) return query.toLowerCase() as Lang;
-  const tags = (acceptLanguage ?? '')
-    .split(',')
+export function pickLang(
+  query: string | null,
+  acceptLanguage: string | null
+): Lang {
+  if (query && isLang(query.toLowerCase())) {
+    return query.toLowerCase() as Lang;
+  }
+  const tags = (acceptLanguage ?? "")
+    .split(",")
     .map((part, i) => {
-      const [tag, ...params] = part.trim().split(';');
-      const q = params.map(p => p.trim()).find(p => p.startsWith('q='));
-      return { base: tag.toLowerCase().split('-')[0], q: q ? Number(q.slice(2)) || 0 : 1, i };
+      const [tag, ...params] = part.trim().split(";");
+      const q = params.map((p) => p.trim()).find((p) => p.startsWith("q="));
+      return {
+        base: tag.toLowerCase().split("-")[0],
+        q: q ? Number(q.slice(2)) || 0 : 1,
+        i,
+      };
     })
-    .filter(t => t.base && t.q > 0)
+    .filter((t) => t.base && t.q > 0)
     .sort((a, b) => b.q - a.q || a.i - b.i);
-  for (const t of tags) if (isLang(t.base)) return t.base;
-  return 'en';
+  for (const t of tags) {
+    if (isLang(t.base)) {
+      return t.base;
+    }
+  }
+  return "en";
 }
 
 /** Only these three reach the mail template; anything else is English. */
-export const asLang = (x: unknown): Lang => (typeof x === 'string' && isLang(x) ? x : 'en');
+export const asLang = (x: unknown): Lang =>
+  typeof x === "string" && isLang(x) ? x : "en";
 
 const en = {
-  langName: 'English',
+  langName: "English",
   page: {
-    title: 'Get a free login key for Better-TG-CLI, the Telegram CLI for AI agents',
-    description: 'Get a free login key for Better-TG-CLI, the open-source Telegram CLI and MCP server for Claude Code, Codex and Cursor. No Telegram API keys of your own needed.',
-    ogLocale: 'en_US',
-    h1: 'Log in to Better-TG-CLI',
-    leadHtml: 'A login key lets you log in to your Telegram account through the CLI without creating your own API keys on my.telegram.org. Confirm your email with a code: one email, one login key, good for logging in on up to 3 computers; asking again replaces it. Your messages and session stay on your computer only.\nAlready have your own keys? <a href="#guide">Skip to installation</a>.',
-    cliBannerHtml: 'You came from <span class="mono">telegram onboard</span>. Once your email is confirmed, the login key goes back to the CLI by itself, so there is nothing to copy.',
-    emailLabel: 'Email',
-    emailHint: 'Only for notices: important updates and revoked keys. Never shared, no newsletters.',
-    getCode: 'Email me a code',
-    codeLabel: 'Code from the email',
-    codeHintBefore: 'We sent 6 digits to',
-    codeHintAfter: 'Check your spam folder if it does not arrive.',
-    getKey: 'Get the login key',
-    changeEmail: 'Change the email or resend',
-    closedHtml: '<b>Signups are closed right now.</b> You can log in with your own keys: create an app on <a href="https://my.telegram.org/apps">my.telegram.org</a> and run <code>telegram auth</code>. See the <a href="https://github.com/TheVilfer/better-tg-cli#log-in">README</a>.',
-    doneTitle: 'Your login key',
-    doneText: 'Shown only once. Save it and do not send it to an agent or anyone else: you will need it at the login step, and again on your other computers (up to 3).',
-    backCli: 'Passing the login key to the CLI… If the CLI page did not open, copy the key and paste it there.',
-    nextInstall: 'Next: installation ↓',
-    footerSource: 'Open source',
-    footerPages: { mcp: 'MCP server setup', faq: 'FAQ', compare: 'Compare Telegram MCP servers' },
-    footerPrivacy: 'Privacy',
-    language: 'Language',
+    title:
+      "Get a free login key for Better-TG-CLI, the Telegram CLI for AI agents",
+    description:
+      "Get a free login key for Better-TG-CLI, the open-source Telegram CLI and MCP server for Claude Code, Codex and Cursor. No Telegram API keys of your own needed.",
+    ogLocale: "en_US",
+    h1: "Log in to Better-TG-CLI",
+    leadHtml:
+      'A login key lets you log in to your Telegram account through the CLI without creating your own API keys on my.telegram.org. Confirm your email with a code: one email, one login key, good for logging in on up to 3 computers; asking again replaces it. Your messages and session stay on your computer only.\nAlready have your own keys? <a href="#guide">Skip to installation</a>.',
+    cliBannerHtml:
+      'You came from <span class="mono">telegram onboard</span>. Once your email is confirmed, the login key goes back to the CLI by itself, so there is nothing to copy.',
+    emailLabel: "Email",
+    emailHint:
+      "Only for notices: important updates and revoked keys. Never shared, no newsletters.",
+    getCode: "Email me a code",
+    codeLabel: "Code from the email",
+    codeHintBefore: "We sent 6 digits to",
+    codeHintAfter: "Check your spam folder if it does not arrive.",
+    getKey: "Get the login key",
+    changeEmail: "Change the email or resend",
+    closedHtml:
+      '<b>Signups are closed right now.</b> You can log in with your own keys: create an app on <a href="https://my.telegram.org/apps">my.telegram.org</a> and run <code>telegram auth</code>. See the <a href="https://github.com/TheVilfer/better-tg-cli#log-in">README</a>.',
+    doneTitle: "Your login key",
+    doneText:
+      "Shown only once. Save it and do not send it to an agent or anyone else: you will need it at the login step, and again on your other computers (up to 3).",
+    backCli:
+      "Passing the login key to the CLI… If the CLI page did not open, copy the key and paste it there.",
+    nextInstall: "Next: installation ↓",
+    footerSource: "Open source",
+    footerPages: {
+      mcp: "MCP server setup",
+      faq: "FAQ",
+      compare: "Compare Telegram MCP servers",
+    },
+    footerPrivacy: "Privacy",
+    language: "Language",
   },
   landing: {
-    title: 'Better-TG-CLI: Telegram CLI and MCP server for AI agents',
-    description: 'Open-source Telegram CLI and MCP server for Claude Code, Codex, Cursor and other AI agents. Works on your own account and asks before every send. Free.',
-    h1: 'Telegram CLI and MCP server for AI agents',
-    lead: 'Better-TG-CLI is an open-source Telegram client for your own account, for Claude Code, Codex, Cursor and the command line. Your agent reads and searches your chats, and asks you before every send.',
-    cta: 'Log in without API keys',
-    ctaNote: 'Free. One email, one login key for up to 3 computers.',
-    facts: ['Asks before every send', 'CLI and MCP server', 'MIT, open source'],
-    installLabel: 'Install',
-    installTabs: { cli: 'CLI', skill: 'Skill' },
-    featuresTitle: 'Built for agents, safe for your account',
+    title: "Better-TG-CLI: Telegram CLI and MCP server for AI agents",
+    description:
+      "Open-source Telegram CLI and MCP server for Claude Code, Codex, Cursor and other AI agents. Works on your own account and asks before every send. Free.",
+    h1: "Telegram CLI and MCP server for AI agents",
+    lead: "Better-TG-CLI is an open-source Telegram client for your own account, for Claude Code, Codex, Cursor and the command line. Your agent reads and searches your chats, and asks you before every send.",
+    cta: "Log in without API keys",
+    ctaNote: "Free. One email, one login key for up to 3 computers.",
+    facts: ["Asks before every send", "CLI and MCP server", "MIT, open source"],
+    installLabel: "Install",
+    installTabs: { cli: "CLI", skill: "Skill" },
+    featuresTitle: "Built for agents, safe for your account",
     features: {
-      safe: { title: 'You approve every send', text: 'After login the agent shows you the exact action and runs it only after your yes. Writing without asking needs your own confirmation in a terminal or a system dialog, for as long as you choose. Every write goes to an audit log.' },
-      commands: { title: 'commands', text: 'Read, search, send, bots, groups, folders and exports.' },
-      deps: { title: 'runtime dependencies', text: 'One small file. Nothing else to install or audit.' },
-      tokens: { title: 'Cheap on tokens', text: 'One compact line per item with the ID first, and single-line JSON with empty fields dropped.' },
-      bots: { title: 'Talks to bots', text: 'The current Telegram layer: real text in bot replies, menus you can walk and buttons you can press.' },
-      agents: { title: 'Works with your agent', text: 'A skill and an MCP server for Claude Code, Codex, Cursor, Claude Desktop and Gemini CLI.' },
+      safe: {
+        title: "You approve every send",
+        text: "After login the agent shows you the exact action and runs it only after your yes. Writing without asking needs your own confirmation in a terminal or a system dialog, for as long as you choose. Every write goes to an audit log.",
+      },
+      commands: {
+        title: "commands",
+        text: "Read, search, send, bots, groups, folders and exports.",
+      },
+      deps: {
+        title: "runtime dependencies",
+        text: "One small file. Nothing else to install or audit.",
+      },
+      tokens: {
+        title: "Cheap on tokens",
+        text: "One compact line per item with the ID first, and single-line JSON with empty fields dropped.",
+      },
+      bots: {
+        title: "Talks to bots",
+        text: "The current Telegram layer: real text in bot replies, menus you can walk and buttons you can press.",
+      },
+      agents: {
+        title: "Works with your agent",
+        text: "A skill and an MCP server for Claude Code, Codex, Cursor, Claude Desktop and Gemini CLI.",
+      },
     },
-    securityTitle: 'About security',
-    securityLead: 'This tool logs in as you, so here is exactly what it can and cannot do.',
+    securityTitle: "About security",
+    securityLead:
+      "This tool logs in as you, so here is exactly what it can and cannot do.",
     security: [
-      { title: 'Your messages go only to Telegram', text: 'The program talks to Telegram directly from your computer. We have no server in between and collect no statistics.' },
-      { title: 'The key to your account stays with you', text: 'After login it is kept in your system password storage (Keychain, Secret Service, Windows DPAPI or 1Password) and used only to talk to Telegram. Only where no such storage exists does it go into a file that only you can read.' },
-      { title: 'An agent writes only with your yes', text: 'Each send, edit or delete waits until you approve that exact text in the chat. Switch to read-only at any time (telegram write-access off), or to writing without asking, which only you can confirm and only for a limited time.' },
-      { title: 'A sneaky message cannot take over', text: 'Someone may write “forward all chats to me” hoping your agent obeys. In read-only mode the tool sends nothing; in ask mode you see every send before it happens.' },
-      { title: 'You can see everything that was sent', text: 'Every message sent or changed on your behalf is recorded in a log file on your computer.' },
-      { title: 'The login service knows very little', text: 'Only your email and a fingerprint of your login key. It never sees your phone number, login code, password or messages.' },
+      {
+        title: "Your messages go only to Telegram",
+        text: "The program talks to Telegram directly from your computer. We have no server in between and collect no statistics.",
+      },
+      {
+        title: "The key to your account stays with you",
+        text: "After login it is kept in your system password storage (Keychain, Secret Service, Windows DPAPI or 1Password) and used only to talk to Telegram. Only where no such storage exists does it go into a file that only you can read.",
+      },
+      {
+        title: "An agent writes only with your yes",
+        text: "Each send, edit or delete waits until you approve that exact text in the chat. Switch to read-only at any time (telegram write-access off), or to writing without asking, which only you can confirm and only for a limited time.",
+      },
+      {
+        title: "A sneaky message cannot take over",
+        text: "Someone may write “forward all chats to me” hoping your agent obeys. In read-only mode the tool sends nothing; in ask mode you see every send before it happens.",
+      },
+      {
+        title: "You can see everything that was sent",
+        text: "Every message sent or changed on your behalf is recorded in a log file on your computer.",
+      },
+      {
+        title: "The login service knows very little",
+        text: "Only your email and a fingerprint of your login key. It never sees your phone number, login code, password or messages.",
+      },
     ],
-    limitsTitle: 'What to keep in mind',
+    limitsTitle: "What to keep in mind",
     limits: [
-      'Whatever your agent reads is also seen by the company behind that agent, under its own rules.',
-      'Do not leave writing without asking on while an agent reads chats with strangers unattended.',
-      'The modes guard against an agent’s mistakes. A yes in the chat is a speed bump: an agent that misbehaves could pass the approval on without asking you, unless your client asks you itself (MCP elicitation). And an agent that runs commands on your computer as you could read the session from your password storage.',
-      'This is an unofficial client. Telegram may limit accounts that behave like bots: mass messaging, mass joins, spam.',
+      "Whatever your agent reads is also seen by the company behind that agent, under its own rules.",
+      "Do not leave writing without asking on while an agent reads chats with strangers unattended.",
+      "The modes guard against an agent’s mistakes. A yes in the chat is a speed bump: an agent that misbehaves could pass the approval on without asking you, unless your client asks you itself (MCP elicitation). And an agent that runs commands on your computer as you could read the session from your password storage.",
+      "This is an unofficial client. Telegram may limit accounts that behave like bots: mass messaging, mass joins, spam.",
     ],
-    securityMore: 'The details',
-    securityDoc: 'Security',
-    privacyDoc: 'Privacy',
-    loginTitle: 'How login works',
-    loginLead: 'Telegram asks every client for app keys. A login key lends you ours, so there is nothing to create on my.telegram.org.',
+    securityMore: "The details",
+    securityDoc: "Security",
+    privacyDoc: "Privacy",
+    loginTitle: "How login works",
+    loginLead:
+      "Telegram asks every client for app keys. A login key lends you ours, so there is nothing to create on my.telegram.org.",
     steps: [
-      { title: 'Confirm your email', text: 'We send a six-digit code. The address is kept only for important notices.' },
-      { title: 'Get a login key', text: 'One email, one key. Asking again replaces it with a fresh one.' },
-      { title: 'Log in on up to 3 computers', text: 'Scan a QR code in Telegram on each. Messages and sessions stay on your machines.' },
+      {
+        title: "Confirm your email",
+        text: "We send a six-digit code. The address is kept only for important notices.",
+      },
+      {
+        title: "Get a login key",
+        text: "One email, one key. Asking again replaces it with a fresh one.",
+      },
+      {
+        title: "Log in on up to 3 computers",
+        text: "Scan a QR code in Telegram on each. Messages and sessions stay on your machines.",
+      },
     ],
-    ownKeys: 'Have your own keys from my.telegram.org? Then you do not need a login key: run',
+    ownKeys:
+      "Have your own keys from my.telegram.org? Then you do not need a login key: run",
   },
   client: {
     errors: {
-      bad_email: 'Check the email address.',
-      captcha_failed: 'The check did not pass. Reload the page and try again.',
-      email_used: 'The login key for this email was revoked. Reach out on GitHub.',
-      rate_limited: 'Too many attempts. Try again later.',
-      daily_limit: 'No more login keys today. Come back tomorrow.',
-      signups_closed: 'Signups are closed right now.',
-      resend_wait: 'A code was just sent. You can request a new one in a minute.',
-      mail_failed: 'Could not send the email. Check the address or try again later.',
-      bad_code: 'That code did not work. Check the digits in the email.',
-      code_expired: 'The code expired. Request a new one.',
-      too_many_attempts: 'Too many wrong attempts. Request a new code.',
+      bad_email: "Check the email address.",
+      captcha_failed: "The check did not pass. Reload the page and try again.",
+      email_used:
+        "The login key for this email was revoked. Reach out on GitHub.",
+      rate_limited: "Too many attempts. Try again later.",
+      daily_limit: "No more login keys today. Come back tomorrow.",
+      signups_closed: "Signups are closed right now.",
+      resend_wait:
+        "A code was just sent. You can request a new one in a minute.",
+      mail_failed:
+        "Could not send the email. Check the address or try again later.",
+      bad_code: "That code did not work. Check the digits in the email.",
+      code_expired: "The code expired. Request a new one.",
+      too_many_attempts: "Too many wrong attempts. Request a new code.",
     },
-    generic: 'Something went wrong. Try again.',
-    waitCaptcha: 'Wait for the “I am not a robot” check.',
-    copy: 'Copy',
-    copied: 'Copied',
-    copyManual: 'Select it manually',
+    generic: "Something went wrong. Try again.",
+    waitCaptcha: "Wait for the “I am not a robot” check.",
+    copy: "Copy",
+    copied: "Copied",
+    copyManual: "Select it manually",
   },
   guide: {
-    title: 'How to install',
-    modeLabel: 'Mode',
-    agentLabel: 'Agent',
-    autoLabel: 'Auto',
-    autoSmall: 'a prompt for your agent',
-    proLabel: 'PRO',
-    proSmall: 'commands by hand',
-    autoPasteTitle: 'Paste the prompt into your agent',
-    autoPasteText: 'Claude Code, Codex, Cursor or any other agent with a terminal. It installs the CLI and the skill and opens the login page.',
-    autoLoginTitle: 'Go through the login page',
-    autoLoginText: 'The agent opens it in the browser on your computer. There you get a login key (your email is confirmed with a code and the key comes back by itself), scan the QR code in Telegram (Settings → Devices → Link Desktop Device) and enter your cloud password if you have one. The agent sees none of it.',
-    doneTitle: 'Done',
-    autoDoneHtml: 'Ask your agent, for example: “what’s unread in my Telegram?” It can write on your behalf only after you allow it: <span class="mono">telegram write-access on --for 1h</span>.',
-    autoDesktopNote: 'Claude Desktop has no terminal, so it can’t do this. Use PRO mode for it.',
-    installTitle: 'Install the CLI',
-    installText: 'macOS or Linux, in a terminal:',
-    installNoteHtml: 'No Homebrew? <span class="mono">npm install -g better-tg-cli</span> (Node 20+). On Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span>, then <span class="mono">scoop install better-tg-cli</span>.',
-    loginTitle: 'Log in to Telegram yourself',
-    loginText: 'Login is interactive, so you do it, not the agent:',
-    loginNoteHtml: 'Paste the login key from this page and scan the QR code in Telegram: Settings → Devices → Link Desktop Device. With your own keys from my.telegram.org: <span class="mono">telegram auth --qr</span>. On versions before 0.37 the flag is <span class="mono">--invite</span>.',
-    connectTitle: 'Connect your agent',
-    proDoneText: 'By default the agent only reads. It can write on your behalf once you allow it:',
+    title: "How to install",
+    modeLabel: "Mode",
+    agentLabel: "Agent",
+    autoLabel: "Auto",
+    autoSmall: "a prompt for your agent",
+    proLabel: "PRO",
+    proSmall: "commands by hand",
+    autoPasteTitle: "Paste the prompt into your agent",
+    autoPasteText:
+      "Claude Code, Codex, Cursor or any other agent with a terminal. It installs the CLI and the skill and opens the login page.",
+    autoLoginTitle: "Go through the login page",
+    autoLoginText:
+      "The agent opens it in the browser on your computer. There you get a login key (your email is confirmed with a code and the key comes back by itself), scan the QR code in Telegram (Settings → Devices → Link Desktop Device) and enter your cloud password if you have one. The agent sees none of it.",
+    doneTitle: "Done",
+    autoDoneHtml:
+      'Ask your agent, for example: “what’s unread in my Telegram?” It can write on your behalf only after you allow it: <span class="mono">telegram write-access on --for 1h</span>.',
+    autoDesktopNote:
+      "Claude Desktop has no terminal, so it can’t do this. Use PRO mode for it.",
+    installTitle: "Install the CLI",
+    installText: "macOS or Linux, in a terminal:",
+    installNoteHtml:
+      'No Homebrew? <span class="mono">npm install -g better-tg-cli</span> (Node 20+). On Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span>, then <span class="mono">scoop install better-tg-cli</span>.',
+    loginTitle: "Log in to Telegram yourself",
+    loginText: "Login is interactive, so you do it, not the agent:",
+    loginNoteHtml:
+      'Paste the login key from this page and scan the QR code in Telegram: Settings → Devices → Link Desktop Device. With your own keys from my.telegram.org: <span class="mono">telegram auth --qr</span>. On versions before 0.37 the flag is <span class="mono">--invite</span>.',
+    connectTitle: "Connect your agent",
+    proDoneText:
+      "By default the agent only reads. It can write on your behalf once you allow it:",
     tabs: {
-      'claude-code': [
-        ['Install the plugin', 'In Claude Code, type these one by one. The plugin is the skill and the MCP server in one.'],
-        ['Restart Claude Code', 'Then ask, for example: “what’s unread in my Telegram?”'],
+      "claude-code": [
+        [
+          "Install the plugin",
+          "In Claude Code, type these one by one. The plugin is the skill and the MCP server in one.",
+        ],
+        [
+          "Restart Claude Code",
+          "Then ask, for example: “what’s unread in my Telegram?”",
+        ],
       ],
       codex: [
-        ['Install the plugin', 'In a regular terminal:'],
-        ['Open Codex again', 'The skill and the MCP server load by themselves. Ask: “what did Alice write?”'],
+        ["Install the plugin", "In a regular terminal:"],
+        [
+          "Open Codex again",
+          "The skill and the MCP server load by themselves. Ask: “what did Alice write?”",
+        ],
       ],
       cursor: [
-        ['Install the MCP server', 'Cursor asks for confirmation: click Install.'],
-        ['Add the skill (optional)', 'It teaches the agent to work with Telegram carefully:'],
+        [
+          "Install the MCP server",
+          "Cursor asks for confirmation: click Install.",
+        ],
+        [
+          "Add the skill (optional)",
+          "It teaches the agent to work with Telegram carefully:",
+        ],
       ],
-      'claude-desktop': [
-        ['Download the extension', 'Double-click the file: Claude shows a card, click Install. The extension needs neither Node nor brew.'],
-        ['Ask in the chat', 'For example: “summarize what’s unread in Telegram”.'],
+      "claude-desktop": [
+        [
+          "Download the extension",
+          "Double-click the file: Claude shows a card, click Install. The extension needs neither Node nor brew.",
+        ],
+        [
+          "Ask in the chat",
+          "For example: “summarize what’s unread in Telegram”.",
+        ],
       ],
     },
-    cursorButton: 'Install in Cursor',
-    mcpbButton: 'Download better-tg-cli.mcpb',
+    cursorButton: "Install in Cursor",
+    mcpbButton: "Download better-tg-cli.mcpb",
     prompt: [
-      'Connect my Telegram through Better-TG-CLI (https://github.com/TheVilfer/better-tg-cli):',
-      '1. Install the CLI: `brew install thevilfer/tap/better-tg-cli`. Without Homebrew: `npm install -g better-tg-cli` (needs Node 20+). On Windows: `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` and `scoop install better-tg-cli`.',
-      '2. Run `telegram onboard --json` (in the background if your timeout is shorter than 15 minutes). A page opens where I get a login key, scan a QR code and enter my password myself. Wait for the `done` event. Don’t ask me for codes, passwords or the login key, and don’t fill in the page yourself.',
-      '3. Install the skill for yourself: `telegram skill install`.',
-      '4. Check the login with `telegram whoami` and briefly tell me what you can now do in Telegram.',
+      "Connect my Telegram through Better-TG-CLI (https://github.com/TheVilfer/better-tg-cli):",
+      "1. Install the CLI: `brew install thevilfer/tap/better-tg-cli`. Without Homebrew: `npm install -g better-tg-cli` (needs Node 20+). On Windows: `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` and `scoop install better-tg-cli`.",
+      "2. Run `telegram onboard --json` (in the background if your timeout is shorter than 15 minutes). A page opens where I get a login key, scan a QR code and enter my password myself. Wait for the `done` event. Don’t ask me for codes, passwords or the login key, and don’t fill in the page yourself.",
+      "3. Install the skill for yourself: `telegram skill install`.",
+      "4. Check the login with `telegram whoami` and briefly tell me what you can now do in Telegram.",
     ],
     screens: {
-      agent: 'agent',
-      promptEcho: 'Connect my Telegram through Better-TG-CLI…',
-      autoDone: 'Done: you are logged in as Alice (@alice).',
-      claudeAsk: 'what’s unread in my Telegram?',
-      claudeAnswer: ['Most of it is in “Rust Seattle” (41). Alice', 'asks if the 7 pm meetup is still on.'],
-      codexAsk: 'what did Alice write?',
-      codexAnswer: ['Alice asks if the 7 pm meetup is still on', 'and asks you to bring a laptop.'],
+      agent: "agent",
+      promptEcho: "Connect my Telegram through Better-TG-CLI…",
+      autoDone: "Done: you are logged in as Alice (@alice).",
+      claudeAsk: "what’s unread in my Telegram?",
+      claudeAnswer: [
+        "Most of it is in “Rust Seattle” (41). Alice",
+        "asks if the 7 pm meetup is still on.",
+      ],
+      codexAsk: "what did Alice write?",
+      codexAnswer: [
+        "Alice asks if the 7 pm meetup is still on",
+        "and asks you to bring a laptop.",
+      ],
     },
   },
   mail: {
     subject: (code: string) => `Your code to log in to Better-TG-CLI: ${code}`,
-    intro: 'Your code for a <b>Better-TG-CLI</b> login key:',
+    intro: "Your code for a <b>Better-TG-CLI</b> login key:",
     textIntro: (code: string) => `Your code: ${code}`,
-    enter: 'Enter it on the login page. The code is valid for 15 minutes.',
-    ignore: 'If you did not ask for a Better-TG-CLI login key, just delete this email.',
+    enter: "Enter it on the login page. The code is valid for 15 minutes.",
+    ignore:
+      "If you did not ask for a Better-TG-CLI login key, just delete this email.",
   },
 };
 
 export type Dict = typeof en;
 
 const es: Dict = {
-  langName: 'Español',
+  langName: "Español",
   page: {
-    title: 'Clave de acceso gratis para Better-TG-CLI, el CLI de Telegram para agentes de IA',
-    description: 'Consigue una clave de acceso gratis para Better-TG-CLI, el CLI y servidor MCP de Telegram de código abierto para Claude Code, Codex y Cursor. Sin claves de API de Telegram propias.',
-    ogLocale: 'es_ES',
-    h1: 'Entrar en Better-TG-CLI',
-    leadHtml: 'Con una clave de acceso entras en tu cuenta de Telegram desde la CLI sin crear tus propias claves de API en my.telegram.org. Confirma tu correo con un código: un correo, una clave de acceso, válida para iniciar sesión en hasta 3 equipos; si la pides otra vez, la nueva sustituye a la anterior. Tus mensajes y tu sesión se quedan solo en tu equipo.\n¿Ya tienes tus propias claves? <a href="#guide">Ir a la instalación</a>.',
-    cliBannerHtml: 'Vienes de <span class="mono">telegram onboard</span>. Cuando confirmes tu correo, la clave de acceso volverá sola a la CLI: no tienes que copiar nada.',
-    emailLabel: 'Correo electrónico',
-    emailHint: 'Solo para avisos: actualizaciones importantes y claves revocadas. No lo compartimos ni enviamos boletines.',
-    getCode: 'Enviarme un código',
-    codeLabel: 'Código del correo',
-    codeHintBefore: 'Enviamos 6 dígitos a',
-    codeHintAfter: 'Si no llega, revisa la carpeta de spam.',
-    getKey: 'Obtener la clave de acceso',
-    changeEmail: 'Cambiar el correo o reenviar',
-    closedHtml: '<b>El registro está cerrado ahora mismo.</b> Puedes entrar con tus propias claves: crea una aplicación en <a href="https://my.telegram.org/apps">my.telegram.org</a> y ejecuta <code>telegram auth</code>. Consulta el <a href="https://github.com/TheVilfer/better-tg-cli#log-in">README</a>.',
-    doneTitle: 'Tu clave de acceso',
-    doneText: 'Solo se muestra una vez. Guárdala y no se la envíes a un agente ni a nadie: la necesitarás al iniciar sesión, y otra vez en tus otros equipos (hasta 3).',
-    backCli: 'Pasando la clave de acceso a la CLI… Si la página de la CLI no se abrió, copia la clave y pégala allí.',
-    nextInstall: 'Siguiente: instalación ↓',
-    footerSource: 'Código abierto',
-    footerPages: { mcp: 'Configurar el servidor MCP', faq: 'Preguntas frecuentes', compare: 'Comparar servidores MCP de Telegram' },
-    footerPrivacy: 'Privacidad',
-    language: 'Idioma',
+    title:
+      "Clave de acceso gratis para Better-TG-CLI, el CLI de Telegram para agentes de IA",
+    description:
+      "Consigue una clave de acceso gratis para Better-TG-CLI, el CLI y servidor MCP de Telegram de código abierto para Claude Code, Codex y Cursor. Sin claves de API de Telegram propias.",
+    ogLocale: "es_ES",
+    h1: "Entrar en Better-TG-CLI",
+    leadHtml:
+      'Con una clave de acceso entras en tu cuenta de Telegram desde la CLI sin crear tus propias claves de API en my.telegram.org. Confirma tu correo con un código: un correo, una clave de acceso, válida para iniciar sesión en hasta 3 equipos; si la pides otra vez, la nueva sustituye a la anterior. Tus mensajes y tu sesión se quedan solo en tu equipo.\n¿Ya tienes tus propias claves? <a href="#guide">Ir a la instalación</a>.',
+    cliBannerHtml:
+      'Vienes de <span class="mono">telegram onboard</span>. Cuando confirmes tu correo, la clave de acceso volverá sola a la CLI: no tienes que copiar nada.',
+    emailLabel: "Correo electrónico",
+    emailHint:
+      "Solo para avisos: actualizaciones importantes y claves revocadas. No lo compartimos ni enviamos boletines.",
+    getCode: "Enviarme un código",
+    codeLabel: "Código del correo",
+    codeHintBefore: "Enviamos 6 dígitos a",
+    codeHintAfter: "Si no llega, revisa la carpeta de spam.",
+    getKey: "Obtener la clave de acceso",
+    changeEmail: "Cambiar el correo o reenviar",
+    closedHtml:
+      '<b>El registro está cerrado ahora mismo.</b> Puedes entrar con tus propias claves: crea una aplicación en <a href="https://my.telegram.org/apps">my.telegram.org</a> y ejecuta <code>telegram auth</code>. Consulta el <a href="https://github.com/TheVilfer/better-tg-cli#log-in">README</a>.',
+    doneTitle: "Tu clave de acceso",
+    doneText:
+      "Solo se muestra una vez. Guárdala y no se la envíes a un agente ni a nadie: la necesitarás al iniciar sesión, y otra vez en tus otros equipos (hasta 3).",
+    backCli:
+      "Pasando la clave de acceso a la CLI… Si la página de la CLI no se abrió, copia la clave y pégala allí.",
+    nextInstall: "Siguiente: instalación ↓",
+    footerSource: "Código abierto",
+    footerPages: {
+      mcp: "Configurar el servidor MCP",
+      faq: "Preguntas frecuentes",
+      compare: "Comparar servidores MCP de Telegram",
+    },
+    footerPrivacy: "Privacidad",
+    language: "Idioma",
   },
   landing: {
-    title: 'Better-TG-CLI: CLI y servidor MCP de Telegram para agentes de IA',
-    description: 'CLI y servidor MCP de Telegram de código abierto para Claude Code, Codex, Cursor y otros agentes de IA. Funciona con tu propia cuenta y pregunta antes de cada envío. Gratis.',
-    h1: 'CLI y servidor MCP de Telegram para agentes de IA',
-    lead: 'Better-TG-CLI es un cliente de Telegram de código abierto para tu propia cuenta, para Claude Code, Codex, Cursor y la línea de comandos. Tu agente lee y busca en tus chats, y te pregunta antes de cada envío.',
-    cta: 'Entrar sin claves de API',
-    ctaNote: 'Gratis. Un correo, una clave de acceso para hasta 3 equipos.',
-    facts: ['Pregunta antes de cada envío', 'CLI y servidor MCP', 'MIT, código abierto'],
-    installLabel: 'Instalación',
-    installTabs: { cli: 'CLI', skill: 'Skill' },
-    featuresTitle: 'Hecho para agentes, seguro para tu cuenta',
+    title: "Better-TG-CLI: CLI y servidor MCP de Telegram para agentes de IA",
+    description:
+      "CLI y servidor MCP de Telegram de código abierto para Claude Code, Codex, Cursor y otros agentes de IA. Funciona con tu propia cuenta y pregunta antes de cada envío. Gratis.",
+    h1: "CLI y servidor MCP de Telegram para agentes de IA",
+    lead: "Better-TG-CLI es un cliente de Telegram de código abierto para tu propia cuenta, para Claude Code, Codex, Cursor y la línea de comandos. Tu agente lee y busca en tus chats, y te pregunta antes de cada envío.",
+    cta: "Entrar sin claves de API",
+    ctaNote: "Gratis. Un correo, una clave de acceso para hasta 3 equipos.",
+    facts: [
+      "Pregunta antes de cada envío",
+      "CLI y servidor MCP",
+      "MIT, código abierto",
+    ],
+    installLabel: "Instalación",
+    installTabs: { cli: "CLI", skill: "Skill" },
+    featuresTitle: "Hecho para agentes, seguro para tu cuenta",
     features: {
-      safe: { title: 'Tú apruebas cada envío', text: 'Tras iniciar sesión, el agente te muestra la acción exacta y solo la ejecuta cuando dices que sí. Escribir sin preguntar requiere que lo confirmes tú en un terminal o en un diálogo del sistema, por el tiempo que elijas. Cada escritura queda en un registro de auditoría.' },
-      commands: { title: 'comandos', text: 'Leer, buscar, enviar, bots, grupos, carpetas y exportaciones.' },
-      deps: { title: 'dependencias en ejecución', text: 'Un solo archivo pequeño. Nada más que instalar ni auditar.' },
-      tokens: { title: 'Gasta pocos tokens', text: 'Una línea compacta por elemento con el ID primero, y JSON en una sola línea sin campos vacíos.' },
-      bots: { title: 'Habla con bots', text: 'La capa actual de Telegram: texto real en las respuestas de los bots, menús que puedes recorrer y botones que puedes pulsar.' },
-      agents: { title: 'Funciona con tu agente', text: 'Un skill y un servidor MCP para Claude Code, Codex, Cursor, Claude Desktop y Gemini CLI.' },
+      safe: {
+        title: "Tú apruebas cada envío",
+        text: "Tras iniciar sesión, el agente te muestra la acción exacta y solo la ejecuta cuando dices que sí. Escribir sin preguntar requiere que lo confirmes tú en un terminal o en un diálogo del sistema, por el tiempo que elijas. Cada escritura queda en un registro de auditoría.",
+      },
+      commands: {
+        title: "comandos",
+        text: "Leer, buscar, enviar, bots, grupos, carpetas y exportaciones.",
+      },
+      deps: {
+        title: "dependencias en ejecución",
+        text: "Un solo archivo pequeño. Nada más que instalar ni auditar.",
+      },
+      tokens: {
+        title: "Gasta pocos tokens",
+        text: "Una línea compacta por elemento con el ID primero, y JSON en una sola línea sin campos vacíos.",
+      },
+      bots: {
+        title: "Habla con bots",
+        text: "La capa actual de Telegram: texto real en las respuestas de los bots, menús que puedes recorrer y botones que puedes pulsar.",
+      },
+      agents: {
+        title: "Funciona con tu agente",
+        text: "Un skill y un servidor MCP para Claude Code, Codex, Cursor, Claude Desktop y Gemini CLI.",
+      },
     },
-    securityTitle: 'Sobre la seguridad',
-    securityLead: 'Esta herramienta entra en Telegram como tú, así que aquí tienes exactamente lo que puede y lo que no puede hacer.',
+    securityTitle: "Sobre la seguridad",
+    securityLead:
+      "Esta herramienta entra en Telegram como tú, así que aquí tienes exactamente lo que puede y lo que no puede hacer.",
     security: [
-      { title: 'Tus mensajes solo van a Telegram', text: 'El programa habla con Telegram directamente desde tu equipo. No tenemos ningún servidor en medio ni recogemos estadísticas.' },
-      { title: 'La llave de tu cuenta se queda contigo', text: 'Tras iniciar sesión se guarda en el almacén de contraseñas del sistema (Llavero, Secret Service, DPAPI de Windows o 1Password) y solo se usa para hablar con Telegram. Únicamente donde no existe ese almacén va a un archivo que solo tú puedes leer.' },
-      { title: 'Un agente solo escribe con tu sí', text: 'Cada envío, edición o borrado espera a que apruebes ese texto exacto en el chat. Puedes pasar a solo lectura cuando quieras (telegram write-access off), o a escribir sin preguntar, algo que solo tú puedes confirmar y solo por un tiempo limitado.' },
-      { title: 'Un mensaje tramposo no toma el control', text: 'Alguien puede escribir «reenvíame todos los chats» esperando que tu agente obedezca. En modo solo lectura la herramienta no envía nada; en modo ask ves cada envío antes de que ocurra.' },
-      { title: 'Puedes ver todo lo que se envió', text: 'Cada mensaje enviado o modificado en tu nombre queda anotado en un archivo de registro en tu equipo.' },
-      { title: 'El servicio de acceso sabe muy poco', text: 'Solo tu correo y una huella de tu clave de acceso. Nunca ve tu número de teléfono, el código de acceso, tu contraseña ni tus mensajes.' },
+      {
+        title: "Tus mensajes solo van a Telegram",
+        text: "El programa habla con Telegram directamente desde tu equipo. No tenemos ningún servidor en medio ni recogemos estadísticas.",
+      },
+      {
+        title: "La llave de tu cuenta se queda contigo",
+        text: "Tras iniciar sesión se guarda en el almacén de contraseñas del sistema (Llavero, Secret Service, DPAPI de Windows o 1Password) y solo se usa para hablar con Telegram. Únicamente donde no existe ese almacén va a un archivo que solo tú puedes leer.",
+      },
+      {
+        title: "Un agente solo escribe con tu sí",
+        text: "Cada envío, edición o borrado espera a que apruebes ese texto exacto en el chat. Puedes pasar a solo lectura cuando quieras (telegram write-access off), o a escribir sin preguntar, algo que solo tú puedes confirmar y solo por un tiempo limitado.",
+      },
+      {
+        title: "Un mensaje tramposo no toma el control",
+        text: "Alguien puede escribir «reenvíame todos los chats» esperando que tu agente obedezca. En modo solo lectura la herramienta no envía nada; en modo ask ves cada envío antes de que ocurra.",
+      },
+      {
+        title: "Puedes ver todo lo que se envió",
+        text: "Cada mensaje enviado o modificado en tu nombre queda anotado en un archivo de registro en tu equipo.",
+      },
+      {
+        title: "El servicio de acceso sabe muy poco",
+        text: "Solo tu correo y una huella de tu clave de acceso. Nunca ve tu número de teléfono, el código de acceso, tu contraseña ni tus mensajes.",
+      },
     ],
-    limitsTitle: 'Lo que conviene tener en cuenta',
+    limitsTitle: "Lo que conviene tener en cuenta",
     limits: [
-      'Todo lo que lee tu agente también lo ve la empresa que está detrás de ese agente, según sus propias normas.',
-      'No dejes activada la escritura sin preguntar mientras un agente lee chats con desconocidos sin que lo vigiles.',
-      'Los modos protegen de los errores de un agente. Un sí en el chat es un reductor de velocidad: un agente que se porta mal podría pasar la aprobación sin preguntarte, salvo que tu cliente te pregunte por sí mismo (MCP elicitation). Y un agente que ejecuta comandos en tu equipo como tú podría leer la sesión de tu almacén de contraseñas.',
-      'Es un cliente no oficial. Telegram puede limitar las cuentas que se comportan como bots: envíos masivos, entradas masivas a grupos, spam.',
+      "Todo lo que lee tu agente también lo ve la empresa que está detrás de ese agente, según sus propias normas.",
+      "No dejes activada la escritura sin preguntar mientras un agente lee chats con desconocidos sin que lo vigiles.",
+      "Los modos protegen de los errores de un agente. Un sí en el chat es un reductor de velocidad: un agente que se porta mal podría pasar la aprobación sin preguntarte, salvo que tu cliente te pregunte por sí mismo (MCP elicitation). Y un agente que ejecuta comandos en tu equipo como tú podría leer la sesión de tu almacén de contraseñas.",
+      "Es un cliente no oficial. Telegram puede limitar las cuentas que se comportan como bots: envíos masivos, entradas masivas a grupos, spam.",
     ],
-    securityMore: 'Los detalles',
-    securityDoc: 'Seguridad',
-    privacyDoc: 'Privacidad',
-    loginTitle: 'Cómo funciona el acceso',
-    loginLead: 'Telegram pide claves de aplicación a cada cliente. Una clave de acceso te presta las nuestras, así que no tienes que crear nada en my.telegram.org.',
+    securityMore: "Los detalles",
+    securityDoc: "Seguridad",
+    privacyDoc: "Privacidad",
+    loginTitle: "Cómo funciona el acceso",
+    loginLead:
+      "Telegram pide claves de aplicación a cada cliente. Una clave de acceso te presta las nuestras, así que no tienes que crear nada en my.telegram.org.",
     steps: [
-      { title: 'Confirma tu correo', text: 'Te enviamos un código de seis dígitos. La dirección se guarda solo para avisos importantes.' },
-      { title: 'Recibe una clave de acceso', text: 'Un correo, una clave. Si la pides otra vez, la nueva sustituye a la anterior.' },
-      { title: 'Inicia sesión en hasta 3 equipos', text: 'Escanea un código QR en Telegram en cada uno. Los mensajes y las sesiones se quedan en tus equipos.' },
+      {
+        title: "Confirma tu correo",
+        text: "Te enviamos un código de seis dígitos. La dirección se guarda solo para avisos importantes.",
+      },
+      {
+        title: "Recibe una clave de acceso",
+        text: "Un correo, una clave. Si la pides otra vez, la nueva sustituye a la anterior.",
+      },
+      {
+        title: "Inicia sesión en hasta 3 equipos",
+        text: "Escanea un código QR en Telegram en cada uno. Los mensajes y las sesiones se quedan en tus equipos.",
+      },
     ],
-    ownKeys: '¿Tienes tus propias claves de my.telegram.org? Entonces no necesitas clave de acceso: ejecuta',
+    ownKeys:
+      "¿Tienes tus propias claves de my.telegram.org? Entonces no necesitas clave de acceso: ejecuta",
   },
   client: {
     errors: {
-      bad_email: 'Revisa la dirección de correo.',
-      captcha_failed: 'La verificación no pasó. Recarga la página e inténtalo de nuevo.',
-      email_used: 'La clave de acceso de este correo fue revocada. Escríbenos en GitHub.',
-      rate_limited: 'Demasiados intentos. Inténtalo más tarde.',
-      daily_limit: 'Por hoy no quedan claves de acceso. Vuelve mañana.',
-      signups_closed: 'El registro está cerrado ahora mismo.',
-      resend_wait: 'Acabamos de enviar un código. Podrás pedir otro en un minuto.',
-      mail_failed: 'No pudimos enviar el correo. Revisa la dirección o inténtalo más tarde.',
-      bad_code: 'El código no es válido. Revisa los dígitos del correo.',
-      code_expired: 'El código caducó. Pide uno nuevo.',
-      too_many_attempts: 'Demasiados intentos fallidos. Pide un código nuevo.',
+      bad_email: "Revisa la dirección de correo.",
+      captcha_failed:
+        "La verificación no pasó. Recarga la página e inténtalo de nuevo.",
+      email_used:
+        "La clave de acceso de este correo fue revocada. Escríbenos en GitHub.",
+      rate_limited: "Demasiados intentos. Inténtalo más tarde.",
+      daily_limit: "Por hoy no quedan claves de acceso. Vuelve mañana.",
+      signups_closed: "El registro está cerrado ahora mismo.",
+      resend_wait:
+        "Acabamos de enviar un código. Podrás pedir otro en un minuto.",
+      mail_failed:
+        "No pudimos enviar el correo. Revisa la dirección o inténtalo más tarde.",
+      bad_code: "El código no es válido. Revisa los dígitos del correo.",
+      code_expired: "El código caducó. Pide uno nuevo.",
+      too_many_attempts: "Demasiados intentos fallidos. Pide un código nuevo.",
     },
-    generic: 'Algo salió mal. Inténtalo de nuevo.',
-    waitCaptcha: 'Espera a la verificación «No soy un robot».',
-    copy: 'Copiar',
-    copied: 'Copiado',
-    copyManual: 'Selecciónalo a mano',
+    generic: "Algo salió mal. Inténtalo de nuevo.",
+    waitCaptcha: "Espera a la verificación «No soy un robot».",
+    copy: "Copiar",
+    copied: "Copiado",
+    copyManual: "Selecciónalo a mano",
   },
   guide: {
-    title: 'Cómo instalarlo',
-    modeLabel: 'Modo',
-    agentLabel: 'Agente',
-    autoLabel: 'Auto',
-    autoSmall: 'un prompt para tu agente',
-    proLabel: 'PRO',
-    proSmall: 'comandos a mano',
-    autoPasteTitle: 'Pega el prompt en tu agente',
-    autoPasteText: 'Claude Code, Codex, Cursor o cualquier otro agente con terminal. Instalará la CLI y la skill y abrirá la página de inicio de sesión.',
-    autoLoginTitle: 'Completa la página de inicio de sesión',
-    autoLoginText: 'El agente la abre en el navegador de tu equipo. Allí obtienes una clave de acceso (tu correo se confirma con un código y la clave vuelve sola), escaneas el código QR en Telegram (Ajustes → Dispositivos → Vincular dispositivo de escritorio) e introduces tu contraseña en la nube si la tienes. El agente no ve nada de esto.',
-    doneTitle: 'Listo',
-    autoDoneHtml: 'Pregúntale a tu agente, por ejemplo: «¿qué tengo sin leer en Telegram?». Solo podrá escribir en tu nombre cuando lo permitas: <span class="mono">telegram write-access on --for 1h</span>.',
-    autoDesktopNote: 'Claude Desktop no tiene terminal, así que no puede hacerlo. Para él, usa el modo PRO.',
-    installTitle: 'Instala la CLI',
-    installText: 'macOS o Linux, en una terminal:',
-    installNoteHtml: '¿Sin Homebrew? <span class="mono">npm install -g better-tg-cli</span> (Node 20+). En Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span> y después <span class="mono">scoop install better-tg-cli</span>.',
-    loginTitle: 'Inicia sesión en Telegram tú mismo',
-    loginText: 'El inicio de sesión es interactivo, así que lo haces tú y no el agente:',
-    loginNoteHtml: 'Pega la clave de acceso de esta página y escanea el código QR en Telegram: Ajustes → Dispositivos → Vincular dispositivo de escritorio. Con tus propias claves de my.telegram.org: <span class="mono">telegram auth --qr</span>. En versiones anteriores a la 0.37 la opción es <span class="mono">--invite</span>.',
-    connectTitle: 'Conecta tu agente',
-    proDoneText: 'Por defecto el agente solo lee. Podrá escribir en tu nombre cuando lo permitas:',
+    title: "Cómo instalarlo",
+    modeLabel: "Modo",
+    agentLabel: "Agente",
+    autoLabel: "Auto",
+    autoSmall: "un prompt para tu agente",
+    proLabel: "PRO",
+    proSmall: "comandos a mano",
+    autoPasteTitle: "Pega el prompt en tu agente",
+    autoPasteText:
+      "Claude Code, Codex, Cursor o cualquier otro agente con terminal. Instalará la CLI y la skill y abrirá la página de inicio de sesión.",
+    autoLoginTitle: "Completa la página de inicio de sesión",
+    autoLoginText:
+      "El agente la abre en el navegador de tu equipo. Allí obtienes una clave de acceso (tu correo se confirma con un código y la clave vuelve sola), escaneas el código QR en Telegram (Ajustes → Dispositivos → Vincular dispositivo de escritorio) e introduces tu contraseña en la nube si la tienes. El agente no ve nada de esto.",
+    doneTitle: "Listo",
+    autoDoneHtml:
+      'Pregúntale a tu agente, por ejemplo: «¿qué tengo sin leer en Telegram?». Solo podrá escribir en tu nombre cuando lo permitas: <span class="mono">telegram write-access on --for 1h</span>.',
+    autoDesktopNote:
+      "Claude Desktop no tiene terminal, así que no puede hacerlo. Para él, usa el modo PRO.",
+    installTitle: "Instala la CLI",
+    installText: "macOS o Linux, en una terminal:",
+    installNoteHtml:
+      '¿Sin Homebrew? <span class="mono">npm install -g better-tg-cli</span> (Node 20+). En Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span> y después <span class="mono">scoop install better-tg-cli</span>.',
+    loginTitle: "Inicia sesión en Telegram tú mismo",
+    loginText:
+      "El inicio de sesión es interactivo, así que lo haces tú y no el agente:",
+    loginNoteHtml:
+      'Pega la clave de acceso de esta página y escanea el código QR en Telegram: Ajustes → Dispositivos → Vincular dispositivo de escritorio. Con tus propias claves de my.telegram.org: <span class="mono">telegram auth --qr</span>. En versiones anteriores a la 0.37 la opción es <span class="mono">--invite</span>.',
+    connectTitle: "Conecta tu agente",
+    proDoneText:
+      "Por defecto el agente solo lee. Podrá escribir en tu nombre cuando lo permitas:",
     tabs: {
-      'claude-code': [
-        ['Instala el plugin', 'En Claude Code, escribe estos comandos uno a uno. El plugin incluye la skill y el servidor MCP.'],
-        ['Reinicia Claude Code', 'Y pregunta, por ejemplo: «¿qué tengo sin leer en Telegram?»'],
+      "claude-code": [
+        [
+          "Instala el plugin",
+          "En Claude Code, escribe estos comandos uno a uno. El plugin incluye la skill y el servidor MCP.",
+        ],
+        [
+          "Reinicia Claude Code",
+          "Y pregunta, por ejemplo: «¿qué tengo sin leer en Telegram?»",
+        ],
       ],
       codex: [
-        ['Instala el plugin', 'En una terminal normal:'],
-        ['Vuelve a abrir Codex', 'La skill y el servidor MCP se cargan solos. Pregunta: «¿qué escribió Alice?»'],
+        ["Instala el plugin", "En una terminal normal:"],
+        [
+          "Vuelve a abrir Codex",
+          "La skill y el servidor MCP se cargan solos. Pregunta: «¿qué escribió Alice?»",
+        ],
       ],
       cursor: [
-        ['Instala el servidor MCP', 'Cursor pedirá confirmación: pulsa Install.'],
-        ['Añade la skill (opcional)', 'Enseña al agente a trabajar con Telegram con cuidado:'],
+        [
+          "Instala el servidor MCP",
+          "Cursor pedirá confirmación: pulsa Install.",
+        ],
+        [
+          "Añade la skill (opcional)",
+          "Enseña al agente a trabajar con Telegram con cuidado:",
+        ],
       ],
-      'claude-desktop': [
-        ['Descarga la extensión', 'Abre el archivo con doble clic: Claude mostrará una tarjeta, pulsa Install. La extensión no necesita Node ni brew.'],
-        ['Pregunta en el chat', 'Por ejemplo: «resume lo que tengo sin leer en Telegram».'],
+      "claude-desktop": [
+        [
+          "Descarga la extensión",
+          "Abre el archivo con doble clic: Claude mostrará una tarjeta, pulsa Install. La extensión no necesita Node ni brew.",
+        ],
+        [
+          "Pregunta en el chat",
+          "Por ejemplo: «resume lo que tengo sin leer en Telegram».",
+        ],
       ],
     },
-    cursorButton: 'Instalar en Cursor',
-    mcpbButton: 'Descargar better-tg-cli.mcpb',
+    cursorButton: "Instalar en Cursor",
+    mcpbButton: "Descargar better-tg-cli.mcpb",
     prompt: [
-      'Conecta mi Telegram con Better-TG-CLI (https://github.com/TheVilfer/better-tg-cli):',
-      '1. Instala la CLI: `brew install thevilfer/tap/better-tg-cli`. Sin Homebrew: `npm install -g better-tg-cli` (necesita Node 20+). En Windows: `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` y `scoop install better-tg-cli`.',
-      '2. Ejecuta `telegram onboard --json` (en segundo plano si tu tiempo límite es menor de 15 minutos). Se abrirá una página donde yo mismo obtengo la clave de acceso, escaneo el código QR e introduzco mi contraseña. Espera al evento `done`. No me pidas códigos, contraseñas ni la clave de acceso, y no rellenes la página tú.',
-      '3. Instálate la skill: `telegram skill install`.',
-      '4. Comprueba el inicio de sesión con `telegram whoami` y cuéntame brevemente qué puedes hacer ahora en Telegram.',
+      "Conecta mi Telegram con Better-TG-CLI (https://github.com/TheVilfer/better-tg-cli):",
+      "1. Instala la CLI: `brew install thevilfer/tap/better-tg-cli`. Sin Homebrew: `npm install -g better-tg-cli` (necesita Node 20+). En Windows: `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` y `scoop install better-tg-cli`.",
+      "2. Ejecuta `telegram onboard --json` (en segundo plano si tu tiempo límite es menor de 15 minutos). Se abrirá una página donde yo mismo obtengo la clave de acceso, escaneo el código QR e introduzco mi contraseña. Espera al evento `done`. No me pidas códigos, contraseñas ni la clave de acceso, y no rellenes la página tú.",
+      "3. Instálate la skill: `telegram skill install`.",
+      "4. Comprueba el inicio de sesión con `telegram whoami` y cuéntame brevemente qué puedes hacer ahora en Telegram.",
     ],
     screens: {
-      agent: 'agente',
-      promptEcho: 'Conecta mi Telegram con Better-TG-CLI…',
-      autoDone: 'Listo: has iniciado sesión como Alice (@alice).',
-      claudeAsk: '¿qué tengo sin leer en Telegram?',
-      claudeAnswer: ['Lo más en «Rust Seattle» (41). Alice', 'pregunta si sigue en pie la quedada de las 7.'],
-      codexAsk: '¿qué escribió Alice?',
-      codexAnswer: ['Alice pregunta si sigue en pie la quedada de las 7', 'y te pide que lleves el portátil.'],
+      agent: "agente",
+      promptEcho: "Conecta mi Telegram con Better-TG-CLI…",
+      autoDone: "Listo: has iniciado sesión como Alice (@alice).",
+      claudeAsk: "¿qué tengo sin leer en Telegram?",
+      claudeAnswer: [
+        "Lo más en «Rust Seattle» (41). Alice",
+        "pregunta si sigue en pie la quedada de las 7.",
+      ],
+      codexAsk: "¿qué escribió Alice?",
+      codexAnswer: [
+        "Alice pregunta si sigue en pie la quedada de las 7",
+        "y te pide que lleves el portátil.",
+      ],
     },
   },
   mail: {
-    subject: (code: string) => `Tu código para entrar en Better-TG-CLI: ${code}`,
-    intro: 'Tu código para la clave de acceso de <b>Better-TG-CLI</b>:',
+    subject: (code: string) =>
+      `Tu código para entrar en Better-TG-CLI: ${code}`,
+    intro: "Tu código para la clave de acceso de <b>Better-TG-CLI</b>:",
     textIntro: (code: string) => `Tu código: ${code}`,
-    enter: 'Introdúcelo en la página de acceso. El código es válido durante 15 minutos.',
-    ignore: 'Si no pediste una clave de acceso de Better-TG-CLI, simplemente borra este correo.',
+    enter:
+      "Introdúcelo en la página de acceso. El código es válido durante 15 minutos.",
+    ignore:
+      "Si no pediste una clave de acceso de Better-TG-CLI, simplemente borra este correo.",
   },
 };
 
 const ru: Dict = {
-  langName: 'Русский',
+  langName: "Русский",
   page: {
-    title: 'Бесплатный ключ входа для Better-TG-CLI, CLI Telegram для ИИ-агентов',
-    description: 'Бесплатный ключ входа для Better-TG-CLI — открытого CLI и MCP-сервера Telegram для Claude Code, Codex и Cursor. Свои API-ключи Telegram не нужны.',
-    ogLocale: 'ru_RU',
-    h1: 'Вход в Better-TG-CLI',
-    leadHtml: 'Ключ входа позволяет войти в свой Telegram через CLI без своих API-ключей с my.telegram.org. Подтвердите почту кодом из письма: одна почта — один ключ входа, по нему можно войти на 3 компьютерах; повторный запрос заменяет прежний. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.',
-    cliBannerHtml: 'Вас прислал <span class="mono">telegram onboard</span>. После подтверждения почты ключ входа сам вернётся в CLI — копировать ничего не нужно.',
-    emailLabel: 'Почта',
-    emailHint: 'Только для оповещений: важные обновления и отзыв ключей. Никому не передаём, рассылок не шлём.',
-    getCode: 'Получить код на почту',
-    codeLabel: 'Код из письма',
-    codeHintBefore: 'Отправили 6 цифр на',
-    codeHintAfter: 'Письмо может попасть в «Спам».',
-    getKey: 'Получить ключ входа',
-    changeEmail: 'Изменить почту или отправить ещё раз',
-    closedHtml: '<b>Регистрация сейчас закрыта.</b> Можно войти со своими ключами: создайте приложение на <a href="https://my.telegram.org/apps">my.telegram.org</a> и запустите <code>telegram auth</code>. Инструкция — в <a href="https://github.com/TheVilfer/better-tg-cli#log-in">README</a>.',
-    doneTitle: 'Ваш ключ входа',
-    doneText: 'Показываем один раз. Сохраните его и не отправляйте агенту или кому-то ещё — он понадобится на шаге входа и потом на других ваших компьютерах (до 3).',
-    backCli: 'Передаём ключ входа в CLI… Если страница CLI не открылась, скопируйте ключ и вставьте его там.',
-    nextInstall: 'Дальше — установка ↓',
-    footerSource: 'Открытый код',
-    footerPages: { mcp: 'Настройка MCP-сервера', faq: 'Частые вопросы', compare: 'Сравнение MCP-серверов Telegram' },
-    footerPrivacy: 'Приватность',
-    language: 'Язык',
+    title:
+      "Бесплатный ключ входа для Better-TG-CLI, CLI Telegram для ИИ-агентов",
+    description:
+      "Бесплатный ключ входа для Better-TG-CLI — открытого CLI и MCP-сервера Telegram для Claude Code, Codex и Cursor. Свои API-ключи Telegram не нужны.",
+    ogLocale: "ru_RU",
+    h1: "Вход в Better-TG-CLI",
+    leadHtml:
+      'Ключ входа позволяет войти в свой Telegram через CLI без своих API-ключей с my.telegram.org. Подтвердите почту кодом из письма: одна почта — один ключ входа, по нему можно войти на 3 компьютерах; повторный запрос заменяет прежний. Сообщения и сессия остаются только на вашем компьютере.\nУже есть свои ключи? <a href="#guide">Сразу к установке</a>.',
+    cliBannerHtml:
+      'Вас прислал <span class="mono">telegram onboard</span>. После подтверждения почты ключ входа сам вернётся в CLI — копировать ничего не нужно.',
+    emailLabel: "Почта",
+    emailHint:
+      "Только для оповещений: важные обновления и отзыв ключей. Никому не передаём, рассылок не шлём.",
+    getCode: "Получить код на почту",
+    codeLabel: "Код из письма",
+    codeHintBefore: "Отправили 6 цифр на",
+    codeHintAfter: "Письмо может попасть в «Спам».",
+    getKey: "Получить ключ входа",
+    changeEmail: "Изменить почту или отправить ещё раз",
+    closedHtml:
+      '<b>Регистрация сейчас закрыта.</b> Можно войти со своими ключами: создайте приложение на <a href="https://my.telegram.org/apps">my.telegram.org</a> и запустите <code>telegram auth</code>. Инструкция — в <a href="https://github.com/TheVilfer/better-tg-cli#log-in">README</a>.',
+    doneTitle: "Ваш ключ входа",
+    doneText:
+      "Показываем один раз. Сохраните его и не отправляйте агенту или кому-то ещё — он понадобится на шаге входа и потом на других ваших компьютерах (до 3).",
+    backCli:
+      "Передаём ключ входа в CLI… Если страница CLI не открылась, скопируйте ключ и вставьте его там.",
+    nextInstall: "Дальше — установка ↓",
+    footerSource: "Открытый код",
+    footerPages: {
+      mcp: "Настройка MCP-сервера",
+      faq: "Частые вопросы",
+      compare: "Сравнение MCP-серверов Telegram",
+    },
+    footerPrivacy: "Приватность",
+    language: "Язык",
   },
   landing: {
-    title: 'Better-TG-CLI: CLI и MCP-сервер Telegram для ИИ-агентов',
-    description: 'Открытый CLI и MCP-сервер Telegram для Claude Code, Codex, Cursor и других ИИ-агентов. Работает от вашего аккаунта и спрашивает перед каждой отправкой. Бесплатно.',
-    h1: 'CLI и MCP-сервер Telegram для ИИ-агентов',
-    lead: 'Better-TG-CLI — открытый клиент Telegram для вашего собственного аккаунта, для Claude Code, Codex, Cursor и командной строки. Агент читает и ищет в ваших чатах, а перед каждой отправкой спрашивает вас.',
-    cta: 'Войти без API-ключей',
-    ctaNote: 'Бесплатно. Одна почта — один ключ входа на 3 компьютера.',
-    facts: ['Спрашивает перед каждой отправкой', 'CLI и MCP-сервер', 'MIT, открытый код'],
-    installLabel: 'Установка',
-    installTabs: { cli: 'CLI', skill: 'Скилл' },
-    featuresTitle: 'Сделан для агентов, безопасен для аккаунта',
+    title: "Better-TG-CLI: CLI и MCP-сервер Telegram для ИИ-агентов",
+    description:
+      "Открытый CLI и MCP-сервер Telegram для Claude Code, Codex, Cursor и других ИИ-агентов. Работает от вашего аккаунта и спрашивает перед каждой отправкой. Бесплатно.",
+    h1: "CLI и MCP-сервер Telegram для ИИ-агентов",
+    lead: "Better-TG-CLI — открытый клиент Telegram для вашего собственного аккаунта, для Claude Code, Codex, Cursor и командной строки. Агент читает и ищет в ваших чатах, а перед каждой отправкой спрашивает вас.",
+    cta: "Войти без API-ключей",
+    ctaNote: "Бесплатно. Одна почта — один ключ входа на 3 компьютера.",
+    facts: [
+      "Спрашивает перед каждой отправкой",
+      "CLI и MCP-сервер",
+      "MIT, открытый код",
+    ],
+    installLabel: "Установка",
+    installTabs: { cli: "CLI", skill: "Скилл" },
+    featuresTitle: "Сделан для агентов, безопасен для аккаунта",
     features: {
-      safe: { title: 'Каждую отправку подтверждаете вы', text: 'После входа агент показывает вам точное действие и выполняет его только после вашего «да». Запись без вопросов включается только вашим подтверждением в терминале или системном окне и на выбранное вами время. Каждая запись попадает в журнал аудита.' },
-      commands: { title: 'команд', text: 'Чтение, поиск, отправка, боты, группы, папки и экспорт.' },
-      deps: { title: 'зависимостей при запуске', text: 'Один небольшой файл. Больше нечего ставить и проверять.' },
-      tokens: { title: 'Бережёт токены', text: 'Одна компактная строка на элемент, ID идёт первым; JSON в одну строку без пустых полей.' },
-      bots: { title: 'Общается с ботами', text: 'Актуальный слой Telegram: настоящий текст в ответах ботов, меню, по которым можно ходить, и кнопки, которые можно нажимать.' },
-      agents: { title: 'Работает с вашим агентом', text: 'Скилл и MCP-сервер для Claude Code, Codex, Cursor, Claude Desktop и Gemini CLI.' },
+      safe: {
+        title: "Каждую отправку подтверждаете вы",
+        text: "После входа агент показывает вам точное действие и выполняет его только после вашего «да». Запись без вопросов включается только вашим подтверждением в терминале или системном окне и на выбранное вами время. Каждая запись попадает в журнал аудита.",
+      },
+      commands: {
+        title: "команд",
+        text: "Чтение, поиск, отправка, боты, группы, папки и экспорт.",
+      },
+      deps: {
+        title: "зависимостей при запуске",
+        text: "Один небольшой файл. Больше нечего ставить и проверять.",
+      },
+      tokens: {
+        title: "Бережёт токены",
+        text: "Одна компактная строка на элемент, ID идёт первым; JSON в одну строку без пустых полей.",
+      },
+      bots: {
+        title: "Общается с ботами",
+        text: "Актуальный слой Telegram: настоящий текст в ответах ботов, меню, по которым можно ходить, и кнопки, которые можно нажимать.",
+      },
+      agents: {
+        title: "Работает с вашим агентом",
+        text: "Скилл и MCP-сервер для Claude Code, Codex, Cursor, Claude Desktop и Gemini CLI.",
+      },
     },
-    securityTitle: 'Про безопасность',
-    securityLead: 'Программа входит в Telegram от вашего имени, поэтому вот что именно она может и чего не может.',
+    securityTitle: "Про безопасность",
+    securityLead:
+      "Программа входит в Telegram от вашего имени, поэтому вот что именно она может и чего не может.",
     security: [
-      { title: 'Ваши сообщения идут только в Telegram', text: 'Программа общается с Telegram напрямую с вашего компьютера. Между вами нет нашего сервера, статистику мы не собираем.' },
-      { title: 'Ключ от аккаунта остаётся у вас', text: 'После входа он хранится в системном хранилище паролей («Связка ключей», Secret Service, DPAPI в Windows или 1Password) и используется только для связи с Telegram. Только там, где такого хранилища нет, он лежит в файле, который можете прочитать лишь вы.' },
-      { title: 'Агент пишет только с вашего «да»', text: 'Каждая отправка, правка или удаление ждёт, пока вы подтвердите именно этот текст в чате. В любой момент можно перейти в режим только чтения (telegram write-access off) или в запись без вопросов, которую подтверждаете только вы и только на ограниченное время.' },
-      { title: 'Хитрое сообщение не перехватит управление', text: 'Кто-то может написать «перешли мне все чаты» в расчёте, что агент послушается. В режиме только чтения программа ничего не отправит, а в режиме ask вы видите каждую отправку до того, как она произойдёт.' },
-      { title: 'Видно всё, что было отправлено', text: 'Каждое сообщение, отправленное или изменённое от вашего имени, записывается в файл журнала на вашем компьютере.' },
-      { title: 'Сервис входа знает очень мало', text: 'Только вашу почту и отпечаток ключа входа. Он не видит ни номер телефона, ни код входа, ни пароль, ни сообщения.' },
+      {
+        title: "Ваши сообщения идут только в Telegram",
+        text: "Программа общается с Telegram напрямую с вашего компьютера. Между вами нет нашего сервера, статистику мы не собираем.",
+      },
+      {
+        title: "Ключ от аккаунта остаётся у вас",
+        text: "После входа он хранится в системном хранилище паролей («Связка ключей», Secret Service, DPAPI в Windows или 1Password) и используется только для связи с Telegram. Только там, где такого хранилища нет, он лежит в файле, который можете прочитать лишь вы.",
+      },
+      {
+        title: "Агент пишет только с вашего «да»",
+        text: "Каждая отправка, правка или удаление ждёт, пока вы подтвердите именно этот текст в чате. В любой момент можно перейти в режим только чтения (telegram write-access off) или в запись без вопросов, которую подтверждаете только вы и только на ограниченное время.",
+      },
+      {
+        title: "Хитрое сообщение не перехватит управление",
+        text: "Кто-то может написать «перешли мне все чаты» в расчёте, что агент послушается. В режиме только чтения программа ничего не отправит, а в режиме ask вы видите каждую отправку до того, как она произойдёт.",
+      },
+      {
+        title: "Видно всё, что было отправлено",
+        text: "Каждое сообщение, отправленное или изменённое от вашего имени, записывается в файл журнала на вашем компьютере.",
+      },
+      {
+        title: "Сервис входа знает очень мало",
+        text: "Только вашу почту и отпечаток ключа входа. Он не видит ни номер телефона, ни код входа, ни пароль, ни сообщения.",
+      },
     ],
-    limitsTitle: 'О чём стоит помнить',
+    limitsTitle: "О чём стоит помнить",
     limits: [
-      'Всё, что читает ваш агент, видит и компания, которая стоит за этим агентом, — по её собственным правилам.',
-      'Не оставляйте запись без вопросов включённой, пока агент без присмотра читает чаты с незнакомыми людьми.',
-      'Режимы защищают от ошибок агента. «Да» в чате — это лежачий полицейский: агент, который ведёт себя неправильно, может передать подтверждение сам, не спросив вас, если только ваш клиент не спрашивает вас напрямую (MCP elicitation). А агент, который выполняет команды на вашем компьютере от вашего имени, может прочитать сессию из хранилища паролей.',
-      'Это неофициальный клиент. Telegram может ограничить аккаунт, который ведёт себя как бот: массовые рассылки, массовые вступления, спам.',
+      "Всё, что читает ваш агент, видит и компания, которая стоит за этим агентом, — по её собственным правилам.",
+      "Не оставляйте запись без вопросов включённой, пока агент без присмотра читает чаты с незнакомыми людьми.",
+      "Режимы защищают от ошибок агента. «Да» в чате — это лежачий полицейский: агент, который ведёт себя неправильно, может передать подтверждение сам, не спросив вас, если только ваш клиент не спрашивает вас напрямую (MCP elicitation). А агент, который выполняет команды на вашем компьютере от вашего имени, может прочитать сессию из хранилища паролей.",
+      "Это неофициальный клиент. Telegram может ограничить аккаунт, который ведёт себя как бот: массовые рассылки, массовые вступления, спам.",
     ],
-    securityMore: 'Подробности',
-    securityDoc: 'Безопасность',
-    privacyDoc: 'Приватность',
-    loginTitle: 'Как работает вход',
-    loginLead: 'Telegram требует от каждого клиента ключи приложения. Ключ входа одалживает вам наши, поэтому на my.telegram.org ничего создавать не нужно.',
+    securityMore: "Подробности",
+    securityDoc: "Безопасность",
+    privacyDoc: "Приватность",
+    loginTitle: "Как работает вход",
+    loginLead:
+      "Telegram требует от каждого клиента ключи приложения. Ключ входа одалживает вам наши, поэтому на my.telegram.org ничего создавать не нужно.",
     steps: [
-      { title: 'Подтвердите почту', text: 'Мы пришлём код из шести цифр. Адрес хранится только для важных уведомлений.' },
-      { title: 'Получите ключ входа', text: 'Одна почта — один ключ. Повторный запрос заменяет его новым.' },
-      { title: 'Войдите на 3 компьютерах', text: 'На каждом отсканируйте QR-код в Telegram. Сообщения и сессии остаются на ваших машинах.' },
+      {
+        title: "Подтвердите почту",
+        text: "Мы пришлём код из шести цифр. Адрес хранится только для важных уведомлений.",
+      },
+      {
+        title: "Получите ключ входа",
+        text: "Одна почта — один ключ. Повторный запрос заменяет его новым.",
+      },
+      {
+        title: "Войдите на 3 компьютерах",
+        text: "На каждом отсканируйте QR-код в Telegram. Сообщения и сессии остаются на ваших машинах.",
+      },
     ],
-    ownKeys: 'Есть свои ключи с my.telegram.org? Тогда ключ входа не нужен: запустите',
+    ownKeys:
+      "Есть свои ключи с my.telegram.org? Тогда ключ входа не нужен: запустите",
   },
   client: {
     errors: {
-      bad_email: 'Проверьте адрес почты.',
-      captcha_failed: 'Проверка не прошла. Обновите страницу и попробуйте ещё раз.',
-      email_used: 'Ключ входа для этой почты отозван. Напишите нам в GitHub.',
-      rate_limited: 'Слишком много попыток. Попробуйте позже.',
-      daily_limit: 'На сегодня ключи входа закончились. Загляните завтра.',
-      signups_closed: 'Регистрация сейчас закрыта.',
-      resend_wait: 'Код уже отправлен. Новый можно запросить через минуту.',
-      mail_failed: 'Не получилось отправить письмо. Проверьте адрес или попробуйте позже.',
-      bad_code: 'Код не подошёл. Проверьте цифры из письма.',
-      code_expired: 'Код истёк. Запросите новый.',
-      too_many_attempts: 'Слишком много неверных попыток. Запросите новый код.',
+      bad_email: "Проверьте адрес почты.",
+      captcha_failed:
+        "Проверка не прошла. Обновите страницу и попробуйте ещё раз.",
+      email_used: "Ключ входа для этой почты отозван. Напишите нам в GitHub.",
+      rate_limited: "Слишком много попыток. Попробуйте позже.",
+      daily_limit: "На сегодня ключи входа закончились. Загляните завтра.",
+      signups_closed: "Регистрация сейчас закрыта.",
+      resend_wait: "Код уже отправлен. Новый можно запросить через минуту.",
+      mail_failed:
+        "Не получилось отправить письмо. Проверьте адрес или попробуйте позже.",
+      bad_code: "Код не подошёл. Проверьте цифры из письма.",
+      code_expired: "Код истёк. Запросите новый.",
+      too_many_attempts: "Слишком много неверных попыток. Запросите новый код.",
     },
-    generic: 'Что-то пошло не так. Попробуйте ещё раз.',
-    waitCaptcha: 'Дождитесь проверки «Я не робот».',
-    copy: 'Копировать',
-    copied: 'Скопировано',
-    copyManual: 'Выделите вручную',
+    generic: "Что-то пошло не так. Попробуйте ещё раз.",
+    waitCaptcha: "Дождитесь проверки «Я не робот».",
+    copy: "Копировать",
+    copied: "Скопировано",
+    copyManual: "Выделите вручную",
   },
   guide: {
-    title: 'Как установить',
-    modeLabel: 'Режим',
-    agentLabel: 'Агент',
-    autoLabel: 'Auto',
-    autoSmall: 'промпт для агента',
-    proLabel: 'PRO',
-    proSmall: 'команды вручную',
-    autoPasteTitle: 'Вставьте промпт своему агенту',
-    autoPasteText: 'Claude Code, Codex, Cursor или любой другой агент с терминалом. Он поставит CLI и скилл и откроет страницу входа.',
-    autoLoginTitle: 'Пройдите страницу входа',
-    autoLoginText: 'Агент откроет её в браузере на вашем компьютере. Там: «Получить ключ входа» (почта подтверждается кодом, ключ вернётся сам), QR в Telegram — Настройки → Устройства → Подключить устройство, и облачный пароль, если он есть. Агент ничего из этого не видит.',
-    doneTitle: 'Готово',
-    autoDoneHtml: 'Спросите агента, например: «что у меня непрочитанного в телеге?» Писать от вашего имени он сможет, только когда вы разрешите: <span class="mono">telegram write-access on --for 1h</span>.',
-    autoDesktopNote: 'Claude Desktop без терминала так не умеет — для него режим PRO.',
-    installTitle: 'Поставьте CLI',
-    installText: 'macOS или Linux, в терминале:',
-    installNoteHtml: 'Нет Homebrew — <span class="mono">npm install -g better-tg-cli</span> (Node 20+). На Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span>, затем <span class="mono">scoop install better-tg-cli</span>.',
-    loginTitle: 'Войдите в Telegram сами',
-    loginText: 'Вход интерактивный, поэтому его делаете вы, а не агент:',
-    loginNoteHtml: 'Вставьте ключ входа с этой страницы и отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство. Со своими ключами с my.telegram.org — <span class="mono">telegram auth --qr</span>. В версиях до 0.37 флаг называется <span class="mono">--invite</span>.',
-    connectTitle: 'Подключите своего агента',
-    proDoneText: 'По умолчанию агент только читает. Писать от вашего имени он сможет, когда вы разрешите:',
+    title: "Как установить",
+    modeLabel: "Режим",
+    agentLabel: "Агент",
+    autoLabel: "Auto",
+    autoSmall: "промпт для агента",
+    proLabel: "PRO",
+    proSmall: "команды вручную",
+    autoPasteTitle: "Вставьте промпт своему агенту",
+    autoPasteText:
+      "Claude Code, Codex, Cursor или любой другой агент с терминалом. Он поставит CLI и скилл и откроет страницу входа.",
+    autoLoginTitle: "Пройдите страницу входа",
+    autoLoginText:
+      "Агент откроет её в браузере на вашем компьютере. Там: «Получить ключ входа» (почта подтверждается кодом, ключ вернётся сам), QR в Telegram — Настройки → Устройства → Подключить устройство, и облачный пароль, если он есть. Агент ничего из этого не видит.",
+    doneTitle: "Готово",
+    autoDoneHtml:
+      'Спросите агента, например: «что у меня непрочитанного в телеге?» Писать от вашего имени он сможет, только когда вы разрешите: <span class="mono">telegram write-access on --for 1h</span>.',
+    autoDesktopNote:
+      "Claude Desktop без терминала так не умеет — для него режим PRO.",
+    installTitle: "Поставьте CLI",
+    installText: "macOS или Linux, в терминале:",
+    installNoteHtml:
+      'Нет Homebrew — <span class="mono">npm install -g better-tg-cli</span> (Node 20+). На Windows: <span class="mono">scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket</span>, затем <span class="mono">scoop install better-tg-cli</span>.',
+    loginTitle: "Войдите в Telegram сами",
+    loginText: "Вход интерактивный, поэтому его делаете вы, а не агент:",
+    loginNoteHtml:
+      'Вставьте ключ входа с этой страницы и отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство. Со своими ключами с my.telegram.org — <span class="mono">telegram auth --qr</span>. В версиях до 0.37 флаг называется <span class="mono">--invite</span>.',
+    connectTitle: "Подключите своего агента",
+    proDoneText:
+      "По умолчанию агент только читает. Писать от вашего имени он сможет, когда вы разрешите:",
     tabs: {
-      'claude-code': [
-        ['Поставьте плагин', 'В Claude Code наберите по очереди. Плагин — это скилл и MCP-сервер сразу.'],
-        ['Перезапустите Claude Code', 'И попросите, например: «что у меня непрочитанного в телеге?»'],
+      "claude-code": [
+        [
+          "Поставьте плагин",
+          "В Claude Code наберите по очереди. Плагин — это скилл и MCP-сервер сразу.",
+        ],
+        [
+          "Перезапустите Claude Code",
+          "И попросите, например: «что у меня непрочитанного в телеге?»",
+        ],
       ],
       codex: [
-        ['Поставьте плагин', 'В обычном терминале:'],
-        ['Откройте Codex заново', 'Скилл и MCP-сервер подхватятся сами. Спросите: «что пишет Алиса?»'],
+        ["Поставьте плагин", "В обычном терминале:"],
+        [
+          "Откройте Codex заново",
+          "Скилл и MCP-сервер подхватятся сами. Спросите: «что пишет Алиса?»",
+        ],
       ],
       cursor: [
-        ['Поставьте MCP-сервер', 'Cursor спросит подтверждение — нажмите Install.'],
-        ['Добавьте скилл (по желанию)', 'Он учит агента аккуратной работе с Telegram:'],
+        [
+          "Поставьте MCP-сервер",
+          "Cursor спросит подтверждение — нажмите Install.",
+        ],
+        [
+          "Добавьте скилл (по желанию)",
+          "Он учит агента аккуратной работе с Telegram:",
+        ],
       ],
-      'claude-desktop': [
-        ['Скачайте расширение', 'Откройте файл двойным кликом — Claude покажет карточку, нажмите Install. Node и brew для расширения не нужны.'],
-        ['Спросите в чате', 'Например: «сделай сводку непрочитанного в Telegram».'],
+      "claude-desktop": [
+        [
+          "Скачайте расширение",
+          "Откройте файл двойным кликом — Claude покажет карточку, нажмите Install. Node и brew для расширения не нужны.",
+        ],
+        [
+          "Спросите в чате",
+          "Например: «сделай сводку непрочитанного в Telegram».",
+        ],
       ],
     },
-    cursorButton: 'Установить в Cursor',
-    mcpbButton: 'Скачать better-tg-cli.mcpb',
+    cursorButton: "Установить в Cursor",
+    mcpbButton: "Скачать better-tg-cli.mcpb",
     prompt: [
-      'Подключи мне Telegram через Better-TG-CLI (https://github.com/TheVilfer/better-tg-cli):',
-      '1. Установи CLI: `brew install thevilfer/tap/better-tg-cli`. Если Homebrew нет — `npm install -g better-tg-cli` (нужен Node 20+). На Windows — `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` и `scoop install better-tg-cli`.',
-      '2. Запусти `telegram onboard --json` (в фоне, если твой таймаут короче 15 минут). Откроется страница, где я сам получу ключ входа, отсканирую QR и введу пароль. Дождись события `done`. Не проси у меня коды, пароли и ключ входа и не заполняй страницу сам.',
-      '3. Установи себе скилл: `telegram skill install`.',
-      '4. Проверь вход командой `telegram whoami` и коротко расскажи, что ты теперь умеешь в Telegram.',
+      "Подключи мне Telegram через Better-TG-CLI (https://github.com/TheVilfer/better-tg-cli):",
+      "1. Установи CLI: `brew install thevilfer/tap/better-tg-cli`. Если Homebrew нет — `npm install -g better-tg-cli` (нужен Node 20+). На Windows — `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` и `scoop install better-tg-cli`.",
+      "2. Запусти `telegram onboard --json` (в фоне, если твой таймаут короче 15 минут). Откроется страница, где я сам получу ключ входа, отсканирую QR и введу пароль. Дождись события `done`. Не проси у меня коды, пароли и ключ входа и не заполняй страницу сам.",
+      "3. Установи себе скилл: `telegram skill install`.",
+      "4. Проверь вход командой `telegram whoami` и коротко расскажи, что ты теперь умеешь в Telegram.",
     ],
     screens: {
-      agent: 'агент',
-      promptEcho: 'Подключи мне Telegram через Better-TG-CLI…',
-      autoDone: 'Готово: вы вошли как Алиса (@alice).',
-      claudeAsk: 'что у меня непрочитанного в телеге?',
-      claudeAnswer: ['Больше всего в «Rust Seattle» (41). Алиса', 'спрашивает, в силе ли встреча в 7.'],
-      codexAsk: 'что пишет Алиса?',
-      codexAnswer: ['Алиса спрашивает, в силе ли встреча в 7,', 'и просит взять ноутбук.'],
+      agent: "агент",
+      promptEcho: "Подключи мне Telegram через Better-TG-CLI…",
+      autoDone: "Готово: вы вошли как Алиса (@alice).",
+      claudeAsk: "что у меня непрочитанного в телеге?",
+      claudeAnswer: [
+        "Больше всего в «Rust Seattle» (41). Алиса",
+        "спрашивает, в силе ли встреча в 7.",
+      ],
+      codexAsk: "что пишет Алиса?",
+      codexAnswer: [
+        "Алиса спрашивает, в силе ли встреча в 7,",
+        "и просит взять ноутбук.",
+      ],
     },
   },
   mail: {
     subject: (code: string) => `Код для входа в Better-TG-CLI: ${code}`,
-    intro: 'Ваш код для входа в <b>Better-TG-CLI</b>:',
+    intro: "Ваш код для входа в <b>Better-TG-CLI</b>:",
     textIntro: (code: string) => `Ваш код: ${code}`,
-    enter: 'Введите его на странице входа. Код действует 15 минут.',
-    ignore: 'Если вы не запрашивали вход в Better-TG-CLI, просто удалите это письмо.',
+    enter: "Введите его на странице входа. Код действует 15 минут.",
+    ignore:
+      "Если вы не запрашивали вход в Better-TG-CLI, просто удалите это письмо.",
   },
 };
 

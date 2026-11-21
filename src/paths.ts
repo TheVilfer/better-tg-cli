@@ -1,5 +1,5 @@
-import { homedir, platform } from 'node:os';
-import { join } from 'node:path';
+import { homedir, platform } from "node:os";
+import { join } from "node:path";
 
 /**
  * TG_PROFILE isolates every piece of local state: config dir (config, audit log,
@@ -9,10 +9,16 @@ import { join } from 'node:path';
 export function profile(): string | undefined {
   let p = process.env.TG_PROFILE;
   // Mock runs keep their audit log and write-access flag away from every real profile
-  if (isMock() && !p?.startsWith('mock')) p = 'mock';
-  if (!p) return undefined;
+  if (isMock() && !p?.startsWith("mock")) {
+    p = "mock";
+  }
+  if (!p) {
+    return undefined;
+  }
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(p)) {
-    throw new Error(`Invalid TG_PROFILE "${p}": use lowercase letters, digits and dashes`);
+    throw new Error(
+      `Invalid TG_PROFILE "${p}": use lowercase letters, digits and dashes`
+    );
   }
   return p;
 }
@@ -31,15 +37,20 @@ export function isMock(): boolean {
  * Its approvals and signing key stay in the mock profile; nothing touches the Keychain.
  */
 export function isMockAsk(): boolean {
-  return isMock() && process.env.TG_MOCK_ASK === '1';
+  return isMock() && process.env.TG_MOCK_ASK === "1";
 }
 
-const suffix = (): string => (profile() ? `-${profile()}` : '');
+const suffix = (): string => (profile() ? `-${profile()}` : "");
 
 /** ~/.config/tg on macOS and Linux (existing installs depend on it), %APPDATA%\\tg on Windows. */
-export function configDir(env: NodeJS.ProcessEnv = process.env, os: NodeJS.Platform = platform()): string {
-  if (os === 'win32' && env.APPDATA) return join(env.APPDATA, `tg${suffix()}`);
-  return join(homedir(), '.config', `tg${suffix()}`);
+export function configDir(
+  env: NodeJS.ProcessEnv = process.env,
+  os: NodeJS.Platform = platform()
+): string {
+  if (os === "win32" && env.APPDATA) {
+    return join(env.APPDATA, `tg${suffix()}`);
+  }
+  return join(homedir(), ".config", `tg${suffix()}`);
 }
 
 export function configFile(name: string): string {

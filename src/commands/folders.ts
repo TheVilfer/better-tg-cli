@@ -1,14 +1,15 @@
-import { Command } from 'commander';
-import { getClient, getFolders, disconnectClient } from '../client.js';
-import { formatFolders } from '../formatters/plain.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-export const foldersCommand = new Command('folders')
-  .description('List all folders with their chats')
-  .option('--json', 'Output as JSON')
+import { getClient, getFolders, disconnectClient } from "../client.js";
+import { fail } from "../errors.js";
+import { formatFolders } from "../formatters/plain.js";
+import ora from "../spinner.js";
+
+export const foldersCommand = new Command("folders")
+  .description("List all folders with their chats")
+  .option("--json", "Output as JSON")
   .action(async (options) => {
-    const spinner = ora('Loading folders...').start();
+    const spinner = ora("Loading folders...").start();
 
     try {
       const client = await getClient();
@@ -18,16 +19,14 @@ export const foldersCommand = new Command('folders')
 
       if (options.json) {
         console.log(JSON.stringify(folders, null, 2));
+      } else if (folders.length === 0) {
+        console.log("No folders found.");
       } else {
-        if (folders.length === 0) {
-          console.log('No folders found.');
-        } else {
-          console.log(formatFolders(folders));
-        }
+        console.log(formatFolders(folders));
       }
 
       await disconnectClient();
     } catch (error) {
-      fail(error, spinner, 'Failed to load folders');
+      fail(error, spinner, "Failed to load folders");
     }
   });

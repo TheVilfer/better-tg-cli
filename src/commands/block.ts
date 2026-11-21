@@ -1,34 +1,60 @@
-import { Command } from 'commander';
-import { getClient, setBlocked, disconnectClient } from '../client.js';
-import { formatJson } from '../formatters/json.js';
-import { auditLog } from '../audit.js';
-import { assertWriteEnabled } from '../guard.js';
-import chalk from '../colors.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-function makeBlockCommand(name: 'block' | 'unblock', blocked: boolean): Command {
+import { auditLog } from "../audit.js";
+import { getClient, setBlocked, disconnectClient } from "../client.js";
+import chalk from "../colors.js";
+import { fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import { assertWriteEnabled } from "../guard.js";
+import ora from "../spinner.js";
+
+function makeBlockCommand(
+  name: "block" | "unblock",
+  blocked: boolean
+): Command {
   return new Command(name)
-    .description(blocked ? 'Block a user' : 'Unblock a user')
-    .argument('<user>', 'Username (@user), name, or ID')
-    .option('--json', 'Output as JSON')
+    .description(blocked ? "Block a user" : "Unblock a user")
+    .argument("<user>", "Username (@user), name, or ID")
+    .option("--json", "Output as JSON")
     .action(async (user, options) => {
       await assertWriteEnabled();
-      const spinner = ora(`${blocked ? 'Blocking' : 'Unblocking'} "${user}"...`).start();
+      const spinner = ora(
+        `${blocked ? "Blocking" : "Unblocking"} "${user}"...`
+      ).start();
       try {
         const client = await getClient();
         const result = await setBlocked(client, user, blocked);
-        auditLog({ timestamp: new Date().toISOString(), command: name, target: user, result: { success: true } });
+        auditLog({
+          timestamp: new Date().toISOString(),
+          command: name,
+          target: user,
+          result: { success: true },
+        });
         spinner.stop();
-        if (options.json) console.log(formatJson({ user: result.name, blocked }));
-        else console.log(chalk.green(`✓ ${blocked ? 'Blocked' : 'Unblocked'} "${result.name}"`));
+        if (options.json) {
+          console.log(formatJson({ user: result.name, blocked }));
+        } else {
+          console.log(
+            chalk.green(
+              `✓ ${blocked ? "Blocked" : "Unblocked"} "${result.name}"`
+            )
+          );
+        }
         await disconnectClient();
       } catch (error) {
-        auditLog({ timestamp: new Date().toISOString(), command: name, target: user, result: { success: false, error: error instanceof Error ? error.message : String(error) } });
+        auditLog({
+          timestamp: new Date().toISOString(),
+          command: name,
+          target: user,
+          result: {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
         fail(error, spinner, `Failed to ${name}`);
       }
     });
 }
 
-export const blockCommand = makeBlockCommand('block', true);
-export const unblockCommand = makeBlockCommand('unblock', false);
+export const blockCommand = makeBlockCommand("block", true);
+export const unblockCommand = makeBlockCommand("unblock", false);

@@ -7,15 +7,17 @@ export function parseConfigText(raw: string): unknown {
     return JSON.parse(raw);
   } catch {
     const normalized = raw
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:"'\\])\/\/[^\n]*/g, '$1')
-      .replace(/'((?:[^'\\]|\\.)*)'/g, (_m, s: string) => JSON.stringify(s.replace(/\\'/g, "'")))
-      .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
-      .replace(/,(\s*[}\]])/g, '$1');
+      .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+      .replaceAll(/(^|[^:"'\\])\/\/[^\n]*/g, "$1")
+      .replaceAll(/'((?:[^'\\]|\\.)*)'/g, (_m, s: string) =>
+        JSON.stringify(s.replaceAll("\\'", "'"))
+      )
+      .replaceAll(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
+      .replaceAll(/,(\s*[}\]])/g, "$1");
     return JSON.parse(normalized);
   }
 }
 
 export function stringifyConfig(value: unknown): string {
-  return JSON.stringify(value, null, 2) + '\n';
+  return `${JSON.stringify(value, null, 2)}\n`;
 }

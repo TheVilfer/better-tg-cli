@@ -1,45 +1,63 @@
-import type { ChatInfo, MessageInfo, ButtonLayout } from '../client.js';
-import { formatMediaLabel } from './plain.js';
+import type { ChatInfo, MessageInfo, ButtonLayout } from "../client.js";
+import { formatMediaLabel } from "./plain.js";
 
 function buttonsMarkdown(layout: ButtonLayout): string {
-  const lines: string[] = [`\n**${layout.isInline ? 'Inline' : 'Reply'} keyboard:**`];
+  const lines: string[] = [
+    `\n**${layout.isInline ? "Inline" : "Reply"} keyboard:**`,
+  ];
   for (const row of layout.rows) {
     for (const b of row) {
-      const extra = b.url ? ` → ${b.url}` : b.query != null ? ` (query: ${b.query})` : b.copyText ? ` (copies: ${b.copyText})` : '';
-      lines.push(`- \`[${b.index}]\` ${b.text || '(no label)'} — *${b.type}*${extra}`);
+      const extra = b.url
+        ? ` → ${b.url}`
+        : b.query == null
+          ? b.copyText
+            ? ` (copies: ${b.copyText})`
+            : ""
+          : ` (query: ${b.query})`;
+      lines.push(
+        `- \`[${b.index}]\` ${b.text || "(no label)"} — *${b.type}*${extra}`
+      );
     }
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatChatsMarkdown(chats: ChatInfo[]): string {
-  const lines: string[] = ['# Telegram Chats\n'];
+  const lines: string[] = ["# Telegram Chats\n"];
 
   for (const chat of chats) {
     const type = chat.type.charAt(0).toUpperCase() + chat.type.slice(1);
-    const unread = chat.unreadCount > 0 ? ` **(${chat.unreadCount} unread)**` : '';
-    const username = chat.username ? ` (@${chat.username})` : '';
+    const unread =
+      chat.unreadCount > 0 ? ` **(${chat.unreadCount} unread)**` : "";
+    const username = chat.username ? ` (@${chat.username})` : "";
 
-    lines.push(`## ${chat.title}${username}${unread}`);
-    lines.push(`- Type: ${type}`);
-    lines.push(`- ID: ${chat.id}`);
+    lines.push(
+      `## ${chat.title}${username}${unread}`,
+      `- Type: ${type}`,
+      `- ID: ${chat.id}`
+    );
 
     if (chat.lastMessage) {
-      const preview = chat.lastMessage.substring(0, 100).replace(/\n/g, ' ');
-      lines.push(`- Last message: ${preview}${chat.lastMessage.length > 100 ? '...' : ''}`);
+      const preview = chat.lastMessage.slice(0, 100).replaceAll("\n", " ");
+      lines.push(
+        `- Last message: ${preview}${chat.lastMessage.length > 100 ? "..." : ""}`
+      );
     }
 
     if (chat.lastMessageDate) {
       lines.push(`- Last activity: ${chat.lastMessageDate.toISOString()}`);
     }
 
-    lines.push('');
+    lines.push("");
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-export function formatMessagesMarkdown(messages: MessageInfo[], chatTitle?: string): string {
+export function formatMessagesMarkdown(
+  messages: MessageInfo[],
+  chatTitle?: string
+): string {
   const lines: string[] = [];
 
   if (chatTitle) {
@@ -48,26 +66,25 @@ export function formatMessagesMarkdown(messages: MessageInfo[], chatTitle?: stri
 
   for (const msg of messages) {
     const time = msg.date.toISOString();
-    const sender = msg.isOutgoing ? 'You' : msg.sender;
-    const reply = msg.replyToMsgId ? ` (reply to #${msg.replyToMsgId})` : '';
+    const sender = msg.isOutgoing ? "You" : msg.sender;
+    const reply = msg.replyToMsgId ? ` (reply to #${msg.replyToMsgId})` : "";
 
-    lines.push(`### ${sender} - ${time}${reply}`);
-    lines.push(`*Message ID: ${msg.id}*\n`);
+    lines.push(`### ${sender} - ${time}${reply}`, `*Message ID: ${msg.id}*\n`);
     if (msg.media) {
       lines.push(`**Media:** ${formatMediaLabel(msg.media)}\n`);
     }
     if (msg.text) {
       lines.push(msg.text);
     } else if (!msg.media) {
-      lines.push('*(no text)*');
+      lines.push("*(no text)*");
     }
     if (msg.buttons) {
       lines.push(buttonsMarkdown(msg.buttons));
     }
-    lines.push('\n---\n');
+    lines.push("\n---\n");
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatContactMarkdown(contact: {
@@ -82,12 +99,15 @@ export function formatContactMarkdown(contact: {
 }): string {
   const lines: string[] = [];
 
-  const name = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'Unknown';
-  lines.push(`# ${name}\n`);
-
-  lines.push('| Field | Value |');
-  lines.push('|-------|-------|');
-  lines.push(`| ID | ${contact.id} |`);
+  const name =
+    [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
+    "Unknown";
+  lines.push(
+    `# ${name}\n`,
+    "| Field | Value |",
+    "|-------|-------|",
+    `| ID | ${contact.id} |`
+  );
 
   if (contact.username) {
     lines.push(`| Username | @${contact.username} |`);
@@ -97,52 +117,57 @@ export function formatContactMarkdown(contact: {
     lines.push(`| Phone | ${contact.phone} |`);
   }
 
-  lines.push(`| Bot | ${contact.isBot ? 'Yes' : 'No'} |`);
-  lines.push(`| Mutual Contact | ${contact.isMutualContact ? 'Yes' : 'No'} |`);
+  lines.push(
+    `| Bot | ${contact.isBot ? "Yes" : "No"} |`,
+    `| Mutual Contact | ${contact.isMutualContact ? "Yes" : "No"} |`
+  );
 
   if (contact.bio) {
     lines.push(`\n## Bio\n${contact.bio}`);
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatMembersMarkdown(
   members: { id: string; name: string; username?: string; isAdmin: boolean }[]
 ): string {
-  const lines: string[] = ['# Group Members\n'];
+  const lines: string[] = ["# Group Members\n"];
 
-  lines.push('| Name | Username | Role |');
-  lines.push('|------|----------|------|');
+  lines.push("| Name | Username | Role |", "|------|----------|------|");
 
   for (const member of members) {
-    const username = member.username ? `@${member.username}` : '-';
-    const role = member.isAdmin ? 'Admin' : 'Member';
+    const username = member.username ? `@${member.username}` : "-";
+    const role = member.isAdmin ? "Admin" : "Member";
     lines.push(`| ${member.name} | ${username} | ${role} |`);
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 export function formatInboxMarkdown(chats: ChatInfo[]): string {
-  const unreadChats = chats.filter(c => c.unreadCount > 0);
+  const unreadChats = chats.filter((c) => c.unreadCount > 0);
 
   if (unreadChats.length === 0) {
-    return '# Inbox\n\nNo unread messages!';
+    return "# Inbox\n\nNo unread messages!";
   }
 
-  const lines: string[] = ['# Inbox\n'];
-  lines.push(`**${unreadChats.length} chats with unread messages**\n`);
-
-  lines.push('| Chat | Type | Unread | Last Message |');
-  lines.push('|------|------|--------|--------------|');
+  const lines: string[] = ["# Inbox\n"];
+  lines.push(
+    `**${unreadChats.length} chats with unread messages**\n`,
+    "| Chat | Type | Unread | Last Message |",
+    "|------|------|--------|--------------|"
+  );
 
   for (const chat of unreadChats) {
     const preview = chat.lastMessage
-      ? chat.lastMessage.substring(0, 30).replace(/\n/g, ' ') + (chat.lastMessage.length > 30 ? '...' : '')
-      : '-';
-    lines.push(`| ${chat.title}${chat.muted ? ' (muted)' : ''} | ${chat.type} | ${chat.unreadCount} | ${preview} |`);
+      ? chat.lastMessage.slice(0, 30).replaceAll("\n", " ") +
+        (chat.lastMessage.length > 30 ? "..." : "")
+      : "-";
+    lines.push(
+      `| ${chat.title}${chat.muted ? " (muted)" : ""} | ${chat.type} | ${chat.unreadCount} | ${preview} |`
+    );
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }

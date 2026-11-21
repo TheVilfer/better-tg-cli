@@ -1,98 +1,165 @@
-import { spawn } from 'node:child_process';
-import { Command } from 'commander';
-import { type OnboardEvent } from '../onboard.js';
-import { checkStoredSession, openSetupPage } from '../setup.js';
+import { spawn } from "node:child_process";
 
-const HUMAN: Record<OnboardEvent['event'], (e: never) => string> = {
-  url: (e: { url: string }) => `Open this page to log in (it stays on this computer): ${e.url}`,
-  waiting_invite: () => 'Waiting for a login key or API keys on the page…',
-  waiting_scan: () => 'Waiting for the QR scan (Telegram → Settings → Devices → Link Desktop Device)…',
-  need_password: () => 'Waiting for the two-step verification password on the page…',
+import { Command } from "commander";
+
+import type { OnboardEvent } from "../onboard.js";
+import { checkStoredSession, openSetupPage } from "../setup.js";
+
+const HUMAN: Record<OnboardEvent["event"], (e: never) => string> = {
+  url: (e: { url: string }) =>
+    `Open this page to log in (it stays on this computer): ${e.url}`,
+  waiting_invite: () => "Waiting for a login key or API keys on the page…",
+  waiting_scan: () =>
+    "Waiting for the QR scan (Telegram → Settings → Devices → Link Desktop Device)…",
+  need_password: () =>
+    "Waiting for the two-step verification password on the page…",
   logged_in: (e: { user: { name: string; username?: string } }) =>
-    `Logged in as ${e.user.name}${e.user.username ? ` (@${e.user.username})` : ''}. Session saved.`,
-  waiting_mode: () => 'Waiting for the user to choose on the page what you may do: read-only, ask before each write, or write freely…',
-  mode: (e: { mode: string; until?: string }) => `Write mode: ${e.mode}${e.until ? ` until ${new Date(e.until).toLocaleString()}` : ''}.`,
+    `Logged in as ${e.user.name}${e.user.username ? ` (@${e.user.username})` : ""}. Session saved.`,
+  waiting_mode: () =>
+    "Waiting for the user to choose on the page what you may do: read-only, ask before each write, or write freely…",
+  mode: (e: { mode: string; until?: string }) =>
+    `Write mode: ${e.mode}${e.until ? ` until ${new Date(e.until).toLocaleString()}` : ""}.`,
   done: (e: { user?: { name: string; username?: string }; mode?: string }) =>
-    e.user ? `Done: ${e.user.name}${e.user.username ? ` (@${e.user.username})` : ''}, write mode ${e.mode ?? 'read-only'}.` : `Done: write mode ${e.mode ?? 'unchanged'}.`,
-  error: (e: { message: string }) => `Login failed: ${e.message}. The page offers a retry.`,
+    e.user
+      ? `Done: ${e.user.name}${e.user.username ? ` (@${e.user.username})` : ""}, write mode ${e.mode ?? "read-only"}.`
+      : `Done: write mode ${e.mode ?? "unchanged"}.`,
+  error: (e: { message: string }) =>
+    `Login failed: ${e.message}. The page offers a retry.`,
 };
 
 export function openBrowser(url: string): void {
-  const [cmd, ...args] = process.platform === 'darwin' ? ['open', url]
-    // explorer.exe mangles URLs with query strings; the URL protocol handler opens the default browser
-    : process.platform === 'win32' ? ['rundll32', 'url.dll,FileProtocolHandler', url]
-    : ['xdg-open', url];
+  const [cmd, ...args] =
+    process.platform === "darwin"
+      ? ["open", url]
+      : // explorer.exe mangles URLs with query strings; the URL protocol handler opens the default browser
+        process.platform === "win32"
+        ? ["rundll32", "url.dll,FileProtocolHandler", url]
+        : ["xdg-open", url];
   try {
-    spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => {}).unref();
-  } catch { /* the URL is printed anyway */ }
+    spawn(cmd, args, { stdio: "ignore", detached: true, windowsHide: true })
+      .on("error", () => {})
+      .unref();
+  } catch {
+    /* the URL is printed anyway */
+  }
 }
 
-export const onboardCommand = new Command('onboard')
-  .description('Guided login for agents: opens a local page where you get a login key (or use your own keys), scan a QR code and enter your 2FA password; the agent never sees any of it')
-  .option('--json', 'Print progress as JSON lines (events: already_logged_in, session_expired, url, waiting_invite, waiting_scan, need_password, logged_in, waiting_mode, mode, done, error, timeout)')
-  .option('--no-open', "Don't open the browser, just print the URL")
-  .option('--timeout <minutes>', 'Give up after this many minutes', '15')
-  .option('--broker <url>', 'Login service URL (default: built-in, or TG_BROKER_URL)')
-  .option('--test-dc', "Log in on Telegram's test servers (for development; use with TG_PROFILE)")
-  .action(async (opts: { json?: boolean; open: boolean; timeout: string; broker?: string; testDc?: boolean }) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const emit = (e: OnboardEvent) => {
-      console.log(opts.json ? JSON.stringify(e) : (HUMAN[e.event] as (x: OnboardEvent) => string)(e));
-      // The login is saved: the overall limit no longer applies, the mode step has its own (10 min)
-      if (e.event === 'logged_in' && timer) clearTimeout(timer);
-    };
+export const onboardCommand = new Command("onboard")
+  .description(
+    "Guided login for agents: opens a local page where you get a login key (or use your own keys), scan a QR code and enter your 2FA password; the agent never sees any of it"
+  )
+  .option(
+    "--json",
+    "Print progress as JSON lines (events: already_logged_in, session_expired, url, waiting_invite, waiting_scan, need_password, logged_in, waiting_mode, mode, done, error, timeout)"
+  )
+  .option("--no-open", "Don't open the browser, just print the URL")
+  .option("--timeout <minutes>", "Give up after this many minutes", "15")
+  .option(
+    "--broker <url>",
+    "Login service URL (default: built-in, or TG_BROKER_URL)"
+  )
+  .option(
+    "--test-dc",
+    "Log in on Telegram's test servers (for development; use with TG_PROFILE)"
+  )
+  .action(
+    async (opts: {
+      json?: boolean;
+      open: boolean;
+      timeout: string;
+      broker?: string;
+      testDc?: boolean;
+    }) => {
+      let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+      const emit = (e: OnboardEvent) => {
+        console.log(
+          opts.json
+            ? JSON.stringify(e)
+            : (HUMAN[e.event] as (x: OnboardEvent) => string)(e)
+        );
+        // The login is saved: the overall limit no longer applies, the mode step has its own (10 min)
+        if (e.event === "logged_in" && timer) {
+          clearTimeout(timer);
+        }
+      };
 
-    // Never replace a working login, same as `telegram auth`. A stored session Telegram no longer
-    // accepts is replaced by a new login; an unreadable store or no network stops here
-    let state: Awaited<ReturnType<typeof checkStoredSession>>['state'];
-    let checked: string | undefined;
-    try {
-      // The stored session as it was before the check: the page may replace only that one
-      ({ state, snapshot: checked } = await checkStoredSession());
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // No page is open yet, so not HUMAN.error ("the page offers a retry")
-      if (opts.json) emit({ event: 'error', message });
-      else console.error(`${message}\nNothing changed: the stored login could not be checked. Run "telegram onboard" again once this is fixed.`);
-      process.exit(1);
-    }
-    if (state === 'alive') {
-      console.log(opts.json
-        ? JSON.stringify({ event: 'already_logged_in' })
-        : 'Already logged in. Check with "telegram whoami"; "telegram logout" first to switch accounts.');
-      return;
-    }
-    if (state === 'expired') {
-      console.log(opts.json
-        ? JSON.stringify({ event: 'session_expired' })
-        : 'The stored login no longer works (logged out elsewhere or revoked). Starting a new login.');
-    }
-    const minutes = Number(opts.timeout);
-    if (!(minutes > 0)) {
-      console.error(`Invalid --timeout "${opts.timeout}"`);
-      process.exit(2);
-    }
-    if (process.env.SSH_CONNECTION) {
-      console.error('Note: over SSH the page on 127.0.0.1 is only reachable on this machine. Forward the port ' +
-        '(ssh -L <port>:127.0.0.1:<port>) or run "telegram auth --qr" in a terminal here instead.');
-    }
+      // Never replace a working login, same as `telegram auth`. A stored session Telegram no longer
+      // accepts is replaced by a new login; an unreadable store or no network stops here
+      let state: Awaited<ReturnType<typeof checkStoredSession>>["state"];
+      let checked: string | undefined;
+      try {
+        // The stored session as it was before the check: the page may replace only that one
+        ({ state, snapshot: checked } = await checkStoredSession());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // No page is open yet, so not HUMAN.error ("the page offers a retry")
+        if (opts.json) {
+          emit({ event: "error", message });
+        } else {
+          console.error(
+            `${message}\nNothing changed: the stored login could not be checked. Run "telegram onboard" again once this is fixed.`
+          );
+        }
+        process.exit(1);
+      }
+      if (state === "alive") {
+        console.log(
+          opts.json
+            ? JSON.stringify({ event: "already_logged_in" })
+            : 'Already logged in. Check with "telegram whoami"; "telegram logout" first to switch accounts.'
+        );
+        return;
+      }
+      if (state === "expired") {
+        console.log(
+          opts.json
+            ? JSON.stringify({ event: "session_expired" })
+            : "The stored login no longer works (logged out elsewhere or revoked). Starting a new login."
+        );
+      }
+      const minutes = Number(opts.timeout);
+      if (!(minutes > 0)) {
+        console.error(`Invalid --timeout "${opts.timeout}"`);
+        process.exit(2);
+      }
+      if (process.env.SSH_CONNECTION) {
+        console.error(
+          "Note: over SSH the page on 127.0.0.1 is only reachable on this machine. Forward the port " +
+            '(ssh -L <port>:127.0.0.1:<port>) or run "telegram auth --qr" in a terminal here instead.'
+        );
+      }
 
-    const session = await openSetupPage({ emit, testDc: opts.testDc, broker: opts.broker, checkedSession: checked });
-    if (opts.open) openBrowser(session.url);
+      const session = await openSetupPage({
+        emit,
+        testDc: opts.testDc,
+        broker: opts.broker,
+        checkedSession: checked,
+      });
+      if (opts.open) {
+        openBrowser(session.url);
+      }
 
-    timer = setTimeout(() => {
-      console.log(opts.json ? JSON.stringify({ event: 'timeout' }) : `Timed out after ${minutes} min; run "telegram onboard" again.`);
+      timer = setTimeout(() => {
+        console.log(
+          opts.json
+            ? JSON.stringify({ event: "timeout" })
+            : `Timed out after ${minutes} min; run "telegram onboard" again.`
+        );
+        session.close();
+        process.exit(1);
+      }, minutes * 60_000);
+      const onSignal = () => {
+        session.close();
+        process.exit(130);
+      };
+      process.once("SIGINT", onSignal);
+      process.once("SIGTERM", onSignal);
+
+      await session.done;
+      clearTimeout(timer);
+      // Let the page see "done" on its next poll before the server goes away
+      await new Promise((r) => setTimeout(r, 2500));
       session.close();
-      process.exit(1);
-    }, minutes * 60_000);
-    const onSignal = () => { session.close(); process.exit(130); };
-    process.once('SIGINT', onSignal);
-    process.once('SIGTERM', onSignal);
-
-    await session.done;
-    clearTimeout(timer);
-    // Let the page see "done" on its next poll before the server goes away
-    await new Promise(r => setTimeout(r, 2500));
-    session.close();
-    process.exit(0);
-  });
+      process.exit(0);
+    }
+  );
