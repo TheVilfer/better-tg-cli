@@ -63,3 +63,4 @@ export { editPermissionsCommand } from './edit-permissions.js';
 export { topicCommand } from './topic.js';
 export { registerGeneratedCommands, buildHelpCommand } from './generated.js';
 export { schemaCommand } from './schema.js';
+export { pluginCommand } from './plugin.js';

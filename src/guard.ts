@@ -106,18 +106,25 @@ export async function assertWriteEnabled(argv: string[] = process.argv.slice(2),
 }
 
 /**
- * download, sync and avatar only write local files, so in a terminal they need no write access. Over
- * MCP (TG_MCP, set for every call) the model picks the path, so they follow the write mode like any
- * write: refused in read-only, an approval each in "ask". A read (TG_READ_ONLY) never writes a file.
- * Under TG_MOCK a write needs no approval, so over MCP these are refused outright: the model would
- * otherwise write real files wherever it likes.
+ * `fixedDestination`: the command writes only where the CLI decides (plugin data under the profile's
+ * own folder), never a path the model picks. `readsStdin`: as in GuardOptions.
  */
-export async function assertLocalWriteAllowed(argv: string[] = process.argv.slice(2)): Promise<void> {
+export interface LocalWriteOptions { fixedDestination?: boolean; readsStdin?: boolean }
+
+/**
+ * download, sync, avatar and plugin data only write local files, so in a terminal they need no write
+ * access. Over MCP (TG_MCP, set for every call) they follow the write mode like any write: refused
+ * in read-only, an approval each in "ask". A read (TG_READ_ONLY) never writes a file. Under TG_MOCK a
+ * write needs no approval, so over MCP the commands whose path the model picks (download, sync,
+ * avatar) are refused outright: the model would otherwise write real files wherever it likes. A
+ * fixed destination (plugin data) is in the mock profile's own folder, so it follows the mock's rules.
+ */
+export async function assertLocalWriteAllowed(argv: string[] = process.argv.slice(2), opts: LocalWriteOptions = {}): Promise<void> {
   if (!process.env.TG_MCP && !process.env.TG_READ_ONLY) return;
-  if (isMock() && !process.env.TG_READ_ONLY && process.env[DESCRIBE_ENV] !== '1') {
+  if (isMock() && !opts.fixedDestination && !process.env.TG_READ_ONLY && process.env[DESCRIBE_ENV] !== '1') {
     stop(new CliError('Over MCP in mock mode (TG_MOCK), download, sync and avatar write no local files. Run them in a terminal, or unset TG_MOCK.', 'not_in_mock', EXIT.ERROR), argv);
   }
-  await assertWriteEnabled(argv);
+  await assertWriteEnabled(argv, opts.readsStdin ? { readsStdin: true } : {});
 }
 
 // The mock account has no store to ask about (and must not probe the real one)

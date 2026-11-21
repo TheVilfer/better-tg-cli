@@ -19,6 +19,11 @@ export interface AuditEntry {
   approvedVia?: 'chat' | 'elicitation';
   /** No secret store: the mode lives in a plain file the agent could edit (src/write-store.ts) */
   unprotected?: true;
+  /**
+   * Plugin management and `plugin data` (src/commands/plugin.ts): names, revision and sizes only,
+   * never a value, a body or a secret.
+   */
+  plugin?: { name: string; version?: string; revision?: string; installId?: string; source?: string; key?: string; bytes?: number; keepData?: boolean };
 }
 
 let writeContext: Pick<AuditEntry, 'writeMode' | 'approvedVia' | 'unprotected'> = {};

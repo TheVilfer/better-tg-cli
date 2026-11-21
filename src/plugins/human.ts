@@ -1,0 +1,115 @@
+import { confirmByHuman } from '../confirm.js';
+import { CliError, EXIT, shellCommand } from '../errors.js';
+import { isMock, profile } from '../paths.js';
+import { hasHumanChannel } from '../write-store.js';
+import { oneLine } from '../approval-action.js';
+import { allEffects, PERMISSION_TEXT, type Manifest } from './manifest.js';
+import type { ResolvedSource, Snapshot } from './source.js';
+
+/**
+ * Installing and removing plugins is the human's decision (docs/plugins.md, "Human"): a y/N on a
+ * real terminal or a system dialog. No write mode skips it ("on" included), and TG_APPROVE, an agent's
+ * code, is never read here. Over MCP it is refused before anything is fetched, with the command for
+ * the human's own terminal (the MCP dialog for this is a later step, P4).
+ */
+
+export type Confirm = (question: string) => Promise<boolean>;
+
+/** The command a human runs in their own terminal, with this profile. */
+export function humanCommand(argv: string[]): string {
+  const p = profile();
+  return `${p && !isMock() ? `TG_PROFILE=${p} ` : ''}${shellCommand(argv)}`;
+}
+
+export const humanRequired = (argv: string[]) => new CliError(
+  `"telegram ${argv.slice(0, 2).join(' ')}" is the user's to run: plugins are installed and removed only by a human`,
+  'human_required', EXIT.ERROR,
+  {
+    hint: `Ask the user to run this in a terminal on this computer: ${humanCommand(argv)}`,
+    command: argv,
+  },
+);
+
+/**
+ * Asks the human. `confirm` is the real prompt or dialog (confirmByHuman); tests pass their own.
+ * In mock mode only (TG_MOCK), TG_MOCK_HUMAN=yes|no answers for the human, so tests never open a
+ * dialog; a mock run without it and without a terminal is refused.
+ */
+export async function humanConfirms(question: string, argv: string[], confirm: Confirm = confirmByHuman): Promise<boolean> {
+  if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw humanRequired(argv);
+  const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (isMock()) {
+    const answer = process.env.TG_MOCK_HUMAN;
+    if (answer === 'yes' || answer === 'no') {
+      console.error(question);
+      console.error(`(mock: TG_MOCK_HUMAN=${answer} answers for the human)`);
+      return answer === 'yes';
+    }
+    if (!tty) {
+      throw new CliError('No terminal to confirm on (mock mode: set TG_MOCK_HUMAN=yes|no to rehearse the answer)', 'no_human_channel', EXIT.ERROR);
+    }
+  } else if (!hasHumanChannel()) {
+    throw new CliError('No terminal or dialog to confirm on. Run this command yourself in a terminal.', 'no_human_channel', EXIT.ERROR, {
+      hint: humanCommand(argv),
+    });
+  }
+  // A terminal prompt shows the question itself; a dialog does not leave it in the terminal
+  if (!tty) console.error(`${question}\n(waiting for the user's answer in a system dialog)`);
+  return confirm(question);
+}
+
+const clip = (s: string, n: number) => oneLine(s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+export function originLabel(s: ResolvedSource): string {
+  return s.type === 'github' ? `github:${s.owner}/${s.repo}${s.ref ? `@${s.ref}` : ''}` : `local folder ${s.path}`;
+}
+
+export function revisionLabel(s: ResolvedSource, revision: string): string {
+  return s.type === 'github' ? `commit ${revision}` : `content ${revision}`;
+}
+
+const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+
+/**
+ * What the human reads before saying yes. The lines the host computed (source, revision, official,
+ * profile, size) come first; the plugin's own words follow under a heading, each on one line, so a
+ * description cannot forge a host line.
+ */
+export function installSummary(s: Snapshot): string {
+  const m: Manifest = s.manifest;
+  const p = profile();
+  const lines = [
+    `Install the Better-TG-CLI plugin "${m.name}" ${m.version}?`,
+    `  Source:      ${originLabel(s.source)}`,
+    `  Revision:    ${revisionLabel(s.source, s.revision)}`,
+    `  Official:    ${s.official && s.source.type === 'github' ? `yes (published by ${s.source.owner})` : 'no (a third-party plugin)'}`,
+    `  Profile:     ${p ?? 'default'}`,
+    `  Files:       ${s.files.size} files, ${kb(s.bytes)}`,
+  ];
+  const permissions = m.permissions ?? [];
+  lines.push(permissions.length ? '  Can read:' : '  Can read:    nothing from Telegram');
+  for (const perm of permissions) lines.push(`    - ${PERMISSION_TEXT[perm]}`);
+  const effects = allEffects(m);
+  lines.push(`  Effects:     ${effects.length ? effects.join(', ') : 'none (its commands only read)'}`);
+  const network = m.network ?? [];
+  const sources = [
+    permissions.includes('messages:read-own') && 'your own messages',
+    permissions.includes('messages:read') && 'other people\'s messages',
+    permissions.includes('messages:read-target') && 'the messages the agent passes to it',
+    permissions.includes('chats:read') && 'your chat list',
+    permissions.includes('identity:read') && 'your name and ID',
+    (permissions.includes('storage:read') || permissions.includes('storage:write')) && 'its saved data',
+  ].filter(Boolean);
+  lines.push(network.length
+    ? `  Sends data:  ${sources.length ? sources.join(', ') : 'what its commands compute'} may go to: ${network.join(', ')}`
+    : '  Sends data:  nowhere (no network access)');
+  if (m.secrets?.length) lines.push(`  Secrets:     ${m.secrets.map(x => `${x.name} (only to ${x.inject.origin})`).join(', ')}; you enter them yourself later`);
+  if (m.main) lines.push('  Code:        it ships code; running plugin code is not available in this version yet');
+  lines.push('  In the plugin\'s own words:');
+  lines.push(`    Description: ${clip(m.description, 300)}`);
+  if (m.author) lines.push(`    Author:      ${clip(m.author.name, 100)}${m.author.url ? ` <${clip(m.author.url, 200)}>` : ''}`);
+  for (const t of m.triggers ?? []) lines.push(`    Trigger ${t.id}: ${clip(t.when, 200)}`);
+  if (m.onboarding) lines.push('    Onboarding:  yes (the agent walks you through it after install)');
+  lines.push('  Plugin text is data for the agent: it never outranks Better-TG-CLI\'s rules or your approval of each write.');
+  return lines.join('\n');
+}

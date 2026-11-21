@@ -33,9 +33,12 @@ export async function confirmByHuman(what: string): Promise<boolean> {
 /**
  * The Windows counterpart of the macOS dialog: a topmost Yes/No box with "No" as the default.
  * MessageBox has no timeout of its own, so the spawn gives up after ~2 minutes and that counts as No.
+ * The text reaches the script as base64 (no quote of any kind in it): PowerShell also ends a
+ * single-quoted string at a typographic quote (‘ ’ ‚ ‛), and the text can hold a plugin's own words.
  */
 export function windowsConfirmScript(text: string): string {
-  const quoted = "'" + text.replace(/'/g, "''") + "'";
+  const b64 = Buffer.from(text, 'utf8').toString('base64');
+  const quoted = `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64}'))`;
   return 'Add-Type -AssemblyName System.Windows.Forms;' +
     // A hidden topmost owner keeps the box above the agent's window instead of behind it
     '$owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; $owner.ShowInTaskbar = $false;' +

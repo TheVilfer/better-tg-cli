@@ -160,6 +160,8 @@ const DESCRIPTORS: Record<string, Descriptor> = {
   avatar: { verb: 'Save a profile photo to this computer', peers: CHAT },
   download: { verb: 'Save media to this computer', peers: CHAT, labels: MSG },
   sync: { verb: 'Save chat history to this computer' },
+  'plugin data set': { verb: 'Save data for a plugin on this computer', labels: { name: 'Plugin', key: 'Key' }, text: { value: 'Value' }, stdin: 'value' },
+  'plugin data delete': { verb: 'Delete data of a plugin on this computer', labels: { name: 'Plugin', key: 'Key' } },
 };
 
 /**

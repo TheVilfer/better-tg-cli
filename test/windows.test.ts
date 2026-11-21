@@ -116,9 +116,14 @@ describe('DPAPI secret store', () => {
 });
 
 describe('Windows write-access confirmation', () => {
-  it('quotes the text for PowerShell and defaults to No', () => {
-    const script = windowsConfirmScript("It's «ok»?\nSecond line");
-    expect(script).toContain("'It''s «ok»?\nSecond line'");
+  it('passes the text to PowerShell as base64 and defaults to No', () => {
+    const text = "It's «ok»?\nSecond line";
+    const script = windowsConfirmScript(text);
+    expect(script).toContain(`FromBase64String('${Buffer.from(text, 'utf8').toString('base64')}')`);
+    expect(script).not.toContain('Second line');
+    // PowerShell ends a single-quoted string at typographic quotes too: none may reach the script
+    const evil = "x\u2019); Remove-Item C:\\ -Recurse; (\u2018\u201a\u201b'";
+    expect(windowsConfirmScript(evil)).not.toMatch(/[\u2018\u2019\u201a\u201b]|Remove-Item/);
     expect(script).toContain("'YesNo', 'Warning', 'Button2'");
     expect(script).toContain('TopMost = $true');
   });
@@ -126,7 +131,7 @@ describe('Windows write-access confirmation', () => {
   it.runIf(process.platform === 'win32')('parses as valid PowerShell', () => {
     const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     const file = join(mkdtempSync(join(tmpdir(), 'tg-ps-')), 'confirm.ps1');
-    writeFileSync(file, '\ufeff' + windowsConfirmScript("It's a test"), 'utf8');
+    writeFileSync(file, '\ufeff' + windowsConfirmScript("It's a \u2019test\u2018"), 'utf8');
     const check = `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('${file.replace(/'/g, "''")}', [ref]$null, [ref]$e); [Console]::Out.Write($e.Count)`;
     const res = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand(check)], { encoding: 'utf8', windowsHide: true });
     expect(res.stdout.trim()).toBe('0');

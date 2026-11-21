@@ -3,6 +3,7 @@ import { getClient, sendMessage, disconnectClient, chatRef } from '../client.js'
 import { formatJson } from '../formatters/json.js';
 import { auditLog } from '../audit.js';
 import { assertWriteEnabled } from '../guard.js';
+import { PLUGIN_HELP_LINE } from '../plugins/catalog.js';
 import chalk from '../colors.js';
 import ora from '../spinner.js';
 import { readTextArg } from '../text.js';
@@ -48,6 +49,7 @@ export const sendCommand = new Command('send')
   .option('--reply-to <id>', 'Reply to this message ID', positiveInt)
   .option('--topic <id>', 'Post into this forum topic (ID from `telegram topics`)', positiveInt)
   .option('--json', 'Output as JSON')
+  .addHelpText('after', PLUGIN_HELP_LINE)
   .action(async (target, messageArg, options) => {
     await assertWriteEnabled();
     const message = readTextArg(messageArg);
