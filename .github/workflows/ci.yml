@@ -7,7 +7,6 @@ on:
   pull_request:
     branches: [main, next]
 
-
 permissions:
   contents: read
 
@@ -17,6 +16,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+      # oxlint (with the project's own rules) and the oxfmt check
+      - run: npm run lint
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -71,7 +84,7 @@ jobs:
       - name: Smoke test the CLI
         shell: bash
         env:
-          TG_NO_UPDATE_CHECK: '1'
+          TG_NO_UPDATE_CHECK: "1"
         run: |
           node dist/telegram.mjs --version
           node dist/telegram.mjs help-all -g onboard | grep -q onboard
@@ -96,7 +109,7 @@ jobs:
       - name: Build and run the standalone telegram.exe
         shell: bash
         env:
-          TG_NO_UPDATE_CHECK: '1'
+          TG_NO_UPDATE_CHECK: "1"
         run: |
           scripts/build-binary.sh windows-x64 out
           mkdir smoke && pwsh -NoProfile -Command "Expand-Archive -Path (Get-ChildItem out/*.zip).FullName -DestinationPath smoke"

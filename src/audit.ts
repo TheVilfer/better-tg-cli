@@ -1,6 +1,15 @@
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
-import { configDir, configFile } from './paths.js';
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 
+import { configDir, configFile } from "./paths.js";
+
+/**
+ * - `writeMode`: Set by the write guard: the profile's mode and, in "ask" mode, how this write was approved
+ * - `unprotected`: No secret store: the mode lives in a plain file the agent could edit (src/write-store.ts)
+ * - `plugin`: Plugin management, `plugin data` and `plugin run` (src/commands/plugin.ts): names, revision, sizes, API names and proposal types only, never a value, an input, a result, a body or a secret.
+ * - `result.reason`: a plugin change the human confirmed that did not happen: why, in one line (never a secret).
+ * - `plugin.fromVersion`, `fromRevision`, `newlyAccepted`, `secretsReset`: `plugin update`: the revision it left, what the human accepted anew, the secret names it deleted (never a value).
+ * - `plugin.via`: how the human was asked: a terminal or system dialog, or the MCP client's dialog.
+ */
 export interface AuditEntry {
   timestamp: string;
   command: string;
@@ -13,40 +22,48 @@ export interface AuditEntry {
     success: boolean;
     messageId?: number;
     error?: string;
-    /** A plugin change the human confirmed that did not happen: why, in one line (never a secret) */
     reason?: string;
   };
-  /** Set by the write guard: the profile's mode and, in "ask" mode, how this write was approved */
-  writeMode?: 'ask' | 'on';
-  approvedVia?: 'chat' | 'elicitation';
-  /** No secret store: the mode lives in a plain file the agent could edit (src/write-store.ts) */
+  writeMode?: "ask" | "on";
+  approvedVia?: "chat" | "elicitation";
   unprotected?: true;
-  /**
-   * Plugin management, `plugin data` and `plugin run` (src/commands/plugin.ts): names, revision,
-   * sizes, API names and proposal types only, never a value, an input, a result, a body or a secret.
-   */
   plugin?: {
-    name: string; version?: string; revision?: string; installId?: string; source?: string; key?: string; bytes?: number; keepData?: boolean;
-    /** `plugin run`: the command, the host API names it called (each once) and the proposal types it returned */
-    command?: string; apis?: string[]; proposals?: string[];
-    /** `plugin run` that sent requests: how many and to which origins (never a URL, path, query, header or body) */
+    name: string;
+    version?: string;
+    revision?: string;
+    installId?: string;
+    source?: string;
+    key?: string;
+    bytes?: number;
+    keepData?: boolean;
+    command?: string;
+    apis?: string[];
+    proposals?: string[];
     network?: { requests: number; origins: string[] };
-    /** `plugin update`: the revision it left, what the human accepted anew, the secret names it deleted (never a value) */
-    fromVersion?: string; fromRevision?: string;
-    newlyAccepted?: { permissions: string[]; effects: string[]; network: string[]; secrets: string[] };
+    fromVersion?: string;
+    fromRevision?: string;
+    newlyAccepted?: {
+      permissions: string[];
+      effects: string[];
+      network: string[];
+      secrets: string[];
+    };
     secretsReset?: string[];
-    /** How the human was asked: a terminal or system dialog, or the MCP client's dialog */
-    via?: 'terminal' | 'mcp';
+    via?: "terminal" | "mcp";
   };
 }
 
-let writeContext: Pick<AuditEntry, 'writeMode' | 'approvedVia' | 'unprotected'> = {};
+let writeContext: Pick<
+  AuditEntry,
+  "writeMode" | "approvedVia" | "unprotected"
+> = {};
 
 /** Called by assertWriteEnabled(); every audit entry of this process records it. */
-export function setWriteContext(context: Pick<AuditEntry, 'writeMode' | 'approvedVia' | 'unprotected'>): void {
+export function setWriteContext(
+  context: Pick<AuditEntry, "writeMode" | "approvedVia" | "unprotected">
+): void {
   writeContext = context;
 }
-
 
 export function auditLog(entry: AuditEntry): void {
   try {
@@ -54,8 +71,10 @@ export function auditLog(entry: AuditEntry): void {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
-    appendFileSync(configFile('audit.jsonl'), JSON.stringify({ ...entry, ...writeContext }) + '\n', { encoding: 'utf8', mode: 0o600 });
-  } catch {
-    // Never throw — audit failures must not break the caller
-  }
+    appendFileSync(
+      configFile("audit.jsonl"),
+      `${JSON.stringify({ ...entry, ...writeContext })}\n`,
+      { encoding: "utf-8", mode: 0o600 }
+    );
+  } catch {}
 }

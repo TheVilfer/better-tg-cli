@@ -1,27 +1,43 @@
-import { Command } from 'commander';
-import { Api } from 'teleproto';
-import { NewMessage, type NewMessageEvent } from 'teleproto/events/index.js';
-import { getClient, resolveChat, disconnectClient, messageText, buildMessageFull } from '../client.js';
-import { formatStatsSuffix } from '../formatters/plain.js';
-import chalk from '../colors.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
-import { positiveInt } from '../args.js';
+import { Command } from "commander";
+import { Api } from "teleproto";
+import { NewMessage } from "teleproto/events/index.js";
+import type { NewMessageEvent } from "teleproto/events/index.js";
 
-export const watchCommand = new Command('watch')
-  .description('Stream new incoming messages in real time (until timeout / limit / Ctrl-C)')
-  .argument('[chat]', 'Restrict to one chat (name, @user, or ID). Omit to watch everything.')
-  .option('-t, --timeout <seconds>', 'Stop after N seconds', positiveInt)
-  .option('-n, --limit <number>', 'Stop after N messages', positiveInt)
-  .option('--full', 'Include full per-message stats (views, forwards, reactions, flags, media detail)')
-  .option('--stats', 'Alias for --full')
-  .option('--json', 'Emit each message as a JSON line')
+import { positiveInt } from "../args.js";
+import {
+  getClient,
+  resolveChat,
+  disconnectClient,
+  messageText,
+  buildMessageFull,
+} from "../client.js";
+import chalk from "../colors.js";
+import { fail } from "../errors.js";
+import { formatStatsSuffix } from "../formatters/plain.js";
+import ora from "../spinner.js";
+
+export const watchCommand = new Command("watch")
+  .description(
+    "Stream new incoming messages in real time (until timeout / limit / Ctrl-C)"
+  )
+  .argument(
+    "[chat]",
+    "Restrict to one chat (name, @user, or ID). Omit to watch everything."
+  )
+  .option("-t, --timeout <seconds>", "Stop after N seconds", positiveInt)
+  .option("-n, --limit <number>", "Stop after N messages", positiveInt)
+  .option(
+    "--full",
+    "Include full per-message stats (views, forwards, reactions, flags, media detail)"
+  )
+  .option("--stats", "Alias for --full")
+  .option("--json", "Emit each message as a JSON line")
   .action(async (chat, options) => {
     const full = Boolean(options.full || options.stats);
     const timeoutSec = options.timeout ? options.timeout : undefined;
     const limit = options.limit ? options.limit : undefined;
 
-    const spinner = ora('Connecting...').start();
+    const spinner = ora("Connecting...").start();
     try {
       const client = await getClient();
 
@@ -32,14 +48,20 @@ export const watchCommand = new Command('watch')
       }
 
       spinner.stop();
-      console.error(chalk.gray(`Watching${chat ? ` "${chat}"` : ' all chats'}${timeoutSec ? ` for ${timeoutSec}s` : ''}${limit ? `, up to ${limit} message(s)` : ''}. Press Ctrl-C to stop.\n`));
+      console.error(
+        chalk.gray(
+          `Watching${chat ? ` "${chat}"` : " all chats"}${timeoutSec ? ` for ${timeoutSec}s` : ""}${limit ? `, up to ${limit} message(s)` : ""}. Press Ctrl-C to stop.\n`
+        )
+      );
 
       let count = 0;
       await new Promise<void>((resolvePromise) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
 
         const finish = () => {
-          if (timer) clearTimeout(timer);
+          if (timer) {
+            clearTimeout(timer);
+          }
           client.removeEventHandler(handler, event);
           resolvePromise();
         };
@@ -47,36 +69,54 @@ export const watchCommand = new Command('watch')
         const event = new NewMessage(chatFilter ? { chats: chatFilter } : {});
         const handler = async (e: NewMessageEvent) => {
           const msg = e.message;
-          if (!(msg instanceof Api.Message)) return;
+          if (!(msg instanceof Api.Message)) {
+            return;
+          }
           count += 1;
 
-          let sender = 'Unknown';
+          let sender = "Unknown";
           try {
             const s = await msg.getSender();
-            if (s instanceof Api.User) sender = s.firstName || s.username || s.id.toString();
-            else if (s instanceof Api.Channel || s instanceof Api.Chat) sender = s.title;
-          } catch {
-            // ignore
-          }
+            if (s instanceof Api.User) {
+              sender = s.firstName || s.username || s.id.toString();
+            } else if (s instanceof Api.Channel || s instanceof Api.Chat) {
+              sender = s.title;
+            }
+          } catch {}
 
           const stats = full ? buildMessageFull(msg) : undefined;
           if (options.json) {
-            console.log(JSON.stringify({ id: msg.id, chatId: msg.chatId?.toString(), sender, text: messageText(msg), date: new Date(msg.date * 1000).toISOString(), ...(stats ? { full: stats } : {}) }));
+            console.log(
+              JSON.stringify({
+                id: msg.id,
+                chatId: msg.chatId?.toString(),
+                sender,
+                text: messageText(msg),
+                date: new Date(msg.date * 1000).toISOString(),
+                ...(stats ? { full: stats } : {}),
+              })
+            );
           } else {
             const time = new Date(msg.date * 1000).toLocaleTimeString();
-            const suffix = stats ? chalk.gray(formatStatsSuffix(stats)) : '';
-            console.log(`${chalk.gray(time)} ${chalk.cyan(sender)}: ${messageText(msg) || chalk.gray('(no text)')}${suffix} ${chalk.gray(`#${msg.id}`)}`);
+            const suffix = stats ? chalk.gray(formatStatsSuffix(stats)) : "";
+            console.log(
+              `${chalk.gray(time)} ${chalk.cyan(sender)}: ${messageText(msg) || chalk.gray("(no text)")}${suffix} ${chalk.gray(`#${msg.id}`)}`
+            );
           }
 
-          if (limit && count >= limit) finish();
+          if (limit && count >= limit) {
+            finish();
+          }
         };
 
         client.addEventHandler(handler, event);
-        if (timeoutSec) timer = setTimeout(finish, timeoutSec * 1000);
+        if (timeoutSec) {
+          timer = setTimeout(finish, timeoutSec * 1000);
+        }
       });
 
       await disconnectClient();
     } catch (error) {
-      fail(error, spinner, 'Watch failed');
+      fail(error, spinner, "Watch failed");
     }
   });

@@ -30,6 +30,7 @@ can read the session from the Keychain with `security find-generic-password`, ch
 mode the same way, and act as you with any Telegram client. On cloud agent computers the agent
 owns the whole machine. Give agents with a shell only chats you trust, or connect them through MCP
 without a shell, and keep the audit log in view.
+
 - **Login keys:** the broker hands out the app's `api_hash` for a single login. It is not stored
   locally. Login keys are stored hashed, limited in uses and revocable.
 
@@ -61,6 +62,7 @@ chats unattended.
 
 `telegram onboard` serves a one-shot page on `127.0.0.1` so an agent can start the login without
 seeing any secret. Any site open in the same browser can send requests to localhost, so:
+
 - the page lives under a random 256-bit path, and everything else answers 404;
 - the `Host` header must be exactly `127.0.0.1:<port>`, which blocks DNS rebinding;
 - POSTs need the page's own `Origin`, which blocks cross-site form posts;

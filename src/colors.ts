@@ -1,7 +1,3 @@
-/**
- * Minimal chalk replacement (the subset this CLI uses, chainable: `colors.bold.blue(x)`).
- * Colors only on a TTY; NO_COLOR disables, FORCE_COLOR enables.
- */
 const CODES = {
   bold: [1, 22],
   red: [31, 39],
@@ -16,17 +12,24 @@ const CODES = {
 type Name = keyof typeof CODES;
 export type Style = ((text: unknown) => string) & { [K in Name]: Style };
 
-const enabled = process.env.FORCE_COLOR ? true : !process.env.NO_COLOR && !!process.stdout.isTTY;
+const enabled = process.env.FORCE_COLOR
+  ? true
+  : !process.env.NO_COLOR && !!process.stdout.isTTY;
 
 function style(open: string, close: string): Style {
-  const fn = ((text: unknown) => (enabled ? `${open}${text}${close}` : String(text))) as Style;
+  const fn = ((text: unknown) =>
+    enabled ? `${open}${text}${close}` : String(text)) as Style;
   for (const name of Object.keys(CODES) as Name[]) {
     Object.defineProperty(fn, name, {
-      get: () => style(`${open}\x1b[${CODES[name][0]}m`, `\x1b[${CODES[name][1]}m${close}`),
+      get: () =>
+        style(
+          `${open}\u001B[${CODES[name][0]}m`,
+          `\u001B[${CODES[name][1]}m${close}`
+        ),
     });
   }
   return fn;
 }
 
-const colors = style('', '');
+const colors = style("", "");
 export default colors;

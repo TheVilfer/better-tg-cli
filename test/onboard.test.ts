@@ -1,52 +1,90 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { request } from 'node:http';
-import { rpcCode, type LoginDriver } from '../src/auth.js';
-import { RPCError } from 'teleproto/errors/index.js';
-import { startOnboarding, type ModeChoice, type ModeResult, type OnboardEvent, type OnboardSession, type SavedMode } from '../src/onboard.js';
-import { errorMessage } from '../src/text.js';
+import { request } from "node:http";
 
-// Raw HTTP so the tests control Host and Origin exactly (fetch won't set Host)
-function call(url: string, opts: { method?: string; host?: string; origin?: string; body?: unknown } = {}) {
+import { RPCError } from "teleproto/errors/index.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { rpcCode } from "../src/auth.js";
+import type { LoginDriver } from "../src/auth.js";
+import { startOnboarding } from "../src/onboard.js";
+import type {
+  ModeChoice,
+  ModeResult,
+  OnboardEvent,
+  OnboardSession,
+  SavedMode,
+} from "../src/onboard.js";
+import { errorMessage } from "../src/text.js";
+
+function call(
+  url: string,
+  opts: { method?: string; host?: string; origin?: string; body?: unknown } = {}
+) {
   const u = new URL(url);
-  return new Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }>((resolve, reject) => {
-    const data = opts.body === undefined ? undefined : JSON.stringify(opts.body);
-    const req = request({
-      host: '127.0.0.1', port: u.port, path: u.pathname, method: opts.method ?? 'GET',
-      headers: {
-        host: opts.host ?? u.host,
-        ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
-        ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}),
+  return new Promise<{
+    status: number;
+    body: string;
+    headers: Record<string, string | string[] | undefined>;
+  }>((resolve, reject) => {
+    const data =
+      opts.body === undefined ? undefined : JSON.stringify(opts.body);
+    const req = request(
+      {
+        host: "127.0.0.1",
+        port: u.port,
+        path: u.pathname,
+        method: opts.method ?? "GET",
+        headers: {
+          host: opts.host ?? u.host,
+          ...(opts.origin === undefined ? {} : { origin: opts.origin }),
+          ...(data
+            ? {
+                "content-type": "application/json",
+                "content-length": Buffer.byteLength(data),
+              }
+            : {}),
+        },
       },
-    }, res => {
-      let b = '';
-      res.on('data', c => (b += c));
-      res.on('end', () => resolve({ status: res.statusCode!, body: b, headers: res.headers }));
-    });
-    req.on('error', reject);
+      (res) => {
+        let b = "";
+        res.on("data", (c) => (b += c));
+        res.on("end", () =>
+          resolve({ status: res.statusCode!, body: b, headers: res.headers })
+        );
+      }
+    );
+    req.on("error", reject);
     req.end(data);
   });
 }
 
-/** A driver the test steers: it shows a QR, optionally asks for a password (wrong first), then succeeds or fails. */
-function fakeDriver(plan: { password?: string; wrongFirst?: boolean; failFirst?: boolean } = {}) {
+function fakeDriver(
+  plan: { password?: string; wrongFirst?: boolean; failFirst?: boolean } = {}
+) {
   const calls: { apiId: number; apiHash: string }[] = [];
   let attempt = 0;
   const driver: LoginDriver = {
     async login(creds, io) {
       calls.push(creds);
       attempt++;
-      io.onQr('tg://login?token=abc');
-      await new Promise(r => setTimeout(r, 20));
-      if (plan.failFirst && attempt === 1) throw new Error('AUTH_TOKEN_EXPIRED');
-      if (plan.password) {
-        let pw = await io.password('my hint');
-        if (plan.wrongFirst) {
-          io.onPasswordError('PASSWORD_HASH_INVALID');
-          pw = await io.password('my hint');
-        }
-        if (pw !== plan.password) throw new Error('unexpected password');
+      io.onQr("tg://login?token=abc");
+      await new Promise((r) => setTimeout(r, 20));
+      if (plan.failFirst && attempt === 1) {
+        throw new Error("AUTH_TOKEN_EXPIRED");
       }
-      return { session: 'SESSION', user: { id: '1', name: 'Alice', username: 'alice' } };
+      if (plan.password) {
+        let pw = await io.password("my hint");
+        if (plan.wrongFirst) {
+          io.onPasswordError("PASSWORD_HASH_INVALID");
+          pw = await io.password("my hint");
+        }
+        if (pw !== plan.password) {
+          throw new Error("unexpected password");
+        }
+      }
+      return {
+        session: "SESSION",
+        user: { id: "1", name: "Alice", username: "alice" },
+      };
     },
   };
   return { driver, calls };
@@ -55,389 +93,647 @@ function fakeDriver(plan: { password?: string; wrongFirst?: boolean; failFirst?:
 let session: OnboardSession | undefined;
 afterEach(() => session?.close());
 
-async function start(plan?: Parameters<typeof fakeDriver>[0], extra: Partial<Parameters<typeof startOnboarding>[0]> = {}) {
+async function start(
+  plan?: Parameters<typeof fakeDriver>[0],
+  extra: Partial<Parameters<typeof startOnboarding>[0]> = {}
+) {
   const events: OnboardEvent[] = [];
   const saved: unknown[] = [];
   const redeemed: string[] = [];
   const { driver, calls } = fakeDriver(plan);
   session = await startOnboarding({
     driver,
-    redeemInvite: async token => { redeemed.push(token); return { apiId: 42, apiHash: 'h'.repeat(32) }; },
+    redeemInvite: async (token) => {
+      redeemed.push(token);
+      return { apiId: 42, apiHash: "h".repeat(32) };
+    },
     save: (s, creds, invite) => saved.push({ s, creds, invite }),
-    emit: e => events.push(e),
-    site: 'https://site.test',
+    emit: (e) => events.push(e),
+    site: "https://site.test",
     ...extra,
   });
-  const origin = new URL(session.url).origin;
-  const post = (route: string, body: unknown, o = origin) => call(session!.url + route, { method: 'POST', origin: o, body });
-  const state = async () => JSON.parse((await call(session!.url + 'state')).body);
+  const { origin } = new URL(session.url);
+  const post = (route: string, body: unknown, o = origin) =>
+    call(session!.url + route, { method: "POST", origin: o, body });
+  const state = async () =>
+    JSON.parse((await call(`${session!.url}state`)).body);
   const until = async (step: string) => {
     for (let i = 0; i < 100; i++) {
       const s = await state();
-      if (s.step === step) return s;
-      await new Promise(r => setTimeout(r, 10));
+      if (s.step === step) {
+        return s;
+      }
+      await new Promise((r) => setTimeout(r, 10));
     }
     throw new Error(`never reached ${step}: ${JSON.stringify(await state())}`);
   };
   return { events, saved, redeemed, calls, origin, post, state, until };
 }
 
-describe('telegram onboard server', () => {
-  it('answers only on 127.0.0.1 under the secret path, with the right Host and Origin', async () => {
+describe("telegram onboard server", () => {
+  it("answers only on 127.0.0.1 under the secret path, with the right Host and Origin", async () => {
     const { origin, post } = await start();
     const url = new URL(session!.url);
-    expect(url.hostname).toBe('127.0.0.1');
+    expect(url.hostname).toBe("127.0.0.1");
     expect(url.pathname).toMatch(/^\/s\/[A-Za-z0-9_-]{43}\/$/);
 
     expect((await call(`${origin}/`)).status).toBe(404);
     expect((await call(`${origin}/s/guess/state`)).status).toBe(404);
-    expect((await call(session!.url + 'state', { host: 'evil.example:80' })).status).toBe(421); // DNS rebinding
-    expect((await call(session!.url + 'invite', { method: 'POST', body: { invite: 'x' } })).status).toBe(403); // no Origin
-    expect((await post('invite', { invite: 'x' }, 'https://evil.example')).status).toBe(403);
+    expect(
+      (await call(`${session!.url}state`, { host: "evil.example:80" })).status
+    ).toBe(421);
+    expect(
+      (
+        await call(`${session!.url}invite`, {
+          method: "POST",
+          body: { invite: "x" },
+        })
+      ).status
+    ).toBe(403);
+    expect(
+      (await post("invite", { invite: "x" }, "https://evil.example")).status
+    ).toBe(403);
   });
 
-  it('serves the page with a nonce CSP, no referrer, and the return link to the invite site', async () => {
+  it("serves the page with a nonce CSP, no referrer, and the return link to the invite site", async () => {
     await start();
     const res = await call(session!.url);
     expect(res.status).toBe(200);
-    expect(res.headers['referrer-policy']).toBe('no-referrer');
-    expect(String(res.headers['content-security-policy'])).toContain("frame-ancestors 'none'");
-    expect(res.body).toContain(`https://site.test/?return=${encodeURIComponent(session!.url + 'cb')}`);
-    expect((await call(session!.url + 'cb')).status).toBe(200);
-    // English, Spanish and Russian strings; the page picks one from navigator.languages
-    for (const s of ['Get a login key', 'Obtener una clave de acceso', 'Получить ключ входа']) expect(res.body).toContain(s);
+    expect(res.headers["referrer-policy"]).toBe("no-referrer");
+    expect(String(res.headers["content-security-policy"])).toContain(
+      "frame-ancestors 'none'"
+    );
+    expect(res.body).toContain(
+      `https://site.test/?return=${encodeURIComponent(`${session!.url}cb`)}`
+    );
+    expect((await call(`${session!.url}cb`)).status).toBe(200);
+    for (const s of [
+      "Get a login key",
+      "Obtener una clave de acceso",
+      "Получить ключ входа",
+    ]) {
+      expect(res.body).toContain(s);
+    }
   });
 
-  it('goes invite → QR → password → done, and saves only at the end', async () => {
-    const { events, saved, redeemed, post, until } = await start({ password: 'secret' });
-    expect((await post('invite', { invite: ' tgi_token ' })).status).toBe(202);
-    expect(redeemed).toEqual(['tgi_token']);
-    const pw = await until('password');
-    expect(pw.hint).toBe('my hint');
+  it("goes invite → QR → password → done, and saves only at the end", async () => {
+    const { events, saved, redeemed, post, until } = await start({
+      password: "secret",
+    });
+    expect((await post("invite", { invite: " tgi_token " })).status).toBe(202);
+    expect(redeemed).toEqual(["tgi_token"]);
+    const pw = await until("password");
+    expect(pw.hint).toBe("my hint");
     expect(saved).toEqual([]);
-    expect((await post('password', { password: 'secret' })).status).toBe(202);
-    const done = await until('done');
-    expect(done.user).toEqual({ id: '1', name: 'Alice', username: 'alice' });
-    expect(saved).toEqual([{ s: 'SESSION', creds: { apiId: 42, apiHash: 'h'.repeat(32), invite: true }, invite: true }]);
-    expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'need_password', 'done']);
-    expect(JSON.stringify(events)).not.toContain('secret');
-    await expect(session!.done).resolves.toMatchObject({ user: { username: 'alice' } });
-    expect((await post('invite', { invite: 'again' })).status).toBe(409);
+    expect((await post("password", { password: "secret" })).status).toBe(202);
+    const done = await until("done");
+    expect(done.user).toEqual({ id: "1", name: "Alice", username: "alice" });
+    expect(saved).toEqual([
+      {
+        s: "SESSION",
+        creds: { apiId: 42, apiHash: "h".repeat(32), invite: true },
+        invite: true,
+      },
+    ]);
+    expect(events.map((e) => e.event)).toEqual([
+      "url",
+      "waiting_invite",
+      "waiting_scan",
+      "need_password",
+      "done",
+    ]);
+    expect(JSON.stringify(events)).not.toContain("secret");
+    await expect(session!.done).resolves.toMatchObject({
+      user: { username: "alice" },
+    });
+    expect((await post("invite", { invite: "again" })).status).toBe(409);
   });
 
-  it('asks again after a wrong 2FA password and says so', async () => {
-    const { post, until } = await start({ password: 'right', wrongFirst: true });
-    await post('invite', { invite: 'tgi_token' });
-    await until('password');
-    await post('password', { password: 'nope' });
-    await new Promise(r => setTimeout(r, 30));
-    const again = await until('password');
-    expect(again.error).toBe('wrong_password');
-    await post('password', { password: 'right' });
-    await until('done');
+  it("asks again after a wrong 2FA password and says so", async () => {
+    const { post, until } = await start({
+      password: "right",
+      wrongFirst: true,
+    });
+    await post("invite", { invite: "tgi_token" });
+    await until("password");
+    await post("password", { password: "nope" });
+    await new Promise((r) => setTimeout(r, 30));
+    const again = await until("password");
+    expect(again.error).toBe("wrong_password");
+    await post("password", { password: "right" });
+    await until("done");
   });
 
-  it('retries a failed attempt with the same credentials, without redeeming the invite again', async () => {
+  it("retries a failed attempt with the same credentials, without redeeming the invite again", async () => {
     const { post, until, redeemed, calls } = await start({ failFirst: true });
-    await post('invite', { invite: 'tgi_token' });
-    const failed = await until('error');
-    expect(failed.error).toBe('AUTH_TOKEN_EXPIRED');
-    expect((await post('retry', {})).status).toBe(202);
-    await until('done');
-    expect(redeemed).toEqual(['tgi_token']);
+    await post("invite", { invite: "tgi_token" });
+    const failed = await until("error");
+    expect(failed.error).toBe("AUTH_TOKEN_EXPIRED");
+    expect((await post("retry", {})).status).toBe(202);
+    await until("done");
+    expect(redeemed).toEqual(["tgi_token"]);
     expect(calls).toHaveLength(2);
   });
 
-  it('takes own API keys and checks their shape', async () => {
+  it("takes own API keys and checks their shape", async () => {
     const { post, until, saved } = await start();
-    expect((await post('invite', { apiId: 'abc', apiHash: 'x' })).status).toBe(400);
-    expect((await post('invite', { apiId: '12345', apiHash: 'A'.repeat(32) })).status).toBe(202);
-    await until('done');
-    expect(saved).toEqual([{ s: 'SESSION', creds: { apiId: 12345, apiHash: 'A'.repeat(32), invite: false }, invite: false }]);
+    expect((await post("invite", { apiId: "abc", apiHash: "x" })).status).toBe(
+      400
+    );
+    expect(
+      (await post("invite", { apiId: "12345", apiHash: "A".repeat(32) })).status
+    ).toBe(202);
+    await until("done");
+    expect(saved).toEqual([
+      {
+        s: "SESSION",
+        creds: { apiId: 12_345, apiHash: "A".repeat(32), invite: false },
+        invite: false,
+      },
+    ]);
   });
 
-  it('refuses a password nobody asked for', async () => {
+  it("refuses a password nobody asked for", async () => {
     const { post } = await start();
-    expect((await post('password', { password: 'x' })).status).toBe(409);
+    expect((await post("password", { password: "x" })).status).toBe(409);
   });
 });
 
-describe('errors on the wire', () => {
-  it('sends the message of an Error and never a stringified value', () => {
-    expect(errorMessage(new Error('Invite expired'))).toBe('Invite expired');
-    expect(errorMessage({ stack: 'at secret.ts:1', toString: () => 'dump' })).toBe('Unexpected error');
-    expect(errorMessage('plain string')).toBe('Unexpected error');
-    expect(errorMessage(undefined)).toBe('Unexpected error');
+describe("errors on the wire", () => {
+  it("sends the message of an Error and never a stringified value", () => {
+    expect(errorMessage(new Error("Invite expired"))).toBe("Invite expired");
+    expect(
+      errorMessage({ stack: "at secret.ts:1", toString: () => "dump" })
+    ).toBe("Unexpected error");
+    expect(errorMessage("plain string")).toBe("Unexpected error");
+    expect(errorMessage(undefined)).toBe("Unexpected error");
   });
 
-  it('marks its JSON answers as not to be sniffed', async () => {
+  it("marks its JSON answers as not to be sniffed", async () => {
     const { state } = await start();
     await state();
-    const res = await fetch(session!.url + 'state');
-    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(res.headers.get('content-type')).toBe('application/json');
+    const res = await fetch(`${session!.url}state`);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-type")).toBe("application/json");
   });
 });
 
-describe('rpcCode', () => {
-  it('reads the RPC code, not the readable message', () => {
-    const e = new RPCError('PASSWORD_HASH_INVALID', undefined, 400);
-    Object.defineProperty(e, 'message', { value: 'The password (and thus its hash value) you entered is invalid' });
-    expect(rpcCode(e)).toBe('PASSWORD_HASH_INVALID');
-    expect(rpcCode(new Error('plain'))).toBe('plain');
+describe(rpcCode, () => {
+  it("reads the RPC code, not the readable message", () => {
+    const e = new RPCError("PASSWORD_HASH_INVALID", undefined, 400);
+    Object.defineProperty(e, "message", {
+      value: "The password (and thus its hash value) you entered is invalid",
+    });
+    expect(rpcCode(e)).toBe("PASSWORD_HASH_INVALID");
+    expect(rpcCode(new Error("plain"))).toBe("plain");
   });
 
-  describe('the write-mode step', () => {
-    const modes = (answer: Awaited<ReturnType<NonNullable<Parameters<typeof startOnboarding>[0]['applyMode']>>>) => {
+  describe("the write-mode step", () => {
+    const modes = (
+      answer: Awaited<
+        ReturnType<
+          NonNullable<Parameters<typeof startOnboarding>[0]["applyMode"]>
+        >
+      >
+    ) => {
       const choices: unknown[] = [];
-      return { choices, applyMode: async (c: unknown) => { choices.push(c); return answer; } };
+      return {
+        choices,
+        applyMode: async (c: unknown) => {
+          choices.push(c);
+          return answer;
+        },
+      };
     };
 
-    it('sets the default mode at the login, lets the page change it, then sends done', async () => {
+    it("sets the default mode at the login, lets the page change it, then sends done", async () => {
       const m = modes({ ok: true });
-      const { events, post, until } = await start({}, { applyMode: m.applyMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      const s = await until('mode');
-      expect(s.user).toMatchObject({ username: 'alice' });
-      expect(s.mode).toBe('ask'); // already in effect; the page preselects it
-      expect(m.choices).toEqual([{ mode: 'ask' }]);
-      expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'logged_in', 'waiting_mode']);
-      expect((await post('mode', { mode: 'read-only', for: '' })).status).toBe(202);
-      expect(m.choices).toEqual([{ mode: 'ask' }, { mode: 'read-only', forSeconds: undefined }]);
-      expect((await until('done')).mode).toBe('read-only');
-      expect(events.slice(-2).map(e => e.event)).toEqual(['mode', 'done']);
-      await expect(session!.done).resolves.toMatchObject({ mode: 'read-only', user: { username: 'alice' } });
+      const { events, post, until } = await start(
+        {},
+        { applyMode: m.applyMode, defaultMode: "ask" }
+      );
+      await post("invite", { invite: "tok" });
+      const s = await until("mode");
+      expect(s.user).toMatchObject({ username: "alice" });
+      expect(s.mode).toBe("ask");
+      expect(m.choices).toEqual([{ mode: "ask" }]);
+      expect(events.map((e) => e.event)).toEqual([
+        "url",
+        "waiting_invite",
+        "waiting_scan",
+        "logged_in",
+        "waiting_mode",
+      ]);
+      expect((await post("mode", { mode: "read-only", for: "" })).status).toBe(
+        202
+      );
+      expect(m.choices).toEqual([
+        { mode: "ask" },
+        { mode: "read-only", forSeconds: undefined },
+      ]);
+      expect((await until("done")).mode).toBe("read-only");
+      expect(events.slice(-2).map((e) => e.event)).toEqual(["mode", "done"]);
+      await expect(session!.done).resolves.toMatchObject({
+        mode: "read-only",
+        user: { username: "alice" },
+      });
     });
 
-    it('stays on the step when the person declines the dialog, and says so', async () => {
-      const m = modes({ ok: false, error: 'not_confirmed' });
-      const { post, until, state } = await start({}, { applyMode: m.applyMode });
-      await post('invite', { invite: 'tok' });
-      await until('mode');
-      const res = await post('mode', { mode: 'on', for: '' });
+    it("stays on the step when the person declines the dialog, and says so", async () => {
+      const m = modes({ ok: false, error: "not_confirmed" });
+      const { post, until, state } = await start(
+        {},
+        { applyMode: m.applyMode }
+      );
+      await post("invite", { invite: "tok" });
+      await until("mode");
+      const res = await post("mode", { mode: "on", for: "" });
       expect(res.status).toBe(409);
-      expect(JSON.parse(res.body).error).toBe('not_confirmed');
-      expect((await state()).step).toBe('mode');
+      expect(JSON.parse(res.body).error).toBe("not_confirmed");
+      expect((await state()).step).toBe("mode");
     });
 
-    it('rejects unknown modes and spans, and a mode before the login', async () => {
+    it("rejects unknown modes and spans, and a mode before the login", async () => {
       const m = modes({ ok: true });
       const { post, until } = await start({}, { applyMode: m.applyMode });
-      expect((await post('mode', { mode: 'ask' })).status).toBe(409); // still at the login key
-      await post('invite', { invite: 'tok' });
-      await until('mode');
-      expect((await post('mode', { mode: 'root' })).status).toBe(400);
-      expect((await post('mode', { mode: 'on', for: 'forever' })).status).toBe(400);
-      expect((await post('mode', { mode: 'on' }, 'https://evil.example')).status).toBe(403);
+      expect((await post("mode", { mode: "ask" })).status).toBe(409);
+      await post("invite", { invite: "tok" });
+      await until("mode");
+      expect((await post("mode", { mode: "root" })).status).toBe(400);
+      expect((await post("mode", { mode: "on", for: "forever" })).status).toBe(
+        400
+      );
+      expect(
+        (await post("mode", { mode: "on" }, "https://evil.example")).status
+      ).toBe(403);
       expect(m.choices).toEqual([]);
     });
 
-    it('can run alone, without a login (write-access with no terminal)', async () => {
+    it("can run alone, without a login (write-access with no terminal)", async () => {
       const m = modes({ ok: true });
-      const { events, post, until, state } = await start({}, { applyMode: m.applyMode, modeOnly: true });
-      expect((await state())).toMatchObject({ step: 'mode', modeOnly: true });
-      expect(events.map(e => e.event)).toEqual(['url', 'waiting_mode']);
-      await post('mode', { mode: 'read-only' });
-      expect((await until('done')).mode).toBe('read-only');
-      await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'read-only' });
+      const { events, post, until, state } = await start(
+        {},
+        { applyMode: m.applyMode, modeOnly: true }
+      );
+      await expect(state()).resolves.toMatchObject({
+        step: "mode",
+        modeOnly: true,
+      });
+      expect(events.map((e) => e.event)).toEqual(["url", "waiting_mode"]);
+      await post("mode", { mode: "read-only" });
+      expect((await until("done")).mode).toBe("read-only");
+      await expect(session!.done).resolves.toEqual({
+        user: undefined,
+        mode: "read-only",
+      });
     });
 
-    /**
-     * A fake secret store: applyMode writes the mode and its end to it unless told to fail,
-     * currentMode reads it back. `lie`: says ok, keeps the old value. `start`: the value already there.
-     */
-    const store = (plan: { refuse?: boolean; lie?: boolean; start?: SavedMode; dialogMs?: number } = {}) => {
-      const st = { value: plan.start ?? ({ mode: 'read-only' } as SavedMode) };
+    const store = (
+      plan: {
+        refuse?: boolean;
+        lie?: boolean;
+        start?: SavedMode;
+        dialogMs?: number;
+      } = {}
+    ) => {
+      const st = { value: plan.start ?? ({ mode: "read-only" } as SavedMode) };
       return {
         st,
         currentMode: () => st.value,
         applyMode: async (c: ModeChoice): Promise<ModeResult> => {
-          if (plan.refuse) return { ok: false, error: 'store_failed' };
-          if (plan.dialogMs && c.mode === 'on') await new Promise(r => setTimeout(r, plan.dialogMs)); // the person answers a dialog
-          // Like applyModeChoice: the end is fixed right before the write and reported as written
-          const until = c.mode !== 'read-only' && c.forSeconds ? new Date(Math.floor(Date.now() / 1000) * 1000 + c.forSeconds * 1000) : undefined;
-          if (!plan.lie) st.value = until ? { mode: c.mode, until } : { mode: c.mode };
+          if (plan.refuse) {
+            return { ok: false, error: "store_failed" };
+          }
+          if (plan.dialogMs && c.mode === "on") {
+            await new Promise((r) => setTimeout(r, plan.dialogMs));
+          }
+          const until =
+            c.mode !== "read-only" && c.forSeconds
+              ? new Date(
+                  Math.floor(Date.now() / 1000) * 1000 + c.forSeconds * 1000
+                )
+              : undefined;
+          if (!plan.lie) {
+            st.value = until ? { mode: c.mode, until } : { mode: c.mode };
+          }
           return { ok: true, until };
         },
       };
     };
 
-    it('says so when the store refuses the default mode right after the login, and shows the real mode', async () => {
+    it("says so when the store refuses the default mode right after the login, and shows the real mode", async () => {
       const f = store({ refuse: true });
-      const { events, saved, post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      const s = await until('mode');
-      expect(s).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'read-only' });
-      expect(saved).toHaveLength(1); // the login itself is kept
-      expect(events.map(e => e.event)).toEqual(['url', 'waiting_invite', 'waiting_scan', 'logged_in', 'waiting_mode']); // JSONL unchanged
+      const { events, saved, post, until } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      const s = await until("mode");
+      expect(s).toMatchObject({
+        step: "mode",
+        error: "store_failed",
+        mode: "read-only",
+      });
+      expect(saved).toHaveLength(1);
+      expect(events.map((e) => e.event)).toEqual([
+        "url",
+        "waiting_invite",
+        "waiting_scan",
+        "logged_in",
+        "waiting_mode",
+      ]);
     });
 
-    it('does not trust an ok from a store that kept the old value', async () => {
+    it("does not trust an ok from a store that kept the old value", async () => {
       const f = store({ lie: true });
-      const { post, until, state } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      expect(await until('mode')).toMatchObject({ error: 'store_failed', mode: 'read-only' });
-      const res = await post('mode', { mode: 'on', for: '1h' });
+      const { post, until, state } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      await expect(until("mode")).resolves.toMatchObject({
+        error: "store_failed",
+        mode: "read-only",
+      });
+      const res = await post("mode", { mode: "on", for: "1h" });
       expect(res.status).toBe(409);
-      expect(JSON.parse(res.body).error).toBe('store_failed');
-      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'read-only' });
+      expect(JSON.parse(res.body).error).toBe("store_failed");
+      await expect(state()).resolves.toMatchObject({
+        step: "mode",
+        error: "store_failed",
+        mode: "read-only",
+      });
     });
 
-    it('reports done with the mode read back from the store', async () => {
+    it("reports done with the mode read back from the store", async () => {
       const f = store();
-      const { events, post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      const s = await until('mode');
-      expect(s.mode).toBe('ask');
+      const { events, post, until } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      const s = await until("mode");
+      expect(s.mode).toBe("ask");
       expect(s.error).toBeUndefined();
-      expect((await post('mode', { mode: 'on', for: '' })).status).toBe(202);
-      expect((await until('done')).mode).toBe('on');
-      expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'on' });
+      expect((await post("mode", { mode: "on", for: "" })).status).toBe(202);
+      expect((await until("done")).mode).toBe("on");
+      expect(events.at(-1)).toMatchObject({ event: "done", mode: "on" });
     });
 
     it('does not take an old "on" for good as the "on for an hour" that was picked', async () => {
-      // The mode name matches, the end does not: an hour later writes would still go through
-      const f = store({ lie: true, start: { mode: 'on' } });
-      const { post, until, state, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      await until('mode');
-      const res = await post('mode', { mode: 'on', for: '1h' });
+      const f = store({ lie: true, start: { mode: "on" } });
+      const { post, until, state, events } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      await until("mode");
+      const res = await post("mode", { mode: "on", for: "1h" });
       expect(res.status).toBe(409);
-      expect(JSON.parse(res.body).error).toBe('store_failed');
-      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'on' });
-      expect(events.map(e => e.event)).not.toContain('done');
+      expect(JSON.parse(res.body).error).toBe("store_failed");
+      await expect(state()).resolves.toMatchObject({
+        step: "mode",
+        error: "store_failed",
+        mode: "on",
+      });
+      expect(events.map((e) => e.event)).not.toContain("done");
     });
 
     it('does not take an old "on for an hour" as the "on" for good that was picked', async () => {
-      const f = store({ lie: true, start: { mode: 'on', until: new Date(Date.now() + 3_600_000) } });
-      const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      await until('mode');
-      expect((await post('mode', { mode: 'on', for: '' })).status).toBe(409);
+      const f = store({
+        lie: true,
+        start: { mode: "on", until: new Date(Date.now() + 3_600_000) },
+      });
+      const { post, until } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      await until("mode");
+      expect((await post("mode", { mode: "on", for: "" })).status).toBe(409);
     });
 
     it('does not take an old "ask" with an end as the default "ask" right after the login', async () => {
-      const f = store({ lie: true, start: { mode: 'ask', until: new Date(Date.now() + 86_400_000) } });
-      const { post, until } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      expect(await until('mode')).toMatchObject({ error: 'store_failed', mode: 'ask' });
+      const f = store({
+        lie: true,
+        start: { mode: "ask", until: new Date(Date.now() + 86_400_000) },
+      });
+      const { post, until } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      await expect(until("mode")).resolves.toMatchObject({
+        error: "store_failed",
+        mode: "ask",
+      });
     });
 
     it('does not take an older "on for an hour" whose end falls inside the time the dialog was open', async () => {
-      // A dialog opened at 12:00 and answered at 12:02: an old end of 13:00 is not 13:02.
-      // Here the store already holds "on" until an hour from now and the dialog takes 1.5 s.
-      const f = store({ lie: true, start: { mode: 'on', until: new Date(Math.floor(Date.now() / 1000) * 1000 + 3_600_000) }, dialogMs: 1500 });
-      const { post, until, state, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      await until('mode');
-      const res = await post('mode', { mode: 'on', for: '1h' });
+      const f = store({
+        lie: true,
+        start: {
+          mode: "on",
+          until: new Date(Math.floor(Date.now() / 1000) * 1000 + 3_600_000),
+        },
+        dialogMs: 1500,
+      });
+      const { post, until, state, events } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      await until("mode");
+      const res = await post("mode", { mode: "on", for: "1h" });
       expect(res.status).toBe(409);
-      expect(JSON.parse(res.body).error).toBe('store_failed');
-      expect(await state()).toMatchObject({ step: 'mode', error: 'store_failed', mode: 'on' });
-      expect(events.map(e => e.event)).not.toContain('mode');
+      expect(JSON.parse(res.body).error).toBe("store_failed");
+      await expect(state()).resolves.toMatchObject({
+        step: "mode",
+        error: "store_failed",
+        mode: "on",
+      });
+      expect(events.map((e) => e.event)).not.toContain("mode");
     });
 
-    it('does not take a timed choice as saved when applyMode does not say which end it wrote', async () => {
+    it("does not take a timed choice as saved when applyMode does not say which end it wrote", async () => {
       const f = store();
-      const silent = async (c: ModeChoice): Promise<ModeResult> => { const r = await f.applyMode(c); return r.ok ? { ok: true } : r; };
-      const { post, until } = await start({}, { applyMode: silent, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      await until('mode');
-      expect((await post('mode', { mode: 'on', for: '1h' })).status).toBe(409);
+      const silent = async (c: ModeChoice): Promise<ModeResult> => {
+        const r = await f.applyMode(c);
+        return r.ok ? { ok: true } : r;
+      };
+      const { post, until } = await start(
+        {},
+        { applyMode: silent, currentMode: f.currentMode, defaultMode: "ask" }
+      );
+      await post("invite", { invite: "tok" });
+      await until("mode");
+      expect((await post("mode", { mode: "on", for: "1h" })).status).toBe(409);
     });
 
     it('accepts an honest "on for an hour" after a long dialog', async () => {
-      const f = store({ start: { mode: 'on' }, dialogMs: 1500 });
-      const { post, until, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask' });
-      await post('invite', { invite: 'tok' });
-      await until('mode');
-      expect((await post('mode', { mode: 'on', for: '1h' })).status).toBe(202);
-      expect((await until('done')).mode).toBe('on');
-      expect(events.find(e => e.event === 'mode')).toMatchObject({ mode: 'on', until: expect.any(String) });
+      const f = store({ start: { mode: "on" }, dialogMs: 1500 });
+      const { post, until, events } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+        }
+      );
+      await post("invite", { invite: "tok" });
+      await until("mode");
+      expect((await post("mode", { mode: "on", for: "1h" })).status).toBe(202);
+      expect((await until("done")).mode).toBe("on");
+      expect(events.find((e) => e.event === "mode")).toMatchObject({
+        mode: "on",
+        until: expect.any(String),
+      });
     });
 
-    it('at the timeout reports the mode in the store then, even if another process changed it', async () => {
+    it("at the timeout reports the mode in the store then, even if another process changed it", async () => {
       const f = store();
-      const { post, until, events } = await start({}, { applyMode: f.applyMode, currentMode: f.currentMode, defaultMode: 'ask', modeWaitMs: 400 });
-      await post('invite', { invite: 'tok' });
-      expect((await until('mode')).mode).toBe('ask');
-      f.st.value = { mode: 'read-only' }; // `telegram write-access off` in another terminal
-      expect((await until('done')).mode).toBe('read-only');
-      expect(events.at(-1)).toMatchObject({ event: 'done', mode: 'read-only' });
+      const { post, until, events } = await start(
+        {},
+        {
+          applyMode: f.applyMode,
+          currentMode: f.currentMode,
+          defaultMode: "ask",
+          modeWaitMs: 400,
+        }
+      );
+      await post("invite", { invite: "tok" });
+      expect((await until("mode")).mode).toBe("ask");
+      f.st.value = { mode: "read-only" };
+      expect((await until("done")).mode).toBe("read-only");
+      expect(events.at(-1)).toMatchObject({ event: "done", mode: "read-only" });
     });
 
-    describe('the clock stops while a choice is being applied', () => {
+    describe("the clock stops while a choice is being applied", () => {
       afterEach(() => vi.useRealTimers());
-      // Only the clock the step uses is faked: node:http keeps its own timers, setImmediate stays real
-      const tick = () => new Promise(r => setImmediate(r));
+      const tick = () => new Promise((r) => setImmediate(r));
 
-      /** applyMode that waits for the test, like an OS dialog the person has not answered yet */
       async function dialog() {
-        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         let answer!: (r: ModeResult) => void;
         let asked = 0;
-        const t = await start({}, {
-          modeOnly: true,
-          modeWaitMs: 1000,
-          applyMode: () => { asked++; return new Promise<ModeResult>(r => (answer = r)); },
-        });
+        const t = await start(
+          {},
+          {
+            modeOnly: true,
+            modeWaitMs: 1000,
+            applyMode: () => {
+              asked++;
+              return new Promise<ModeResult>((r) => (answer = r));
+            },
+          }
+        );
         vi.advanceTimersByTime(300);
-        const res = t.post('mode', { mode: 'on', for: '' });
-        while (!asked) await tick();
-        // The dialog stays open far past the 10 minutes (here 1 s) of the step
+        const res = t.post("mode", { mode: "on", for: "" });
+        while (!asked) {
+          await tick();
+        }
         vi.advanceTimersByTime(5000);
         await tick();
-        const dones = () => t.events.filter(e => e.event === 'done');
+        const dones = () => t.events.filter((e) => e.event === "done");
         expect(dones()).toEqual([]);
         return { ...t, res, dones, answer: (r: ModeResult) => answer(r) };
       }
 
-      it('an approval after the time ran out sends one done, with the new mode', async () => {
+      it("an approval after the time ran out sends one done, with the new mode", async () => {
         const d = await dialog();
         d.answer({ ok: true });
         expect((await d.res).status).toBe(202);
         vi.advanceTimersByTime(60_000);
         await tick();
-        expect(d.dones()).toEqual([{ event: 'done', mode: 'on' }]);
-        await expect(session!.done).resolves.toEqual({ user: undefined, mode: 'on' });
+        expect(d.dones()).toEqual([{ event: "done", mode: "on" }]);
+        await expect(session!.done).resolves.toEqual({
+          user: undefined,
+          mode: "on",
+        });
       });
 
-      it('a refusal resumes the wait with the time that was left, then one done', async () => {
+      it("a refusal resumes the wait with the time that was left, then one done", async () => {
         const d = await dialog();
-        d.answer({ ok: false, error: 'not_confirmed' });
+        d.answer({ ok: false, error: "not_confirmed" });
         expect((await d.res).status).toBe(409);
-        expect((await d.state()).step).toBe('mode');
+        expect((await d.state()).step).toBe("mode");
         vi.advanceTimersByTime(699);
         await tick();
         expect(d.dones()).toEqual([]);
         vi.advanceTimersByTime(1);
         await tick();
-        expect(d.dones()).toEqual([{ event: 'done' }]);
+        expect(d.dones()).toEqual([{ event: "done" }]);
         vi.advanceTimersByTime(60_000);
         expect(d.dones()).toHaveLength(1);
       });
 
-      it('a choice that throws resumes the wait too', async () => {
-        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      it("a choice that throws resumes the wait too", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         let fail!: (e: Error) => void;
         let asked = 0;
-        const t = await start({}, { modeOnly: true, modeWaitMs: 1000, applyMode: () => { asked++; return new Promise<ModeResult>((_, j) => (fail = j)); } });
-        const res = t.post('mode', { mode: 'on', for: '' });
-        while (!asked) await tick();
+        const t = await start(
+          {},
+          {
+            modeOnly: true,
+            modeWaitMs: 1000,
+            applyMode: () => {
+              asked++;
+              return new Promise<ModeResult>((_, j) => (fail = j));
+            },
+          }
+        );
+        const res = t.post("mode", { mode: "on", for: "" });
+        while (!asked) {
+          await tick();
+        }
         vi.advanceTimersByTime(5000);
-        fail(new Error('dialog crashed'));
+        fail(new Error("dialog crashed"));
         expect((await res).status).toBe(500);
-        expect((await t.state()).step).toBe('mode');
+        expect((await t.state()).step).toBe("mode");
         vi.advanceTimersByTime(1000);
         await tick();
-        expect(t.events.filter(e => e.event === 'done')).toHaveLength(1);
+        expect(t.events.filter((e) => e.event === "done")).toHaveLength(1);
       });
     });
 
-    it('serves the mode strings in all three languages', async () => {
+    it("serves the mode strings in all three languages", async () => {
       await start();
       const res = await call(session!.url);
-      for (const t of ['Ask me each time', 'Preguntarme cada vez', 'Спрашивать каждый раз']) expect(res.body).toContain(t);
+      for (const t of [
+        "Ask me each time",
+        "Preguntarme cada vez",
+        "Спрашивать каждый раз",
+      ]) {
+        expect(res.body).toContain(t);
+      }
     });
   });
 });

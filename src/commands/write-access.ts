@@ -1,103 +1,191 @@
-import { Command } from 'commander';
-import { parseForDuration, parseWriteState } from '../write-state.js';
-import { confirmByHuman } from '../confirm.js';
-import { getWriteValue, hasHumanChannel, isWriteModeProtected, mayTrustUnconfirmedChoice } from '../write-store.js';
-import { applyModeChoice, currentModeLine, modeQuestion, savedMode } from '../write-mode.js';
-import { ONBOARD_SITE, startOnboarding } from '../onboard.js';
-import { openBrowser } from './onboard.js';
-import chalk from '../colors.js';
-import { checkedBy } from '../args.js';
-import { CliError, EXIT, fail, usageError } from '../errors.js';
-import { writeStatus } from '../status.js';
+import { Command } from "commander";
 
-export { windowsConfirmScript } from '../confirm.js';
+import { checkedBy } from "../args.js";
+import chalk from "../colors.js";
+import { confirmByHuman } from "../confirm.js";
+import { CliError, EXIT, fail, usageError } from "../errors.js";
+import { ONBOARD_SITE, startOnboarding } from "../onboard.js";
+import { writeStatus } from "../status.js";
+import {
+  applyModeChoice,
+  currentModeLine,
+  modeQuestion,
+  savedMode,
+} from "../write-mode.js";
+import { parseForDuration, parseWriteState } from "../write-state.js";
+import {
+  getWriteValue,
+  hasHumanChannel,
+  isWriteModeProtected,
+  mayTrustUnconfirmedChoice,
+} from "../write-store.js";
+import { openBrowser } from "./onboard.js";
+
+export { windowsConfirmScript } from "../confirm.js";
 
 const UNPROTECTED_NOTE =
-  'No secret store on this machine: the mode is kept in a plain file in the profile, which an agent could edit. ' +
-  'It guards against mistakes, not against a hostile agent.';
+  "No secret store on this machine: the mode is kept in a plain file in the profile, which an agent could edit. " +
+  "It guards against mistakes, not against a hostile agent.";
 
-export const writeAccessCommand = new Command('write-access')
-  .description('Manage write access: read-only, ask (the user approves each write in the chat; set after onboarding) or on (no questions; needs the user\'s confirmation)')
-  .argument('[action]', 'ask, on, off, or omit to show status')
-  .option('--for <duration>', 'With "ask" or "on": back to read-only automatically after 30m / 2h / 1d / 1w', checkedBy(parseForDuration))
-  .option('--no-open', 'Without a terminal or dialog: print the page URL instead of opening a browser')
-  .option('--json', 'Print the resulting status as JSON: {writeMode, writes, writeUntil?, writeModeProtected, secretStore, profile}')
-  .action(async (action: string | undefined, options: { for?: string; open: boolean; json?: boolean }) => {
-    if (action && !['ask', 'on', 'off'].includes(action)) {
-      fail(usageError(`Unknown action: ${action}`, 'Usage: telegram write-access [ask|on|off] [--for 1h] [--json]'));
-    }
-    // --json: the status after the command, on stdout as one line; the human text goes to stderr
-    const out = options.json ? console.error : console.log;
-    if (action === 'ask') {
-      // No dialog: in "ask" every write waits for the user's yes in the chat, which is the confirmation
-      const result = await applyModeChoice({ mode: 'ask', forSeconds: options.for ? parseForDuration(options.for) : undefined });
-      if (!result.ok) unchanged(result.error);
-      out(chalk.green(`Write access: ${currentModeLine()}.`));
-      out(chalk.gray('Before every send, show the user the exact action and wait for their yes in the chat.'));
-      if (!isWriteModeProtected()) out(chalk.gray(UNPROTECTED_NOTE));
-    } else if (action === 'on') {
-      const forSeconds = options.for ? parseForDuration(options.for) : undefined;
-      let result;
-      if (hasHumanChannel()) {
-        // A dialog that could not be shown throws dialog_failed (not a No)
-        const yes = await confirmByHuman(modeQuestion(action, forSeconds)).catch((e: unknown) => fail(e));
-        if (!yes) {
-          fail(new CliError('Not confirmed by the user. Write access stays as it was.', 'not_confirmed', EXIT.ERROR));
+export const writeAccessCommand = new Command("write-access")
+  .description(
+    "Manage write access: read-only, ask (the user approves each write in the chat; set after onboarding) or on (no questions; needs the user's confirmation)"
+  )
+  .argument("[action]", "ask, on, off, or omit to show status")
+  .option(
+    "--for <duration>",
+    'With "ask" or "on": back to read-only automatically after 30m / 2h / 1d / 1w',
+    checkedBy(parseForDuration)
+  )
+  .option(
+    "--no-open",
+    "Without a terminal or dialog: print the page URL instead of opening a browser"
+  )
+  .option(
+    "--json",
+    "Print the resulting status as JSON: {writeMode, writes, writeUntil?, writeModeProtected, secretStore, profile}"
+  )
+  .action(
+    async (
+      action: string | undefined,
+      options: { for?: string; open: boolean; json?: boolean }
+    ) => {
+      if (action && !["ask", "on", "off"].includes(action)) {
+        fail(
+          usageError(
+            `Unknown action: ${action}`,
+            "Usage: telegram write-access [ask|on|off] [--for 1h] [--json]"
+          )
+        );
+      }
+      const out = options.json ? console.error : console.log;
+      if (action === "ask") {
+        const result = await applyModeChoice({
+          mode: "ask",
+          forSeconds: options.for ? parseForDuration(options.for) : undefined,
+        });
+        if (!result.ok) {
+          unchanged(result.error);
         }
-        result = await applyModeChoice({ mode: action, forSeconds }, { alreadyConfirmed: true });
-      } else if (mayTrustUnconfirmedChoice()) {
-        result = await chooseOnPage(options.open, out);
-      } else {
-        fail(new CliError('No terminal or dialog to confirm on. Run this command yourself in a terminal.', 'no_human_channel', EXIT.ERROR));
+        out(chalk.green(`Write access: ${currentModeLine()}.`));
+        out(
+          chalk.gray(
+            "Before every send, show the user the exact action and wait for their yes in the chat."
+          )
+        );
+        if (!isWriteModeProtected()) {
+          out(chalk.gray(UNPROTECTED_NOTE));
+        }
+      } else if (action === "on") {
+        const forSeconds = options.for
+          ? parseForDuration(options.for)
+          : undefined;
+        let result;
+        if (hasHumanChannel()) {
+          const yes = await confirmByHuman(
+            modeQuestion(action, forSeconds)
+          ).catch((error: unknown) => fail(error));
+          if (!yes) {
+            fail(
+              new CliError(
+                "Not confirmed by the user. Write access stays as it was.",
+                "not_confirmed",
+                EXIT.ERROR
+              )
+            );
+          }
+          result = await applyModeChoice(
+            { mode: action, forSeconds },
+            { alreadyConfirmed: true }
+          );
+        } else if (mayTrustUnconfirmedChoice()) {
+          result = await chooseOnPage(options.open, out);
+        } else {
+          fail(
+            new CliError(
+              "No terminal or dialog to confirm on. Run this command yourself in a terminal.",
+              "no_human_channel",
+              EXIT.ERROR
+            )
+          );
+        }
+        if (!result.ok) {
+          unchanged(result.error);
+        }
+        out(chalk.green(`Write access: ${currentModeLine()}.`));
+        if (!isWriteModeProtected()) {
+          out(chalk.gray(UNPROTECTED_NOTE));
+        }
+      } else if (action === "off") {
+        await applyModeChoice({ mode: "read-only" });
+        out(chalk.yellow("Write access disabled (read-only mode)."));
+      } else if (!options.json) {
+        const state = parseWriteState(getWriteValue());
+        const line = `Write access: ${currentModeLine()}`;
+        console.log(
+          state.mode === "read-only" ? chalk.yellow(line) : chalk.green(line)
+        );
+        if (!isWriteModeProtected()) {
+          console.log(chalk.gray(UNPROTECTED_NOTE));
+        }
+        if (state.mode === "read-only") {
+          console.log(
+            chalk.gray(
+              "To allow writes: telegram write-access ask (the user approves each one in the chat) | on [--for 1h] (no questions, the user confirms)"
+            )
+          );
+        }
       }
-      if (!result.ok) unchanged(result.error);
-      out(chalk.green(`Write access: ${currentModeLine()}.`));
-      if (!isWriteModeProtected()) out(chalk.gray(UNPROTECTED_NOTE));
-    } else if (action === 'off') {
-      await applyModeChoice({ mode: 'read-only' });
-      out(chalk.yellow('Write access disabled (read-only mode).'));
-    } else if (!options.json) {
-      const state = parseWriteState(getWriteValue());
-      const line = `Write access: ${currentModeLine()}`;
-      console.log(state.mode === 'read-only' ? chalk.yellow(line) : chalk.green(line));
-      if (!isWriteModeProtected()) console.log(chalk.gray(UNPROTECTED_NOTE));
-      if (state.mode === 'read-only') {
-        console.log(chalk.gray('To allow writes: telegram write-access ask (the user approves each one in the chat) | on [--for 1h] (no questions, the user confirms)'));
+      if (options.json) {
+        console.log(JSON.stringify(writeStatus()));
       }
     }
-    if (options.json) console.log(JSON.stringify(writeStatus()));
-  });
+  );
 
-/** The mode could not be changed: one error (JSON with --json), exit 1. */
 function unchanged(reason: string): never {
-  fail(new CliError(`Write access unchanged (${reason}).`, reason === 'not_confirmed' ? 'not_confirmed' : 'write_access_unchanged', EXIT.ERROR));
+  fail(
+    new CliError(
+      `Write access unchanged (${reason}).`,
+      reason === "not_confirmed" ? "not_confirmed" : "write_access_unchanged",
+      EXIT.ERROR
+    )
+  );
 }
 
-/**
- * No terminal, no dialog, no secret store (a cloud agent computer): the person picks the mode on a
- * local page, like the last step of `telegram onboard`. The agent passes the URL on; the page waits
- * up to 10 minutes and changes nothing if nobody picks.
- */
-async function chooseOnPage(open: boolean, print: (line: string) => void = console.log) {
-  let picked: Awaited<ReturnType<typeof applyModeChoice>> = { ok: false, error: 'not_confirmed' };
+async function chooseOnPage(
+  open: boolean,
+  print: (line: string) => void = console.log
+) {
+  let picked: Awaited<ReturnType<typeof applyModeChoice>> = {
+    ok: false,
+    error: "not_confirmed",
+  };
   const session = await startOnboarding({
     modeOnly: true,
-    driver: { login: () => Promise.reject(new Error('not a login')) },
-    redeemInvite: () => Promise.reject(new Error('not a login')),
+    driver: { login: () => Promise.reject(new Error("not a login")) },
+    redeemInvite: () => Promise.reject(new Error("not a login")),
     save: () => {},
     site: process.env.TG_ONBOARD_SITE || ONBOARD_SITE,
-    emit: e => {
-      if (e.event === 'url') {
-        print(`Ask the user to open this page and choose what you may do: ${e.url}`);
-        print('It is on 127.0.0.1 of this computer, so it opens in this computer\'s browser (on a cloud agent: the one the user watches), not in a browser on the user\'s own machine. Waiting up to 10 minutes…');
-        if (open) openBrowser(e.url);
+    emit: (e) => {
+      if (e.event === "url") {
+        print(
+          `Ask the user to open this page and choose what you may do: ${e.url}`
+        );
+        print(
+          "It is on 127.0.0.1 of this computer, so it opens in this computer's browser (on a cloud agent: the one the user watches), not in a browser on the user's own machine. Waiting up to 10 minutes…"
+        );
+        if (open) {
+          openBrowser(e.url);
+        }
       }
     },
-    applyMode: async choice => (picked = await applyModeChoice(choice)),
+    applyMode: async (choice) => (picked = await applyModeChoice(choice)),
     currentMode: savedMode,
   });
   const result = await session.done;
-  await new Promise(r => setTimeout(r, 2500)); // let the page show "saved" before the server goes
+  await new Promise((r) => setTimeout(r, 2500));
   session.close();
-  return result.mode ? picked : { ok: false as const, error: 'not_confirmed' as const };
+  return result.mode
+    ? picked
+    : { ok: false as const, error: "not_confirmed" as const };
 }

@@ -1,28 +1,38 @@
-import { TelegramClient } from 'teleproto';
-import { StringSession } from 'teleproto/sessions/index.js';
-import { renderUnicodeCompact } from 'uqr';
-import { clientParams } from './client-options.js';
-import { connectClient } from './transport.js';
-import { loadConfig, saveConfig, setCredentials, setInviteCredentials, setSessionString } from './config.js';
-import { prompt, promptHidden } from './prompt.js';
-import { clearApprovals } from './approval.js';
-import { clearDialogCache } from './dialog-cache.js';
+import { TelegramClient } from "teleproto";
+import { StringSession } from "teleproto/sessions/index.js";
+import { renderUnicodeCompact } from "uqr";
 
-async function askOwnCredentials(): Promise<{ apiId: number; apiHash: string }> {
-  console.log('To get your API credentials:');
-  console.log('1. Go to https://my.telegram.org/apps');
-  console.log('2. Log in with your phone number');
-  console.log('3. Create a new application (if you haven\'t already)');
-  console.log('4. Copy the api_id and api_hash\n');
+import { clearApprovals } from "./approval.js";
+import { clientParams } from "./client-options.js";
+import {
+  loadConfig,
+  saveConfig,
+  setCredentials,
+  setInviteCredentials,
+  setSessionString,
+} from "./config.js";
+import { clearDialogCache } from "./dialog-cache.js";
+import { prompt, promptHidden } from "./prompt.js";
+import { connectClient } from "./transport.js";
 
-  const apiId = parseInt(await prompt('Enter your API ID: '), 10);
-  if (isNaN(apiId)) {
-    throw new Error('Invalid API ID');
+async function askOwnCredentials(): Promise<{
+  apiId: number;
+  apiHash: string;
+}> {
+  console.log("To get your API credentials:");
+  console.log("1. Go to https://my.telegram.org/apps");
+  console.log("2. Log in with your phone number");
+  console.log("3. Create a new application (if you haven't already)");
+  console.log("4. Copy the api_id and api_hash\n");
+
+  const apiId = Number.parseInt(await prompt("Enter your API ID: "), 10);
+  if (Number.isNaN(apiId)) {
+    throw new Error("Invalid API ID");
   }
 
-  const apiHash = await promptHidden('Enter your API Hash: ');
+  const apiHash = await promptHidden("Enter your API Hash: ");
   if (!apiHash) {
-    throw new Error('Invalid API Hash');
+    throw new Error("Invalid API Hash");
   }
   return { apiId, apiHash };
 }
@@ -34,46 +44,76 @@ async function askOwnCredentials(): Promise<{ apiId: number; apiHash: string }> 
 export async function authenticate(
   invite?: { apiId: number; apiHash: string },
   testServers = false,
-  qr = false,
+  qr = false
 ): Promise<TelegramClient> {
-  console.log(testServers ? '\nTelegram Authentication Setup (TEST servers)\n' : '\nTelegram Authentication Setup\n');
+  console.log(
+    testServers
+      ? "\nTelegram Authentication Setup (TEST servers)\n"
+      : "\nTelegram Authentication Setup\n"
+  );
 
   const { apiId, apiHash } = invite ?? (await askOwnCredentials());
 
-  console.log('\nConnecting to Telegram...');
+  console.log("\nConnecting to Telegram...");
 
-  // Connected up front so a blocked TCP transport falls back to WebSocket before any prompt
-  const client = await connectClient(t => new TelegramClient(new StringSession(''), apiId, apiHash, clientParams(testServers, t)));
+  const client = await connectClient(
+    (t) =>
+      new TelegramClient(
+        new StringSession(""),
+        apiId,
+        apiHash,
+        clientParams(testServers, t)
+      )
+  );
 
-  const password = async () => await promptHidden('Enter your 2FA password (press Enter if none): ');
+  const password = async () =>
+    await promptHidden("Enter your 2FA password (press Enter if none): ");
   if (qr) {
     let drawn = 0;
-    await client.signInUserWithQrCode({ apiId, apiHash }, {
-      qrCode: async ({ token }) => {
-        const url = `tg://login?token=${Buffer.from(token).toString('base64url')}`;
-        const art = renderQr(url);
-        // Redraw in place: the token refreshes every 30 s
-        if (drawn && process.stdout.isTTY) process.stdout.write(`\x1b[${drawn}A\x1b[J`);
-        const text = `\nOn your phone: Telegram → Settings → Devices → Link Desktop Device, then scan:\n\n${art}\n(refreshes every 30 s; Ctrl-C to cancel)\n`;
-        process.stdout.write(text);
-        drawn = text.split('\n').length - 1;
-      },
+    await client.signInUserWithQrCode(
+      { apiId, apiHash },
+      {
+        qrCode: async ({ token }) => {
+          const url = `tg://login?token=${Buffer.from(token).toString("base64url")}`;
+          const art = renderQr(url);
+          if (drawn && process.stdout.isTTY) {
+            process.stdout.write(`\u001B[${drawn}A\u001B[J`);
+          }
+          const text = `\nOn your phone: Telegram → Settings → Devices → Link Desktop Device, then scan:\n\n${art}\n(refreshes every 30 s; Ctrl-C to cancel)\n`;
+          process.stdout.write(text);
+          drawn = text.split("\n").length - 1;
+        },
+        password,
+        onError: async (err) => {
+          console.error("Error:", err.message);
+          return true;
+        },
+      }
+    );
+  } else {
+    await client.start({
+      phoneNumber: async () =>
+        await prompt(
+          "Enter your phone number (with country code, e.g., +1234567890): "
+        ),
       password,
-      onError: async (err) => { console.error('Error:', err.message); return true; },
+      phoneCode: async () => await prompt("Enter the code you received: "),
+      firstAndLastNames: async () => [
+        (await prompt("New account. First name: ")) || "Dev",
+        (await prompt("Last name (optional): ")) || "",
+      ],
+      onError: (err) => console.error("Error:", err),
     });
-  } else await client.start({
-    phoneNumber: async () => await prompt('Enter your phone number (with country code, e.g., +1234567890): '),
-    // Hidden input: the 2FA password must not end up in terminal scrollback
-    password,
-    phoneCode: async () => await prompt('Enter the code you received: '),
-    // Only asked for a phone with no account yet (typical for test-DC numbers)
-    firstAndLastNames: async () => [(await prompt('New account. First name: ')) || 'Dev', (await prompt('Last name (optional): ')) || ''],
-    onError: (err) => console.error('Error:', err),
-  });
+  }
 
-  saveLogin((client.session as StringSession).save(), { apiId, apiHash }, !!invite, testServers);
+  saveLogin(
+    (client.session as StringSession).save(),
+    { apiId, apiHash },
+    !!invite,
+    testServers
+  );
 
-  console.log('\nAuthentication successful! Session saved.');
+  console.log("\nAuthentication successful! Session saved.");
 
   return client;
 }
@@ -82,24 +122,41 @@ export async function authenticate(
  * Save a finished login. Invite logins keep only the api_id: the api_hash was for this login and
  * is forgotten. Called only after Telegram accepted the login.
  */
-export function saveLogin(session: string, creds: { apiId: number; apiHash: string }, invite: boolean, testServers = false): void {
-  if (invite) setInviteCredentials(creds.apiId);
-  else setCredentials(creds.apiId, creds.apiHash);
-  // Only touch the flag when it is or was set, so ordinary configs stay unchanged
-  if (testServers || loadConfig(() => {}).testServers) saveConfig({ testServers });
+export function saveLogin(
+  session: string,
+  creds: { apiId: number; apiHash: string },
+  invite: boolean,
+  testServers = false
+): void {
+  if (invite) {
+    setInviteCredentials(creds.apiId);
+  } else {
+    setCredentials(creds.apiId, creds.apiHash);
+  }
+  if (testServers || loadConfig(() => {}).testServers) {
+    saveConfig({ testServers });
+  }
   setSessionString(session);
-  // A new login (maybe another account): approvals and the dialog list of the old one do not carry over
   clearApprovals();
   clearDialogCache();
 }
 
-export interface LoginUser { id: string; name: string; username?: string }
+export interface LoginUser {
+  id: string;
+  name: string;
+  username?: string;
+}
 
 /** What `telegram onboard` needs from a login; the tests pass a fake. */
 export interface LoginDriver {
   login(
     creds: { apiId: number; apiHash: string },
-    io: { onQr(url: string): void; password(hint?: string): Promise<string>; onPasswordError(message: string): void; signal: AbortSignal },
+    io: {
+      onQr(url: string): void;
+      password(hint?: string): Promise<string>;
+      onPasswordError(message: string): void;
+      signal: AbortSignal;
+    }
   ): Promise<{ session: string; user: LoginUser }>;
 }
 
@@ -112,32 +169,58 @@ export function rpcCode(err: Error): string {
 export function qrLoginDriver(testServers = false): LoginDriver {
   return {
     async login(creds, io) {
-      // A blocked TCP transport (cloud agent computers) falls back to WebSocket here
-      const client = await connectClient(t => new TelegramClient(new StringSession(''), creds.apiId, creds.apiHash, clientParams(testServers, t)));
-      // teleproto reports a stop as AUTH_USER_CANCEL; keep the real cause to show instead
+      const client = await connectClient(
+        (t) =>
+          new TelegramClient(
+            new StringSession(""),
+            creds.apiId,
+            creds.apiHash,
+            clientParams(testServers, t)
+          )
+      );
       let cause: string | undefined;
       try {
-        const user = await client.signInUserWithQrCode(creds, {
-          qrCode: async ({ token }) => io.onQr(`tg://login?token=${Buffer.from(token).toString('base64url')}`),
-          password: async (hint?: string) => io.password(hint),
-          onError: async (err: Error) => {
-            const code = rpcCode(err);
-            if (code === 'PASSWORD_HASH_INVALID') {
-              io.onPasswordError(code);
-              return false;
+        const user = await client
+          .signInUserWithQrCode(creds, {
+            qrCode: async ({ token }) =>
+              io.onQr(
+                `tg://login?token=${Buffer.from(token).toString("base64url")}`
+              ),
+            password: async (hint?: string) => io.password(hint),
+            onError: async (err: Error) => {
+              const code = rpcCode(err);
+              if (code === "PASSWORD_HASH_INVALID") {
+                io.onPasswordError(code);
+                return false;
+              }
+              cause = code;
+              return true;
+            },
+            abortSignal: io.signal,
+          } as Parameters<TelegramClient["signInUserWithQrCode"]>[1])
+          .catch((error: unknown) => {
+            if (
+              cause &&
+              error instanceof Error &&
+              error.message === "AUTH_USER_CANCEL"
+            ) {
+              throw new Error(cause);
             }
-            cause = code;
-            return true;
-          },
-          abortSignal: io.signal,
-        } as Parameters<TelegramClient['signInUserWithQrCode']>[1]).catch((e: unknown) => {
-          if (cause && e instanceof Error && e.message === 'AUTH_USER_CANCEL') throw new Error(cause);
-          throw e;
-        });
-        const u = user as unknown as { id: { toString(): string }; firstName?: string; lastName?: string; username?: string };
+            throw error;
+          });
+        const u = user as unknown as {
+          id: { toString(): string };
+          firstName?: string;
+          lastName?: string;
+          username?: string;
+        };
         return {
           session: (client.session as StringSession).save(),
-          user: { id: u.id.toString(), name: [u.firstName, u.lastName].filter(Boolean).join(' '), username: u.username },
+          user: {
+            id: u.id.toString(),
+            name: [u.firstName, u.lastName].filter(Boolean).join(" "),
+            username: u.username,
+          },
         };
       } finally {
         await client.disconnect().catch(() => {});
@@ -148,5 +231,8 @@ export function qrLoginDriver(testServers = false): LoginDriver {
 
 /** Terminal QR for a dark background (verified by decoding); TG_QR_INVERT=1 for light terminals. */
 export function renderQr(data: string): string {
-  return renderUnicodeCompact(data, { border: 2, invert: !!process.env.TG_QR_INVERT });
+  return renderUnicodeCompact(data, {
+    border: 2,
+    invert: !!process.env.TG_QR_INVERT,
+  });
 }

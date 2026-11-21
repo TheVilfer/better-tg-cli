@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Rebuild all brand assets: mark SVGs (gen.py) and banner/preview PNGs (headless Chrome, Geist font).
 set -euo pipefail
 cd "$(dirname "$0")"
 python3 gen.py
@@ -11,7 +10,6 @@ shot banner-dark.html 2400,860 banner-dark.png
 shot banner-light.html 2400,860 banner-light.png
 shot social.html 1280,640 social-preview.png
 rm -f banner-dark.html banner-light.html social.html
-# Square avatar/icon
 printf '<html><body style="margin:0;background:#000">%s</body></html>' "$(sed 's/width="120" height="120"/width="512" height="512"/' icon.svg)" > icon.html
 shot icon.html 512,512 icon-512.png
 rm -f icon.html

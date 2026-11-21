@@ -1,15 +1,16 @@
-import { Command } from 'commander';
-import { getClient, getMe, disconnectClient } from '../client.js';
-import { formatJson } from '../formatters/json.js';
-import { formatUser } from '../formatters/plain.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-export const whoamiCommand = new Command('whoami')
-  .description('Show logged-in account information')
-  .option('--json', 'Output as JSON')
+import { getClient, getMe, disconnectClient } from "../client.js";
+import { fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import { formatUser } from "../formatters/plain.js";
+import ora from "../spinner.js";
+
+export const whoamiCommand = new Command("whoami")
+  .description("Show logged-in account information")
+  .option("--json", "Output as JSON")
   .action(async (options) => {
-    const spinner = ora('Fetching account info...').start();
+    const spinner = ora("Fetching account info...").start();
 
     try {
       const client = await getClient();
@@ -18,24 +19,28 @@ export const whoamiCommand = new Command('whoami')
       spinner.stop();
 
       if (options.json) {
-        console.log(formatJson({
-          id: me.id.toString(),
-          firstName: me.firstName,
-          lastName: me.lastName,
-          username: me.username,
-          phone: me.phone,
-        }));
+        console.log(
+          formatJson({
+            id: me.id.toString(),
+            firstName: me.firstName,
+            lastName: me.lastName,
+            username: me.username,
+            phone: me.phone,
+          })
+        );
       } else {
-        console.log(formatUser({
-          firstName: me.firstName ?? undefined,
-          lastName: me.lastName ?? undefined,
-          username: me.username ?? undefined,
-          phone: me.phone ?? undefined,
-        }));
+        console.log(
+          formatUser({
+            firstName: me.firstName ?? undefined,
+            lastName: me.lastName ?? undefined,
+            username: me.username ?? undefined,
+            phone: me.phone ?? undefined,
+          })
+        );
       }
 
       await disconnectClient();
     } catch (error) {
-      fail(error, spinner, 'Failed to get account info');
+      fail(error, spinner, "Failed to get account info");
     }
   });

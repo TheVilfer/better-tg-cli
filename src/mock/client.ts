@@ -1,20 +1,32 @@
-import { Api, utils, type TelegramClient } from 'teleproto';
-import { Dialog } from 'teleproto/tl/custom/dialog.js';
-import bigInt from 'big-integer';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, extname } from 'node:path';
-import { loadWorld, mockStatePath, saveWorld, type MockButton, type MockChat, type MockMessage, type MockReply, type MockUser, type MockWorld } from './world.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname } from "node:path";
+
+import bigInt from "big-integer";
+import { Api, utils } from "teleproto";
+import type { TelegramClient } from "teleproto";
+import { Dialog } from "teleproto/tl/custom/dialog.js";
+
+import { loadWorld, mockStatePath, saveWorld } from "./world.js";
+import type {
+  MockButton,
+  MockChat,
+  MockMessage,
+  MockReply,
+  MockUser,
+  MockWorld,
+} from "./world.js";
 
 type Entity = Api.User | Api.Chat | Api.Channel;
-type Media = NonNullable<MockMessage['media']>;
-/** Constructor arguments the CLI never reads are left out; TL classes only check them when serializing. */
+type Media = NonNullable<MockMessage["media"]>;
 const args = <T>(value: object): T => value as T;
 
 const now = () => Math.floor(Date.now() / 1000);
 const HASH = bigInt(1);
 
 function notImplemented(what: string): never {
-  throw new Error(`mock: ${what} is not implemented. Add it to src/mock/client.ts, or run without TG_MOCK against a dev profile.`);
+  throw new Error(
+    `mock: ${what} is not implemented. Add it to src/mock/client.ts, or run without TG_MOCK against a dev profile.`
+  );
 }
 
 /**
@@ -24,11 +36,12 @@ function notImplemented(what: string): never {
  */
 export class MockClient {
   readonly connected = true;
-  readonly session = { save: () => '' };
+  readonly session = { save: () => "" };
 
-  constructor(readonly world: MockWorld, private readonly persist: (world: MockWorld) => void = () => {}) {}
-
-  // --- entities ---
+  constructor(
+    readonly world: MockWorld,
+    private readonly persist: (world: MockWorld) => void = () => {}
+  ) {}
 
   private user(u: MockUser): Api.User {
     return new Api.User({
@@ -47,173 +60,315 @@ export class MockClient {
   }
 
   private findUser(id: number): MockUser | undefined {
-    return this.world.users.find(u => u.id === id);
+    return this.world.users.find((u) => u.id === id);
   }
 
   private entityOf(chat: MockChat): Entity {
-    if (chat.kind === 'user') {
+    if (chat.kind === "user") {
       const u = this.findUser(chat.id);
-      if (!u) throw new Error(`mock state: chat ${chat.id} is a private chat but there is no user ${chat.id}`);
+      if (!u) {
+        throw new Error(
+          `mock state: chat ${chat.id} is a private chat but there is no user ${chat.id}`
+        );
+      }
       return this.user(u);
     }
-    if (chat.kind === 'group') {
-      return new Api.Chat(args({
-        id: bigInt(chat.id),
-        title: chat.title ?? 'Group',
-        photo: new Api.ChatPhotoEmpty(),
-        participantsCount: chat.membersCount ?? chat.members?.length ?? 0,
-        date: 0,
-        version: 1,
-        creator: chat.role === 'creator',
-      }));
+    if (chat.kind === "group") {
+      return new Api.Chat(
+        args({
+          id: bigInt(chat.id),
+          title: chat.title ?? "Group",
+          photo: new Api.ChatPhotoEmpty(),
+          participantsCount: chat.membersCount ?? chat.members?.length ?? 0,
+          date: 0,
+          version: 1,
+          creator: chat.role === "creator",
+        })
+      );
     }
-    return new Api.Channel(args({
-      id: bigInt(chat.id),
-      accessHash: HASH,
-      title: chat.title ?? 'Channel',
-      username: chat.username,
-      photo: new Api.ChatPhotoEmpty(),
-      date: 0,
-      megagroup: chat.kind === 'supergroup',
-      broadcast: chat.kind === 'channel',
-      forum: chat.forum,
-      verified: chat.verified,
-      scam: chat.scam,
-      fake: chat.fake,
-      creator: chat.role === 'creator',
-      adminRights: chat.role ? new Api.ChatAdminRights({ changeInfo: true, deleteMessages: true, banUsers: true, inviteUsers: true, pinMessages: true }) : undefined,
-      participantsCount: chat.membersCount ?? chat.members?.length,
-    }));
+    return new Api.Channel(
+      args({
+        id: bigInt(chat.id),
+        accessHash: HASH,
+        title: chat.title ?? "Channel",
+        username: chat.username,
+        photo: new Api.ChatPhotoEmpty(),
+        date: 0,
+        megagroup: chat.kind === "supergroup",
+        broadcast: chat.kind === "channel",
+        forum: chat.forum,
+        verified: chat.verified,
+        scam: chat.scam,
+        fake: chat.fake,
+        creator: chat.role === "creator",
+        adminRights: chat.role
+          ? new Api.ChatAdminRights({
+              changeInfo: true,
+              deleteMessages: true,
+              banUsers: true,
+              inviteUsers: true,
+              pinMessages: true,
+            })
+          : undefined,
+        participantsCount: chat.membersCount ?? chat.members?.length,
+      })
+    );
   }
 
   private peerOf(chat: MockChat): Api.TypePeer {
-    if (chat.kind === 'user') return new Api.PeerUser({ userId: bigInt(chat.id) });
-    if (chat.kind === 'group') return new Api.PeerChat({ chatId: bigInt(chat.id) });
+    if (chat.kind === "user") {
+      return new Api.PeerUser({ userId: bigInt(chat.id) });
+    }
+    if (chat.kind === "group") {
+      return new Api.PeerChat({ chatId: bigInt(chat.id) });
+    }
     return new Api.PeerChannel({ channelId: bigInt(chat.id) });
   }
 
-  /** The chat a peer-like value points at, or undefined (a known user we have no dialog with). */
   private locate(like: unknown): { chat?: MockChat; user?: MockUser } {
-    const users = this.world.users;
-    const chats = this.world.chats;
-    const byUser = (id: number) => ({ chat: chats.find(c => c.kind === 'user' && c.id === id), user: users.find(u => u.id === id) });
-    const byGroup = (id: number) => ({ chat: chats.find(c => c.kind === 'group' && c.id === id) });
-    const byChannel = (id: number) => ({ chat: chats.find(c => (c.kind === 'supergroup' || c.kind === 'channel') && c.id === id) });
+    const { users } = this.world;
+    const { chats } = this.world;
+    const byUser = (id: number) => ({
+      chat: chats.find((c) => c.kind === "user" && c.id === id),
+      user: users.find((u) => u.id === id),
+    });
+    const byGroup = (id: number) => ({
+      chat: chats.find((c) => c.kind === "group" && c.id === id),
+    });
+    const byChannel = (id: number) => ({
+      chat: chats.find(
+        (c) => (c.kind === "supergroup" || c.kind === "channel") && c.id === id
+      ),
+    });
 
-    if (typeof like === 'string') {
+    if (typeof like === "string") {
       const text = like.trim();
-      if (/^-?\d+$/.test(text)) return this.locate(bigInt(text));
-      const name = text.replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '').toLowerCase();
-      if (['me', 'self'].includes(name)) return byUser(this.world.me);
-      const u = users.find(x => x.username?.toLowerCase() === name || x.phone === name.replace(/^\+/, ''));
-      if (u) return byUser(u.id);
-      return { chat: chats.find(c => c.username?.toLowerCase() === name) };
+      if (/^-?\d+$/.test(text)) {
+        return this.locate(bigInt(text));
+      }
+      const name = text
+        .replace(/^@/, "")
+        .replace(/^https?:\/\/t\.me\//, "")
+        .toLowerCase();
+      if (["me", "self"].includes(name)) {
+        return byUser(this.world.me);
+      }
+      const u = users.find(
+        (x) =>
+          x.username?.toLowerCase() === name ||
+          x.phone === name.replace(/^\+/, "")
+      );
+      if (u) {
+        return byUser(u.id);
+      }
+      return { chat: chats.find((c) => c.username?.toLowerCase() === name) };
     }
-    if (typeof like === 'number') return this.locate(bigInt(like));
+    if (typeof like === "number") {
+      return this.locate(bigInt(like));
+    }
     if (bigInt.isInstance(like)) {
       const marked = like.toString();
-      if (marked.startsWith('-100')) return byChannel(Number(marked.slice(4)));
-      if (marked.startsWith('-')) return byGroup(Number(marked.slice(1)));
+      if (marked.startsWith("-100")) {
+        return byChannel(Number(marked.slice(4)));
+      }
+      if (marked.startsWith("-")) {
+        return byGroup(Number(marked.slice(1)));
+      }
       const id = Number(marked);
       const found = byUser(id);
-      return found.user ? found : byChannel(id).chat ? byChannel(id) : byGroup(id);
+      return found.user
+        ? found
+        : byChannel(id).chat
+          ? byChannel(id)
+          : byGroup(id);
     }
-    if (like && typeof like === 'object') {
-      const o = like as { className?: string; id?: bigInt.BigInteger; userId?: bigInt.BigInteger; chatId?: bigInt.BigInteger; channelId?: bigInt.BigInteger; peer?: unknown };
+    if (like && typeof like === "object") {
+      const o = like as {
+        className?: string;
+        id?: bigInt.BigInteger;
+        userId?: bigInt.BigInteger;
+        chatId?: bigInt.BigInteger;
+        channelId?: bigInt.BigInteger;
+        peer?: unknown;
+      };
       switch (o.className) {
-        case 'User': return byUser(o.id!.toJSNumber());
-        case 'Chat': return byGroup(o.id!.toJSNumber());
-        case 'Channel': return byChannel(o.id!.toJSNumber());
-        case 'PeerUser': case 'InputPeerUser': case 'InputUser': return byUser(o.userId!.toJSNumber());
-        case 'PeerChat': case 'InputPeerChat': return byGroup(o.chatId!.toJSNumber());
-        case 'PeerChannel': case 'InputPeerChannel': case 'InputChannel': return byChannel(o.channelId!.toJSNumber());
-        case 'InputPeerSelf': case 'InputUserSelf': return byUser(this.world.me);
-        case 'InputNotifyPeer': case 'InputDialogPeer': case 'InputFolderPeer': return this.locate(o.peer);
+        case "User": {
+          return byUser(o.id!.toJSNumber());
+        }
+        case "Chat": {
+          return byGroup(o.id!.toJSNumber());
+        }
+        case "Channel": {
+          return byChannel(o.id!.toJSNumber());
+        }
+        case "PeerUser":
+        case "InputPeerUser":
+        case "InputUser": {
+          return byUser(o.userId!.toJSNumber());
+        }
+        case "PeerChat":
+        case "InputPeerChat": {
+          return byGroup(o.chatId!.toJSNumber());
+        }
+        case "PeerChannel":
+        case "InputPeerChannel":
+        case "InputChannel": {
+          return byChannel(o.channelId!.toJSNumber());
+        }
+        case "InputPeerSelf":
+        case "InputUserSelf": {
+          return byUser(this.world.me);
+        }
+        case "InputNotifyPeer":
+        case "InputDialogPeer":
+        case "InputFolderPeer": {
+          return this.locate(o.peer);
+        }
       }
     }
     return {};
   }
 
-  /** The chat to act on; a private chat with a known user is opened on first use. */
   private chat(like: unknown, create = false): MockChat {
     const { chat, user } = this.locate(like);
-    if (chat) return chat;
+    if (chat) {
+      return chat;
+    }
     if (user) {
-      const opened: MockChat = { id: user.id, kind: 'user', messages: [] };
-      if (create) this.world.chats.push(opened);
+      const opened: MockChat = { id: user.id, kind: "user", messages: [] };
+      if (create) {
+        this.world.chats.push(opened);
+      }
       return opened;
     }
-    throw new Error(`Cannot find any entity corresponding to "${describe(like)}"`);
+    throw new Error(
+      `Cannot find any entity corresponding to "${describe(like)}"`
+    );
   }
 
   async getMe(): Promise<Api.User> {
     mockFailure();
-    // TG_MOCK_SLOW_ME=<ms> (tests): a slow account lookup, as on a slow connection
     const slow = Number(process.env.TG_MOCK_SLOW_ME ?? 0);
-    if (slow > 0) await new Promise(resolve => setTimeout(resolve, slow));
+    if (slow > 0) {
+      await new Promise((resolve) => setTimeout(resolve, slow));
+    }
     return this.user(this.findUser(this.world.me)!);
   }
 
   async getEntity(like: unknown): Promise<Entity> {
     mockFailure();
     const { chat, user } = this.locate(like);
-    if (chat) return this.entityOf(chat);
-    if (user) return this.user(user);
-    throw new Error(`Cannot find any entity corresponding to "${describe(like)}"`);
+    if (chat) {
+      return this.entityOf(chat);
+    }
+    if (user) {
+      return this.user(user);
+    }
+    throw new Error(
+      `Cannot find any entity corresponding to "${describe(like)}"`
+    );
   }
 
   async getInputEntity(like: unknown): Promise<Api.TypeInputPeer> {
     return utils.getInputPeer(await this.getEntity(like));
   }
 
-  // --- messages ---
-
   private date(m: MockMessage): number {
     return m.date ?? now() - (m.ago ?? 0);
   }
 
   private senderId(chat: MockChat, m: MockMessage): number | undefined {
-    if (m.from) return m.from;
-    if (m.out) return this.world.me;
-    return chat.kind === 'user' ? chat.id : undefined;
+    if (m.from) {
+      return m.from;
+    }
+    if (m.out) {
+      return this.world.me;
+    }
+    return chat.kind === "user" ? chat.id : undefined;
   }
 
-  private markup(m: Pick<MockMessage, 'buttons' | 'keyboard'>): Api.TypeReplyMarkup | undefined {
-    if (!m.buttons?.length) return undefined;
+  private markup(
+    m: Pick<MockMessage, "buttons" | "keyboard">
+  ): Api.TypeReplyMarkup | undefined {
+    if (!m.buttons?.length) {
+      return undefined;
+    }
     if (m.keyboard) {
       return new Api.ReplyKeyboardMarkup({
-        rows: m.buttons.map(row => new Api.KeyboardButtonRow({
-          buttons: row.map(b => new Api.KeyboardButton({ text: b.text, type: new Api.ButtonTypeDefault() })),
-        })),
+        rows: m.buttons.map(
+          (row) =>
+            new Api.KeyboardButtonRow({
+              buttons: row.map(
+                (b) =>
+                  new Api.KeyboardButton({
+                    text: b.text,
+                    type: new Api.ButtonTypeDefault(),
+                  })
+              ),
+            })
+        ),
       });
     }
     return new Api.ReplyInlineMarkup({
-      rows: m.buttons.map(row => new Api.KeyboardInlineButtonRow({
-        buttons: row.map(b => new Api.KeyboardInlineButton({
-          text: b.text,
-          type: b.url
-            ? new Api.InlineButtonTypeUrl({ url: b.url })
-            : new Api.InlineButtonTypeCallback({ data: Buffer.from(b.data ?? b.text) }),
-        })),
-      })),
+      rows: m.buttons.map(
+        (row) =>
+          new Api.KeyboardInlineButtonRow({
+            buttons: row.map(
+              (b) =>
+                new Api.KeyboardInlineButton({
+                  text: b.text,
+                  type: b.url
+                    ? new Api.InlineButtonTypeUrl({ url: b.url })
+                    : new Api.InlineButtonTypeCallback({
+                        data: Buffer.from(b.data ?? b.text),
+                      }),
+                })
+            ),
+          })
+      ),
     });
   }
 
   private media(m: MockMessage): Api.TypeMessageMedia | undefined {
-    const media = m.media;
-    if (!media) return undefined;
-    if (media.kind === 'photo') return new Api.MessageMediaPhoto({ photo: new Api.PhotoEmpty({ id: bigInt(m.id) }) });
+    const { media } = m;
+    if (!media) {
+      return undefined;
+    }
+    if (media.kind === "photo") {
+      return new Api.MessageMediaPhoto({
+        photo: new Api.PhotoEmpty({ id: bigInt(m.id) }),
+      });
+    }
     const attributes: Api.TypeDocumentAttribute[] = [];
-    if (media.fileName) attributes.push(new Api.DocumentAttributeFilename({ fileName: media.fileName }));
-    if (media.kind === 'video') attributes.push(new Api.DocumentAttributeVideo({ duration: media.duration ?? 0, w: 1280, h: 720 }));
-    if (media.kind === 'voice') attributes.push(new Api.DocumentAttributeAudio({ duration: media.duration ?? 0, voice: true }));
+    if (media.fileName) {
+      attributes.push(
+        new Api.DocumentAttributeFilename({ fileName: media.fileName })
+      );
+    }
+    if (media.kind === "video") {
+      attributes.push(
+        new Api.DocumentAttributeVideo({
+          duration: media.duration ?? 0,
+          w: 1280,
+          h: 720,
+        })
+      );
+    }
+    if (media.kind === "voice") {
+      attributes.push(
+        new Api.DocumentAttributeAudio({
+          duration: media.duration ?? 0,
+          voice: true,
+        })
+      );
+    }
     return new Api.MessageMediaDocument({
       document: new Api.Document({
         id: bigInt(m.id),
         accessHash: HASH,
         fileReference: Buffer.alloc(0),
         date: this.date(m),
-        mimeType: media.mimeType ?? 'application/octet-stream',
+        mimeType: media.mimeType ?? "application/octet-stream",
         size: bigInt(media.size ?? 0),
         dcId: 1,
         attributes,
@@ -221,87 +376,195 @@ export class MockClient {
     });
   }
 
-  private reactionOf(r: NonNullable<MockMessage['reactions']>[number]): Api.TypeReaction {
-    if (r.paid) return new Api.ReactionPaid();
-    if (r.customEmojiId) return new Api.ReactionCustomEmoji({ documentId: bigInt(r.customEmojiId) });
-    return new Api.ReactionEmoji({ emoticon: r.emoji ?? '👍' });
+  private reactionOf(
+    r: NonNullable<MockMessage["reactions"]>[number]
+  ): Api.TypeReaction {
+    if (r.paid) {
+      return new Api.ReactionPaid();
+    }
+    if (r.customEmojiId) {
+      return new Api.ReactionCustomEmoji({
+        documentId: bigInt(r.customEmojiId),
+      });
+    }
+    return new Api.ReactionEmoji({ emoticon: r.emoji ?? "👍" });
   }
 
   private reactions(m: MockMessage): Api.MessageReactions | undefined {
-    if (!m.reactions?.length) return undefined;
-    const groups = new Map<string, { reaction: Api.TypeReaction; count: number; chosenOrder?: number }>();
+    if (!m.reactions?.length) {
+      return undefined;
+    }
+    const groups = new Map<
+      string,
+      { reaction: Api.TypeReaction; count: number; chosenOrder?: number }
+    >();
     for (const r of m.reactions) {
-      const key = r.paid ? 'paid' : r.customEmojiId ? `c:${r.customEmojiId}` : `e:${r.emoji}`;
+      const key = r.paid
+        ? "paid"
+        : r.customEmojiId
+          ? `c:${r.customEmojiId}`
+          : `e:${r.emoji}`;
       const g = groups.get(key) ?? { reaction: this.reactionOf(r), count: 0 };
       g.count += 1;
-      if (r.userId === this.world.me) g.chosenOrder = 0;
+      if (r.userId === this.world.me) {
+        g.chosenOrder = 0;
+      }
       groups.set(key, g);
     }
-    return new Api.MessageReactions(args({
-      results: [...groups.values()].map(g => new Api.ReactionCount(args({ reaction: g.reaction, count: g.count, chosenOrder: g.chosenOrder }))),
-      recentReactions: m.reactions.map(r => new Api.MessagePeerReaction(args({
-        peerId: new Api.PeerUser({ userId: bigInt(r.userId) }), date: now(), reaction: this.reactionOf(r), my: r.userId === this.world.me || undefined,
-      }))),
-      canSeeList: true,
-    }));
+    return new Api.MessageReactions(
+      args({
+        results: [...groups.values()].map(
+          (g) =>
+            new Api.ReactionCount(
+              args({
+                reaction: g.reaction,
+                count: g.count,
+                chosenOrder: g.chosenOrder,
+              })
+            )
+        ),
+        recentReactions: m.reactions.map(
+          (r) =>
+            new Api.MessagePeerReaction(
+              args({
+                peerId: new Api.PeerUser({ userId: bigInt(r.userId) }),
+                date: now(),
+                reaction: this.reactionOf(r),
+                my: r.userId === this.world.me || undefined,
+              })
+            )
+        ),
+        canSeeList: true,
+      })
+    );
   }
 
-  private pollMedia(poll: NonNullable<MockMessage['poll']>): Api.MessageMediaPoll {
-    const answers = poll.options.map((o, i) => new Api.PollAnswer({ text: new Api.TextWithEntities({ text: o.text, entities: [] }), option: Buffer.from([i]) }));
+  private pollMedia(
+    poll: NonNullable<MockMessage["poll"]>
+  ): Api.MessageMediaPoll {
+    const answers = poll.options.map(
+      (o, i) =>
+        new Api.PollAnswer({
+          text: new Api.TextWithEntities({ text: o.text, entities: [] }),
+          option: Buffer.from([i]),
+        })
+    );
     return new Api.MessageMediaPoll({
-      poll: new Api.Poll(args({ id: HASH, question: new Api.TextWithEntities({ text: poll.question, entities: [] }), answers, quiz: poll.quiz, multipleChoice: poll.multiple, closed: poll.closed })),
-      results: new Api.PollResults(args({
-        totalVoters: poll.totalVoters,
-        results: poll.options.map((o, i) => new Api.PollAnswerVoters(args({ option: Buffer.from([i]), voters: o.voters ?? 0, chosen: o.chosen, correct: o.correct }))),
-      })),
+      poll: new Api.Poll(
+        args({
+          id: HASH,
+          question: new Api.TextWithEntities({
+            text: poll.question,
+            entities: [],
+          }),
+          answers,
+          quiz: poll.quiz,
+          multipleChoice: poll.multiple,
+          closed: poll.closed,
+        })
+      ),
+      results: new Api.PollResults(
+        args({
+          totalVoters: poll.totalVoters,
+          results: poll.options.map(
+            (o, i) =>
+              new Api.PollAnswerVoters(
+                args({
+                  option: Buffer.from([i]),
+                  voters: o.voters ?? 0,
+                  chosen: o.chosen,
+                  correct: o.correct,
+                })
+              )
+          ),
+        })
+      ),
     });
   }
 
   private message(chat: MockChat, m: MockMessage): Api.Message {
-    const from = chat.kind === 'group' || chat.kind === 'supergroup' ? this.senderId(chat, m) : undefined;
-    return new Api.Message(args({
-      id: m.id,
-      date: this.date(m),
-      message: m.text,
-      out: m.out,
-      post: chat.kind === 'channel' || undefined,
-      silent: m.silent,
-      noforwards: m.noforwards,
-      peerId: this.peerOf(chat),
-      fromId: from ? new Api.PeerUser({ userId: bigInt(from) }) : undefined,
-      replyTo: m.quoteFrom
-        ? new Api.MessageReplyHeader(args({
-          replyFrom: new Api.MessageFwdHeader(args({
-            date: this.date(m),
-            fromId: m.savedFrom ? undefined : this.peerOf(this.chat(bigInt(m.quoteFrom))),
-            savedFromPeer: m.savedFrom ? this.peerOf(this.chat(bigInt(m.savedFrom))) : undefined,
-          })),
-          quote: true, quoteText: m.quoteText,
-        }))
-        : m.replyTo || m.thread
-        ? new Api.MessageReplyHeader({ replyToMsgId: m.replyTo ?? m.thread, replyToTopId: m.thread, forumTopic: chat.forum && !!m.thread })
-        : undefined,
-      media: m.poll ? this.pollMedia(m.poll) : this.media(m),
-      replyMarkup: this.markup(m),
-      replies: m.replies === undefined ? undefined : new Api.MessageReplies(args({ replies: m.replies, repliesPts: 0, comments: chat.kind === 'channel' || undefined, channelId: chat.linkedChatId ? bigInt(chat.linkedChatId) : undefined })),
-      reactions: this.reactions(m),
-      views: m.views,
-      forwards: m.forwards,
-      viaBotId: m.viaBotId ? bigInt(m.viaBotId) : undefined,
-      groupedId: m.groupedId ? bigInt(m.groupedId) : undefined,
-      postAuthor: m.postAuthor,
-      ttlPeriod: m.ttlPeriod,
-      pinned: m.pinned,
-      editDate: m.edited ? this.date(m) : undefined,
-      fwdFrom: m.forwardedFrom || m.savedFrom && !m.quoteFrom
-        ? new Api.MessageFwdHeader(args({
-          date: this.date(m),
-          fromId: m.forwardedFrom ? this.peerOf(this.chat(bigInt(m.forwardedFrom))) : undefined,
-          savedFromPeer: m.savedFrom && !m.quoteFrom ? this.peerOf(this.chat(bigInt(m.savedFrom))) : undefined,
-          savedFromMsgId: m.savedFrom && !m.quoteFrom ? 1 : undefined,
-        }))
-        : undefined,
-    }));
+    const from =
+      chat.kind === "group" || chat.kind === "supergroup"
+        ? this.senderId(chat, m)
+        : undefined;
+    return new Api.Message(
+      args({
+        id: m.id,
+        date: this.date(m),
+        message: m.text,
+        out: m.out,
+        post: chat.kind === "channel" || undefined,
+        silent: m.silent,
+        noforwards: m.noforwards,
+        peerId: this.peerOf(chat),
+        fromId: from ? new Api.PeerUser({ userId: bigInt(from) }) : undefined,
+        replyTo: m.quoteFrom
+          ? new Api.MessageReplyHeader(
+              args({
+                replyFrom: new Api.MessageFwdHeader(
+                  args({
+                    date: this.date(m),
+                    fromId: m.savedFrom
+                      ? undefined
+                      : this.peerOf(this.chat(bigInt(m.quoteFrom))),
+                    savedFromPeer: m.savedFrom
+                      ? this.peerOf(this.chat(bigInt(m.savedFrom)))
+                      : undefined,
+                  })
+                ),
+                quote: true,
+                quoteText: m.quoteText,
+              })
+            )
+          : m.replyTo || m.thread
+            ? new Api.MessageReplyHeader({
+                replyToMsgId: m.replyTo ?? m.thread,
+                replyToTopId: m.thread,
+                forumTopic: chat.forum && !!m.thread,
+              })
+            : undefined,
+        media: m.poll ? this.pollMedia(m.poll) : this.media(m),
+        replyMarkup: this.markup(m),
+        replies:
+          m.replies === undefined
+            ? undefined
+            : new Api.MessageReplies(
+                args({
+                  replies: m.replies,
+                  repliesPts: 0,
+                  comments: chat.kind === "channel" || undefined,
+                  channelId: chat.linkedChatId
+                    ? bigInt(chat.linkedChatId)
+                    : undefined,
+                })
+              ),
+        reactions: this.reactions(m),
+        views: m.views,
+        forwards: m.forwards,
+        viaBotId: m.viaBotId ? bigInt(m.viaBotId) : undefined,
+        groupedId: m.groupedId ? bigInt(m.groupedId) : undefined,
+        postAuthor: m.postAuthor,
+        ttlPeriod: m.ttlPeriod,
+        pinned: m.pinned,
+        editDate: m.edited ? this.date(m) : undefined,
+        fwdFrom:
+          m.forwardedFrom || (m.savedFrom && !m.quoteFrom)
+            ? new Api.MessageFwdHeader(
+                args({
+                  date: this.date(m),
+                  fromId: m.forwardedFrom
+                    ? this.peerOf(this.chat(bigInt(m.forwardedFrom)))
+                    : undefined,
+                  savedFromPeer:
+                    m.savedFrom && !m.quoteFrom
+                      ? this.peerOf(this.chat(bigInt(m.savedFrom)))
+                      : undefined,
+                  savedFromMsgId: m.savedFrom && !m.quoteFrom ? 1 : undefined,
+                })
+              )
+            : undefined,
+      })
+    );
   }
 
   private newest(chat: MockChat): MockMessage[] {
@@ -318,43 +581,72 @@ export class MockClient {
 
   async getMessages(
     like: unknown,
-    params: { limit?: number; offsetId?: number; offsetDate?: number; minId?: number; maxId?: number; ids?: number | number[]; fromUser?: unknown; filter?: { className?: string } } = {},
+    params: {
+      limit?: number;
+      offsetId?: number;
+      offsetDate?: number;
+      minId?: number;
+      maxId?: number;
+      ids?: number | number[];
+      fromUser?: unknown;
+      filter?: { className?: string };
+    } = {}
   ): Promise<(Api.Message | undefined)[]> {
     const chat = this.chat(like);
     if (params.ids !== undefined) {
       const ids = Array.isArray(params.ids) ? params.ids : [params.ids];
-      return ids.map(id => {
-        const m = chat.messages.find(x => x.id === id);
+      return ids.map((id) => {
+        const m = chat.messages.find((x) => x.id === id);
         return m ? this.message(chat, m) : undefined;
       });
     }
     mockHistoryFlood();
     let list = this.newest(chat);
-    if (params.filter?.className === 'InputMessagesFilterPinned') list = list.filter(m => m.pinned);
-    if (params.offsetId) list = list.filter(m => m.id < params.offsetId!);
-    if (params.offsetDate) list = list.filter(m => this.date(m) < params.offsetDate!);
-    if (params.minId) list = list.filter(m => m.id > params.minId!);
-    if (params.maxId) list = list.filter(m => m.id < params.maxId!);
+    if (params.filter?.className === "InputMessagesFilterPinned") {
+      list = list.filter((m) => m.pinned);
+    }
+    if (params.offsetId) {
+      list = list.filter((m) => m.id < params.offsetId!);
+    }
+    if (params.offsetDate) {
+      list = list.filter((m) => this.date(m) < params.offsetDate!);
+    }
+    if (params.minId) {
+      list = list.filter((m) => m.id > params.minId!);
+    }
+    if (params.maxId) {
+      list = list.filter((m) => m.id < params.maxId!);
+    }
     if (params.fromUser) {
       const sender = this.locate(params.fromUser).user?.id;
-      list = list.filter(m => this.senderId(chat, m) === sender);
+      list = list.filter((m) => this.senderId(chat, m) === sender);
     }
-    return list.slice(0, params.limit ?? 100).map(m => this.message(chat, m));
+    return list.slice(0, params.limit ?? 100).map((m) => this.message(chat, m));
   }
 
   async sendMessage(
     like: unknown,
-    params: { message?: string; replyTo?: number | { replyToMsgId?: number; topMsgId?: number }; schedule?: number } = {},
+    params: {
+      message?: string;
+      replyTo?: number | { replyToMsgId?: number; topMsgId?: number };
+      schedule?: number;
+    } = {}
   ): Promise<Api.Message> {
     const chat = this.chat(like, true);
-    const reply = typeof params.replyTo === 'object' ? params.replyTo : { replyToMsgId: params.replyTo, topMsgId: undefined };
-    const repliedTo = reply.replyToMsgId ? chat.messages.find(m => m.id === reply.replyToMsgId) : undefined;
-    if (reply.replyToMsgId && !repliedTo) throw new Error('MSG_ID_INVALID: the message to reply to does not exist');
+    const reply =
+      typeof params.replyTo === "object"
+        ? params.replyTo
+        : { replyToMsgId: params.replyTo, topMsgId: undefined };
+    const repliedTo = reply.replyToMsgId
+      ? chat.messages.find((m) => m.id === reply.replyToMsgId)
+      : undefined;
+    if (reply.replyToMsgId && !repliedTo) {
+      throw new Error("MSG_ID_INVALID: the message to reply to does not exist");
+    }
     const sent = this.append(chat, {
       out: true,
-      text: params.message ?? '',
+      text: params.message ?? "",
       replyTo: reply.replyToMsgId,
-      // A reply inside a thread stays in it, as on Telegram
       thread: reply.topMsgId ?? repliedTo?.thread,
       date: params.schedule,
     });
@@ -363,24 +655,49 @@ export class MockClient {
     return this.message(chat, sent);
   }
 
-  private append(chat: MockChat, m: Omit<MockMessage, 'id'>): MockMessage {
-    const message: MockMessage = { ...m, id: this.nextId(chat), date: m.date ?? now() };
-    for (const key of Object.keys(message) as (keyof MockMessage)[]) if (message[key] === undefined) delete message[key];
+  private append(chat: MockChat, m: Omit<MockMessage, "id">): MockMessage {
+    const message: MockMessage = {
+      ...m,
+      id: this.nextId(chat),
+      date: m.date ?? now(),
+    };
+    for (const key of Object.keys(message) as (keyof MockMessage)[]) {
+      if (message[key] === undefined) {
+        delete message[key];
+      }
+    }
     chat.messages.push(message);
     return message;
   }
 
-  /** A scripted bot answers a message whose text is one of its `commands`. */
   private botAnswers(chat: MockChat, text: string): void {
-    const reply = chat.kind === 'user' ? this.findUser(chat.id)?.commands?.[text.trim()] : undefined;
-    if (reply) this.append(chat, { text: reply.text, buttons: reply.buttons, keyboard: reply.keyboard });
+    const reply =
+      chat.kind === "user"
+        ? this.findUser(chat.id)?.commands?.[text.trim()]
+        : undefined;
+    if (reply) {
+      this.append(chat, {
+        text: reply.text,
+        buttons: reply.buttons,
+        keyboard: reply.keyboard,
+      });
+    }
   }
 
-  async editMessage(like: unknown, params: { message: number; text?: string }): Promise<Api.Message> {
+  async editMessage(
+    like: unknown,
+    params: { message: number; text?: string }
+  ): Promise<Api.Message> {
     const chat = this.chat(like);
-    const m = chat.messages.find(x => x.id === params.message);
-    if (!m) throw new Error('MESSAGE_ID_INVALID: no such message');
-    if (!m.out) throw new Error("MESSAGE_AUTHOR_REQUIRED: you can't edit someone else's message");
+    const m = chat.messages.find((x) => x.id === params.message);
+    if (!m) {
+      throw new Error("MESSAGE_ID_INVALID: no such message");
+    }
+    if (!m.out) {
+      throw new Error(
+        "MESSAGE_AUTHOR_REQUIRED: you can't edit someone else's message"
+      );
+    }
     m.text = params.text ?? m.text;
     m.edited = true;
     this.save();
@@ -394,12 +711,19 @@ export class MockClient {
    */
   async deleteMessages(like: unknown, ids: number[]): Promise<unknown[]> {
     const chat = this.chat(like);
-    const global = chat.kind === 'user' || chat.kind === 'group';
+    const global = chat.kind === "user" || chat.kind === "group";
     for (const id of ids) {
-      const owner = chat.messages.some(m => m.id === id) || !global
-        ? chat
-        : this.world.chats.find(c => (c.kind === 'user' || c.kind === 'group') && c.messages.some(m => m.id === id));
-      if (owner) owner.messages = owner.messages.filter(m => m.id !== id);
+      const owner =
+        chat.messages.some((m) => m.id === id) || !global
+          ? chat
+          : this.world.chats.find(
+              (c) =>
+                (c.kind === "user" || c.kind === "group") &&
+                c.messages.some((m) => m.id === id)
+            );
+      if (owner) {
+        owner.messages = owner.messages.filter((m) => m.id !== id);
+      }
     }
     this.save();
     return [];
@@ -415,78 +739,136 @@ export class MockClient {
 
   async pinMessage(like: unknown, id: number): Promise<void> {
     const chat = this.chat(like);
-    const m = chat.messages.find(x => x.id === id);
-    if (!m) throw new Error('MESSAGE_ID_INVALID: no such message');
+    const m = chat.messages.find((x) => x.id === id);
+    if (!m) {
+      throw new Error("MESSAGE_ID_INVALID: no such message");
+    }
     m.pinned = true;
     this.save();
   }
 
   async unpinMessage(like: unknown, id?: number): Promise<void> {
     const chat = this.chat(like);
-    for (const m of chat.messages) if (id === undefined || m.id === id) delete m.pinned;
+    for (const m of chat.messages) {
+      if (id === undefined || m.id === id) {
+        delete m.pinned;
+      }
+    }
     this.save();
   }
 
-  async forwardMessages(like: unknown, params: { messages: number | number[]; fromPeer: unknown }): Promise<Api.Message[]> {
+  async forwardMessages(
+    like: unknown,
+    params: { messages: number | number[]; fromPeer: unknown }
+  ): Promise<Api.Message[]> {
     const to = this.chat(like, true);
     const from = this.chat(params.fromPeer);
-    const ids = Array.isArray(params.messages) ? params.messages : [params.messages];
-    const sent = ids.map(id => {
-      const m = from.messages.find(x => x.id === id);
-      if (!m) throw new Error(`MESSAGE_ID_INVALID: no message ${id} to forward`);
-      return this.append(to, { out: true, text: m.text, media: m.media, forwardedFrom: from.kind === 'user' ? undefined : from.id });
+    const ids = Array.isArray(params.messages)
+      ? params.messages
+      : [params.messages];
+    const sent = ids.map((id) => {
+      const m = from.messages.find((x) => x.id === id);
+      if (!m) {
+        throw new Error(`MESSAGE_ID_INVALID: no message ${id} to forward`);
+      }
+      return this.append(to, {
+        out: true,
+        text: m.text,
+        media: m.media,
+        forwardedFrom: from.kind === "user" ? undefined : from.id,
+      });
     });
     this.save();
-    return sent.map(m => this.message(to, m));
+    return sent.map((m) => this.message(to, m));
   }
 
-  /** A path is read as teleproto reads it; a named blob (the CLI's snapshot of a file) is taken as it is. */
   private async fileOf(file: unknown): Promise<{ name: string; size: number }> {
-    if (typeof file === 'string') {
-      if (!existsSync(file)) throw new Error(`File not found: ${file}`);
+    if (typeof file === "string") {
+      if (!existsSync(file)) {
+        throw new Error(`File not found: ${file}`);
+      }
       return { name: basename(file), size: readFileSync(file).length };
     }
-    const blob = file as { name?: unknown; arrayBuffer?: () => Promise<ArrayBuffer> };
-    if (typeof blob?.name !== 'string' || typeof blob.arrayBuffer !== 'function') throw new Error('Could not create file from the argument');
+    const blob = file as {
+      name?: unknown;
+      arrayBuffer?: () => Promise<ArrayBuffer>;
+    };
+    if (
+      typeof blob?.name !== "string" ||
+      typeof blob.arrayBuffer !== "function"
+    ) {
+      throw new Error("Could not create file from the argument");
+    }
     return { name: blob.name, size: (await blob.arrayBuffer()).byteLength };
   }
 
   async uploadFile(params: { file: unknown }): Promise<Api.InputFile> {
     const { name } = await this.fileOf(params.file);
-    return new Api.InputFile({ id: bigInt(1), parts: 1, name, md5Checksum: '' });
+    return new Api.InputFile({
+      id: bigInt(1),
+      parts: 1,
+      name,
+      md5Checksum: "",
+    });
   }
 
   async sendFile(
     like: unknown,
-    params: { file: unknown; caption?: string; forceDocument?: boolean; replyTo?: number | { replyToMsgId?: number; topMsgId?: number } },
+    params: {
+      file: unknown;
+      caption?: string;
+      forceDocument?: boolean;
+      replyTo?: number | { replyToMsgId?: number; topMsgId?: number };
+    }
   ): Promise<Api.Message> {
     const file = await this.fileOf(params.file);
     const chat = this.chat(like, true);
-    const reply = typeof params.replyTo === 'object' ? params.replyTo : { replyToMsgId: params.replyTo, topMsgId: undefined };
+    const reply =
+      typeof params.replyTo === "object"
+        ? params.replyTo
+        : { replyToMsgId: params.replyTo, topMsgId: undefined };
     const ext = extname(file.name).toLowerCase();
-    const kind: Media['kind'] = params.forceDocument
-      ? 'document'
-      : ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? 'photo'
-        : ['.mp4', '.mov', '.webm'].includes(ext) ? 'video'
-          : ['.ogg', '.oga'].includes(ext) ? 'voice' : 'document';
+    const kind: Media["kind"] = params.forceDocument
+      ? "document"
+      : [".jpg", ".jpeg", ".png", ".webp"].includes(ext)
+        ? "photo"
+        : [".mp4", ".mov", ".webm"].includes(ext)
+          ? "video"
+          : [".ogg", ".oga"].includes(ext)
+            ? "voice"
+            : "document";
     const sent = this.append(chat, {
       out: true,
-      text: params.caption ?? '',
+      text: params.caption ?? "",
       replyTo: reply.replyToMsgId,
       thread: reply.topMsgId,
-      media: { kind, fileName: kind === 'photo' ? undefined : file.name, size: file.size },
+      media: {
+        kind,
+        fileName: kind === "photo" ? undefined : file.name,
+        size: file.size,
+      },
     });
     this.save();
     return this.message(chat, sent);
   }
 
   /** Writes a placeholder: mock messages have no real file behind them. */
-  async downloadMedia(message: Api.Message, params: { outputFile?: string } = {}): Promise<string | Buffer> {
-    if (this.chat(message.peerId).messages.find(m => m.id === message.id)?.media?.downloadFails) {
-      throw new Error('FILE_REFERENCE_EXPIRED: the mock media of this message cannot be downloaded');
+  async downloadMedia(
+    message: Api.Message,
+    params: { outputFile?: string } = {}
+  ): Promise<string | Buffer> {
+    if (
+      this.chat(message.peerId).messages.find((m) => m.id === message.id)?.media
+        ?.downloadFails
+    ) {
+      throw new Error(
+        "FILE_REFERENCE_EXPIRED: the mock media of this message cannot be downloaded"
+      );
     }
     const content = Buffer.from(`mock media of message ${message.id}\n`);
-    if (typeof params.outputFile !== 'string') return content;
+    if (typeof params.outputFile !== "string") {
+      return content;
+    }
     mkdirSync(dirname(params.outputFile), { recursive: true });
     writeFileSync(params.outputFile, content);
     return params.outputFile;
@@ -496,38 +878,47 @@ export class MockClient {
     return undefined;
   }
 
-  // --- dialogs ---
-
-  async getDialogs(params: { limit?: number; archived?: boolean } = {}): Promise<Dialog[]> {
+  async getDialogs(
+    params: { limit?: number; archived?: boolean } = {}
+  ): Promise<Dialog[]> {
     const entities = new Map<string, Entity>();
-    let chats = this.world.chats.filter(c => c.messages.length > 0 || c.kind !== 'user');
-    if (params.archived !== undefined) chats = chats.filter(c => !!c.archived === params.archived);
-    const rows = chats.map(chat => {
+    let chats = this.world.chats.filter(
+      (c) => c.messages.length > 0 || c.kind !== "user"
+    );
+    if (params.archived !== undefined) {
+      chats = chats.filter((c) => !!c.archived === params.archived);
+    }
+    const rows = chats.map((chat) => {
       const entity = this.entityOf(chat);
       entities.set(utils.getPeerId(entity).toString(), entity);
       const top = this.newest(chat)[0];
       return { chat, top, date: top ? this.date(top) : 0 };
     });
     rows.sort((a, b) => b.date - a.date);
-    return rows.slice(0, params.limit ?? 100).map(({ chat, top }) => new Dialog(
-      this as unknown as TelegramClient,
-      new Api.Dialog(args({
-        peer: this.peerOf(chat),
-        topMessage: top?.id ?? 0,
-        readInboxMaxId: chat.readInboxMaxId ?? top?.id ?? 0,
-        readOutboxMaxId: 0,
-        unreadCount: chat.unread ?? 0,
-        unreadMentionsCount: 0,
-        unreadReactionsCount: 0,
-        notifySettings: new Api.PeerNotifySettings({ muteUntil: chat.mutedUntil }),
-        folderId: chat.archived ? 1 : undefined,
-      })),
-      entities as never,
-      top ? this.message(chat, top) : undefined,
-    ));
+    return rows.slice(0, params.limit ?? 100).map(
+      ({ chat, top }) =>
+        new Dialog(
+          this as unknown as TelegramClient,
+          new Api.Dialog(
+            args({
+              peer: this.peerOf(chat),
+              topMessage: top?.id ?? 0,
+              readInboxMaxId: chat.readInboxMaxId ?? top?.id ?? 0,
+              readOutboxMaxId: 0,
+              unreadCount: chat.unread ?? 0,
+              unreadMentionsCount: 0,
+              unreadReactionsCount: 0,
+              notifySettings: new Api.PeerNotifySettings({
+                muteUntil: chat.mutedUntil,
+              }),
+              folderId: chat.archived ? 1 : undefined,
+            })
+          ),
+          entities as never,
+          top ? this.message(chat, top) : undefined
+        )
+    );
   }
-
-  // --- raw requests ---
 
   private statsGraph(data: string): Api.StatsGraph {
     return new Api.StatsGraph(args({ json: new Api.DataJSON({ data }) }));
@@ -541,591 +932,1216 @@ export class MockClient {
     return new Api.StatsGraphError({ error });
   }
 
-  async invoke(request: { className: string } & Record<string, any>): Promise<any> {
+  async invoke(
+    request: { className: string } & Record<string, any>
+  ): Promise<any> {
     switch (request.className) {
-      case 'messages.GetReplies': return this.getReplies(request);
-      case 'messages.Search': return this.search([this.chat(request.peer)], request);
-      case 'messages.SearchGlobal': return this.search(this.world.chats, request);
-      case 'users.GetFullUser': {
-        const user = this.locate(request.id).user;
-        if (!user) throw new Error('USER_ID_INVALID');
-        return { fullUser: { about: user.about, blocked: user.blocked, commonChatsCount: this.commonChats(user.id) }, users: [this.user(user)], chats: [] };
+      case "messages.GetReplies": {
+        return this.getReplies(request);
       }
-      case 'channels.GetFullChannel': {
+      case "messages.Search": {
+        return this.search([this.chat(request.peer)], request);
+      }
+      case "messages.SearchGlobal": {
+        return this.search(this.world.chats, request);
+      }
+      case "users.GetFullUser": {
+        const { user } = this.locate(request.id);
+        if (!user) {
+          throw new Error("USER_ID_INVALID");
+        }
+        return {
+          fullUser: {
+            about: user.about,
+            blocked: user.blocked,
+            commonChatsCount: this.commonChats(user.id),
+          },
+          users: [this.user(user)],
+          chats: [],
+        };
+      }
+      case "channels.GetFullChannel": {
         const chat = this.chat(request.channel);
         return {
-          fullChat: new Api.ChannelFull(args({
-            id: bigInt(chat.id),
-            about: chat.about ?? '',
-            participantsCount: chat.membersCount ?? chat.members?.length,
-            adminsCount: chat.members?.filter(m => m.role).length,
-            kickedCount: chat.kickedCount,
-            bannedCount: chat.bannedCount,
-            onlineCount: chat.onlineCount,
-            slowmodeSeconds: chat.slowModeSeconds,
-            unreadCount: chat.unread ?? 0,
-            linkedChatId: chat.linkedChatId ? bigInt(chat.linkedChatId) : undefined,
-          })),
+          fullChat: new Api.ChannelFull(
+            args({
+              id: bigInt(chat.id),
+              about: chat.about ?? "",
+              participantsCount: chat.membersCount ?? chat.members?.length,
+              adminsCount: chat.members?.filter((m) => m.role).length,
+              kickedCount: chat.kickedCount,
+              bannedCount: chat.bannedCount,
+              onlineCount: chat.onlineCount,
+              slowmodeSeconds: chat.slowModeSeconds,
+              unreadCount: chat.unread ?? 0,
+              linkedChatId: chat.linkedChatId
+                ? bigInt(chat.linkedChatId)
+                : undefined,
+            })
+          ),
           chats: [this.entityOf(chat)],
           users: [],
         };
       }
-      case 'stats.GetBroadcastStats': {
+      case "stats.GetBroadcastStats": {
         const chat = this.chat(request.channel);
-        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
-        const avp = (current: number, previous = current) => new Api.StatsAbsValueAndPrev({ current, previous });
+        if (!chat.stats) {
+          throw new Error("CHAT_ADMIN_REQUIRED");
+        }
+        const avp = (current: number, previous = current) =>
+          new Api.StatsAbsValueAndPrev({ current, previous });
         const g = this.statsGraph('{"columns":[["x",1,2],["y",10,20]]}');
-        return new Api.stats.BroadcastStats(args({
-          period: new Api.StatsDateRangeDays({ minDate: 1_700_000_000, maxDate: 1_700_600_000 }),
-          followers: avp(chat.membersCount ?? 0, (chat.membersCount ?? 0) - 50),
-          viewsPerPost: avp(12044, 11000),
-          sharesPerPost: avp(18, 12),
-          reactionsPerPost: avp(9, 7),
-          viewsPerStory: avp(400, 380), sharesPerStory: avp(3, 2), reactionsPerStory: avp(5, 4),
-          enabledNotifications: new Api.StatsPercentValue({ part: 62, total: 100 }),
-          // One async graph (loaded via LoadAsyncGraph) and one error graph, to exercise both paths.
-          growthGraph: g, followersGraph: this.asyncGraph('async-followers'), muteGraph: this.errorGraph('no data'),
-          topHoursGraph: g, interactionsGraph: g, ivInteractionsGraph: g, viewsBySourceGraph: g,
-          newFollowersBySourceGraph: g, languagesGraph: g, reactionsByEmotionGraph: g,
-          storyInteractionsGraph: g, storyReactionsByEmotionGraph: g,
-          recentPostsInteractions: chat.messages.slice(0, 3).map(m => new Api.PostInteractionCountersMessage({ msgId: m.id, views: m.views ?? 0, forwards: m.forwards ?? 0, reactions: (m.reactions ?? []).length })),
-        }));
+        return new Api.stats.BroadcastStats(
+          args({
+            period: new Api.StatsDateRangeDays({
+              minDate: 1_700_000_000,
+              maxDate: 1_700_600_000,
+            }),
+            followers: avp(
+              chat.membersCount ?? 0,
+              (chat.membersCount ?? 0) - 50
+            ),
+            viewsPerPost: avp(12_044, 11_000),
+            sharesPerPost: avp(18, 12),
+            reactionsPerPost: avp(9, 7),
+            viewsPerStory: avp(400, 380),
+            sharesPerStory: avp(3, 2),
+            reactionsPerStory: avp(5, 4),
+            enabledNotifications: new Api.StatsPercentValue({
+              part: 62,
+              total: 100,
+            }),
+            growthGraph: g,
+            followersGraph: this.asyncGraph("async-followers"),
+            muteGraph: this.errorGraph("no data"),
+            topHoursGraph: g,
+            interactionsGraph: g,
+            ivInteractionsGraph: g,
+            viewsBySourceGraph: g,
+            newFollowersBySourceGraph: g,
+            languagesGraph: g,
+            reactionsByEmotionGraph: g,
+            storyInteractionsGraph: g,
+            storyReactionsByEmotionGraph: g,
+            recentPostsInteractions: chat.messages.slice(0, 3).map(
+              (m) =>
+                new Api.PostInteractionCountersMessage({
+                  msgId: m.id,
+                  views: m.views ?? 0,
+                  forwards: m.forwards ?? 0,
+                  reactions: (m.reactions ?? []).length,
+                })
+            ),
+          })
+        );
       }
-      case 'stats.GetMegagroupStats': {
+      case "stats.GetMegagroupStats": {
         const chat = this.chat(request.channel);
-        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
-        const avp = (current: number, previous = current) => new Api.StatsAbsValueAndPrev({ current, previous });
+        if (!chat.stats) {
+          throw new Error("CHAT_ADMIN_REQUIRED");
+        }
+        const avp = (current: number, previous = current) =>
+          new Api.StatsAbsValueAndPrev({ current, previous });
         const g = this.statsGraph('{"columns":[["x",1,2],["y",3,4]]}');
         const members = chat.members ?? [];
-        return new Api.stats.MegagroupStats(args({
-          period: new Api.StatsDateRangeDays({ minDate: 1_700_000_000, maxDate: 1_700_600_000 }),
-          members: avp(chat.membersCount ?? members.length, (chat.membersCount ?? members.length) - 2),
-          messages: avp(chat.messages.length, chat.messages.length - 1),
-          viewers: avp(3, 2),
-          posters: avp(2, 2),
-          growthGraph: g, membersGraph: this.asyncGraph('async-members'), newMembersBySourceGraph: g,
-          languagesGraph: this.errorGraph('not enough data'), messagesGraph: g, actionsGraph: g,
-          topHoursGraph: g, weekdaysGraph: g,
-          topPosters: members.slice(0, 2).map((m, i) => new Api.StatsGroupTopPoster({ userId: bigInt(m.userId), messages: 20 - i * 5, avgChars: 80 - i * 10 })),
-          topAdmins: members.filter(m => m.role).map(m => new Api.StatsGroupTopAdmin({ userId: bigInt(m.userId), deleted: 2, kicked: 1, banned: 0 })),
-          topInviters: members.slice(0, 1).map(m => new Api.StatsGroupTopInviter({ userId: bigInt(m.userId), invitations: 7 })),
-          users: members.flatMap(m => { const u = this.findUser(m.userId); return u ? [this.user(u)] : []; }),
-        }));
+        return new Api.stats.MegagroupStats(
+          args({
+            period: new Api.StatsDateRangeDays({
+              minDate: 1_700_000_000,
+              maxDate: 1_700_600_000,
+            }),
+            members: avp(
+              chat.membersCount ?? members.length,
+              (chat.membersCount ?? members.length) - 2
+            ),
+            messages: avp(chat.messages.length, chat.messages.length - 1),
+            viewers: avp(3, 2),
+            posters: avp(2, 2),
+            growthGraph: g,
+            membersGraph: this.asyncGraph("async-members"),
+            newMembersBySourceGraph: g,
+            languagesGraph: this.errorGraph("not enough data"),
+            messagesGraph: g,
+            actionsGraph: g,
+            topHoursGraph: g,
+            weekdaysGraph: g,
+            topPosters: members.slice(0, 2).map(
+              (m, i) =>
+                new Api.StatsGroupTopPoster({
+                  userId: bigInt(m.userId),
+                  messages: 20 - i * 5,
+                  avgChars: 80 - i * 10,
+                })
+            ),
+            topAdmins: members
+              .filter((m) => m.role)
+              .map(
+                (m) =>
+                  new Api.StatsGroupTopAdmin({
+                    userId: bigInt(m.userId),
+                    deleted: 2,
+                    kicked: 1,
+                    banned: 0,
+                  })
+              ),
+            topInviters: members.slice(0, 1).map(
+              (m) =>
+                new Api.StatsGroupTopInviter({
+                  userId: bigInt(m.userId),
+                  invitations: 7,
+                })
+            ),
+            users: members.flatMap((m) => {
+              const u = this.findUser(m.userId);
+              return u ? [this.user(u)] : [];
+            }),
+          })
+        );
       }
-      case 'stats.LoadAsyncGraph': {
-        return this.statsGraph(`{"token":"${request.token}","columns":[["x",1,2],["y",5,6]]}`);
+      case "stats.LoadAsyncGraph": {
+        return this.statsGraph(
+          `{"token":"${request.token}","columns":[["x",1,2],["y",5,6]]}`
+        );
       }
-      case 'stats.GetMessagePublicForwards':
-      case 'stats.GetStoryPublicForwards': {
+      case "stats.GetMessagePublicForwards":
+      case "stats.GetStoryPublicForwards": {
         const chat = this.chat(request.channel ?? request.peer);
-        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
-        // A public forward of this post into another supergroup we can name.
-        const into = this.world.chats.find(c => c.kind === 'supergroup' && c.id !== chat.id) ?? chat;
-        const fwdMsg = new Api.Message(args({ id: 999, date: now(), message: 'reposted', peerId: this.peerOf(into), views: 123 }));
-        return new Api.stats.PublicForwards(args({
-          count: 1,
-          forwards: [new Api.PublicForwardMessage({ message: fwdMsg })],
-          chats: [this.entityOf(into)],
-          users: [],
-          nextOffset: undefined,
-        }));
+        if (!chat.stats) {
+          throw new Error("CHAT_ADMIN_REQUIRED");
+        }
+        const into =
+          this.world.chats.find(
+            (c) => c.kind === "supergroup" && c.id !== chat.id
+          ) ?? chat;
+        const fwdMsg = new Api.Message(
+          args({
+            id: 999,
+            date: now(),
+            message: "reposted",
+            peerId: this.peerOf(into),
+            views: 123,
+          })
+        );
+        return new Api.stats.PublicForwards(
+          args({
+            count: 1,
+            forwards: [new Api.PublicForwardMessage({ message: fwdMsg })],
+            chats: [this.entityOf(into)],
+            users: [],
+            nextOffset: undefined,
+          })
+        );
       }
-      case 'stats.GetMessageStats':
-      case 'stats.GetStoryStats': {
+      case "stats.GetMessageStats":
+      case "stats.GetStoryStats": {
         const chat = this.chat(request.channel ?? request.peer);
-        if (!chat.stats) throw new Error('CHAT_ADMIN_REQUIRED');
+        if (!chat.stats) {
+          throw new Error("CHAT_ADMIN_REQUIRED");
+        }
         const g = this.statsGraph('{"columns":[["x",1,2],["y",7,8]]}');
-        return new Api.stats.MessageStats(args({ viewsGraph: g, reactionsByEmotionGraph: this.errorGraph('no reactions') }));
+        return new Api.stats.MessageStats(
+          args({
+            viewsGraph: g,
+            reactionsByEmotionGraph: this.errorGraph("no reactions"),
+          })
+        );
       }
-      case 'messages.GetFullChat': return this.fullChat(this.chat(bigInt(`-${request.chatId.toString()}`)));
-      case 'channels.GetParticipants': return this.participants(request);
-      case 'messages.GetDialogFilters': return { filters: (this.world.folders ?? []).map(f => this.folder(f)) };
-      case 'messages.UpdateDialogFilter': {
+      case "messages.GetFullChat": {
+        return this.fullChat(
+          this.chat(bigInt(`-${request.chatId.toString()}`))
+        );
+      }
+      case "channels.GetParticipants": {
+        return this.participants(request);
+      }
+      case "messages.GetDialogFilters": {
+        return {
+          filters: (this.world.folders ?? []).map((f) => this.folder(f)),
+        };
+      }
+      case "messages.UpdateDialogFilter": {
         const folders = (this.world.folders ??= []);
-        const index = folders.findIndex(f => f.id === request.id);
-        if (!request.filter) {
-          if (index >= 0) folders.splice(index, 1);
-        } else {
-          const title = typeof request.filter.title === 'string' ? request.filter.title : request.filter.title?.text ?? 'Untitled';
-          const ids = (peers: unknown[] = []) => peers.map(p => this.chat(p).id);
-          const next = { id: request.id, title, emoticon: request.filter.emoticon, include: ids(request.filter.includePeers), exclude: ids(request.filter.excludePeers) };
-          if (index >= 0) folders[index] = next;
-          else folders.push(next);
+        const index = folders.findIndex((f) => f.id === request.id);
+        if (request.filter) {
+          const title =
+            typeof request.filter.title === "string"
+              ? request.filter.title
+              : (request.filter.title?.text ?? "Untitled");
+          const ids = (peers: unknown[] = []) =>
+            peers.map((p) => this.chat(p).id);
+          const next = {
+            id: request.id,
+            title,
+            emoticon: request.filter.emoticon,
+            include: ids(request.filter.includePeers),
+            exclude: ids(request.filter.excludePeers),
+          };
+          if (index !== -1) {
+            folders[index] = next;
+          } else {
+            folders.push(next);
+          }
+        } else if (index !== -1) {
+          folders.splice(index, 1);
         }
         this.save();
         return true;
       }
-      case 'messages.GetForumTopics': {
+      case "messages.GetForumTopics": {
         const chat = this.chat(request.peer);
         const q = request.q?.toLowerCase();
-        const topics = (chat.topics ?? []).filter(t => !q || t.title.toLowerCase().includes(q)).slice(0, request.limit ?? 100);
+        const topics = (chat.topics ?? [])
+          .filter((t) => !q || t.title.toLowerCase().includes(q))
+          .slice(0, request.limit ?? 100);
         return {
-          topics: topics.map(t => new Api.ForumTopic(args({
-            id: t.id,
-            date: 0,
-            title: t.title,
-            iconColor: 0,
-            topMessage: chat.messages.filter(m => m.thread === t.id || m.id === t.id).reduce((max, m) => Math.max(max, m.id), t.id),
-            readInboxMaxId: 0,
-            readOutboxMaxId: 0,
-            unreadCount: t.unread ?? 0,
-            unreadMentionsCount: 0,
-            unreadReactionsCount: 0,
-            fromId: new Api.PeerUser({ userId: bigInt(this.world.me) }),
-            notifySettings: new Api.PeerNotifySettings({}),
-            closed: t.closed,
-            pinned: t.pinned,
-          }))),
+          topics: topics.map(
+            (t) =>
+              new Api.ForumTopic(
+                args({
+                  id: t.id,
+                  date: 0,
+                  title: t.title,
+                  iconColor: 0,
+                  topMessage: chat.messages
+                    .filter((m) => m.thread === t.id || m.id === t.id)
+                    .reduce((max, m) => Math.max(max, m.id), t.id),
+                  readInboxMaxId: 0,
+                  readOutboxMaxId: 0,
+                  unreadCount: t.unread ?? 0,
+                  unreadMentionsCount: 0,
+                  unreadReactionsCount: 0,
+                  fromId: new Api.PeerUser({ userId: bigInt(this.world.me) }),
+                  notifySettings: new Api.PeerNotifySettings({}),
+                  closed: t.closed,
+                  pinned: t.pinned,
+                })
+              )
+          ),
           count: topics.length,
         };
       }
-      case 'contacts.GetContacts': {
-        const users = this.world.users.filter(u => u.contact).map(u => this.user(u));
-        return new Api.contacts.Contacts({ contacts: [], savedCount: users.length, users });
+      case "contacts.GetContacts": {
+        const users = this.world.users
+          .filter((u) => u.contact)
+          .map((u) => this.user(u));
+        return new Api.contacts.Contacts({
+          contacts: [],
+          savedCount: users.length,
+          users,
+        });
       }
-      case 'channels.ExportMessageLink': {
+      case "channels.ExportMessageLink": {
         const chat = this.chat(request.channel);
-        if (!chat.messages.some(m => m.id === request.id)) throw new Error('MESSAGE_ID_INVALID: no such message');
-        return { link: `https://t.me/${chat.username ?? `c/${chat.id}`}/${request.id}${request.thread ? '?thread=1' : ''}`, html: '' };
+        if (!chat.messages.some((m) => m.id === request.id)) {
+          throw new Error("MESSAGE_ID_INVALID: no such message");
+        }
+        return {
+          link: `https://t.me/${chat.username ?? `c/${chat.id}`}/${request.id}${request.thread ? "?thread=1" : ""}`,
+          html: "",
+        };
       }
-      case 'messages.SendReaction': {
+      case "messages.SendReaction": {
         const m = this.findMessage(request.peer, request.msgId);
-        const others = (m.reactions ?? []).filter(r => r.userId !== this.world.me);
-        const mine = (request.reaction ?? []).map((r: { emoticon?: string }) => ({ userId: this.world.me, emoji: r.emoticon ?? '?' }));
+        const others = (m.reactions ?? []).filter(
+          (r) => r.userId !== this.world.me
+        );
+        const mine = (request.reaction ?? []).map(
+          (r: { emoticon?: string }) => ({
+            userId: this.world.me,
+            emoji: r.emoticon ?? "?",
+          })
+        );
         m.reactions = [...others, ...mine];
-        if (!m.reactions.length) delete m.reactions;
+        if (!m.reactions.length) {
+          delete m.reactions;
+        }
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({ updates: [], users: [], chats: [], date: now(), seq: 0 })
+        );
       }
-      case 'messages.GetMessageReactionsList': {
+      case "messages.GetMessageReactionsList": {
         const m = this.findMessage(request.peer, request.id);
         const reactions = (m.reactions ?? []).slice(0, request.limit ?? 50);
         return {
           count: reactions.length,
-          reactions: reactions.map(r => new Api.MessagePeerReaction({
-            peerId: new Api.PeerUser({ userId: bigInt(r.userId) }),
-            date: now(),
-            reaction: this.reactionOf(r),
-          })),
-          users: reactions.flatMap(r => { const u = this.findUser(r.userId); return u ? [this.user(u)] : []; }),
+          reactions: reactions.map(
+            (r) =>
+              new Api.MessagePeerReaction({
+                peerId: new Api.PeerUser({ userId: bigInt(r.userId) }),
+                date: now(),
+                reaction: this.reactionOf(r),
+              })
+          ),
+          users: reactions.flatMap((r) => {
+            const u = this.findUser(r.userId);
+            return u ? [this.user(u)] : [];
+          }),
           chats: [],
         };
       }
-      case 'messages.GetBotCallbackAnswer': return this.pressButton(request);
-      case 'messages.SetTyping': return true;
-      case 'account.UpdateNotifySettings': {
+      case "messages.GetBotCallbackAnswer": {
+        return this.pressButton(request);
+      }
+      case "messages.SetTyping": {
+        return true;
+      }
+      case "account.UpdateNotifySettings": {
         const chat = this.chat(request.peer);
         const until = request.settings?.muteUntil ?? 0;
-        if (until > now()) chat.mutedUntil = until;
-        else delete chat.mutedUntil;
-        this.save();
-        return true;
-      }
-      case 'contacts.Block':
-      case 'contacts.Unblock': {
-        const user = this.locate(request.id).user;
-        if (!user) throw new Error('CONTACT_ID_INVALID');
-        user.blocked = request.className === 'contacts.Block' || undefined;
-        this.save();
-        return true;
-      }
-      case 'contacts.AddContact': {
-        const user = this.locate(request.id).user;
-        if (!user) throw new Error('CONTACT_ID_INVALID');
-        user.contact = true;
-        if (request.firstName) user.firstName = request.firstName;
-        if (request.lastName) user.lastName = request.lastName;
-        this.save();
-        return new Api.Updates(args({ updates: [], users: [this.user(user)], chats: [], date: now(), seq: 0 }));
-      }
-      case 'contacts.DeleteContacts': {
-        for (const id of request.id ?? []) {
-          const user = this.locate(id).user;
-          if (user) delete user.contact;
+        if (until > now()) {
+          chat.mutedUntil = until;
+        } else {
+          delete chat.mutedUntil;
         }
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
+        return true;
       }
-      case 'channels.GetParticipant': {
+      case "contacts.Block":
+      case "contacts.Unblock": {
+        const { user } = this.locate(request.id);
+        if (!user) {
+          throw new Error("CONTACT_ID_INVALID");
+        }
+        user.blocked = request.className === "contacts.Block" || undefined;
+        this.save();
+        return true;
+      }
+      case "contacts.AddContact": {
+        const { user } = this.locate(request.id);
+        if (!user) {
+          throw new Error("CONTACT_ID_INVALID");
+        }
+        user.contact = true;
+        if (request.firstName) {
+          user.firstName = request.firstName;
+        }
+        if (request.lastName) {
+          user.lastName = request.lastName;
+        }
+        this.save();
+        return new Api.Updates(
+          args({
+            updates: [],
+            users: [this.user(user)],
+            chats: [],
+            date: now(),
+            seq: 0,
+          })
+        );
+      }
+      case "contacts.DeleteContacts": {
+        for (const id of request.id ?? []) {
+          const { user } = this.locate(id);
+          if (user) {
+            delete user.contact;
+          }
+        }
+        this.save();
+        return new Api.Updates(
+          args({ updates: [], users: [], chats: [], date: now(), seq: 0 })
+        );
+      }
+      case "channels.GetParticipant": {
         const chat = this.chat(request.channel);
         const userId = this.locate(request.participant).user?.id;
-        const member = chat.members?.find(m => m.userId === userId);
-        if (!member) throw new Error('USER_NOT_PARTICIPANT');
+        const member = chat.members?.find((m) => m.userId === userId);
+        if (!member) {
+          throw new Error("USER_NOT_PARTICIPANT");
+        }
         const uid = bigInt(member.userId);
-        const rights = new Api.ChatAdminRights({ changeInfo: true, deleteMessages: true, banUsers: true, inviteUsers: true, pinMessages: true });
-        const participant = member.role === 'creator'
-          ? new Api.ChannelParticipantCreator({ userId: uid, adminRights: rights })
-          : member.role === 'admin'
-            ? new Api.ChannelParticipantAdmin(args({ userId: uid, promotedBy: uid, date: 0, adminRights: rights }))
-            : new Api.ChannelParticipant({ userId: uid, date: 0 });
+        const rights = new Api.ChatAdminRights({
+          changeInfo: true,
+          deleteMessages: true,
+          banUsers: true,
+          inviteUsers: true,
+          pinMessages: true,
+        });
+        const participant =
+          member.role === "creator"
+            ? new Api.ChannelParticipantCreator({
+                userId: uid,
+                adminRights: rights,
+              })
+            : member.role === "admin"
+              ? new Api.ChannelParticipantAdmin(
+                  args({
+                    userId: uid,
+                    promotedBy: uid,
+                    date: 0,
+                    adminRights: rights,
+                  })
+                )
+              : new Api.ChannelParticipant({ userId: uid, date: 0 });
         const u = this.findUser(member.userId);
-        return new Api.channels.ChannelParticipant(args({ participant, chats: [this.entityOf(chat)], users: u ? [this.user(u)] : [] }));
+        return new Api.channels.ChannelParticipant(
+          args({
+            participant,
+            chats: [this.entityOf(chat)],
+            users: u ? [this.user(u)] : [],
+          })
+        );
       }
-      case 'messages.EditChatDefaultBannedRights': {
+      case "messages.EditChatDefaultBannedRights": {
         const chat = this.chat(request.peer);
         chat.defaultBannedFlags = bannedFlags(request.bannedRights);
-        if (!chat.defaultBannedFlags.length) delete chat.defaultBannedFlags;
+        if (!chat.defaultBannedFlags.length) {
+          delete chat.defaultBannedFlags;
+        }
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({
+            updates: [],
+            users: [],
+            chats: [this.entityOf(chat)],
+            date: now(),
+            seq: 0,
+          })
+        );
       }
-      case 'channels.EditBanned': {
+      case "channels.EditBanned": {
         const chat = this.chat(request.channel);
         const userId = this.locate(request.participant).user?.id;
-        if (userId === undefined) throw new Error('USER_ID_INVALID');
+        if (userId === undefined) {
+          throw new Error("USER_ID_INVALID");
+        }
         const flags = bannedFlags(request.bannedRights);
-        const list = (chat.bannedUsers ??= []).filter(b => b.userId !== userId);
-        if (flags.length) list.push({ userId, flags, until: request.bannedRights?.untilDate || undefined });
+        const list = (chat.bannedUsers ??= []).filter(
+          (b) => b.userId !== userId
+        );
+        if (flags.length) {
+          list.push({
+            userId,
+            flags,
+            until: request.bannedRights?.untilDate || undefined,
+          });
+        }
         chat.bannedUsers = list;
-        if (!chat.bannedUsers.length) delete chat.bannedUsers;
+        if (!chat.bannedUsers.length) {
+          delete chat.bannedUsers;
+        }
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({
+            updates: [],
+            users: [],
+            chats: [this.entityOf(chat)],
+            date: now(),
+            seq: 0,
+          })
+        );
       }
-      case 'messages.CreateForumTopic': {
+      case "messages.CreateForumTopic": {
         const chat = this.chat(request.peer);
         const topics = (chat.topics ??= []);
         const id = topics.reduce((max, t) => Math.max(max, t.id), 1) + 1;
         topics.push({ id, title: request.title });
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({
+            updates: [],
+            users: [],
+            chats: [this.entityOf(chat)],
+            date: now(),
+            seq: 0,
+          })
+        );
       }
-      case 'messages.EditForumTopic': {
+      case "messages.EditForumTopic": {
         const chat = this.chat(request.peer);
-        const topic = (chat.topics ?? []).find(t => t.id === request.topicId);
-        if (!topic) throw new Error('TOPIC_ID_INVALID');
-        if (request.title !== undefined) topic.title = request.title;
-        if (request.closed !== undefined) topic.closed = request.closed || undefined;
-        if (request.hidden !== undefined) topic.hidden = request.hidden || undefined;
+        const topic = (chat.topics ?? []).find((t) => t.id === request.topicId);
+        if (!topic) {
+          throw new Error("TOPIC_ID_INVALID");
+        }
+        if (request.title !== undefined) {
+          topic.title = request.title;
+        }
+        if (request.closed !== undefined) {
+          topic.closed = request.closed || undefined;
+        }
+        if (request.hidden !== undefined) {
+          topic.hidden = request.hidden || undefined;
+        }
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({
+            updates: [],
+            users: [],
+            chats: [this.entityOf(chat)],
+            date: now(),
+            seq: 0,
+          })
+        );
       }
-      case 'messages.UpdatePinnedForumTopic': {
+      case "messages.UpdatePinnedForumTopic": {
         const chat = this.chat(request.peer);
-        const topic = (chat.topics ?? []).find(t => t.id === request.topicId);
-        if (!topic) throw new Error('TOPIC_ID_INVALID');
+        const topic = (chat.topics ?? []).find((t) => t.id === request.topicId);
+        if (!topic) {
+          throw new Error("TOPIC_ID_INVALID");
+        }
         topic.pinned = request.pinned || undefined;
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat)], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({
+            updates: [],
+            users: [],
+            chats: [this.entityOf(chat)],
+            date: now(),
+            seq: 0,
+          })
+        );
       }
-      case 'account.GetAuthorizations': {
-        return new Api.account.Authorizations(args({
-          authorizationTtlDays: 180,
-          authorizations: [
-            new Api.Authorization(args({ current: true, officialApp: true, hash: bigInt(0), deviceModel: 'CLI', platform: 'Linux', systemVersion: '6.12', apiId: 1, appName: 'better-tg-cli', appVersion: '0', dateCreated: now() - 86400, dateActive: now(), ip: '127.0.0.1', country: 'Nowhere', region: '' })),
-            new Api.Authorization(args({ hash: bigInt(2), deviceModel: 'iPhone', platform: 'iOS', systemVersion: '18', apiId: 2, appName: 'Telegram', appVersion: '11', dateCreated: now() - 30 * 86400, dateActive: now() - 3600, ip: '10.0.0.2', country: 'Elsewhere', region: '' })),
-          ],
-        }));
+      case "account.GetAuthorizations": {
+        return new Api.account.Authorizations(
+          args({
+            authorizationTtlDays: 180,
+            authorizations: [
+              new Api.Authorization(
+                args({
+                  current: true,
+                  officialApp: true,
+                  hash: bigInt(0),
+                  deviceModel: "CLI",
+                  platform: "Linux",
+                  systemVersion: "6.12",
+                  apiId: 1,
+                  appName: "better-tg-cli",
+                  appVersion: "0",
+                  dateCreated: now() - 86_400,
+                  dateActive: now(),
+                  ip: "127.0.0.1",
+                  country: "Nowhere",
+                  region: "",
+                })
+              ),
+              new Api.Authorization(
+                args({
+                  hash: bigInt(2),
+                  deviceModel: "iPhone",
+                  platform: "iOS",
+                  systemVersion: "18",
+                  apiId: 2,
+                  appName: "Telegram",
+                  appVersion: "11",
+                  dateCreated: now() - 30 * 86_400,
+                  dateActive: now() - 3600,
+                  ip: "10.0.0.2",
+                  country: "Elsewhere",
+                  region: "",
+                })
+              ),
+            ],
+          })
+        );
       }
-      case 'payments.GetStarsStatus': {
-        return new Api.payments.StarsStatus(args({ balance: new Api.StarsAmount({ amount: bigInt(this.world.stars ?? 0), nanos: 0 }), history: [], chats: [], users: [] }));
+      case "payments.GetStarsStatus": {
+        return new Api.payments.StarsStatus(
+          args({
+            balance: new Api.StarsAmount({
+              amount: bigInt(this.world.stars ?? 0),
+              nanos: 0,
+            }),
+            history: [],
+            chats: [],
+            users: [],
+          })
+        );
       }
-      case 'payments.GetStarsTransactions': {
-        const tx = (id: string, stars: number, title: string, refund = false) => new Api.StarsTransaction(args({
-          id, amount: new Api.StarsAmount({ amount: bigInt(stars), nanos: 0 }), date: now() - 3600, title, refund: refund || undefined, peer: new Api.StarsTransactionPeerAppStore(),
-        }));
-        return new Api.payments.StarsStatus(args({
-          balance: new Api.StarsAmount({ amount: bigInt(this.world.stars ?? 0), nanos: 0 }),
-          history: [tx('t1', 100, 'Top-up'), tx('t2', 25, 'Reaction', true)],
-          chats: [], users: [],
-        }));
+      case "payments.GetStarsTransactions": {
+        const tx = (id: string, stars: number, title: string, refund = false) =>
+          new Api.StarsTransaction(
+            args({
+              id,
+              amount: new Api.StarsAmount({ amount: bigInt(stars), nanos: 0 }),
+              date: now() - 3600,
+              title,
+              refund: refund || undefined,
+              peer: new Api.StarsTransactionPeerAppStore(),
+            })
+          );
+        return new Api.payments.StarsStatus(
+          args({
+            balance: new Api.StarsAmount({
+              amount: bigInt(this.world.stars ?? 0),
+              nanos: 0,
+            }),
+            history: [tx("t1", 100, "Top-up"), tx("t2", 25, "Reaction", true)],
+            chats: [],
+            users: [],
+          })
+        );
       }
-      case 'messages.GetExportedChatInvites': {
+      case "messages.GetExportedChatInvites": {
         const chat = this.chat(request.peer);
         const invites = chat.role
-          ? [new Api.ChatInviteExported(args({ link: `https://t.me/+mock${chat.id}`, permanent: true, adminId: bigInt(this.world.me), date: now() - 86400, usage: 12 }))]
+          ? [
+              new Api.ChatInviteExported(
+                args({
+                  link: `https://t.me/+mock${chat.id}`,
+                  permanent: true,
+                  adminId: bigInt(this.world.me),
+                  date: now() - 86_400,
+                  usage: 12,
+                })
+              ),
+            ]
           : [];
-        return new Api.messages.ExportedChatInvites(args({ count: invites.length, invites, users: [] }));
+        return new Api.messages.ExportedChatInvites(
+          args({ count: invites.length, invites, users: [] })
+        );
       }
-      case 'messages.GetChatInviteImporters': {
+      case "messages.GetChatInviteImporters": {
         const chat = this.chat(request.peer);
         const reqs = request.requested ? (chat.joinRequests ?? []) : [];
-        return new Api.messages.ChatInviteImporters(args({
-          count: reqs.length,
-          importers: reqs.map(r => new Api.ChatInviteImporter(args({ requested: true, userId: bigInt(r.userId), date: now() - (r.ago ?? 0), about: r.about }))),
-          users: reqs.flatMap(r => { const u = this.findUser(r.userId); return u ? [this.user(u)] : []; }),
-        }));
+        return new Api.messages.ChatInviteImporters(
+          args({
+            count: reqs.length,
+            importers: reqs.map(
+              (r) =>
+                new Api.ChatInviteImporter(
+                  args({
+                    requested: true,
+                    userId: bigInt(r.userId),
+                    date: now() - (r.ago ?? 0),
+                    about: r.about,
+                  })
+                )
+            ),
+            users: reqs.flatMap((r) => {
+              const u = this.findUser(r.userId);
+              return u ? [this.user(u)] : [];
+            }),
+          })
+        );
       }
-      case 'messages.GetScheduledHistory': {
+      case "messages.GetScheduledHistory": {
         const chat = this.chat(request.peer);
         const list = chat.scheduled ?? [];
-        return new Api.messages.Messages(args({ messages: list.map(m => this.message(chat, m)), chats: [], users: [] }));
+        return new Api.messages.Messages(
+          args({
+            messages: list.map((m) => this.message(chat, m)),
+            chats: [],
+            users: [],
+          })
+        );
       }
-      case 'messages.GetAllDrafts': {
-        const drafts = this.world.chats.filter(c => c.draft);
-        return new Api.Updates(args({
-          updates: drafts.map(c => new Api.UpdateDraftMessage({ peer: this.peerOf(c), draft: new Api.DraftMessage({ message: c.draft!, date: now() }) })),
-          users: this.world.users.map(u => this.user(u)),
-          chats: this.world.chats.filter(c => c.kind !== 'user').map(c => this.entityOf(c)),
-          date: now(), seq: 0,
-        }));
+      case "messages.GetAllDrafts": {
+        const drafts = this.world.chats.filter((c) => c.draft);
+        return new Api.Updates(
+          args({
+            updates: drafts.map(
+              (c) =>
+                new Api.UpdateDraftMessage({
+                  peer: this.peerOf(c),
+                  draft: new Api.DraftMessage({
+                    message: c.draft!,
+                    date: now(),
+                  }),
+                })
+            ),
+            users: this.world.users.map((u) => this.user(u)),
+            chats: this.world.chats
+              .filter((c) => c.kind !== "user")
+              .map((c) => this.entityOf(c)),
+            date: now(),
+            seq: 0,
+          })
+        );
       }
-      case 'channels.GetAdminLog': {
+      case "channels.GetAdminLog": {
         const chat = this.chat(request.channel);
-        const toAction = (e: NonNullable<MockChat['adminLog']>[number]) =>
-          e.action === 'title' ? new Api.ChannelAdminLogEventActionChangeTitle({ prevValue: e.prev ?? '', newValue: e.now ?? '' })
-            : e.action === 'join' ? new Api.ChannelAdminLogEventActionParticipantJoin()
+        const toAction = (e: NonNullable<MockChat["adminLog"]>[number]) =>
+          e.action === "title"
+            ? new Api.ChannelAdminLogEventActionChangeTitle({
+                prevValue: e.prev ?? "",
+                newValue: e.now ?? "",
+              })
+            : e.action === "join"
+              ? new Api.ChannelAdminLogEventActionParticipantJoin()
               : new Api.ChannelAdminLogEventActionParticipantLeave();
-        const events = [...(chat.adminLog ?? [])].reverse().map(e => new Api.ChannelAdminLogEvent(args({
-          id: bigInt(e.id), date: now() - (e.ago ?? 0), userId: bigInt(e.userId), action: toAction(e),
-        })));
-        return new Api.channels.AdminLogResults(args({
-          events, chats: [this.entityOf(chat)], users: this.world.users.map(u => this.user(u)),
-        }));
+        const events = [...(chat.adminLog ?? [])].reverse().map(
+          (e) =>
+            new Api.ChannelAdminLogEvent(
+              args({
+                id: bigInt(e.id),
+                date: now() - (e.ago ?? 0),
+                userId: bigInt(e.userId),
+                action: toAction(e),
+              })
+            )
+        );
+        return new Api.channels.AdminLogResults(
+          args({
+            events,
+            chats: [this.entityOf(chat)],
+            users: this.world.users.map((u) => this.user(u)),
+          })
+        );
       }
-      case 'photos.GetUserPhotos': {
-        const user = this.locate(request.userId).user;
-        if (!user) throw new Error('USER_ID_INVALID');
+      case "photos.GetUserPhotos": {
+        const { user } = this.locate(request.userId);
+        if (!user) {
+          throw new Error("USER_ID_INVALID");
+        }
         const count = user.profilePhotos ?? 0;
-        const photos = Array.from({ length: count }, (_unused, i) => new Api.Photo(args({
-          id: bigInt(user.id * 100 + i), accessHash: HASH, fileReference: Buffer.alloc(0),
-          date: now() - i * 86400, sizes: [], dcId: 1,
-        })));
-        return new Api.photos.PhotosSlice(args({ count, photos, users: [this.user(user)] }));
+        const photos = Array.from(
+          { length: count },
+          (_unused, i) =>
+            new Api.Photo(
+              args({
+                id: bigInt(user.id * 100 + i),
+                accessHash: HASH,
+                fileReference: Buffer.alloc(0),
+                date: now() - i * 86_400,
+                sizes: [],
+                dcId: 1,
+              })
+            )
+        );
+        return new Api.photos.PhotosSlice(
+          args({ count, photos, users: [this.user(user)] })
+        );
       }
-      case 'messages.ToggleDialogPin': {
+      case "messages.ToggleDialogPin": {
         const chat = this.chat(request.peer);
-        if (request.pinned) chat.pinnedDialog = true; else delete chat.pinnedDialog;
+        if (request.pinned) {
+          chat.pinnedDialog = true;
+        } else {
+          delete chat.pinnedDialog;
+        }
         this.save();
         return true;
       }
-      case 'messages.MarkDialogUnread': {
+      case "messages.MarkDialogUnread": {
         const chat = this.chat(request.peer);
-        if (request.unread) chat.markedUnread = true; else delete chat.markedUnread;
+        if (request.unread) {
+          chat.markedUnread = true;
+        } else {
+          delete chat.markedUnread;
+        }
         this.save();
         return true;
       }
-      case 'messages.DeleteHistory': {
+      case "messages.DeleteHistory": {
         const chat = this.chat(request.peer);
-        if (request.justClear) chat.messages = [];
-        else { const i = this.world.chats.indexOf(chat); if (i >= 0) this.world.chats.splice(i, 1); }
+        if (request.justClear) {
+          chat.messages = [];
+        } else {
+          const i = this.world.chats.indexOf(chat);
+          if (i !== -1) {
+            this.world.chats.splice(i, 1);
+          }
+        }
         this.save();
-        return new Api.messages.AffectedHistory(args({ pts: 0, ptsCount: 0, offset: 0 }));
+        return new Api.messages.AffectedHistory(
+          args({ pts: 0, ptsCount: 0, offset: 0 })
+        );
       }
-      case 'messages.CreateChat': {
+      case "messages.CreateChat": {
         const members: number[] = [];
         for (const u of request.users ?? []) {
-          const user = this.locate(u).user;
-          if (!user) throw new Error('USER_ID_INVALID');
+          const { user } = this.locate(u);
+          if (!user) {
+            throw new Error("USER_ID_INVALID");
+          }
           members.push(user.id);
         }
-        const id = Math.max(3000, ...this.world.chats.filter(c => c.kind === 'group').map(c => c.id)) + 1;
-        const chat: MockChat = { id, kind: 'group', title: request.title, role: 'creator', members: [{ userId: this.world.me, role: 'creator' }, ...members.map(userId => ({ userId }))], messages: [] };
+        const id =
+          Math.max(
+            3000,
+            ...this.world.chats
+              .filter((c) => c.kind === "group")
+              .map((c) => c.id)
+          ) + 1;
+        const chat: MockChat = {
+          id,
+          kind: "group",
+          title: request.title,
+          role: "creator",
+          members: [
+            { userId: this.world.me, role: "creator" },
+            ...members.map((userId) => ({ userId })),
+          ],
+          messages: [],
+        };
         this.world.chats.push(chat);
         this.save();
         return new Api.messages.InvitedUsers({
-          updates: new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat) as Api.Chat], date: now(), seq: 0 })),
+          updates: new Api.Updates(
+            args({
+              updates: [],
+              users: [],
+              chats: [this.entityOf(chat) as Api.Chat],
+              date: now(),
+              seq: 0,
+            })
+          ),
           missingInvitees: [],
         });
       }
-      case 'channels.JoinChannel': {
+      case "channels.JoinChannel": {
         const chat = this.chat(request.channel);
-        if (!chat.members?.some(m => m.userId === this.world.me)) (chat.members ??= []).push({ userId: this.world.me });
+        if (!chat.members?.some((m) => m.userId === this.world.me)) {
+          (chat.members ??= []).push({ userId: this.world.me });
+        }
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [this.entityOf(chat) as Api.Channel], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({
+            updates: [],
+            users: [],
+            chats: [this.entityOf(chat) as Api.Channel],
+            date: now(),
+            seq: 0,
+          })
+        );
       }
-      case 'photos.UploadProfilePhoto': {
+      case "photos.UploadProfilePhoto": {
         const me = this.findUser(this.world.me)!;
         me.profilePhotos = (me.profilePhotos ?? 0) + 1;
         this.save();
-        return new Api.photos.Photo({ photo: new Api.PhotoEmpty({ id: bigInt(1) }), users: [] });
+        return new Api.photos.Photo({
+          photo: new Api.PhotoEmpty({ id: bigInt(1) }),
+          users: [],
+        });
       }
-      case 'channels.LeaveChannel': {
+      case "channels.LeaveChannel": {
         const chat = this.chat(request.channel);
         const i = this.world.chats.indexOf(chat);
-        if (i >= 0) this.world.chats.splice(i, 1);
-        this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
-      }
-      case 'folders.EditPeerFolders': {
-        for (const item of request.folderPeers ?? []) {
-          const chat = this.chat(item.peer);
-          if (item.folderId === 1) chat.archived = true;
-          else delete chat.archived;
+        if (i !== -1) {
+          this.world.chats.splice(i, 1);
         }
         this.save();
-        return new Api.Updates(args({ updates: [], users: [], chats: [], date: now(), seq: 0 }));
+        return new Api.Updates(
+          args({ updates: [], users: [], chats: [], date: now(), seq: 0 })
+        );
       }
-      default:
+      case "folders.EditPeerFolders": {
+        for (const item of request.folderPeers ?? []) {
+          const chat = this.chat(item.peer);
+          if (item.folderId === 1) {
+            chat.archived = true;
+          } else {
+            delete chat.archived;
+          }
+        }
+        this.save();
+        return new Api.Updates(
+          args({ updates: [], users: [], chats: [], date: now(), seq: 0 })
+        );
+      }
+      default: {
         return notImplemented(`the request ${request.className}`);
+      }
     }
   }
 
   private findMessage(peer: unknown, id: number): MockMessage {
-    const m = this.chat(peer).messages.find(x => x.id === id);
-    if (!m) throw new Error('MESSAGE_ID_INVALID: no such message');
+    const m = this.chat(peer).messages.find((x) => x.id === id);
+    if (!m) {
+      throw new Error("MESSAGE_ID_INVALID: no such message");
+    }
     return m;
   }
 
   private commonChats(userId: number): number {
-    return this.world.chats.filter(c => c.kind !== 'user' && c.members?.some(m => m.userId === userId)).length;
+    return this.world.chats.filter(
+      (c) => c.kind !== "user" && c.members?.some((m) => m.userId === userId)
+    ).length;
   }
 
   private getReplies(request: Record<string, any>) {
     let chat = this.chat(request.peer);
     let rootId: number = request.msgId;
-    // Comments on a channel post live in the linked discussion group, under the forwarded copy
-    if (chat.kind === 'channel' && chat.linkedChatId) {
-      const post = chat.messages.find(m => m.id === rootId);
+    if (chat.kind === "channel" && chat.linkedChatId) {
+      const post = chat.messages.find((m) => m.id === rootId);
       const discussion = this.chat(bigInt(`-100${chat.linkedChatId}`));
-      const copy = discussion.messages.find(m => m.forwardedFrom === chat.id && m.text === post?.text);
-      if (!copy) return { messages: [], chats: [], users: [], count: 0 };
+      const copy = discussion.messages.find(
+        (m) => m.forwardedFrom === chat.id && m.text === post?.text
+      );
+      if (!copy) {
+        return { messages: [], chats: [], users: [], count: 0 };
+      }
       chat = discussion;
       rootId = copy.id;
     }
-    let list = this.newest(chat).filter(m => m.thread === rootId);
-    if (request.offsetId) list = list.filter(m => m.id < request.offsetId);
-    if (request.offsetDate) list = list.filter(m => this.date(m) < request.offsetDate);
-    if (request.minId) list = list.filter(m => m.id > request.minId);
-    return { messages: list.slice(0, request.limit ?? 100).map(m => this.message(chat, m)), chats: [], users: [], count: list.length };
+    let list = this.newest(chat).filter((m) => m.thread === rootId);
+    if (request.offsetId) {
+      list = list.filter((m) => m.id < request.offsetId);
+    }
+    if (request.offsetDate) {
+      list = list.filter((m) => this.date(m) < request.offsetDate);
+    }
+    if (request.minId) {
+      list = list.filter((m) => m.id > request.minId);
+    }
+    return {
+      messages: list
+        .slice(0, request.limit ?? 100)
+        .map((m) => this.message(chat, m)),
+      chats: [],
+      users: [],
+      count: list.length,
+    };
   }
 
   private search(chats: MockChat[], request: Record<string, any>) {
-    const q = String(request.q ?? '').toLowerCase();
-    const from = request.fromId ? this.locate(request.fromId).user?.id : undefined;
-    const filter: string = request.filter?.className ?? 'InputMessagesFilterEmpty';
+    const q = String(request.q ?? "").toLowerCase();
+    const from = request.fromId
+      ? this.locate(request.fromId).user?.id
+      : undefined;
+    const filter: string =
+      request.filter?.className ?? "InputMessagesFilterEmpty";
     const kinds: Record<string, (m: MockMessage) => boolean> = {
       InputMessagesFilterEmpty: () => true,
-      InputMessagesFilterPhotos: m => m.media?.kind === 'photo',
-      InputMessagesFilterVideo: m => m.media?.kind === 'video',
-      InputMessagesFilterPhotoVideo: m => m.media?.kind === 'photo' || m.media?.kind === 'video',
-      InputMessagesFilterDocument: m => m.media?.kind === 'document',
-      InputMessagesFilterVoice: m => m.media?.kind === 'voice',
-      InputMessagesFilterUrl: m => /https?:\/\//.test(m.text),
+      InputMessagesFilterPhotos: (m) => m.media?.kind === "photo",
+      InputMessagesFilterVideo: (m) => m.media?.kind === "video",
+      InputMessagesFilterPhotoVideo: (m) =>
+        m.media?.kind === "photo" || m.media?.kind === "video",
+      InputMessagesFilterDocument: (m) => m.media?.kind === "document",
+      InputMessagesFilterVoice: (m) => m.media?.kind === "voice",
+      InputMessagesFilterUrl: (m) => /https?:\/\//.test(m.text),
     };
     const matchesKind = kinds[filter] ?? ((m: MockMessage) => !!m.media);
     const hits: { chat: MockChat; m: MockMessage }[] = [];
     for (const chat of chats) {
       for (const m of chat.messages) {
-        if (q && !m.text.toLowerCase().includes(q)) continue;
-        if (!matchesKind(m)) continue;
-        if (from !== undefined && this.senderId(chat, m) !== from) continue;
+        if (q && !m.text.toLowerCase().includes(q)) {
+          continue;
+        }
+        if (!matchesKind(m)) {
+          continue;
+        }
+        if (from !== undefined && this.senderId(chat, m) !== from) {
+          continue;
+        }
         const date = this.date(m);
-        if (request.minDate && date < request.minDate) continue;
-        if (request.maxDate && date > request.maxDate) continue;
+        if (request.minDate && date < request.minDate) {
+          continue;
+        }
+        if (request.maxDate && date > request.maxDate) {
+          continue;
+        }
         hits.push({ chat, m });
       }
     }
     hits.sort((a, b) => this.date(b.m) - this.date(a.m));
     const shown = hits.slice(0, request.limit ?? 100);
-    const entities = [...new Set(shown.map(h => h.chat))].map(c => this.entityOf(c));
+    const entities = [...new Set(shown.map((h) => h.chat))].map((c) =>
+      this.entityOf(c)
+    );
     return {
-      messages: shown.map(h => this.message(h.chat, h.m)),
-      chats: entities.filter(e => !(e instanceof Api.User)),
-      users: entities.filter(e => e instanceof Api.User),
+      messages: shown.map((h) => this.message(h.chat, h.m)),
+      chats: entities.filter((e) => !(e instanceof Api.User)),
+      users: entities.filter((e) => e instanceof Api.User),
       count: hits.length,
     };
   }
 
   private fullChat(chat: MockChat) {
     const members = chat.members ?? [];
-    const participants = members.map(m => {
+    const participants = members.map((m) => {
       const userId = bigInt(m.userId);
-      if (m.role === 'creator') return new Api.ChatParticipantCreator({ userId });
-      if (m.role === 'admin') return new Api.ChatParticipantAdmin({ userId, inviterId: userId, date: 0 });
+      if (m.role === "creator") {
+        return new Api.ChatParticipantCreator({ userId });
+      }
+      if (m.role === "admin") {
+        return new Api.ChatParticipantAdmin({
+          userId,
+          inviterId: userId,
+          date: 0,
+        });
+      }
       return new Api.ChatParticipant({ userId, inviterId: userId, date: 0 });
     });
     return {
-      fullChat: new Api.ChatFull(args({
-        id: bigInt(chat.id),
-        about: chat.about ?? '',
-        participants: new Api.ChatParticipants({ chatId: bigInt(chat.id), participants, version: 1 }),
-        notifySettings: new Api.PeerNotifySettings({}),
-      })),
+      fullChat: new Api.ChatFull(
+        args({
+          id: bigInt(chat.id),
+          about: chat.about ?? "",
+          participants: new Api.ChatParticipants({
+            chatId: bigInt(chat.id),
+            participants,
+            version: 1,
+          }),
+          notifySettings: new Api.PeerNotifySettings({}),
+        })
+      ),
       chats: [this.entityOf(chat)],
-      users: members.flatMap(m => { const u = this.findUser(m.userId); return u ? [this.user(u)] : []; }),
+      users: members.flatMap((m) => {
+        const u = this.findUser(m.userId);
+        return u ? [this.user(u)] : [];
+      }),
     };
   }
 
   private participants(request: Record<string, any>) {
     const chat = this.chat(request.channel);
-    const filter: string = request.filter?.className ?? 'ChannelParticipantsRecent';
+    const filter: string =
+      request.filter?.className ?? "ChannelParticipantsRecent";
     let members = chat.members ?? [];
-    if (filter === 'ChannelParticipantsAdmins') members = members.filter(m => m.role);
-    if (filter === 'ChannelParticipantsSearch' && request.filter.q) {
+    if (filter === "ChannelParticipantsAdmins") {
+      members = members.filter((m) => m.role);
+    }
+    if (filter === "ChannelParticipantsSearch" && request.filter.q) {
       const q = String(request.filter.q).toLowerCase();
-      members = members.filter(m => {
+      members = members.filter((m) => {
         const u = this.findUser(m.userId);
-        return !!u && (`${u.firstName} ${u.lastName ?? ''}`.toLowerCase().includes(q) || !!u.username?.toLowerCase().includes(q));
+        return (
+          !!u &&
+          (`${u.firstName} ${u.lastName ?? ""}`.toLowerCase().includes(q) ||
+            !!u.username?.toLowerCase().includes(q))
+        );
       });
     }
-    members = members.slice(request.offset ?? 0, (request.offset ?? 0) + (request.limit ?? 200));
-    const rights = new Api.ChatAdminRights({ changeInfo: true, deleteMessages: true, banUsers: true, inviteUsers: true, pinMessages: true });
+    members = members.slice(
+      request.offset ?? 0,
+      (request.offset ?? 0) + (request.limit ?? 200)
+    );
+    const rights = new Api.ChatAdminRights({
+      changeInfo: true,
+      deleteMessages: true,
+      banUsers: true,
+      inviteUsers: true,
+      pinMessages: true,
+    });
     return new Api.channels.ChannelParticipants({
       count: members.length,
-      participants: members.map(m => {
+      participants: members.map((m) => {
         const userId = bigInt(m.userId);
-        if (m.role === 'creator') return new Api.ChannelParticipantCreator({ userId, adminRights: rights });
-        if (m.role === 'admin') return new Api.ChannelParticipantAdmin({ userId, promotedBy: userId, date: 0, adminRights: rights });
+        if (m.role === "creator") {
+          return new Api.ChannelParticipantCreator({
+            userId,
+            adminRights: rights,
+          });
+        }
+        if (m.role === "admin") {
+          return new Api.ChannelParticipantAdmin({
+            userId,
+            promotedBy: userId,
+            date: 0,
+            adminRights: rights,
+          });
+        }
         return new Api.ChannelParticipant({ userId, date: 0 });
       }),
       chats: [],
-      users: members.flatMap(m => { const u = this.findUser(m.userId); return u ? [this.user(u)] : []; }),
+      users: members.flatMap((m) => {
+        const u = this.findUser(m.userId);
+        return u ? [this.user(u)] : [];
+      }),
     });
   }
 
-  private folder(f: NonNullable<MockWorld['folders']>[number]): Api.DialogFilter {
-    const peers = (ids: number[] = []) => ids.flatMap(id => {
-      const chat = this.world.chats.find(c => c.id === id);
-      return chat ? [utils.getInputPeer(this.entityOf(chat))] : [];
-    });
-    return new Api.DialogFilter(args({
-      id: f.id,
-      title: new Api.TextWithEntities({ text: f.title, entities: [] }),
-      emoticon: f.emoticon,
-      pinnedPeers: [],
-      includePeers: peers(f.include),
-      excludePeers: peers(f.exclude),
-    }));
+  private folder(
+    f: NonNullable<MockWorld["folders"]>[number]
+  ): Api.DialogFilter {
+    const peers = (ids: number[] = []) =>
+      ids.flatMap((id) => {
+        const chat = this.world.chats.find((c) => c.id === id);
+        return chat ? [utils.getInputPeer(this.entityOf(chat))] : [];
+      });
+    return new Api.DialogFilter(
+      args({
+        id: f.id,
+        title: new Api.TextWithEntities({ text: f.title, entities: [] }),
+        emoticon: f.emoticon,
+        pinnedPeers: [],
+        includePeers: peers(f.include),
+        excludePeers: peers(f.exclude),
+      })
+    );
   }
 
-  /** A callback button was pressed: the "bot" edits the message and/or answers, as scripted. */
   private pressButton(request: Record<string, any>) {
     const chat = this.chat(request.peer);
     const m = this.findMessage(request.peer, request.msgId);
-    const data = request.data ? Buffer.from(request.data).toString() : undefined;
-    const button = (m.buttons ?? []).flat().find((b: MockButton) => (b.data ?? b.text) === data);
-    if (!button) throw new Error('DATA_INVALID: the message has no button with this payload');
+    const data = request.data
+      ? Buffer.from(request.data).toString()
+      : undefined;
+    const button = (m.buttons ?? [])
+      .flat()
+      .find((b: MockButton) => (b.data ?? b.text) === data);
+    if (!button) {
+      throw new Error(
+        "DATA_INVALID: the message has no button with this payload"
+      );
+    }
     const apply = (target: MockMessage, reply: MockReply) => {
       target.text = reply.text;
       target.buttons = reply.buttons;
       target.keyboard = reply.keyboard;
-      if (!target.buttons) delete target.buttons;
-      if (!target.keyboard) delete target.keyboard;
+      if (!target.buttons) {
+        delete target.buttons;
+      }
+      if (!target.keyboard) {
+        delete target.keyboard;
+      }
     };
     const scripted = (value: MockReply | string): MockReply => {
-      if (typeof value !== 'string') return value;
+      if (typeof value !== "string") {
+        return value;
+      }
       const command = this.findUser(chat.id)?.commands?.[value];
-      if (!command) throw new Error(`mock state: button "${button.text}" points at the command "${value}", which this bot does not have`);
+      if (!command) {
+        throw new Error(
+          `mock state: button "${button.text}" points at the command "${value}", which this bot does not have`
+        );
+      }
       return command;
     };
-    if (button.edit) apply(m, scripted(button.edit));
+    if (button.edit) {
+      apply(m, scripted(button.edit));
+    }
     if (button.reply) {
       const reply = scripted(button.reply);
-      this.append(chat, { text: reply.text, buttons: reply.buttons, keyboard: reply.keyboard });
+      this.append(chat, {
+        text: reply.text,
+        buttons: reply.buttons,
+        keyboard: reply.keyboard,
+      });
     }
-    if (button.edit || button.reply) this.save();
-    return { message: button.answer, alert: button.alert, url: undefined, cacheTime: 0 };
+    if (button.edit || button.reply) {
+      this.save();
+    }
+    return {
+      message: button.answer,
+      alert: button.alert,
+      url: undefined,
+      cacheTime: 0,
+    };
   }
 
-  // --- lifecycle and everything else ---
-
-  async connect(): Promise<boolean> { return true; }
-  async isUserAuthorized(): Promise<boolean> { return true; }
+  async connect(): Promise<boolean> {
+    return true;
+  }
+  async isUserAuthorized(): Promise<boolean> {
+    return true;
+  }
   async disconnect(): Promise<void> {}
   async destroy(): Promise<void> {}
   removeEventHandler(): void {}
 
-  addEventHandler(): never { return notImplemented('live updates (`watch`)'); }
+  addEventHandler(): never {
+    return notImplemented("live updates (`watch`)");
+  }
 }
 
-/** The true boolean flags of a ChatBannedRights request object (the denied rights). */
 function bannedFlags(rights: Record<string, unknown> | undefined): string[] {
-  if (!rights) return [];
-  return Object.entries(rights).filter(([k, v]) => v === true && k !== 'className').map(([k]) => k);
+  if (!rights) {
+    return [];
+  }
+  return Object.entries(rights)
+    .filter(([k, v]) => v === true && k !== "className")
+    .map(([k]) => k);
 }
 
 function describe(like: unknown): string {
-  if (typeof like === 'string') return like;
-  if (bigInt.isInstance(like)) return like.toString();
+  if (typeof like === "string") {
+    return like;
+  }
+  if (bigInt.isInstance(like)) {
+    return like.toString();
+  }
   return (like as { className?: string })?.className ?? String(like);
 }
 
@@ -1135,15 +2151,15 @@ let announced = false;
 export function createMockClient(path = mockStatePath()): TelegramClient {
   if (!announced) {
     announced = true;
-    process.stderr.write('MOCK MODE (TG_MOCK): fake account, nothing reaches Telegram\n');
+    process.stderr.write(
+      "MOCK MODE (TG_MOCK): fake account, nothing reaches Telegram\n"
+    );
   }
-  return new MockClient(loadWorld(path), world => saveWorld(world, path)) as unknown as TelegramClient;
+  return new MockClient(loadWorld(path), (world) =>
+    saveWorld(world, path)
+  ) as unknown as TelegramClient;
 }
 
-/**
- * TG_MOCK_FAIL rehearses a Telegram that cannot answer: `network` (no connection) or an RPC error
- * such as `FLOOD_WAIT_30`, thrown by getMe and getEntity the way teleproto throws them.
- */
 let historyCalls = 0;
 
 /** Tests: start counting history reads for TG_MOCK_FLOOD_HISTORY again. */
@@ -1151,20 +2167,32 @@ export function resetMockHistoryFlood(): void {
   historyCalls = 0;
 }
 
-/**
- * TG_MOCK_FLOOD_HISTORY=<n>:<seconds> (tests): history reads after the first n in this process
- * fail with FLOOD_WAIT_<seconds>, the way teleproto throws it with floodSleepThreshold 0.
- */
 function mockHistoryFlood(): void {
-  const m = /^(\d+):(\d+)$/.exec(process.env.TG_MOCK_FLOOD_HISTORY ?? '');
-  if (!m || historyCalls++ < Number(m[1])) return;
-  throw Object.assign(new Error(`RPCError 420: FLOOD_WAIT_${m[2]}`), { errorMessage: 'FLOOD_WAIT', seconds: Number(m[2]) });
+  const m = /^(\d+):(\d+)$/.exec(process.env.TG_MOCK_FLOOD_HISTORY ?? "");
+  if (!m || historyCalls++ < Number(m[1])) {
+    return;
+  }
+  throw Object.assign(new Error(`RPCError 420: FLOOD_WAIT_${m[2]}`), {
+    errorMessage: "FLOOD_WAIT",
+    seconds: Number(m[2]),
+  });
 }
 
 function mockFailure(): void {
   const fail = process.env.TG_MOCK_FAIL;
-  if (!fail) return;
-  if (fail === 'network') throw Object.assign(new Error('connect ETIMEDOUT 149.154.167.50:443'), { code: 'ETIMEDOUT' });
+  if (!fail) {
+    return;
+  }
+  if (fail === "network") {
+    throw Object.assign(new Error("connect ETIMEDOUT 149.154.167.50:443"), {
+      code: "ETIMEDOUT",
+    });
+  }
   const flood = /^FLOOD_WAIT_(\d+)$/.exec(fail);
-  throw Object.assign(new Error(`RPCError 420: ${fail}`), flood ? { errorMessage: 'FLOOD_WAIT', seconds: Number(flood[1]) } : { errorMessage: fail });
+  throw Object.assign(
+    new Error(`RPCError 420: ${fail}`),
+    flood
+      ? { errorMessage: "FLOOD_WAIT", seconds: Number(flood[1]) }
+      : { errorMessage: fail }
+  );
 }

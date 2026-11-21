@@ -16,6 +16,7 @@ version, computed from the PR titles, then the tag `vX.Y.Z` is pushed from main 
 
 PR titles become the squash commits on `next`, and they decide the next version
 (`scripts/next-version.mjs`):
+
 - `Add <feature>` for new features → minor
 - `Fix <bug>` for bug fixes, `Update <component>` or anything else → patch
 - a breaking change: put `BREAKING` in the title → minor while the version is 0.x
@@ -49,11 +50,14 @@ upstream/main`, keeping `teleproto` imports and reading text through `messageTex
 ## Development
 
 See `DEVELOPMENT.md`. The short version:
+
 - `scripts/tg-dev <args>` runs `src/` with Bun under `TG_PROFILE=dev`. That profile is `~/.config/tg-dev`
   plus the Keychain service `tg-cli-dev`, isolated from the real session.
 - `TG_MOCK=1 scripts/tg-dev <args>` runs against a fake account (`src/mock/`): no login, no
   write-access step, nothing reaches Telegram. Prefer it for anything that does not need real data.
 - Never add a watch mode that writes `dist/`, because the installed `telegram` runs it live.
+- No comments in code files: the why goes into names, a JSDoc on an export or `docs/internals.md`
+  (exceptions in `AGENTS.md`). Run `npm run fix` and `npm run lint` before a PR.
 - All state paths go through `src/paths.ts`, and every TelegramClient is built with `clientParams()`
   from `src/client-options.ts` (stderr logger, `TG_LOG_LEVEL`, the profile's `testServers`).
 
@@ -88,6 +92,7 @@ A fix that cannot wait for `next` goes as a PR into `main` like a release, follo
 `main` → `next` merge.
 
 A stable tag runs `.github/workflows/release.yml`:
+
 1. verify (tag == package.json, tests) and the Claude Desktop extension `better-tg-cli.mcpb`
    (`scripts/mcpb.mjs`)
 2. Bun binaries for darwin-arm64/x64 (built and ad-hoc signed on macOS) and linux-x64/arm64; the
@@ -149,8 +154,9 @@ build/test), because standalone binaries have no package.json.
 a ~0.3 MB loader holding the whole CJS bundle brotli-compressed (inflated at start, ~2 ms; zero
 runtime dependencies, everything is in devDependencies). Release archives are `.tar.xz`. Binaries come from the same
 script (`bun scripts/bundle.mjs bun-<target> <out>`). The bundle plugin shrinks teleproto:
+
 - TL schema re-encoded (`scripts/tl-compact.mjs`, 1.8 MB → 0.3 MB);
 - RPC error classes generated from a table (`scripts/errors-compact.mjs`);
 - StoreSession, socks and mime replaced by stubs.
-`test/bundle-shrink.test.ts` proves both re-encodings are exact. chalk/ora/json5 were replaced
-by `src/colors.ts`, `src/spinner.ts` and `src/config-format.ts`.
+  `test/bundle-shrink.test.ts` proves both re-encodings are exact. chalk/ora/json5 were replaced
+  by `src/colors.ts`, `src/spinner.ts` and `src/config-format.ts`.

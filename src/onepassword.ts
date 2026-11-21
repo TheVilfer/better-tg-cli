@@ -1,54 +1,60 @@
-import { execFileSync, execSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { configFile, secretPrefix } from './paths.js';
-import type { StrictRead } from './keychain.js';
-import { spawnAsync, type SpawnResult } from './spawn-async.js';
+import { execFileSync, execSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+
+import type { StrictRead } from "./keychain.js";
+import { configFile, secretPrefix } from "./paths.js";
+import { spawnAsync } from "./spawn-async.js";
+import type { SpawnResult } from "./spawn-async.js";
 
 let opAvailableCache: boolean | null = null;
 let opBinaryPath: string | null = null;
 let resolvedVault: string | null = null;
 
 function getOpBinary(): string | null {
-  if (opBinaryPath !== null) return opBinaryPath;
+  if (opBinaryPath !== null) {
+    return opBinaryPath;
+  }
   try {
-    // `where` lists every match on Windows; take the first
-    opBinaryPath = execSync(process.platform === 'win32' ? 'where op' : 'which op', {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
-    }).trim().split(/\r?\n/)[0];
+    opBinaryPath = execSync(
+      process.platform === "win32" ? "where op" : "which op",
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      }
+    )
+      .trim()
+      .split(/\r?\n/)[0];
   } catch {
-    opBinaryPath = '';
+    opBinaryPath = "";
   }
   return opBinaryPath || null;
 }
 
 function resolveVault(): string | null {
-  if (resolvedVault !== null) return resolvedVault;
+  if (resolvedVault !== null) {
+    return resolvedVault;
+  }
 
-  // Env var takes precedence
   const envVault = process.env.TG_OP_VAULT;
   if (envVault) {
     resolvedVault = envVault;
     return resolvedVault;
   }
 
-  // Fall back to config file (read directly to avoid circular dep with config.ts)
   try {
-    const configPath = configFile('config.json5');
+    const configPath = configFile("config.json5");
     if (existsSync(configPath)) {
-      const raw = readFileSync(configPath, 'utf8');
-      // Use dynamic import to avoid bundling JSON5 parse at module level
-      // Simple extraction: look for opVault field
+      const raw = readFileSync(configPath, "utf-8");
       const match = raw.match(/["']?opVault["']?\s*:\s*["']([^"']+)["']/);
       if (match) {
         resolvedVault = match[1];
         return resolvedVault;
       }
     }
-  } catch {
-    // Config unreadable — no vault
-  }
+  } catch {}
 
-  resolvedVault = '';
+  resolvedVault = "";
   return null;
 }
 
@@ -61,10 +67,12 @@ function itemName(key: string): string {
 }
 
 export function isOnePasswordAvailable(): boolean {
-  if (opAvailableCache !== null) return opAvailableCache;
+  if (opAvailableCache !== null) {
+    return opAvailableCache;
+  }
 
   const token = getToken();
-  if (!token || !token.startsWith('ops_')) {
+  if (!token || !token.startsWith("ops_")) {
     opAvailableCache = false;
     return false;
   }
@@ -82,9 +90,9 @@ export function isOnePasswordAvailable(): boolean {
   }
 
   try {
-    execFileSync(binary, ['whoami'], {
-      encoding: 'utf8',
-      stdio: 'ignore',
+    execFileSync(binary, ["whoami"], {
+      encoding: "utf-8",
+      stdio: "ignore",
       windowsHide: true,
       env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
     });
@@ -97,20 +105,24 @@ export function isOnePasswordAvailable(): boolean {
 }
 
 export function opGet(key: string): string | null {
-  if (!isOnePasswordAvailable()) return null;
+  if (!isOnePasswordAvailable()) {
+    return null;
+  }
   const binary = getOpBinary()!;
   const vault = resolveVault()!;
   const token = getToken()!;
 
   try {
-    const result = execFileSync(binary, [
-      'read', `op://${vault}/${itemName(key)}/credential`,
-    ], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-      env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
-    });
+    const result = execFileSync(
+      binary,
+      ["read", `op://${vault}/${itemName(key)}/credential`],
+      {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
+      }
+    );
     return result.trim() || null;
   } catch {
     return null;
@@ -126,76 +138,123 @@ export function opGet(key: string): string | null {
  * failure while the file holds a value, is a failed read. The reason never carries op's output.
  */
 export function opGetStrict(key: string, fileHasValue = false): StrictRead {
-  if (!isOnePasswordAvailable()) return { ok: false, reason: '1Password is not available' };
-  const r = spawnSync(getOpBinary()!, ['read', `op://${resolveVault()!}/${itemName(key)}/credential`], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-    timeout: 60_000,
-    env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
-  });
+  if (!isOnePasswordAvailable()) {
+    return { ok: false, reason: "1Password is not available" };
+  }
+  const r = spawnSync(
+    getOpBinary()!,
+    ["read", `op://${resolveVault()!}/${itemName(key)}/credential`],
+    {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      timeout: 60_000,
+      env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
+    }
+  );
   return opRead(r, fileHasValue);
 }
 
 /** opGetStrict without blocking the event loop; `op` is killed when `signal` aborts. */
-export async function opGetStrictAsync(key: string, signal?: AbortSignal): Promise<StrictRead> {
-  if (!isOnePasswordAvailable()) return { ok: false, reason: '1Password is not available' };
-  const r = await spawnAsync(getOpBinary()!, ['read', `op://${resolveVault()!}/${itemName(key)}/credential`], {
-    timeout: 60_000, signal, env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
-  });
+export async function opGetStrictAsync(
+  key: string,
+  signal?: AbortSignal
+): Promise<StrictRead> {
+  if (!isOnePasswordAvailable()) {
+    return { ok: false, reason: "1Password is not available" };
+  }
+  const r = await spawnAsync(
+    getOpBinary()!,
+    ["read", `op://${resolveVault()!}/${itemName(key)}/credential`],
+    {
+      timeout: 60_000,
+      signal,
+      env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
+    }
+  );
   return opRead(r, false);
 }
 
 function opRead(r: SpawnResult, fileHasValue: boolean): StrictRead {
-  if (r.status === 0 && !r.error) return { ok: true, value: r.stdout.trim() || null };
-  if (!fileHasValue && !r.error && r.status === 1 && /isn['\u2019]t an item/.test(r.stderr ?? '')) {
+  if (r.status === 0 && !r.error) {
+    return { ok: true, value: r.stdout.trim() || null };
+  }
+  if (
+    !fileHasValue &&
+    !r.error &&
+    r.status === 1 &&
+    /isn['\u2019]t an item/.test(r.stderr ?? "")
+  ) {
     return { ok: true, value: null };
   }
-  return { ok: false, reason: `1Password read failed (exit ${r.status ?? 'none'})` };
+  return {
+    ok: false,
+    reason: `1Password read failed (exit ${r.status ?? "none"})`,
+  };
 }
 
-interface OpField { id?: string; label?: string; type?: string; value?: string }
+interface OpField {
+  id?: string;
+  label?: string;
+  type?: string;
+  value?: string;
+}
 
 /**
  * Stores the secret through stdin as an item JSON template, never as a `credential=<value>`
  * argument: a process's arguments are visible to every user on the machine (`ps`).
  */
 export function opSet(key: string, value: string): boolean {
-  if (!isOnePasswordAvailable()) return false;
+  if (!isOnePasswordAvailable()) {
+    return false;
+  }
   const binary = getOpBinary()!;
   const vault = resolveVault()!;
   const token = getToken()!;
   const name = itemName(key);
-  const run = (args: string[], input?: string): string => execFileSync(binary, args, {
-    input,
-    encoding: 'utf8',
-    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
-    windowsHide: true,
-    env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
-  });
+  const run = (args: string[], input?: string): string =>
+    execFileSync(binary, args, {
+      input,
+      encoding: "utf-8",
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"],
+      windowsHide: true,
+      env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
+    });
 
   try {
     let item: { fields?: OpField[] } | null = null;
     try {
-      item = JSON.parse(run(['item', 'get', name, '--vault', vault, '--format', 'json']));
-    } catch {
-      // Item doesn't exist
-    }
+      item = JSON.parse(
+        run(["item", "get", name, "--vault", vault, "--format", "json"])
+      );
+    } catch {}
 
     if (item) {
       const fields = item.fields ?? [];
-      const field = fields.find(f => f.id === 'credential' || f.label === 'credential');
-      if (field) field.value = value;
-      else fields.push({ id: 'credential', label: 'credential', type: 'CONCEALED', value });
+      const field = fields.find(
+        (f) => f.id === "credential" || f.label === "credential"
+      );
+      if (field) {
+        field.value = value;
+      } else {
+        fields.push({
+          id: "credential",
+          label: "credential",
+          type: "CONCEALED",
+          value,
+        });
+      }
       item.fields = fields;
-      run(['item', 'edit', name, '--vault', vault], JSON.stringify(item));
+      run(["item", "edit", name, "--vault", vault], JSON.stringify(item));
     } else {
       const template = {
         title: name,
-        category: 'API_CREDENTIAL',
-        fields: [{ id: 'credential', label: 'credential', type: 'CONCEALED', value }],
+        category: "API_CREDENTIAL",
+        fields: [
+          { id: "credential", label: "credential", type: "CONCEALED", value },
+        ],
       };
-      run(['item', 'create', '--vault', vault, '-'], JSON.stringify(template));
+      run(["item", "create", "--vault", vault, "-"], JSON.stringify(template));
     }
     return true;
   } catch {
@@ -204,16 +263,16 @@ export function opSet(key: string, value: string): boolean {
 }
 
 export function opDelete(key: string): boolean {
-  if (!isOnePasswordAvailable()) return false;
+  if (!isOnePasswordAvailable()) {
+    return false;
+  }
   const binary = getOpBinary()!;
   const vault = resolveVault()!;
   const token = getToken()!;
 
   try {
-    execFileSync(binary, [
-      'item', 'delete', itemName(key), '--vault', vault,
-    ], {
-      stdio: 'ignore',
+    execFileSync(binary, ["item", "delete", itemName(key), "--vault", vault], {
+      stdio: "ignore",
       windowsHide: true,
       env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: token },
     });

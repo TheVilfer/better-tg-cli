@@ -1,0 +1,6 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["./no-comments.mjs"],
+  "categories": { "correctness": "off" },
+  "rules": { "better-tg-cli/no-comments": "error" }
+}

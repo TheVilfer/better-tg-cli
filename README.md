@@ -5,14 +5,14 @@
     <img src="https://raw.githubusercontent.com/TheVilfer/better-tg-cli/main/assets/banner-light.png" alt="Better-TG-CLI"/>
   </picture>
 
-  [![npm version](https://img.shields.io/npm/v/better-tg-cli?style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
-  [![CI](https://img.shields.io/github/actions/workflow/status/TheVilfer/better-tg-cli/ci.yml?branch=main&label=ci&style=flat&colorA=000000&colorB=000000)](https://github.com/TheVilfer/better-tg-cli/actions/workflows/ci.yml)
-  [![npm provenance](https://img.shields.io/badge/npm-provenance-000000?style=flat&colorA=000000&colorB=000000&logo=npm)](https://www.npmjs.com/package/better-tg-cli#provenance)
-  [![install size](https://img.shields.io/npm/unpacked-size/better-tg-cli?label=size&style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
-  [![dependencies](https://img.shields.io/badge/dependencies-0-000000?style=flat&colorA=000000&colorB=000000)](package.json)
-  [![MCP](https://img.shields.io/badge/MCP-server-000000?style=flat&colorA=000000&colorB=000000)](#mcp-server)
-  [![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#install)
-  [![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/better-tg-cli?style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
+[![CI](https://img.shields.io/github/actions/workflow/status/TheVilfer/better-tg-cli/ci.yml?branch=main&label=ci&style=flat&colorA=000000&colorB=000000)](https://github.com/TheVilfer/better-tg-cli/actions/workflows/ci.yml)
+[![npm provenance](https://img.shields.io/badge/npm-provenance-000000?style=flat&colorA=000000&colorB=000000&logo=npm)](https://www.npmjs.com/package/better-tg-cli#provenance)
+[![install size](https://img.shields.io/npm/unpacked-size/better-tg-cli?label=size&style=flat&colorA=000000&colorB=000000)](https://www.npmjs.com/package/better-tg-cli)
+[![dependencies](https://img.shields.io/badge/dependencies-0-000000?style=flat&colorA=000000&colorB=000000)](package.json)
+[![MCP](https://img.shields.io/badge/MCP-server-000000?style=flat&colorA=000000&colorB=000000)](#mcp-server)
+[![platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#install)
+[![license](https://img.shields.io/badge/license-MIT-000000?style=flat&colorA=000000&colorB=000000)](LICENSE)
 
   <p>
     <a href="#install">Install</a> · <a href="skills/better-tg-cli/SKILL.md">Reference</a> · <a href="SECURITY.md">Security</a> · <a href="https://github.com/TheVilfer/better-tg-cli/issues">Issues</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a>
@@ -75,13 +75,13 @@ reworked throughout.
 
 ### Compared with other Telegram MCP servers
 
-| | Better-TG-CLI | [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) | [chaindead/telegram-mcp](https://github.com/chaindead/telegram-mcp) | [WireCatLabs/tg-cli](https://github.com/WireCatLabs/tg-cli) |
-|---|---|---|---|---|
-| What you get | CLI, MCP server, agent skill | MCP server | MCP server | CLI, MCP server, agent skill |
-| Language | TypeScript (Node 20+ or a standalone binary) | Python | Go | TypeScript |
-| Telegram library | teleproto (GramJS fork, layer 229) | Telethon | gotd/td | mtcute |
-| Runtime dependencies | none (one file) | Python packages | one Go binary | npm packages |
-| Install | Homebrew, Scoop, npm, binaries | pip, uvx, Docker | Homebrew, npx, go install | npm, bun |
+|                      | Better-TG-CLI                                | [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) | [chaindead/telegram-mcp](https://github.com/chaindead/telegram-mcp) | [WireCatLabs/tg-cli](https://github.com/WireCatLabs/tg-cli) |
+| -------------------- | -------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| What you get         | CLI, MCP server, agent skill                 | MCP server                                                        | MCP server                                                          | CLI, MCP server, agent skill                                |
+| Language             | TypeScript (Node 20+ or a standalone binary) | Python                                                            | Go                                                                  | TypeScript                                                  |
+| Telegram library     | teleproto (GramJS fork, layer 229)           | Telethon                                                          | gotd/td                                                             | mtcute                                                      |
+| Runtime dependencies | none (one file)                              | Python packages                                                   | one Go binary                                                       | npm packages                                                |
+| Install              | Homebrew, Scoop, npm, binaries               | pip, uvx, Docker                                                  | Homebrew, npx, go install                                           | npm, bun                                                    |
 
 Taken from each project's README and manifest in November 2026; open an issue if something here is
 out of date. What sets Better-TG-CLI apart is the write model (read-only, ask, on, with approvals
@@ -120,21 +120,21 @@ Do **not** install `@skillhq/telegram`. It is the old upstream build on GramJS (
 
 Every channel ships the same version from one release:
 
-| Where | What you get | Install |
-|---|---|---|
-| [Homebrew](https://github.com/TheVilfer/homebrew-tap) | standalone binary | `brew install thevilfer/tap/better-tg-cli` |
-| [npm](https://www.npmjs.com/package/better-tg-cli) | CLI and MCP server (Node 20+) | `npm install -g better-tg-cli` |
-| [Scoop](https://github.com/TheVilfer/scoop-bucket) (Windows, experimental) | standalone `telegram.exe` | `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` then `scoop install better-tg-cli` |
-| [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases) | binaries and SHA256SUMS | download by hand |
-| Claude Code plugin | skill (uses the installed CLI) | [see below](#claude-code-plugin) |
-| Claude Desktop extension | MCP server, runs on Claude's built-in Node | [download `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) and open it |
-| Grok Build plugin | skill and MCP server | [see below](#grok-build-plugin) |
-| Gemini CLI extension | skill and MCP server | `gemini extensions install https://github.com/TheVilfer/better-tg-cli` |
-| Cursor, VS Code | MCP server | [one-click buttons](#mcp-server) |
-| Grok Bot | MCP server over HTTP from your Mac | [see below](#grok-bot-remote-mcp-over-http) |
-| The CLI itself | agent skill for Claude Code, Codex, Cursor, Gemini CLI and 7 more | `telegram skill install` |
-| [skills.sh](https://skills.sh) | agent skill for any shell agent | `npx skills add TheVilfer/better-tg-cli` |
-| [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | MCP server entry `io.github.TheVilfer/better-tg-cli` | through your MCP client |
+| Where                                                                                    | What you get                                                      | Install                                                                                                                |
+| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| [Homebrew](https://github.com/TheVilfer/homebrew-tap)                                    | standalone binary                                                 | `brew install thevilfer/tap/better-tg-cli`                                                                             |
+| [npm](https://www.npmjs.com/package/better-tg-cli)                                       | CLI and MCP server (Node 20+)                                     | `npm install -g better-tg-cli`                                                                                         |
+| [Scoop](https://github.com/TheVilfer/scoop-bucket) (Windows, experimental)               | standalone `telegram.exe`                                         | `scoop bucket add thevilfer https://github.com/TheVilfer/scoop-bucket` then `scoop install better-tg-cli`              |
+| [GitHub Releases](https://github.com/TheVilfer/better-tg-cli/releases)                   | binaries and SHA256SUMS                                           | download by hand                                                                                                       |
+| Claude Code plugin                                                                       | skill (uses the installed CLI)                                    | [see below](#claude-code-plugin)                                                                                       |
+| Claude Desktop extension                                                                 | MCP server, runs on Claude's built-in Node                        | [download `.mcpb`](https://github.com/TheVilfer/better-tg-cli/releases/latest/download/better-tg-cli.mcpb) and open it |
+| Grok Build plugin                                                                        | skill and MCP server                                              | [see below](#grok-build-plugin)                                                                                        |
+| Gemini CLI extension                                                                     | skill and MCP server                                              | `gemini extensions install https://github.com/TheVilfer/better-tg-cli`                                                 |
+| Cursor, VS Code                                                                          | MCP server                                                        | [one-click buttons](#mcp-server)                                                                                       |
+| Grok Bot                                                                                 | MCP server over HTTP from your Mac                                | [see below](#grok-bot-remote-mcp-over-http)                                                                            |
+| The CLI itself                                                                           | agent skill for Claude Code, Codex, Cursor, Gemini CLI and 7 more | `telegram skill install`                                                                                               |
+| [skills.sh](https://skills.sh)                                                           | agent skill for any shell agent                                   | `npx skills add TheVilfer/better-tg-cli`                                                                               |
+| [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli) | MCP server entry `io.github.TheVilfer/better-tg-cli`              | through your MCP client                                                                                                |
 
 ### Claude Code plugin
 
@@ -201,6 +201,7 @@ password. The agent only starts the command and waits: it never sees the login k
 password. The page answers only on a random secret path and closes when you're done.
 
 **With your own API keys** (the default):
+
 1. Open https://my.telegram.org/apps, create an application, and copy its `api_id` and `api_hash`.
 2. Run `telegram auth --qr` and enter them. Then, on your phone, go to Settings → Devices → Link
    Desktop Device and scan the QR code. Enter your 2FA password if you have one. Plain
@@ -288,6 +289,7 @@ the docs link, and `telegram schema [<ns> [<method>]]` prints the same as JSON.
 
 For clients without a shell (Claude Desktop, Cursor, other MCP hosts), `telegram mcp` serves three
 tools over stdio:
+
 - `telegram_help`: a searchable flag reference;
 - `telegram_read`: read-only, so clients may auto-approve it;
 - `telegram_write`: marked destructive, and still needs `write-access on` from you.
@@ -307,7 +309,11 @@ claude mcp add telegram -- telegram mcp          # Claude Code (or use the plugi
 ```
 
 ```json
-{ "mcpServers": { "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] } } }
+{
+  "mcpServers": {
+    "telegram": { "command": "/opt/homebrew/bin/telegram", "args": ["mcp"] }
+  }
+}
 ```
 
 Use the JSON form for Claude Desktop (`claude_desktop_config.json`) or Cursor (`.cursor/mcp.json`).
@@ -315,7 +321,14 @@ GUI apps may not see your shell PATH, so give the full path from `which telegram
 global install, run it through npx:
 
 ```json
-{ "mcpServers": { "telegram": { "command": "npx", "args": ["-y", "better-tg-cli@latest", "mcp"] } } }
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "npx",
+      "args": ["-y", "better-tg-cli@latest", "mcp"]
+    }
+  }
+}
 ```
 
 The server is listed in the [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=better-tg-cli)
@@ -496,6 +509,7 @@ If you installed the agent skill with `telegram skill install`, run that again t
 ## Development
 
 [DEVELOPMENT.md](DEVELOPMENT.md) covers:
+
 - running from source (`scripts/tg-dev`);
 - isolated dev profiles (`TG_PROFILE`) that never touch your real session;
 - Telegram test servers;
@@ -528,8 +542,8 @@ stores locally.
 
 Windows binaries are built from this repository by GitHub Actions only (`.github/workflows/release.yml`),
 never on a personal machine. We have applied for free code signing from SignPath Foundation; once it
-is in place, release binaries will carry: *Free code signing provided by
-[SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).*
+is in place, release binaries will carry: _Free code signing provided by
+[SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org)._
 Until then the Windows `telegram.exe` is unsigned; macOS binaries are ad-hoc signed.
 
 - Committers and reviewers: [@TheVilfer](https://github.com/TheVilfer)

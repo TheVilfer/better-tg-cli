@@ -1,24 +1,19 @@
-import { TL_METHODS, TL_NAMESPACES, type TlMethod } from './generated/tl-commands.js';
+import { TL_METHODS, TL_NAMESPACES } from "./generated/tl-commands.js";
+import type { TlMethod } from "./generated/tl-commands.js";
 
-/**
- * Pure name-mapping for the generated top-level API commands — `telegram <namespace> <method>`
- * (e.g. `telegram messages get-history`) and root-level `telegram <method>` (e.g. `telegram ping`).
- * Kept free of teleproto/commander so the MCP router (src/mcp.ts) can classify a call by its
- * underlying TL method without loading the whole client. The method list is the checked-in
- * src/generated/tl-commands.ts (one entry per TL schema method). "TL" throughout = the Telegram
- * schema layer, not a command name (there is no `tl` command).
- */
-
-const byPath = new Map<string, string>(); // `${ns}/${method}` -> className
-const rootMethodMap = new Map<string, string>(); // methodKebab -> className (no namespace)
+const byPath = new Map<string, string>();
+const rootMethodMap = new Map<string, string>();
 const namespaceMethods = new Map<string, TlMethod[]>();
 for (const m of TL_METHODS) {
   const [ns, method, className] = m;
   if (ns) {
     byPath.set(`${ns}/${method}`, className);
     const list = namespaceMethods.get(ns);
-    if (list) list.push(m);
-    else namespaceMethods.set(ns, [m]);
+    if (list) {
+      list.push(m);
+    } else {
+      namespaceMethods.set(ns, [m]);
+    }
   } else {
     rootMethodMap.set(method, className);
   }
@@ -35,7 +30,10 @@ export function namespaceMethodList(ns: string): TlMethod[] {
 }
 
 /** className for a namespace + kebab method, or undefined if that method does not exist. */
-export function methodClassName(ns: string, method: string): string | undefined {
+export function methodClassName(
+  ns: string,
+  method: string
+): string | undefined {
   return byPath.get(`${ns}/${method}`);
 }
 
@@ -64,8 +62,10 @@ export function namespaceCounts(): { ns: string; count: number }[] {
  */
 export function resolveGeneratedCommand(args: string[]): string | null {
   const [c0, c1] = args;
-  if (!c0) return null;
-  if (isGeneratedNamespace(c0) && typeof c1 === 'string') {
+  if (!c0) {
+    return null;
+  }
+  if (isGeneratedNamespace(c0) && typeof c1 === "string") {
     return methodClassName(c0, c1) ?? null;
   }
   return rootMethodClassName(c0) ?? null;
@@ -79,7 +79,7 @@ export function resolveGeneratedCommand(args: string[]): string | null {
  */
 export function kebabCase(s: string): string {
   return s
-    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .replace(/([A-Z]+)([A-Z][a-z]{2,})/g, '$1-$2')
+    .replaceAll(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replaceAll(/([A-Z]+)([A-Z][a-z]{2,})/g, "$1-$2")
     .toLowerCase();
 }
