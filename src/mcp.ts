@@ -219,23 +219,63 @@ function classifyPlugin(args: string[]): CallClass {
  * strictly; anything else is not echoed back as a command.
  */
 export function pluginManagementRefusal(path: string, rest: string[]): string {
-  const operand = rest.find(a => !a.startsWith('-'));
   const lead = `"${path}" is the user's to run, not over MCP: plugins are installed and removed only by a human, who sees what the plugin may do.`;
-  let argv: string[] | undefined;
-  if (path === 'plugin install' && operand) {
-    try {
-      const source = parseSource(operand);
-      if (source.type === 'github') argv = ['plugin', 'install', operand];
-      else if (/^[\w./~ -]{1,200}$/.test(operand)) argv = ['plugin', 'install', operand];
-    } catch {
-      argv = undefined;
-    }
-  } else if (path === 'plugin remove' && operand && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(operand)) {
-    argv = ['plugin', 'remove', operand, ...(rest.includes('--keep-data') ? ['--keep-data'] : [])];
-  }
+  const argv = path === 'plugin install' ? installArgv(rest) : path === 'plugin remove' ? removeArgv(rest) : undefined;
   return argv
     ? `${lead} Ask the user to run this in a terminal on this computer: ${humanCommand(argv)}`
     : `${lead} Ask the user to run it in a terminal on this computer (telegram ${path} github:owner/repo[@ref] | <folder> | <name>).`;
+}
+
+const REVISION_RE = /^sha256-[A-Za-z0-9+/]{43}=$/;
+
+/**
+ * The arguments of `plugin install` with their options, as the CLI parses them: one source and an
+ * optional `--expect <sha256-…>` (kept, so the command still pins the content the model validated).
+ * Anything else (an unknown option, a malformed hash, a second operand) gives no command at all.
+ */
+function installArgv(rest: string[]): string[] | undefined {
+  let operand: string | undefined;
+  let expect: string | undefined;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--json') continue;
+    if (a === '--expect' || a.startsWith('--expect=')) {
+      if (expect !== undefined) return undefined;
+      expect = a === '--expect' ? rest[++i] : a.slice('--expect='.length);
+      if (expect === undefined) return undefined;
+      continue;
+    }
+    if (a === '--') {
+      if (operand !== undefined || rest.length !== i + 2) return undefined;
+      operand = rest[i + 1];
+      break;
+    }
+    if (a.startsWith('-') || operand !== undefined) return undefined;
+    operand = a;
+  }
+  if (!operand || operand.startsWith('-')) return undefined;
+  if (expect !== undefined && !REVISION_RE.test(expect)) return undefined;
+  let source: ReturnType<typeof parseSource>;
+  try {
+    source = parseSource(operand);
+  } catch {
+    return undefined;
+  }
+  if (source.type === 'github' ? expect !== undefined : !/^[\w./~ -]{1,200}$/.test(operand)) return undefined;
+  return ['plugin', 'install', operand, ...(expect ? ['--expect', expect] : [])];
+}
+
+function removeArgv(rest: string[]): string[] | undefined {
+  let name: string | undefined;
+  let keep = false;
+  for (const a of rest) {
+    if (a === '--json') continue;
+    if (a === '--keep-data') keep = true;
+    else if (a.startsWith('-') || name !== undefined) return undefined;
+    else name = a;
+  }
+  if (!name || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) return undefined;
+  return ['plugin', 'remove', name, ...(keep ? ['--keep-data'] : [])];
 }
 
 /** What the user does instead, for the setup commands MCP refuses: the model passes it on. */

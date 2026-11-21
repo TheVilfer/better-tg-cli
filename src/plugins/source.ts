@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { CliError, EXIT, usageError } from '../errors.js';
 import { VERSION } from '../version.js';
@@ -7,6 +7,7 @@ import {
   checkManifest, LIMITS, MANIFEST_FILE, markdownSection, OFFICIAL_OWNERS, pathProblem, SKILL_FILE, skillProblems,
   type Manifest,
 } from './manifest.js';
+import { readRegular, UnsafePath } from './safe-fs.js';
 
 /**
  * Where a plugin comes from and how its exact snapshot is fetched: a public GitHub repository at one
@@ -55,6 +56,8 @@ export interface Snapshot {
   files: Map<string, Uint8Array>;
   hashes: Record<string, string>;
   official: boolean;
+  /** Why a source of an official owner is not marked official (its commit is on none of their branches or tags) */
+  officialNote?: string;
   bytes: number;
 }
 
@@ -111,7 +114,8 @@ function finish(source: ResolvedSource, revision: string | undefined, manifestBy
   const { manifest, specVersion } = checkSnapshotFiles(manifestBytes, cliVersion);
   const problems = contentProblems(manifest, files);
   if (problems.length) throw invalidPlugin(problems);
-  const hashes: Record<string, string> = {};
+  // No prototype: a file called __proto__ or constructor is an ordinary own key
+  const hashes = Object.create(null) as Record<string, string>;
   let bytes = 0;
   for (const [p, b] of files) { hashes[p] = sha256(b); bytes += b.length; }
   return { source, revision: revision ?? contentRevision(hashes), manifest, specVersion, files, hashes, official, bytes };
@@ -121,54 +125,29 @@ const tooLarge = (what: string) => invalidPlugin([what]);
 
 // ---------- local folder ----------
 
-const O_NOFOLLOW = (constants as Record<string, number>).O_NOFOLLOW ?? 0;
-
 /**
- * Reads one listed file of a folder: every segment must exist with exactly this case and be a real
- * folder or a regular file, never a symbolic link (checked segment by segment, then opened with
- * O_NOFOLLOW where the platform has it and checked again on the open descriptor).
+ * Reads one listed file of a folder through safe-fs: every segment must exist with exactly this
+ * case and be a real folder or a regular file, never a symbolic link or a junction; the file is
+ * read from a descriptor checked to be the file the walk saw (a folder swapped meanwhile is caught).
  */
 function readLocalFile(root: string, rel: string, maxBytes: number): Uint8Array {
   const problem = pathProblem(rel);
   if (problem) throw invalidPlugin([`files: "${rel}" ${problem}`]);
-  const segments = rel.split('/');
-  let dir = root;
-  for (let i = 0; i < segments.length; i++) {
-    const seg = segments[i];
-    let names: string[];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      throw invalidPlugin([`files: "${rel}" does not exist`]);
-    }
-    if (!names.includes(seg)) throw invalidPlugin([`files: "${rel}" does not exist (names are case-sensitive)`]);
-    const path = join(dir, seg);
-    const st = lstatSync(path);
-    if (st.isSymbolicLink()) throw invalidPlugin([`files: "${segments.slice(0, i + 1).join('/')}" is a symbolic link; plugins are regular files only`]);
-    if (i < segments.length - 1) {
-      if (!st.isDirectory()) throw invalidPlugin([`files: "${segments.slice(0, i + 1).join('/')}" is not a folder`]);
-      dir = path;
-      continue;
-    }
-    if (!st.isFile()) throw invalidPlugin([`files: "${rel}" is not a regular file`]);
-    if (st.size > maxBytes) throw tooLarge(`files: "${rel}" is larger than ${maxBytes} bytes`);
-    const fd = openSync(path, constants.O_RDONLY | O_NOFOLLOW);
-    try {
-      const fst = fstatSync(fd);
-      if (!fst.isFile() || fst.size > maxBytes) throw invalidPlugin([`files: "${rel}" changed while it was read`]);
-      const buf = Buffer.alloc(fst.size);
-      let off = 0;
-      while (off < buf.length) {
-        const n = readSync(fd, buf, off, buf.length - off, off);
-        if (n === 0) break;
-        off += n;
-      }
-      return new Uint8Array(buf.subarray(0, off));
-    } finally {
-      closeSync(fd);
-    }
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = readRegular(root, rel, { exactCase: true, maxBytes });
+  } catch (e) {
+    if (!(e instanceof UnsafePath)) throw e;
+    if (e.kind === 'link') throw invalidPlugin([`files: "${e.at}" is a symbolic link; plugins are regular files only`]);
+    if (e.kind === 'too-large') throw tooLarge(`files: "${rel}" is larger than ${maxBytes} bytes`);
+    if (e.kind === 'changed') throw invalidPlugin([`files: "${rel}" changed while it was read`]);
+    if (e.kind === 'case') throw invalidPlugin([`files: "${rel}" does not exist (names are case-sensitive)`]);
+    if (e.kind === 'not-dir') throw invalidPlugin([`files: "${e.at}" is not a folder`]);
+    if (e.kind === 'not-file') throw invalidPlugin([`files: "${rel}" is not a regular file`]);
+    throw invalidPlugin([`files: "${rel}" does not exist`]);
   }
-  throw invalidPlugin([`files: "${rel}" does not exist`]);
+  if (!bytes) throw invalidPlugin([`files: "${rel}" does not exist`]);
+  return bytes;
 }
 
 /** A snapshot of a local folder: the listed files only, hashed; the revision is their combined hash. */
@@ -308,6 +287,52 @@ export async function fetchGithubSnapshot(source: Extract<Source, { type: 'githu
   }
   const files = new Map<string, Uint8Array>();
   for (const [rel, e] of entries) files.set(rel, rel === MANIFEST_FILE ? manifestBytes : await blob(e, rel));
-  const official = OFFICIAL_OWNERS.includes(owner);
-  return finish({ type: 'github', owner, repo: name, ...(source.ref ? { ref: source.ref } : {}), commit: sha }, sha, manifestBytes, files, official, cliVersion);
+  // An official owner's repository serves commits of every fork in its network too: official only
+  // when the commit is on one of its own branches or tags
+  let official = false;
+  let officialNote: string | undefined;
+  if (OFFICIAL_OWNERS.includes(owner)) {
+    official = await publishedBy(fetchImpl, base, sha, source.ref, repo.default_branch);
+    if (!official) officialNote = `commit ${sha.slice(0, 12)} could not be confirmed on a branch or tag of ${owner}/${name} (it may come from a fork)`;
+  }
+  const snap = finish({ type: 'github', owner, repo: name, ...(source.ref ? { ref: source.ref } : {}), commit: sha }, sha, manifestBytes, files, official, cliVersion);
+  return officialNote ? { ...snap, officialNote } : snap;
+}
+
+/**
+ * Whether the repository at `base` itself published commit `sha`: the ref named at install is one of
+ * its branches or tags (annotated tags peeled) pointing at it, or the commit is in the history of its
+ * default branch (compare: identical or behind). Any other answer or error means no.
+ */
+async function publishedBy(fetchImpl: Fetch, base: string, sha: string, ref: string | undefined, defaultBranch: string): Promise<boolean> {
+  const get = async (path: string): Promise<Record<string, unknown> | undefined> => {
+    try {
+      const res = await fetchImpl(`${GITHUB_API}${path}`, {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': `better-tg-cli/${VERSION}`, 'X-GitHub-Api-Version': '2022-11-28' },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return undefined;
+      const body = await res.json();
+      return isObj(body) ? body : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const peel = async (obj: unknown): Promise<string | undefined> => {
+    for (let i = 0; i < 5 && isObj(obj); i++) {
+      if (typeof obj.sha !== 'string' || !/^[0-9a-f]{40}$/.test(obj.sha)) return undefined;
+      if (obj.type === 'commit') return obj.sha;
+      if (obj.type !== 'tag') return undefined;
+      obj = (await get(`${base}/git/tags/${obj.sha}`))?.object;
+    }
+    return undefined;
+  };
+  if (ref !== undefined && !/^[0-9a-f]{7,40}$/i.test(ref)) {
+    for (const kind of ['heads', 'tags']) {
+      const r = await get(`${base}/git/ref/${kind}/${ref.split('/').map(encodeURIComponent).join('/')}`);
+      if (r && r.ref === `refs/${kind}/${ref}` && (await peel(r.object)) === sha) return true;
+    }
+  }
+  const cmp = await get(`${base}/compare/${encodeURIComponent(defaultBranch)}...${sha}`);
+  return cmp?.status === 'identical' || cmp?.status === 'behind';
 }

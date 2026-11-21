@@ -5,6 +5,7 @@ import { hasHumanChannel } from '../write-store.js';
 import { oneLine } from '../approval-action.js';
 import { allEffects, PERMISSION_TEXT, type Manifest } from './manifest.js';
 import type { ResolvedSource, Snapshot } from './source.js';
+import type { LockEntry } from './store.js';
 
 /**
  * Installing and removing plugins is the human's decision (docs/plugins.md, "Human"): a y/N on a
@@ -15,10 +16,19 @@ import type { ResolvedSource, Snapshot } from './source.js';
 
 export type Confirm = (question: string) => Promise<boolean>;
 
-/** The command a human runs in their own terminal, with this profile. */
+const shellValue = (v: string) => (/^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`);
+
+/**
+ * The command a human runs in their own terminal, with this profile; under TG_MOCK with the same
+ * mock state (and mock profile), so running it never touches the terminal's real profile.
+ */
 export function humanCommand(argv: string[]): string {
+  if (isMock()) {
+    const p = process.env.TG_PROFILE;
+    return `TG_MOCK=${shellValue(process.env.TG_MOCK!)} ${p ? `TG_PROFILE=${shellValue(p)} ` : ''}${shellCommand(argv)}`;
+  }
   const p = profile();
-  return `${p && !isMock() ? `TG_PROFILE=${p} ` : ''}${shellCommand(argv)}`;
+  return `${p ? `TG_PROFILE=${p} ` : ''}${shellCommand(argv)}`;
 }
 
 export const humanRequired = (argv: string[]) => new CliError(
@@ -60,12 +70,23 @@ export async function humanConfirms(question: string, argv: string[], confirm: C
 
 const clip = (s: string, n: number) => oneLine(s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+/** Where a plugin came from, as one line: a folder name or a registry field may hold a line break or a terminal escape. */
 export function originLabel(s: ResolvedSource): string {
-  return s.type === 'github' ? `github:${s.owner}/${s.repo}${s.ref ? `@${s.ref}` : ''}` : `local folder ${s.path}`;
+  return oneLine(s.type === 'github' ? `github:${s.owner}/${s.repo}${s.ref ? `@${s.ref}` : ''}` : `local folder ${s.path}`);
 }
 
 export function revisionLabel(s: ResolvedSource, revision: string): string {
-  return s.type === 'github' ? `commit ${revision}` : `content ${revision}`;
+  return oneLine(s.type === 'github' ? `commit ${revision}` : `content ${revision}`);
+}
+
+/** The question before `plugin remove`; every field comes from the registry and is shown as one line. */
+export function removeQuestion(entry: LockEntry, keepData: boolean): string {
+  return [
+    `Remove the Better-TG-CLI plugin "${oneLine(entry.name)}" ${oneLine(entry.version)}?`,
+    `  Source:  ${originLabel(entry.source)} (${revisionLabel(entry.source, entry.revision)})`,
+    `  Install: ${oneLine(entry.installId)}`,
+    `  Data:    ${keepData ? 'kept on this computer (a later install of the same name starts empty)' : 'deleted for every account'}`,
+  ].join('\n');
 }
 
 const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
@@ -79,10 +100,10 @@ export function installSummary(s: Snapshot): string {
   const m: Manifest = s.manifest;
   const p = profile();
   const lines = [
-    `Install the Better-TG-CLI plugin "${m.name}" ${m.version}?`,
+    `Install the Better-TG-CLI plugin "${oneLine(m.name)}" ${oneLine(m.version)}?`,
     `  Source:      ${originLabel(s.source)}`,
     `  Revision:    ${revisionLabel(s.source, s.revision)}`,
-    `  Official:    ${s.official && s.source.type === 'github' ? `yes (published by ${s.source.owner})` : 'no (a third-party plugin)'}`,
+    `  Official:    ${s.official && s.source.type === 'github' ? `yes (published by ${oneLine(s.source.owner)})` : s.officialNote ? `no: ${oneLine(s.officialNote)}` : 'no (a third-party plugin)'}`,
     `  Profile:     ${p ?? 'default'}`,
     `  Files:       ${s.files.size} files, ${kb(s.bytes)}`,
   ];

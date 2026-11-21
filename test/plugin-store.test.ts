@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fetchGithubSnapshot, readLocalSnapshot, type Fetch } from '../src/plugins/source.js';
 import {
-  commitInstall, dataDelete, dataGet, dataList, dataSet, installDir, loadPlugin, onboardingState, pluginsRoot, readLock, removeInstall, verifyInstalled,
+  commitInstall, dataDelete, dataGet, dataList, dataSet, installDir, loadPlugin, lockMac, onboardingState, pluginsRoot, readLock, removeInstall,
+  storeDeps, verifyInstalled, type KeyStore,
 } from '../src/plugins/store.js';
 import { describeEntry } from '../src/plugins/catalog.js';
 import { installSummary } from '../src/plugins/human.js';
@@ -18,7 +19,17 @@ const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, AP
 let n = 0;
 let home: string;
 
+/** The registry key in memory: these tests use a real (non-mock) profile and must never reach the Keychain. */
+let memKey: string | null = null;
+const memStore: KeyStore = { available: () => true, get: () => ({ ok: true, value: memKey }), set: v => { memKey = v; return true; } };
+/** Writes a registry signed with the test key, as only this CLI could (to reach the checks behind the signature). */
+function writeSignedLock(body: { lockfileVersion: 1; plugins: unknown }): void {
+  writeFileSync(join(pluginsRoot(), 'plugin.lock.json'), JSON.stringify({ ...body, mac: lockMac(Buffer.from(memKey!, 'hex'), body) }));
+}
+
 beforeEach(() => {
+  memKey = null;
+  storeDeps.keyStore = memStore;
   home = join(root, `home-${++n}`);
   mkdirSync(home);
   Object.assign(process.env, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData'), TG_PROFILE: 'plugin-test' });
@@ -167,7 +178,8 @@ describe('a snapshot changed after install is disabled (plugin_tampered)', () =>
     const lockFile = join(pluginsRoot(), 'plugin.lock.json');
     const lock = JSON.parse(readFileSync(lockFile, 'utf8'));
     lock.plugins['tone-of-voice'].accepted.permissions = ['storage:read'];
-    writeFileSync(lockFile, JSON.stringify(lock));
+    delete lock.mac;
+    writeSignedLock(lock);
     expect(verifyInstalled(readLock().plugins['tone-of-voice'])).toMatchObject({ ok: false, reason: expect.stringMatching(/not accepted/) });
     expect(entry.name).toBe('tone-of-voice');
   });
@@ -186,7 +198,7 @@ describe('the lock file is untrusted input', () => {
     for (const [field, value] of [['installId', '../../../../tmp'], ['installId', entry.installId.toUpperCase()], ['name', '../x']] as const) {
       const lock = JSON.parse(readFileSync(lockFile, 'utf8'));
       const e = { ...lock.plugins['tone-of-voice'], [field]: value };
-      writeFileSync(lockFile, JSON.stringify({ lockfileVersion: 1, plugins: { 'tone-of-voice': e } }));
+      writeSignedLock({ lockfileVersion: 1, plugins: { 'tone-of-voice': e } });
       expect(() => readLock(), `${field}=${value}`).toThrow(expect.objectContaining({ code: 'plugin_lock_invalid' }));
     }
   });
@@ -253,7 +265,11 @@ const gitSha = (b: Uint8Array) => createHash('sha1').update(`blob ${b.length}\0`
 const fakeSha = (s: string) => createHash('sha1').update(s).digest('hex');
 
 /** A fake GitHub REST API serving `files` at one commit, recording every URL asked for. */
-function fakeGithub(files: Record<string, FakeFile>, opts: { owner?: string; repo?: string; private?: boolean; tamperBlob?: string; rateLimited?: boolean } = {}) {
+function fakeGithub(files: Record<string, FakeFile>, opts: {
+  owner?: string; repo?: string; private?: boolean; tamperBlob?: string; rateLimited?: boolean;
+  /** The commit is not on the repository's own branches or tags (a fork's commit served through the network); compare answers this, or 404 */
+  fork?: 'ahead' | 'diverged' | 404;
+} = {}) {
   const owner = opts.owner ?? 'TheVilfer';
   const repo = opts.repo ?? 'tone-of-voice';
   const commit = fakeSha('commit');
@@ -288,6 +304,13 @@ function fakeGithub(files: Record<string, FakeFile>, opts: { owner?: string; rep
     if (path.toLowerCase() === `/repos/${owner}/${repo}`.toLowerCase()) return res(200, { name: repo, owner: { login: owner }, private: !!opts.private, default_branch: 'main' });
     let m = /^\/repos\/[^/]+\/[^/]+\/commits\/(.+)$/.exec(path);
     if (m) return ['main', 'v1.0.0', commit].includes(decodeURIComponent(m[1])) ? res(200, { sha: commit, commit: { tree: { sha: rootTree } } }) : res(404, {});
+    const tagObject = fakeSha('annotated-tag');
+    const tip = opts.fork ? fakeSha('upstream-main') : commit;
+    if (path.endsWith('/git/ref/heads/main')) return res(200, { ref: 'refs/heads/main', object: { type: 'commit', sha: tip } });
+    if (path.endsWith('/git/ref/tags/v1.0.0')) return res(200, { ref: 'refs/tags/v1.0.0', object: { type: 'tag', sha: tagObject } });
+    if (path.endsWith(`/git/tags/${tagObject}`)) return res(200, { object: { type: 'commit', sha: tip } });
+    m = /\/compare\/main\.\.\.([0-9a-f]{40})$/.exec(path);
+    if (m) return opts.fork === 404 ? res(404, {}) : res(200, { status: opts.fork ?? 'identical' });
     m = /^\/repos\/[^/]+\/[^/]+\/git\/trees\/([0-9a-f]{40})$/.exec(path);
     if (m && trees.has(m[1])) return res(200, { sha: m[1], tree: trees.get(m[1]), truncated: false });
     m = /^\/repos\/[^/]+\/[^/]+\/git\/blobs\/([0-9a-f]{40})$/.exec(path);

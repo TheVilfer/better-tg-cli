@@ -11,9 +11,10 @@ import { VERSION } from '../version.js';
 import { DEFAULT_QUOTA_BYTES, markdownSection, type Manifest } from '../plugins/manifest.js';
 import { fetchGithubSnapshot, parseSource, readLocalSnapshot, type Fetch, type Snapshot } from '../plugins/source.js';
 import {
-  commitInstall, dataDelete, dataGet, dataKeyProblem, dataList, dataSet, findEntry, loadPlugin, onboardingState, readLock, removeInstall,
+  assertApprovedInstall, assertCanSign, commitInstall, dataDelete, dataGet, dataKeyProblem, dataList, dataSet, findEntry, loadPlugin,
+  onboardingState, own, readLock, removeInstall,
 } from '../plugins/store.js';
-import { humanConfirms, humanRequired, installSummary, originLabel, revisionLabel, type Confirm } from '../plugins/human.js';
+import { humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, type Confirm } from '../plugins/human.js';
 import { listPlugins, PLUGIN_NOTICE, pluginSource } from '../plugins/catalog.js';
 
 /**
@@ -79,12 +80,15 @@ const installCommand = new Command('install')
       if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw humanRequired(argv);
       if (options.expect !== undefined && !/^sha256-[A-Za-z0-9+/]{43}=$/.test(options.expect)) throw usageError('--expect must be a sha256-… revision as `plugin validate` prints it');
       const snap = await takeSnapshot(sourceText, options.expect);
-      const existing = readLock().plugins[snap.manifest.name];
+      const plugins = readLock().plugins;
+      const existing = own(plugins, snap.manifest.name) ? plugins[snap.manifest.name] : undefined;
       if (existing) {
         throw new CliError(`Plugin "${snap.manifest.name}" is already installed (${existing.version}, ${originLabel(existing.source)})`, 'plugin_exists', EXIT.ERROR, {
           hint: `Updating is coming in a later version. To replace it now: telegram plugin remove ${snap.manifest.name}, then install again.`,
         });
       }
+      // No unsigned installs: without the secret store the human is not even asked
+      assertCanSign();
       const summary = installSummary(snap);
       const yes = await humanConfirms(summary, argv, pluginDeps.confirm);
       if (!yes) {
@@ -102,7 +106,8 @@ const installCommand = new Command('install')
       if (options.json) {
         console.log(json({
           ok: true, action: 'plugin install', name: entry.name, version: entry.version, source: pluginSource(entry.name, entry.version),
-          origin: originLabel(entry.source), revision: entry.revision, official: entry.official, installId: entry.installId, next,
+          origin: originLabel(entry.source), revision: entry.revision, official: entry.official,
+          ...(snap.officialNote ? { officialNote: snap.officialNote } : {}), installId: entry.installId, next,
         }));
       } else {
         console.log(chalk.green(`✓ Installed ${entry.name} ${entry.version} (${revisionLabel(entry.source, entry.revision)})`));
@@ -145,7 +150,7 @@ const listCommand = new Command('list')
 
 /** The text of a resource as installed: a whole file, or one #section of a Markdown file. */
 function resourceText(m: Manifest, files: Map<string, Uint8Array>, key: string): string {
-  const ref = m.resources?.[key];
+  const ref = m.resources && own(m.resources, key) ? m.resources[key] : undefined;
   if (ref === undefined) {
     throw new CliError(`Plugin "${m.name}" has no resource "${key}"`, 'invalid_argument', EXIT.USAGE, {
       hint: `Its resources: ${Object.keys(m.resources ?? {}).join(', ') || 'none'}`,
@@ -264,6 +269,8 @@ const dataSetCommand = new Command('set')
       const text = valueArg === '-' ? stdinBody(readStdinOnce()) : valueArg;
       if (!text) throw usageError('The value is empty', 'Pass the text on stdin with "-", or delete the key: telegram plugin data delete');
       const { entry, manifest } = loadPlugin(name, cliVersion());
+      // An approval (mode "ask") covers this installation only, not one installed under the name since
+      assertApprovedInstall(entry);
       const userId = (await accountId(false))!;
       const r = dataSet(entry, manifest, userId, key, new TextEncoder().encode(text));
       auditLog({
@@ -290,6 +297,7 @@ const dataDeleteCommand = new Command('delete')
       const problem = dataKeyProblem(key);
       if (problem) throw usageError(problem);
       const { entry } = loadPlugin(name, cliVersion());
+      assertApprovedInstall(entry);
       const userId = (await accountId(false))!;
       if (!dataDelete(entry, userId, key)) throw new CliError(`No data under "${key}" for plugin "${name}" on this account`, 'not_found', EXIT.ERROR);
       auditLog({
@@ -324,12 +332,9 @@ const removeCommand = new Command('remove')
     try {
       if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw humanRequired(argv);
       const entry = findEntry(name);
-      const question = [
-        `Remove the Better-TG-CLI plugin "${entry.name}" ${entry.version}?`,
-        `  Source:  ${originLabel(entry.source)} (${revisionLabel(entry.source, entry.revision)})`,
-        `  Data:    ${options.keepData ? 'kept on this computer (a later install of the same name starts empty)' : 'deleted for every account'}`,
-      ].join('\n');
+      const question = removeQuestion(entry, !!options.keepData);
       if (!(await humanConfirms(question, argv, pluginDeps.confirm))) throw new CliError('Not confirmed by the user. Nothing was removed.', 'not_confirmed', EXIT.ERROR);
+      // Under the lock, and only if this is still the installation the human was shown
       removeInstall(entry, !!options.keepData);
       auditLog({
         timestamp: new Date().toISOString(), command: 'plugin remove', target: name,

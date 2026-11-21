@@ -277,7 +277,12 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   Without a terminal or dialog the command is refused (`no_human_channel`); a "no" is
   `not_confirmed`. Over MCP both are refused **before anything is fetched** (`human_required`) with the
   exact command for the human's terminal on the server's machine, with the profile:
-  `TG_PROFILE=dev telegram plugin install github:owner/repo@v1`. The MCP dialog for this, with
+  `TG_PROFILE=dev telegram plugin install github:owner/repo@v1`. The arguments are parsed as the CLI
+  parses them: `--expect sha256-…` (checked) stays in the command, so it still installs only the
+  content that was validated; anything else unexpected gives no command at all. A mock server's
+  command carries its `TG_MOCK=…` (and mock `TG_PROFILE`), so running it never touches the
+  terminal's real profile. On Windows the dialog's text reaches a fixed PowerShell script on stdin, so
+  no summary is too long for it. The MCP dialog for this, with
   elicitation, is **coming (P4)**; it will refuse on a `--read-only` server and pin the CLI version
   (`npx better-tg-cli@X.Y.Z …`) where there is no `telegram` binary.
 - **Binding to the snapshot** (approvals of `plugin run`, **coming**): classification, the approval
@@ -312,15 +317,45 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **The summary** the human confirms starts with what the host computed (source, revision, official,
   profile, size), then the permissions in plain words, the effects, where data may go, secrets, and
   last the plugin's own words (description, author, triggers), one line each.
-- **Lock file** `plugins/plugin.lock.json`: per plugin the source and revision, the
-  `sha256-<base64>` hash of the manifest and of every file, the accepted permissions, effects,
-  origins and secret names, `installId` (a UUID) and the spec version. Before `list`, `show`, `data`
-  and (from P2) `run`, the host checks that the folder holds exactly the locked files with their
+- **Lock file** `plugins/plugin.lock.json` (the install registry): per plugin the source and
+  revision, the `sha256-<base64>` hash of the manifest and of every file (the same set the manifest
+  lists), the accepted permissions, effects, origins and secret names, `official`, `installId` (a
+  UUID) and the spec version. The registry is **signed**: an HMAC-SHA256 over its canonical JSON
+  (sorted keys) with a 256-bit key kept in the profile's secret store, the one that holds the session
+  (Keychain, Secret Service, DPAPI, 1Password; one key per profile, created at the first install).
+  Its signature is checked before anything in it is used. Without a secret store nothing is installed
+  (`secret_store_unavailable`); a registry whose key is missing or whose signature does not match is
+  refused as a whole (`plugin_lock_invalid`). An empty or missing registry is never signed or
+  checked, so a profile without plugins never touches the store. Before `list`, `show`, `data` and
+  (from P2) `run`, the host also checks that the folder holds exactly the locked files with their
   hashes, no links, and a manifest that declares nothing beyond what was accepted. On a mismatch the
-  plugin is disabled with `plugin_tampered`; `plugin remove` still works. The lock file itself is
-  read as untrusted input: names, IDs and paths in it are checked before use.
+  plugin is disabled with `plugin_tampered`; `plugin remove` still works. The registry is still read
+  as untrusted input: names, IDs and paths in it are checked before use, and it is a map without a
+  prototype (a file called `__proto__` or a plugin called `constructor` is an ordinary name).
+- **Threat model of the registry.** The signature stops a process that can write the profile folder
+  but not the secret store (an agent editing files, a sync tool) from changing what was installed:
+  a file together with its hash, a permission, the `official` mark. Replaying an earlier registry
+  signed with the same key (with its snapshot folders, e.g. from a backup) is not detected: it brings
+  back what the human once confirmed. A process of
+  the same user that can also write the secret store can sign whatever it likes, as it can read the
+  session itself; that is out of scope, as it is for approvals.
 - **On disk.** Everything lives under the profile's config folder (`~/.config/tg[-<profile>]/`,
   `%APPDATA%\tg[-<profile>]\` on Windows): folders `0700`, files `0600` on POSIX, written atomically.
+  Under `TG_MOCK` it lives next to the mock state file instead (`<state>.plugins/`, its registry key
+  in a `0600` file there), so a mock run never changes a real profile, whatever the profile is
+  called. Nothing below that folder is reached through a link: every path is walked component by
+  component from the folder's real path, a symbolic link or Windows junction anywhere is refused,
+  the file is opened with `O_NOFOLLOW` and read from its descriptor only after the descriptor and
+  every folder on the way are checked to be the ones the walk saw (device and inode). A local plugin
+  folder is read the same way. Data `get` refuses a file with more than one hard link.
+- **One change at a time.** Install, remove and `data set/delete` (the quota check and the write
+  together) run under the lock file `.plugins.lock` (created with `O_EXCL`; a lock left by a process
+  that is gone, or older than 10 minutes, is taken over; otherwise `plugin_busy` after 15 s). It is
+  never held across the human's dialog or a download: under the lock, `remove` checks that the
+  registered installation is still the one the human was shown, and `data set/delete` that the
+  plugin they write for is still installed (`plugin_changed` otherwise). In write mode "ask" an
+  approval of `data set/delete` covers the `installId` and revision too, so it does not carry over
+  to a plugin installed under the same name since.
 - **Identity of an installation.** Data (`plugin-data/<installId>/<telegram-user-id>/`, keys are
   logical names `^[a-z0-9][a-z0-9._-]{0,63}$`, declared in `storage.keys`) and secrets are bound to the
   `installId`. After `remove --keep-data`, installing the same name again (from any source) is a new
@@ -329,7 +364,12 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   before need a new confirmation; without it the old snapshot stays. Until then, installing a name
   that is installed is refused (`plugin_exists`).
 - **Official plugins**: a list of owners inside the CLI (`TheVilfer`), matched against the canonical
-  owner GitHub returns. The mark grants nothing: install still asks the human.
+  owner GitHub returns, and only for a commit that repository published itself: the ref named at
+  install is one of its branches or tags (annotated tags peeled) pointing at the commit, or the
+  commit is in the history of its default branch (the compare API answers `identical` or `behind`).
+  GitHub serves every fork's commits through the upstream repository too, so a commit pinned by SHA
+  from a fork installs as a third-party plugin, and the summary says why. The mark grants nothing:
+  install still asks the human.
 - **Audit** (`audit.jsonl` of the profile): install (also a declined one), remove, `data set` and
   `data delete` with the plugin, version, revision, installation ID, key and size; from P2 on also
   every `run` and from P3 settings and secrets (names only). Bodies, values, headers and secrets are
@@ -345,7 +385,9 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **Error codes:** `plugin_invalid` (the plugin breaks the spec; `validate` lists every problem),
   `plugin_unsupported`, `plugin_not_found`, `plugin_exists`, `plugin_tampered`,
   `plugin_revision_mismatch`, `plugin_source_not_found`, `plugin_lock_invalid`, `plugin_limit`
-  (storage quota), `human_required`, `no_human_channel`, `not_confirmed`, `rate_limited` (GitHub API).
+  (storage quota), `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
+  `dialog_failed` (the Windows dialog could not be shown; not the same as the human's No),
+  `human_required`, `no_human_channel`, `not_confirmed`, `rate_limited` (GitHub API).
 - **Exit codes, as the CLI's:** 2 bad arguments (from P2 also an input that fails its schema);
   1 a plugin error or a limit; 3 and 4 only for actions the agent runs.
 - **Acceptance test of the spec** (coming, P6): `plugin validate` accepts the published Tone of Voice,

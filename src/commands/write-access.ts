@@ -39,7 +39,9 @@ export const writeAccessCommand = new Command('write-access')
       const forSeconds = options.for ? parseForDuration(options.for) : undefined;
       let result;
       if (hasHumanChannel()) {
-        if (!(await confirmByHuman(modeQuestion(action, forSeconds)))) {
+        // A dialog that could not be shown throws dialog_failed (not a No)
+        const yes = await confirmByHuman(modeQuestion(action, forSeconds)).catch((e: unknown) => fail(e));
+        if (!yes) {
           fail(new CliError('Not confirmed by the user. Write access stays as it was.', 'not_confirmed', EXIT.ERROR));
         }
         result = await applyModeChoice({ mode: action, forSeconds }, { alreadyConfirmed: true });

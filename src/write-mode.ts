@@ -39,7 +39,14 @@ export async function applyModeChoice(choice: ModeChoice, options: { alreadyConf
   }
   if ((choice.mode === 'on' || options.fromModel) && !options.alreadyConfirmed) {
     if (hasHumanChannel()) {
-      if (!(await confirmByHuman(modeQuestion(choice.mode, choice.forSeconds)))) return { ok: false, error: 'not_confirmed' };
+      let yes: boolean;
+      try {
+        yes = await confirmByHuman(modeQuestion(choice.mode, choice.forSeconds));
+      } catch {
+        // The dialog could not be shown at all (dialog_failed): that is not the person's No
+        return { ok: false, error: 'needs_terminal' };
+      }
+      if (!yes) return { ok: false, error: 'not_confirmed' };
     } else if (options.fromModel || !mayTrustUnconfirmedChoice()) {
       return { ok: false, error: 'needs_terminal' };
     }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dpapiStore, encodedCommand, type Crypter } from '../src/dpapi.js';
 import { windowsConfirmScript } from '../src/commands/write-access.js';
+import { confirmOnWindows, windowsConfirmInput, type Runner } from '../src/confirm.js';
 
 // Stands in for DPAPI on any OS: reversible, but the file must not contain the plaintext
 const fake: Crypter & { calls: number } = {
@@ -116,22 +117,42 @@ describe('DPAPI secret store', () => {
 });
 
 describe('Windows write-access confirmation', () => {
-  it('passes the text to PowerShell as base64 and defaults to No', () => {
-    const text = "It's «ok»?\nSecond line";
-    const script = windowsConfirmScript(text);
-    expect(script).toContain(`FromBase64String('${Buffer.from(text, 'utf8').toString('base64')}')`);
-    expect(script).not.toContain('Second line');
-    // PowerShell ends a single-quoted string at typographic quotes too: none may reach the script
-    const evil = "x\u2019); Remove-Item C:\\ -Recurse; (\u2018\u201a\u201b'";
-    expect(windowsConfirmScript(evil)).not.toMatch(/[\u2018\u2019\u201a\u201b]|Remove-Item/);
+  const cjk = '確'.repeat(200);
+  /** A plugin summary as long as the schema allows: 20 triggers of 200 CJK characters each */
+  const longText = Array.from({ length: 20 }, (_, i) => `    Trigger t${i}: ${cjk}`).join('\n');
+
+  it('runs a fixed script: the text goes on stdin as base64, the default is No', () => {
+    const script = windowsConfirmScript();
+    expect(script).toContain('[Console]::In.ReadToEnd()');
     expect(script).toContain("'YesNo', 'Warning', 'Button2'");
     expect(script).toContain('TopMost = $true');
+    expect(windowsConfirmInput("It's «ok»?")).toBe(Buffer.from("It's «ok»?", 'utf8').toString('base64'));
+    // Base64 has no quote of any kind, typographic ones included
+    expect(windowsConfirmInput("x\u2019); Remove-Item C:\\ -Recurse; (\u2018\u201a\u201b'")).toMatch(/^[A-Za-z0-9+/=]+$/);
+  });
+
+  it('a summary of the largest valid manifest keeps the command line short and reaches the dialog whole', async () => {
+    let seen: { args: string[]; input: string } | undefined;
+    const runner: Runner = async (_file, args, input) => { seen = { args, input }; return { ok: true, stdout: 'ALLOW' }; };
+    expect(await confirmOnWindows(longText, runner)).toBe(true);
+    // CreateProcessW takes at most 32 767 characters; the text no longer travels there
+    expect(seen!.args.join(' ').length).toBeLessThan(4000);
+    expect(seen!.args.join(' ')).toBe((await (async () => { let a = ''; await confirmOnWindows('short', async (_f, args) => { a = args.join(' '); return { ok: true, stdout: 'DENY' }; }); return a; })()));
+    expect(Buffer.from(seen!.input, 'base64').toString('utf8')).toContain(longText);
+  });
+
+  it('No and a timeout are No; a dialog that could not start is an error, not the user\'s No', async () => {
+    expect(await confirmOnWindows('q', async () => ({ ok: true, stdout: 'DENY' }))).toBe(false);
+    expect(await confirmOnWindows('q', async () => ({ ok: false, timedOut: true, error: 'timeout' }))).toBe(false);
+    await expect(confirmOnWindows('q', async () => ({ ok: false, timedOut: false, error: 'spawn ENAMETOOLONG' })))
+      .rejects.toMatchObject({ code: 'dialog_failed' });
+    await expect(confirmOnWindows('q', async () => ({ ok: true, stdout: '' }))).rejects.toMatchObject({ code: 'dialog_failed' });
   });
 
   it.runIf(process.platform === 'win32')('parses as valid PowerShell', () => {
     const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     const file = join(mkdtempSync(join(tmpdir(), 'tg-ps-')), 'confirm.ps1');
-    writeFileSync(file, '\ufeff' + windowsConfirmScript("It's a \u2019test\u2018"), 'utf8');
+    writeFileSync(file, '\ufeff' + windowsConfirmScript(), 'utf8');
     const check = `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('${file.replace(/'/g, "''")}', [ref]$null, [ref]$e); [Console]::Out.Write($e.Count)`;
     const res = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand(check)], { encoding: 'utf8', windowsHide: true });
     expect(res.stdout.trim()).toBe('0');
