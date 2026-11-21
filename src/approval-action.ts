@@ -162,6 +162,7 @@ const DESCRIPTORS: Record<string, Descriptor> = {
   sync: { verb: 'Save chat history to this computer' },
   'plugin data set': { verb: 'Save data for a plugin on this computer', labels: { name: 'Plugin', key: 'Key' }, text: { value: 'Value' }, stdin: 'value' },
   'plugin data delete': { verb: 'Delete data of a plugin on this computer', labels: { name: 'Plugin', key: 'Key' } },
+  'plugin run': { verb: 'Run a plugin command that saves plugin data or proposes actions', labels: { name: 'Plugin', command: 'Command' }, stdinOption: 'input' },
 };
 
 /**

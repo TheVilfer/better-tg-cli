@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { handleMessage, setKnownCommands } from './mcp.js';
+import { handleMessage, PluginRuns, setKnownCommands } from './mcp.js';
 import { isSecretStoreAvailable, secretGet, secretSet } from './secrets.js';
 
 /**
@@ -85,6 +85,8 @@ export type RpcReply = { status: number; body?: unknown };
  */
 export function createRpcProcessor(options: { readOnly?: boolean } = {}, run?: Parameters<typeof handleMessage>[1]) {
   let queue: Promise<unknown> = Promise.resolve();
+  // Streamable HTTP: only the client's notification cancels a plugin run (a closed request does not)
+  const runs = new PluginRuns();
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
     const next = queue.then(fn, fn);
     queue = next.catch(() => undefined);
@@ -106,8 +108,15 @@ export function createRpcProcessor(options: { readOnly?: boolean } = {}, run?: P
         replies.push({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } });
         continue;
       }
+      if (msg.method === 'notifications/cancelled') {
+        // Past the queue, as over stdio: the run it names may be in progress
+        runs.cancel((msg.params as { requestId?: unknown } | undefined)?.requestId);
+        continue;
+      }
+      const call = msg.method === 'tools/call' && msg.id != null;
+      if (call) runs.arrived(msg.id);
       try {
-        const reply = await serial(() => handleMessage(msg, run, { readOnly: options.readOnly }));
+        const reply = await serial(() => handleMessage(msg, run, { readOnly: options.readOnly, runs }).finally(() => { if (call) runs.settled(msg.id); }));
         if (msg.method === 'tools/call') logCall(msg, (reply as { result?: { isError?: boolean } })?.result?.isError ? 'error' : 'ok');
         if (reply) replies.push(reply);
       } catch (e) {

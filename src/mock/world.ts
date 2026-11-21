@@ -130,6 +130,9 @@ export interface MockMessage {
   /** Comment count shown on a channel post or thread root. */
   replies?: number;
   forwardedFrom?: number;
+  /** A reply that quotes a message of this user's chat elsewhere (the reply header names it as its source). */
+  quoteFrom?: number;
+  quoteText?: string;
   /** --full stats. */
   views?: number;
   forwards?: number;

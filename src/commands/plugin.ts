@@ -1,11 +1,13 @@
 import { Command } from 'commander';
+import { isMainThread, parentPort, workerData } from 'node:worker_threads';
+import type { TelegramClient } from 'teleproto';
 import { disconnectClient, getClient, getMe } from '../client.js';
 import { isConfigured, loadConfig } from '../config.js';
 import { isMock } from '../paths.js';
 import { auditLog } from '../audit.js';
 import { assertLocalWriteAllowed } from '../guard.js';
 import { readStdinOnce, stdinBody } from '../text.js';
-import { CliError, EXIT, fail, shellCommand, usageError } from '../errors.js';
+import { CliError, EXIT, ExitSignal, fail, shellCommand, usageError } from '../errors.js';
 import chalk from '../colors.js';
 import { VERSION } from '../version.js';
 import { DEFAULT_QUOTA_BYTES, markdownSection, type Manifest } from '../plugins/manifest.js';
@@ -16,10 +18,13 @@ import {
 } from '../plugins/store.js';
 import { humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, type Confirm } from '../plugins/human.js';
 import { listPlugins, PLUGIN_NOTICE, pluginSource } from '../plugins/catalog.js';
+import { assertRunnable, checkInput, devLog, findCommand, memoryStorage, parseInput, parseTarget, runPluginCommand, type RunOutcome } from '../plugins/run.js';
+import type { StorageBackend } from '../plugins/host.js';
+import type { LockEntry } from '../plugins/store.js';
 
 /**
- * `telegram plugin …` (docs/plugins.md). P1: install by snapshot, list, show, data, remove, validate.
- * Running plugin code (`plugin run`, P2), network and secrets (P3) and `plugin update` with the MCP
+ * `telegram plugin …` (docs/plugins.md): install by snapshot, list, show, data, remove, validate (P1);
+ * run and dev in the sandbox (P2). Network and secrets (P3) and `plugin update` with the MCP
  * management dialog (P4) plug in here.
  */
 
@@ -139,7 +144,7 @@ const listCommand = new Command('list')
           if (p.description) console.log(`  [${p.source}] ${p.description}`);
           for (const t of p.triggers ?? []) console.log(`  trigger ${t.id}: [${p.source}] ${t.when}\n    → telegram ${t.argv.join(' ')}`);
           if (p.onboarding) console.log(`  onboarding: ${p.onboarding.state}\n    → telegram ${p.onboarding.argv.join(' ')}`);
-          if (p.commands?.length) console.log(`  commands (running them comes in a later version): ${p.commands.map(c => c.name).join(', ')}`);
+          for (const c of p.commands ?? []) console.log(`  command ${c.name} (${c.access}): [${p.source}] ${c.description}\n    → telegram ${c.argv.join(' ')} --input '<json>'`);
         }
       }
       await done();
@@ -320,6 +325,152 @@ const dataCommand = new Command('data')
   .addCommand(dataSetCommand)
   .addCommand(dataDeleteCommand);
 
+// ---------- run / dev ----------
+
+/**
+ * Cancels a run: SIGTERM/SIGINT (the MCP server stops its child that way), or the MCP server's
+ * "tg-cancel" message when this call runs in its worker thread.
+ */
+function cancellation(): { signal: AbortSignal; cancelled?: () => boolean } {
+  const ac = new AbortController();
+  const stop = () => ac.abort();
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
+  if (isMainThread) return { signal: ac.signal };
+  parentPort?.on('message', (m: unknown) => { if (m === 'tg-cancel') stop(); });
+  // The server's flag in shared memory reaches a run whose code keeps this thread busy, too
+  const flag = (workerData as { tgCancel?: unknown } | null)?.tgCancel;
+  const shared = flag instanceof SharedArrayBuffer ? new Int32Array(flag) : undefined;
+  return { signal: ac.signal, ...(shared ? { cancelled: () => Atomics.load(shared, 0) === 1 } : {}) };
+}
+
+/** The installation's data for this Telegram account, through the same store as `plugin data`. */
+function installStorage(entry: LockEntry, m: Manifest, userId: string): StorageBackend {
+  return {
+    get: key => {
+      const v = dataGet(entry, userId, key);
+      return v === undefined ? undefined : new TextDecoder().decode(v);
+    },
+    list: () => dataList(entry, userId),
+    set: (key, value) => dataSet(entry, m, userId, key, new TextEncoder().encode(value)),
+    delete: key => dataDelete(entry, userId, key),
+  };
+}
+
+function printOutcome(outcome: RunOutcome, asJson: boolean | undefined): void {
+  // JSON with null kept, as the output schema sees it: never formatJson()
+  console.log(asJson ? outcome.json : JSON.stringify(outcome.envelope, null, 2));
+}
+
+interface RunOptions { input?: string; target?: string; thread?: boolean; json?: boolean }
+
+function runOptions(c: Command): Command {
+  return c
+    .option('--input <json>', 'The command\'s input: a JSON object, or "-" to read it from stdin')
+    .option('--target <ref>', 'What the plugin may read (messages:read-target): <chat>:<msgId>, or <chat>@<topic>; chat is an ID or @username')
+    .option('--thread', 'With --target <chat>:<msgId>: that message\'s thread instead of the message alone')
+    .option('--json', 'Output as one JSON line');
+}
+
+const runCommand = runOptions(new Command('run')
+  .description('Run a command of an installed plugin in its sandbox; prints {data, proposals}. A command with effects is a local write')
+  .argument('<name>', 'Plugin name')
+  .argument('<command>', 'Command name, from `plugin list`'))
+  .action(async (name: string, cmd: string, options: RunOptions) => {
+    const calls: string[] = [];
+    let entry: LockEntry | undefined;
+    let proposals: string[] = [];
+    let error: string | undefined = 'error';
+    try {
+      // The verified snapshot, read once: these bytes run, whatever happens to the folder meanwhile
+      const loaded = loadPlugin(name, cliVersion());
+      entry = loaded.entry;
+      const m = loaded.manifest;
+      const c = findCommand(m, cmd);
+      assertRunnable(m, c);
+      const target = parseTarget(options.target, !!options.thread);
+      if (target && !(m.permissions ?? []).includes('messages:read-target')) {
+        throw usageError(`Plugin "${name}" reads no target (it lacks the permission messages:read-target); drop --target`);
+      }
+      const fromStdin = options.input === '-';
+      const input = parseInput(fromStdin ? stdinBody(readStdinOnce()) : options.input);
+      checkInput(c, input);
+      if (c.effects.length) {
+        // A local write: over MCP it follows the write mode (refused when read-only, approved in
+        // "ask"), and an approval covers this installation and snapshot only
+        await assertLocalWriteAllowed(undefined, { fixedDestination: true, readsStdin: fromStdin });
+        assertApprovedInstall(entry);
+      }
+      const perms = new Set(m.permissions ?? []);
+      let client: Promise<TelegramClient> | undefined;
+      const telegram = () => (client ??= getClient().then(tg => {
+        // A plugin call never sleeps through a FLOOD_WAIT: it gets the error with its cursor
+        (tg as unknown as { floodSleepThreshold: number }).floodSleepThreshold = 0;
+        return tg;
+      }));
+      let me: Promise<string> | undefined;
+      const account = () => (me ??= telegram().then(tg => getMe(tg)).then(u => u.id.toString()));
+      const userId = perms.has('storage:read') || perms.has('storage:write') ? await account() : undefined;
+      const outcome = await runPluginCommand({
+        manifest: m, command: c, code: new TextDecoder().decode(loaded.files.get(m.main!)), filename: m.main!, input,
+        client: telegram, account, storage: () => installStorage(entry!, m, userId!), target,
+        mcp: !!(process.env.TG_MCP || process.env.TG_READ_ONLY), ...cancellation(),
+      }, calls);
+      proposals = outcome.envelope.proposals.map(p => p.type);
+      error = undefined;
+      printOutcome(outcome, options.json);
+      await done();
+    } catch (e) {
+      // The write guard's own exits (describe run, approval_required, writes off): no run happened
+      if (e instanceof ExitSignal) entry = undefined;
+      error = e instanceof CliError ? e.code : 'error';
+      fail(e);
+    } finally {
+      if (entry) {
+        auditLog({
+          timestamp: new Date().toISOString(), command: 'plugin run', target: name,
+          plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, command: cmd, apis: [...new Set(calls)], proposals },
+          result: { success: !error, ...(error ? { error } : {}) },
+        });
+      }
+    }
+  });
+
+const devCommand = runOptions(new Command('dev')
+  .description('For plugin authors: run a command of a plugin folder against the mock account (--mock); nothing is installed, asked or written')
+  .argument('<dir>', 'Plugin folder (holds tg-plugin.json)')
+  .argument('<command>', 'Command name')
+  .option('--mock', 'Telegram, storage and settings are mocked (the only mode of plugin dev)'))
+  .action(async (dir: string, cmd: string, options: RunOptions & { mock?: boolean }) => {
+    try {
+      if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw new CliError('"plugin dev" is for plugin authors in a terminal, not over MCP', 'not_available', EXIT.ERROR);
+      if (!options.mock) throw usageError('plugin dev runs only with --mock', `For a check on the real account install the folder: telegram plugin install ${dir}`);
+      // Every check install runs, then the bytes read here
+      const snap = readLocalSnapshot(dir, cliVersion());
+      const m = snap.manifest;
+      const c = findCommand(m, cmd);
+      assertRunnable(m, c);
+      const target = parseTarget(options.target, !!options.thread);
+      const input = parseInput(options.input === '-' ? stdinBody(readStdinOnce()) : options.input);
+      checkInput(c, input);
+      // The built-in mock account in memory: never the profile, its session or its secret store
+      const { MockClient } = await import('../mock/client.js');
+      const { seedWorld } = await import('../mock/world.js');
+      const world = seedWorld();
+      const client = new MockClient(world) as unknown as TelegramClient;
+      const storage = memoryStorage(m);
+      const log = devLog(m.name);
+      const outcome = await runPluginCommand({
+        manifest: m, command: c, code: new TextDecoder().decode(snap.files.get(m.main!)), filename: m.main!, input,
+        client: async () => client, account: async () => String(world.me), storage: () => storage, target,
+        mcp: false, log: log.write, ...cancellation(),
+      });
+      printOutcome(outcome, options.json);
+    } catch (e) {
+      fail(e);
+    }
+  });
+
 // ---------- remove / validate ----------
 
 const removeCommand = new Command('remove')
@@ -378,6 +529,8 @@ export const pluginCommand = new Command('plugin')
   .addCommand(listCommand)
   .addCommand(showCommand)
   .addCommand(dataCommand)
+  .addCommand(runCommand)
   .addCommand(installCommand)
   .addCommand(removeCommand)
-  .addCommand(validateCommand);
+  .addCommand(validateCommand)
+  .addCommand(devCommand);

@@ -125,7 +125,7 @@ export function installSummary(s: Snapshot): string {
     ? `  Sends data:  ${sources.length ? sources.join(', ') : 'what its commands compute'} may go to: ${network.join(', ')}`
     : '  Sends data:  nowhere (no network access)');
   if (m.secrets?.length) lines.push(`  Secrets:     ${m.secrets.map(x => `${x.name} (only to ${x.inject.origin})`).join(', ')}; you enter them yourself later`);
-  if (m.main) lines.push('  Code:        it ships code; running plugin code is not available in this version yet');
+  if (m.main) lines.push('  Code:        it ships code, which runs in an isolated sandbox with only the access listed here');
   lines.push('  In the plugin\'s own words:');
   lines.push(`    Description: ${clip(m.description, 300)}`);
   if (m.author) lines.push(`    Author:      ${clip(m.author.name, 100)}${m.author.url ? ` <${clip(m.author.url, 200)}>` : ''}`);

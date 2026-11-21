@@ -65,6 +65,8 @@ export interface ErrorDetails {
   retryAfterSeconds?: number;
   /** When the candidates came from the dialog list on disk: the time that list was read (ISO) */
   listedAt?: string;
+  /** More fields of this error's JSON, after the ones above (a plugin run: `limit`, `cursor`, `partial`, `issues`) */
+  fields?: Record<string, unknown>;
 }
 
 /**
@@ -80,12 +82,13 @@ export class CliError extends Error {
   readonly candidates?: ChatCandidate[];
   readonly retryAfterSeconds?: number;
   readonly listedAt?: string;
+  readonly fields?: Record<string, unknown>;
 
   constructor(
     summary: string,
     code: string,
     exitCode: number = EXIT.ERROR,
-    extra: { hint?: Hint; command?: string[]; candidates?: ChatCandidate[]; retryAfterSeconds?: number; listedAt?: string; text?: string } = {},
+    extra: { hint?: Hint; command?: string[]; candidates?: ChatCandidate[]; retryAfterSeconds?: number; listedAt?: string; text?: string; fields?: Record<string, unknown> } = {},
   ) {
     super(extra.text ?? humanText(summary, extra.candidates, extra.hint));
     this.name = 'CliError';
@@ -97,6 +100,7 @@ export class CliError extends Error {
     this.candidates = extra.candidates;
     this.retryAfterSeconds = extra.retryAfterSeconds;
     this.listedAt = extra.listedAt;
+    this.fields = extra.fields;
   }
 }
 
@@ -154,6 +158,7 @@ export function errorDetails(error: unknown): ErrorDetails & { exitCode: number 
       ...(error.candidates?.length ? { candidates: error.candidates } : {}),
       ...(error.retryAfterSeconds !== undefined ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
       ...(error.listedAt ? { listedAt: error.listedAt } : {}),
+      ...(error.fields ? { fields: error.fields } : {}),
     };
   }
   const rpc = error as { errorMessage?: unknown; seconds?: unknown; message?: unknown } | null;
@@ -181,9 +186,10 @@ export function wantsJson(argv: string[] = process.argv.slice(2)): boolean {
 
 /** The one JSON line an error prints with --json. */
 export function errorJson(details: ErrorDetails): string {
-  const { code, message, hint, command, candidates, retryAfterSeconds, listedAt } = details;
+  const { code, message, hint, command, candidates, retryAfterSeconds, listedAt, fields } = details;
   return JSON.stringify({
     error: {
+      ...fields,
       code, message,
       ...(hint ? { hint } : {}),
       ...(command ? { command } : {}),

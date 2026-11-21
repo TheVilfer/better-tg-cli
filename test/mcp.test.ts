@@ -64,11 +64,12 @@ describe('command classification', () => {
 
   it('every plugin path is classified by its full path, and a new one is refused until it is listed', () => {
     const leaves = subcommandPaths().filter(p => p.startsWith('plugin '));
-    // validate stays off MCP on purpose (it reads a folder the model would name)
-    expect(new Set(leaves)).toEqual(new Set([...Object.keys(PLUGIN_PATHS), 'plugin validate']));
-    setKnownCommands([...allPaths(), 'plugin run', 'plugin data export']);
+    // validate and dev stay off MCP on purpose (they read a folder the model would name)
+    expect(new Set(leaves)).toEqual(new Set([...Object.keys(PLUGIN_PATHS), 'plugin validate', 'plugin dev']));
+    expect(classifyCall(['plugin', 'dev', './x', 'collect', '--mock']).group).toBe('never');
+    setKnownCommands([...allPaths(), 'plugin publish', 'plugin data export']);
     try {
-      expect(classifyCall(['plugin', 'run', 'tone-of-voice', 'collect']).group).toBe('unknown');
+      expect(classifyCall(['plugin', 'publish', 'tone-of-voice']).group).toBe('unknown');
       expect(classifyCall(['plugin', 'data', 'export', 'x']).group).toBe('unknown');
     } finally {
       setKnownCommands(allPaths());

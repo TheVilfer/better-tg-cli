@@ -21,6 +21,7 @@ import { openBrowser } from './commands/onboard.js';
 import type { OnboardSession } from './onboard.js';
 import { parseSource } from './plugins/source.js';
 import { humanCommand } from './plugins/human.js';
+import { loadPlugin } from './plugins/store.js';
 
 /**
  * `telegram mcp`: a stdio MCP server (protocol 2025-11-25, initialize handshake) that runs
@@ -73,16 +74,17 @@ export const PER_CALL_COMMANDS = new Set(['api', 'help', 'plugin']);
  * `plugin` runs over MCP only through these full paths (docs/plugins.md, "CLI commands"): reads on
  * telegram_read, local writes (`assertLocalWriteAllowed`) on telegram_write, and the management
  * commands a human runs are refused with that command. Any other path (`validate`, which reads a
- * folder the model would name, and every later one) is refused until it is listed here. P2 adds
- * `plugin run`, classified per call by the effects the lock file records for that command.
+ * folder the model would name, and every later one) is refused until it is listed here. `plugin run`
+ * is classified per call by the effects its installed manifest declares for that command (`run`).
  */
-export const PLUGIN_PATHS: Readonly<Record<string, 'read' | 'write' | 'human'>> = {
+export const PLUGIN_PATHS: Readonly<Record<string, 'read' | 'write' | 'human' | 'run'>> = {
   'plugin list': 'read',
   'plugin show': 'read',
   'plugin data get': 'read',
   'plugin data list': 'read',
   'plugin data set': 'write',
   'plugin data delete': 'write',
+  'plugin run': 'run',
   'plugin install': 'human',
   'plugin remove': 'human',
 };
@@ -205,12 +207,41 @@ function classifyPlugin(args: string[]): CallClass {
     return { group: 'invalid', reason: `${path} needs a subcommand: ${[...new Set(subs)].join(', ')}` };
   }
   const kind = PLUGIN_PATHS[path];
-  if (path === 'plugin validate') {
-    return { group: 'never', reason: '"plugin validate" reads a folder on this computer; plugin authors run it in a terminal' };
+  if (path === 'plugin validate' || path === 'plugin dev') {
+    return { group: 'never', reason: `"${path}" reads a folder on this computer; plugin authors run it in a terminal` };
   }
   if (!kind || !knownCommands.has(path)) return unknown(path);
   if (kind === 'human') return { group: 'never', reason: pluginManagementRefusal(path, args.slice(i)) };
+  if (kind === 'run') return { group: pluginRunGroup(args.slice(i)), label: path };
   return { group: kind, label: path };
+}
+
+/** Options of `plugin run` that take a value (the rest are flags). */
+const RUN_VALUED = new Set(['--input', '--target']);
+
+/**
+ * `plugin run <name> <command>`: a read when the installed manifest gives that command no effects,
+ * a (local) write otherwise. Only a route: the run itself loads the verified snapshot again and
+ * refuses a write on the read tool, so a lookup that fails here (no such plugin, a tampered one)
+ * is left to it and reported by it.
+ */
+function pluginRunGroup(rest: string[]): 'read' | 'write' {
+  const operands: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--') { operands.push(...rest.slice(i + 1)); break; }
+    if (RUN_VALUED.has(a)) { i++; continue; }
+    if (a.startsWith('-')) continue;
+    operands.push(a);
+  }
+  const [name, command] = operands;
+  if (!name || !command) return 'read';
+  try {
+    const { manifest } = loadPlugin(name);
+    return (manifest.commands ?? []).find(c => c.name === command)?.effects.length ? 'write' : 'read';
+  } catch {
+    return 'read';
+  }
 }
 
 /**
@@ -489,7 +520,7 @@ function cliBase(): string[] {
  * `refusedExit`: set by gateWrite when the describe run failed, so the refusal keeps the CLI's exit
  * code; `refusedRun`: that run's output, answered like any failed CLI run (cliResult).
  */
-type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean; refusedExit?: number; refusedRun?: RunOutput };
+type Plan = { argv: string[]; readOnly: boolean; stdin?: string; approval?: string; describe?: boolean; refusedExit?: number; refusedRun?: RunOutput; signal?: AbortSignal };
 
 /**
  * Every output the model gets, raw or curated, text or JSON, error or not: masked (maskOutput; JSON
@@ -623,6 +654,70 @@ export function useWorkers(env = process.env, electron = process.versions.electr
   return Boolean(electron) || env.TG_MCP_WORKER === '1';
 }
 
+/** How long a cancelled run may take to stop by itself before it is killed. */
+const CANCEL_GRACE_MS = 2000;
+
+const onAbort = (signal: AbortSignal | undefined, fn: () => void) => {
+  if (!signal) return;
+  if (signal.aborted) fn();
+  else signal.addEventListener('abort', fn, { once: true });
+};
+
+/**
+ * Plugin runs by JSON-RPC request id, for `notifications/cancelled` (docs/plugins.md §4). The
+ * transport hands a cancellation here as soon as it arrives, past the request queue: a run in
+ * progress is stopped, a run still waiting in the queue never starts, and neither gets a response.
+ * Only plugin runs are cancelled this way; any other call runs to its end as before.
+ */
+export class PluginRuns {
+  private readonly active = new Map<string, AbortController>();
+  /** Calls received and not answered yet, and whether a cancellation came for one before it started. */
+  private readonly pending = new Map<string, boolean>();
+  private closed = false;
+
+  private static key(id: unknown): string {
+    return JSON.stringify(id ?? null);
+  }
+
+  /** A call arrived (before it waits in the queue): only such a call can be cancelled before it starts. */
+  arrived(id: unknown): void {
+    this.pending.set(PluginRuns.key(id), false);
+  }
+
+  /** The call was answered (or dropped): a later cancellation of its id means nothing. */
+  settled(id: unknown): void {
+    this.pending.delete(PluginRuns.key(id));
+  }
+
+  cancel(id: unknown): void {
+    const k = PluginRuns.key(id);
+    const running = this.active.get(k);
+    if (running) return running.abort();
+    // Remembered only for a call still waiting: a finished call's id may come again (a new session)
+    if (this.pending.has(k)) this.pending.set(k, true);
+  }
+
+  /** The channel closed (stdio): everything running stops, nothing queued starts. */
+  cancelAll(): void {
+    this.closed = true;
+    for (const c of this.active.values()) c.abort();
+  }
+
+  begin(id: unknown): AbortSignal {
+    const k = PluginRuns.key(id);
+    const c = new AbortController();
+    if (this.closed || this.pending.get(k)) c.abort();
+    this.active.set(k, c);
+    return c.signal;
+  }
+
+  end(id: unknown): void {
+    this.active.delete(PluginRuns.key(id));
+  }
+}
+
+const isPluginRun = (argv: string[]) => argv[0] === 'plugin' && argv[1] === 'run';
+
 function runChild(plan: Plan): Promise<RunOutput> {
   return new Promise(resolve => {
     const [bin, ...pre] = cliBase();
@@ -639,6 +734,11 @@ function runChild(plan: Plan): Promise<RunOutput> {
     child.stderr!.on('data', d => { if (err.length < MAX_OUTPUT) err += d; });
     if (plan.stdin !== undefined) child.stdin!.end(plan.stdin);
     const timer = setTimeout(() => { child.kill('SIGKILL'); }, CALL_TIMEOUT_MS);
+    // Cancelled (a plugin run): the child stops its sandbox on SIGTERM and exits; killed if it does not
+    onAbort(plan.signal, () => {
+      child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), CANCEL_GRACE_MS).unref();
+    });
     child.on('error', e => { clearTimeout(timer); resolve({ code: 1, timedOut: false, out: '', err: `Failed to start the CLI: ${e.message}` }); });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
@@ -650,8 +750,10 @@ function runChild(plan: Plan): Promise<RunOutput> {
 function runWorker(plan: Plan): Promise<RunOutput> {
   return new Promise(resolve => {
     let worker: Worker;
+    // Set on cancel: a plugin run polls it while its code keeps the thread too busy for a message
+    const cancelFlag = new SharedArrayBuffer(4);
     try {
-      worker = new Worker(resolvePath(process.argv[1]), { argv: plan.argv, env: childEnv(plan), stdin: true, stdout: true, stderr: true });
+      worker = new Worker(resolvePath(process.argv[1]), { argv: plan.argv, env: childEnv(plan), stdin: true, stdout: true, stderr: true, workerData: { tgCancel: cancelFlag } });
     } catch (e) {
       return resolve({ code: 1, timedOut: false, out: '', err: `Failed to start the CLI: ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -664,6 +766,12 @@ function runWorker(plan: Plan): Promise<RunOutput> {
     // Always end stdin (after the text, if any): any prompt hits EOF instead of hanging
     worker.stdin!.end(plan.stdin ?? '');
     const timer = setTimeout(() => { timedOut = true; void worker.terminate(); }, CALL_TIMEOUT_MS);
+    // Cancelled (a plugin run): the worker stops its sandbox on this message; terminated if it does not
+    onAbort(plan.signal, () => {
+      Atomics.store(new Int32Array(cancelFlag), 0, 1);
+      worker.postMessage('tg-cancel');
+      setTimeout(() => void worker.terminate(), CANCEL_GRACE_MS).unref();
+    });
     worker.on('error', (e: unknown) => { failure = e instanceof Error ? e : new Error(String(e)); });
     // Resolve once the thread has exited and both output streams are drained
     let pending = 3;
@@ -722,6 +830,8 @@ export interface McpOptions {
   describe?: (plan: Plan) => Promise<Described>;
   /** Answers telegram_setup (tests replace it); the server's own setup page by default */
   setup?: () => Promise<ToolResult>;
+  /** Plugin runs the transport can cancel (notifications/cancelled, a closed channel). */
+  runs?: PluginRuns;
 }
 
 /**
@@ -809,6 +919,17 @@ export async function handleMessage(msg: RpcMessage, run = runCli, options: McpO
           // Masked like every output; a failed describe run keeps the CLI's exit code
           const exitCode = (plan as Plan).refusedExit;
           return reply({ ...text(cap(refused, 'echo'), true), ...(exitCode !== undefined ? { structuredContent: { exitCode } } : {}) });
+        }
+      }
+      if (options.runs && isPluginRun(plan.argv)) {
+        const signal = options.runs.begin(msg.id);
+        try {
+          // Cancelled while it waited in the queue, or while it ran: no response (MCP cancellation)
+          if (signal.aborted) return undefined;
+          const out = await run({ ...plan, signal });
+          return signal.aborted ? undefined : reply(out);
+        } finally {
+          options.runs.end(msg.id);
         }
       }
       return reply(await run(plan));
@@ -909,7 +1030,8 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
   setKnownCommands(commands);
   let queue: Promise<void> = Promise.resolve();
   const send = (obj: object) => process.stdout.write(JSON.stringify(obj) + '\n');
-  const opts: McpOptions = { ...options };
+  const runs = new PluginRuns();
+  const opts: McpOptions = { ...options, runs };
   // Requests this server sends to the client (elicitation), waiting for their answers
   const waiting = new Map<string, (msg: RpcMessage) => void>();
   let nextId = 0;
@@ -949,20 +1071,32 @@ export function startMcpServer(commands: Iterable<string>, options: { readOnly?:
       answer(msg);
       return;
     }
+    // Past the queue: the call it cancels may be running (or waiting) right now
+    if (msg.method === 'notifications/cancelled') {
+      runs.cancel((msg.params as { requestId?: unknown } | undefined)?.requestId);
+      return;
+    }
     if (msg.method === 'initialize') {
       const caps = (msg.params?.capabilities ?? {}) as { elicitation?: { form?: unknown; url?: unknown } };
       // `elicitation: {}` (2025-06-18) means form; 2025-11-25 may list modes, form among them
       const form = caps.elicitation && (caps.elicitation.form !== undefined || caps.elicitation.url === undefined);
       opts.elicit = form ? elicit : undefined;
     }
+    if (msg.method === 'tools/call' && msg.id != null) runs.arrived(msg.id);
     queue = queue.then(async () => {
       try {
         const res = await handleMessage(msg, runCli, opts);
         if (res) send(res);
       } catch (e) {
         send({ jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32603, message: maskForModel(e instanceof Error ? e.message : String(e), 'echo') } });
+      } finally {
+        if (msg.method === 'tools/call' && msg.id != null) runs.settled(msg.id);
       }
     });
   });
-  rl.on('close', () => { void queue.then(() => { closeSetup(); process.exit(0); }); });
+  // A closed channel cancels the plugin runs (running and queued); other calls finish first
+  rl.on('close', () => {
+    runs.cancelAll();
+    void queue.then(() => { closeSetup(); process.exit(0); });
+  });
 }

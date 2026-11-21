@@ -34,7 +34,7 @@ export interface PluginInfo {
   network: string[];
   triggers?: { id: string; when: string; argv: string[] }[];
   onboarding?: { state: 'done' | 'pending' | 'unknown'; argv: string[]; doneWhen: { storage: string } };
-  commands?: { name: string; description: string; effects: Effect[] }[];
+  commands?: { name: string; description: string; effects: Effect[]; access: 'read' | 'local write' | 'network'; argv: string[]; input: Record<string, unknown> }[];
   resources?: string[];
 }
 
@@ -58,8 +58,12 @@ export function describeEntry(entry: LockEntry, userId: string | undefined, cliV
     effects: allEffects(m),
     triggers: (m.triggers ?? []).map(t => ({ id: t.id, when: t.when, argv: ['plugin', 'show', m.name, '--trigger', t.id] })),
     ...(m.onboarding && state ? { onboarding: { state, argv: ['plugin', 'show', m.name, '--onboarding'], doneWhen: m.onboarding.doneWhen } } : {}),
-    // Running a command is the next step of plugin support (P2): listed, not runnable yet
-    commands: (m.commands ?? []).map(c => ({ name: c.name, description: c.description, effects: c.effects })),
+    // argv runs the command; its input (a JSON object matching `input`) goes after --input
+    commands: (m.commands ?? []).map(c => ({
+      name: c.name, description: c.description, effects: c.effects,
+      access: c.effects.includes('network') ? 'network' as const : c.effects.length ? 'local write' as const : 'read' as const,
+      argv: ['plugin', 'run', m.name, c.name], input: c.input,
+    })),
     resources: Object.keys(m.resources ?? {}),
   };
 }

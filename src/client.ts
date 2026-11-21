@@ -686,7 +686,7 @@ export function messageText(msg: Api.Message): string {
   return maskForModel(text, isLoginServiceMessage(msg) ? 'service' : 'chat');
 }
 
-function plainMessageText(msg: Api.Message): string {
+export function plainMessageText(msg: Api.Message): string {
   if (msg.message) return msg.message;
   if (msg.richMessage) {
     try {
@@ -717,6 +717,16 @@ const isLoginServicePeer = (peer: unknown): boolean =>
 function isLoginServiceMessage(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown }): boolean {
   const fwd = msg.fwdFrom as { fromId?: unknown } | null | undefined;
   return isLoginServicePeer(msg.peerId) || isLoginServicePeer(msg.fromId) || isLoginServicePeer(fwd?.fromId);
+}
+
+/**
+ * For plugins (src/plugins/host.ts): a message of a login-code service account as above, or one
+ * that quotes or replies to such a message in another chat (the reply header names its source).
+ */
+export function isServiceSource(msg: { peerId?: unknown; fromId?: unknown; fwdFrom?: unknown; replyTo?: unknown }): boolean {
+  if (isLoginServiceMessage(msg)) return true;
+  const reply = msg.replyTo as { replyFrom?: { fromId?: unknown } | null; replyToPeerId?: unknown } | null | undefined;
+  return isLoginServicePeer(reply?.replyFrom?.fromId) || isLoginServicePeer(reply?.replyToPeerId);
 }
 
 export { LOGIN_CODE_HIDDEN };

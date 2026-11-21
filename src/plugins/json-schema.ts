@@ -16,6 +16,35 @@ export interface SchemaIssue {
 
 export class UnsupportedSchemaError extends Error {}
 
+/** Validation ran past its time budget (a plugin's schema checked against a plugin's value). */
+export class SchemaTimeoutError extends Error {}
+
+/**
+ * A plugin command's `input`/`output` schema: the supported keywords, and no regular expressions
+ * (`pattern`, `patternProperties`). The host checks plugin values on its own thread, where a
+ * catastrophic expression could not be interrupted; the sandbox time limit covers plugin code only.
+ */
+export function commandSchemaProblems(schema: unknown): string[] {
+  try {
+    assertSupported(schema);
+  } catch (e) {
+    return [(e as Error).message];
+  }
+  const out: string[] = [];
+  for (const { pointer, schema: s } of subschemas(schema)) {
+    for (const k of ['pattern', 'patternProperties']) {
+      if (k in s) out.push(`"${k}" at ${pointer || '/'} is not supported in command schemas (no regular expressions); check the value in the plugin's code`);
+    }
+  }
+  return out;
+}
+
+/** Steps between two looks at the clock, and the deadline of the validation running now. */
+let budget = { steps: 0, deadline: Infinity };
+const tick = () => {
+  if ((++budget.steps & 1023) === 0 && Date.now() > budget.deadline) throw new SchemaTimeoutError('Schema validation took too long');
+};
+
 const SUPPORTED = new Set([
   '$schema', '$id', '$defs', '$ref', '$comment', 'title', 'description', 'default', 'examples', 'deprecated', 'readOnly', 'writeOnly',
   'type', 'enum', 'const',
@@ -109,6 +138,7 @@ function typeMatches(value: unknown, type: string): boolean {
 
 /** Deep equality of JSON values (object key order does not matter). */
 export function jsonEqual(a: unknown, b: unknown): boolean {
+  tick();
   if (a === b) return true;
   if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
@@ -130,13 +160,20 @@ const describe = (v: unknown) => JSON.stringify(v)?.slice(0, 60) ?? String(v);
  * Validates `value` against `schema`. Returns the issues found (empty when valid), at most `limit`.
  * Call `assertSupported(schema)` first for a schema that did not come from this repository.
  */
-export function validate(schema: Schema, value: unknown, limit = 20): SchemaIssue[] {
+export function validate(schema: Schema, value: unknown, limit = 20, timeoutMs = Infinity): SchemaIssue[] {
   const issues: SchemaIssue[] = [];
-  check(schema, schema, value, '', issues, limit);
+  const outer = budget;
+  budget = { steps: 0, deadline: Date.now() + timeoutMs };
+  try {
+    check(schema, schema, value, '', issues, limit);
+  } finally {
+    budget = outer;
+  }
   return issues.slice(0, limit);
 }
 
 function check(root: Schema, schema: Schema, value: unknown, path: string, out: SchemaIssue[], limit: number): void {
+  tick();
   if (out.length >= limit) return;
   if (schema === true) return;
   if (schema === false) { out.push({ path, message: 'is not allowed' }); return; }
