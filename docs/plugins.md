@@ -302,13 +302,24 @@ const r = await host.http.fetch('https://api.example.com/v1/chat', {
   link-local, carrier-grade NAT (100.64/10), multicast, unspecified, broadcast, reserved,
   documentation or benchmarking, or an IPv6 form that carries one of those IPv4 addresses
   (IPv4-mapped `::ffff:…`, IPv4-compatible, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`; Teredo and local
-  NAT64 always). It then opens a TLS connection to exactly that IP (verified for the host name, SNI)
-  and checks the socket reached it, so a second DNS answer (rebinding) is never used. Proxy variables
-  (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY`, …) are not read.
+  NAT64 `64:ff9b:1::/48` always). When an answer is IPv6, the host also asks the same resolver for
+  `ipv4only.arpa` once per run (RFC 7050) to learn the network's own NAT64 prefixes (any range, a
+  global one too); an address inside one of them is judged by the IPv4 address it carries (RFC 6052,
+  every prefix length). If that discovery fails, no prefix is added and the request goes on. It then
+  opens a TLS connection to exactly that IP (verified for the host name, SNI) and checks the socket
+  reached it, so a second DNS answer (rebinding) is never used. The certificate is always verified
+  against the system's CAs and the host name: `NODE_TLS_REJECT_UNAUTHORIZED=0` or any other
+  variable cannot turn that off. Proxy variables (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY`, …) are not
+  read.
 - **No redirects.** A `3xx` comes back as it is, with its `location` header; nothing follows it.
 - **Sizes.** A request body up to 256 KB (`request_too_large`). A response body up to 1 MB on the
   wire and 1 MB after decompression (`gzip`, `deflate`, `br`; the host sends `Accept-Encoding` itself):
-  reading stops at the limit (`response_too_large`), so a gzip bomb ends there. Headers up to 64 KB.
+  reading stops at the limit (`response_too_large`), so a gzip bomb ends there. A
+  `Transfer-Encoding` other than exactly `chunked` and a `Content-Encoding` the host did not ask for
+  are `bad_response` (the size limit and the secret stripping always see the decoded body). Everything
+  of a response that is not body shares one budget of 64 KB: the status lines and headers of every
+  interim `1xx` answer and the final one, chunk-size lines with their extensions, the line break after
+  each chunk and the trailers; a chunked body has at most 8192 chunks (`bad_response` past either).
   A body that is valid UTF-8 comes as `body`, anything else (or `responseType: 'base64'`) as
   `bodyBase64`. One `http.fetch` result may be up to 2 MB inside the sandbox, so a 1 MB body always fits.
 - **Headers.** Names are tokens and values printable ASCII without line breaks (`invalid_argument`).
@@ -319,10 +330,12 @@ const r = await host.http.fetch('https://api.example.com/v1/chat', {
   `Set-Cookie`, `Content-Encoding`, `Content-Length` and `Transfer-Encoding` (the body is decoded). The host sets `Host`,
   `Content-Length`, `Accept-Encoding`, `Connection: close` and a `User-Agent` (unless given).
 - **No cookies.** None is kept or sent, and `Set-Cookie` is removed from the response headers.
-- **Time.** A request ends after 30 s or 250 ms before the run's deadline, whichever is first
-  (`timeout`); a cancelled run stops it (`cancelled`). Every request is a host call and counts against
+- **Time.** A request has one deadline, fixed when `http.fetch` is called: 30 s, or 250 ms before the
+  run's deadline, whichever is first (`timeout`). Reading its secrets from the store (asynchronously;
+  a slow store is stopped), DNS, connecting, TLS and the response all count against it. A cancelled
+  run stops it (`cancelled`). Every request is a host call and counts against
   the run's host-call limits.
-- **Errors** (catchable, `{code, message}`): `network_denied`, `invalid_argument`,
+- **Errors** (catchable, `{code, message}`): `network_denied`, `ambiguous_path`, `invalid_argument`,
   `request_too_large`, `response_too_large`, `timeout`, `network` (DNS, TLS, connection),
   `bad_response` (not HTTP/1.1), `secret_missing`, `secret_store_unavailable`, `cancelled`.
 
@@ -340,9 +353,14 @@ The plugin never sees a secret. The manifest says where the host puts it:
   `human_required` and the command to run. Over MCP it is refused before any prompt, with the exact
   command for the human's terminal (with the profile, or the mock's `TG_MOCK=…`); MCP form
   elicitation is never used for it. A value is 8 to 4096 characters of printable ASCII (it goes into
-  a header). `plugin secret rm <plugin> <secret>` deletes it (also the human's). `plugin show <plugin>`
-  lists each secret as `set` or `not set` (never the value), and `plugin remove` deletes the secrets
-  of the installation.
+  a header). The value is stored only if the installation the human was shown is still the
+  registered one when they finish typing (checked under the plugin lock; a `plugin remove` or a new
+  install meanwhile gives `plugin_changed` and nothing is stored). `plugin secret rm <plugin> <secret>`
+  deletes it (also the human's). `plugin show <plugin>` lists each secret as `set` or `not set` (never
+  the value), and `plugin remove` deletes the secrets of the installation: it records them in the
+  host's state (`plugin-state/pending-secret-cleanup.json`, names only) in the same locked step that
+  removes the installation, so a secret the store fails to delete is deleted by the next plugin
+  command, silently; `plugin secret rm <plugin> <secret>` also deletes one a removed plugin left.
 - **Where it is kept**: the profile's secret store (macOS Keychain, Linux Secret Service, Windows
   DPAPI or 1Password, the one that holds the session) under a key the core builds from the profile,
   the installation ID and the secret name (`plugin-secret-<profile>-<installId>-<name>`). Without a
@@ -350,16 +368,22 @@ The plugin never sees a secret. The manifest says where the host puts it:
   to the mock state, never a real store.
 - **Where it goes**: the host adds the header (`format` with `{value}` replaced) only to a request
   whose origin is `inject.origin` and, with `paths`, whose path equals one of them or starts with it
-  followed by `/` (`/v1` covers `/v1/chat`, not `/v1x`; dot segments are resolved first). At an
-  origin whose secret is limited to some paths, a path a server could read as another one (an
-  encoded `/`, `\` or `.`, such as `/v1/..%2fadmin`, or a `;` parameter) is refused
-  (`network_denied`). A partial response (`206`) to a request that carried a secret is refused
+  followed by `/` (`/v1` covers `/v1/chat`, not `/v1x`). Without `paths` it goes to every path of the
+  origin; `paths` has at least one entry (an empty list is refused at install, and one already
+  installed sends the secret nowhere). A request that would carry a secret limited to some paths is
+  refused with `ambiguous_path`, before the secret is read or anything is sent, when its path as the
+  plugin wrote it or as the URL parser resolved it holds anything a server could read as another
+  path: a `\` or `;`, a `%` without two hex digits, an encoded `/`, `\`, `.`, `;` or `%` (such as
+  `/v1/..%2fadmin`), an encoding that is not normalised (an encoded letter, digit or `-._~`, lowercase
+  hex), an empty segment (`//`), or a `.` or `..` segment (also `/v2/../v1/x`, which the parser would
+  turn into `/v1/x`). A trailing `/` is fine. The manifest's own `paths` follow the same rules. A partial response (`206`) to a request that carried a secret is refused
   (`bad_response`). A request
   that needs a secret that is not set is not sent: `secret_missing` with `command` (an uncaught one
   ends the run with `secret_missing` and the command for the human's terminal).
 - **Stripped from the response.** Before the sandbox sees a response, every form of each secret
   value and formatted header sent in the run is replaced with `[secret]` in the body and the header
-  values (a header whose name holds one is dropped): as is, URL-encoded (`%20` and `+`), JSON-escaped,
+  values (a header whose name holds one is dropped): as is, URL-encoded (`%20` and `+`, and the
+  `application/x-www-form-urlencoded` form `URLSearchParams` writes, which also encodes `!'()~`), JSON-escaped,
   hex, and base64 / base64url, whole and at each byte alignment inside a longer base64 text (so
   `Basic base64(user:key)` or an echoed `Authorization: …` line is found). At an alignment edge up to
   two base64 characters next to the marker may remain; they carry no more than 6 bits of the value.
@@ -373,7 +397,8 @@ after checking it against the setting's schema (exit 2 with `issues` otherwise);
 like `plugin data set` (over MCP through `telegram_write` and the write mode). `plugin settings get
 <plugin> [key]` prints the values (stored or default). `host.settings.get(key)` returns the stored
 value, else the default. Settings live in `plugin-state/<installId>/settings.json` and go with the
-installation.
+installation. All settings of an installation together are at most 256 KB as UTF-8 JSON: a value that
+would pass that is refused (`settings_too_large`, exit 2) and the stored settings stay as they were.
 
 ### The install summary
 
@@ -602,8 +627,9 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   its result broke the output schema), `cancelled`, `flood_wait`, `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
   `dialog_failed` (the Windows dialog could not be shown; not the same as the human's No),
   `human_required`, `no_human_channel`, `not_confirmed`, `rate_limited` (GitHub API), `secret_missing`
-  (a request needs a secret the human has not set; `command` sets it). Inside the sandbox
-  `http.fetch` also gives `network_denied`, `request_too_large`, `response_too_large`, `timeout`,
+  (a request needs a secret the human has not set; `command` sets it), `settings_too_large`
+  (`plugin settings set` past 256 KB in all). Inside the sandbox
+  `http.fetch` also gives `network_denied`, `ambiguous_path`, `request_too_large`, `response_too_large`, `timeout`,
   `network`, `bad_response` and, in `plugin dev`/`TG_MOCK`, `fixture_missing`.
 - **Exit codes, as the CLI's:** 2 bad arguments, an unknown command or an input that fails its schema;
   1 a plugin error or a limit; 3 and 4 only for actions the agent runs.

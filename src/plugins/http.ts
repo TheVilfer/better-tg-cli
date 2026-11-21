@@ -14,10 +14,10 @@
  */
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { connect as tlsConnect, type TLSSocket } from 'node:tls';
+import { checkServerIdentity, connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { createBrotliDecompress, createGunzip, createInflate, createInflateRaw, type Gunzip } from 'node:zlib';
 import { HostError } from './sandbox-types.js';
-import { addressProblem } from './net-address.js';
+import { addressProblem, nat64Prefix, type Nat64Prefix } from './net-address.js';
 import type { Manifest } from './manifest.js';
 import { VERSION } from '../version.js';
 
@@ -26,16 +26,34 @@ export const HTTP_LIMITS = {
   requestBytes: 256 * 1024,
   /** Body bytes a plugin may receive, after decompression (and before it, on the wire). */
   responseBytes: 1024 * 1024,
-  /** The status line and headers of a response. */
+  /**
+   * Everything of a response that is not body, together: the status lines and headers of every
+   * interim (1xx) and final answer, chunk-size lines with their extensions, the CRLF after each
+   * chunk, and trailers.
+   */
   headerBytes: 64 * 1024,
-  /** One request, connection included; never past the run's deadline. */
-  timeoutMs: 30_000,
+  /** Chunks of one chunked body (each costs at least 5 bytes of the budget above, so this binds first). */
+  chunks: 8192,
   urlChars: 8192,
   headers: 50,
   headerValueChars: 8192,
   /** All the plugin's header names and values together. */
   requestHeaderBytes: 16 * 1024,
 } as const;
+
+/**
+ * One request, from entering `http.fetch` (secret reads, DNS, connect, TLS, the response) to its
+ * end; never past the run's deadline. Mutable for tests only.
+ */
+export const httpTiming = { timeoutMs: 30_000 };
+
+/** A request ends a little before the run's deadline, so the plugin still gets its `timeout` error. */
+const DEADLINE_MARGIN_MS = 250;
+
+/** The one absolute deadline of a request entering `http.fetch` now: 30 s, or the run's end, whichever is first. */
+export function requestDeadline(runDeadline: number, now = Date.now()): number {
+  return Math.min(now + httpTiming.timeoutMs, runDeadline - DEADLINE_MARGIN_MS);
+}
 
 /** A text body is handed in as text only while its JSON form stays below this (else base64). */
 const TEXT_JSON_CHARS = 1_500_000;
@@ -65,6 +83,8 @@ const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export interface CheckedRequest {
   method: string;
   url: URL;
+  /** The path as the plugin wrote it, before the URL parser resolved dot segments and backslashes. */
+  rawPath: string;
   /** Header names as given, unique case-insensitively; the secrets' headers are added later. */
   headers: [string, string][];
   body?: Buffer;
@@ -81,7 +101,8 @@ export interface RawResponse {
 /** A checked request with the secret headers the host adds (never seen by the plugin). */
 export type OutgoingRequest = CheckedRequest & { inject: [string, string][] };
 
-export type Backend = (req: OutgoingRequest, signal: AbortSignal, deadline: number) => Promise<RawResponse>;
+/** `until`: the request's own absolute deadline (requestDeadline), shared by every step. */
+export type Backend = (req: OutgoingRequest, signal: AbortSignal, until: number) => Promise<RawResponse>;
 
 export interface FetchResult {
   status: number;
@@ -170,22 +191,61 @@ export function checkRequest(m: Manifest, urlArg: unknown, optsArg: unknown): Ch
   if (body && body.length > HTTP_LIMITS.requestBytes) {
     throw new HostError('request_too_large', `The request body is ${body.length} bytes; the limit is ${HTTP_LIMITS.requestBytes}`);
   }
-  return { method, url, headers, ...(body ? { body } : {}), responseType };
+  return { method, url, rawPath: rawPathOf(urlArg), headers, ...(body ? { body } : {}), responseType };
 }
 
 /**
- * A path a server may read differently than the host: an encoded `/`, `\` or `.`, a backslash or a
- * `;` parameter (`/v1/..%2fadmin` is under `/v1` to the host, `/admin` to a server that decodes
- * first). A request with one is refused at an origin whose secret is limited to some paths.
+ * The path of a URL string as written: what the URL parser sees once it dropped tabs and line
+ * breaks and trimmed spaces, after the scheme and authority (which end at `/`, `\`, `?` or `#`),
+ * up to the query or fragment.
  */
-export const ambiguousPath = (path: string): boolean => /%2f|%5c|%2e|\\|;/i.test(path);
+export function rawPathOf(urlText: string): string {
+  // eslint-disable-next-line no-control-regex
+  const text = urlText.replace(/[\t\n\r]/g, '').replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '');
+  const rest = text.replace(/^[A-Za-z][A-Za-z0-9+.-]*:[/\\]*[^/\\?#]*/, '');
+  const end = rest.search(/[?#]/);
+  return end < 0 ? rest : rest.slice(0, end);
+}
 
-/** Does a secret's `inject` apply to this URL: the exact origin, and a path prefix on a segment boundary. */
+const UNRESERVED = /[A-Za-z0-9\-._~]/;
+
+/**
+ * Why a server might read this path as another one, or undefined. Checked on the path as the plugin
+ * wrote it and as the URL parser normalised it, for a request that would carry a secret limited to
+ * some paths (`/v1/..%2fadmin` is under `/v1` to the host and `/admin` to a server that decodes
+ * first): a `\` or `;`, a `%` without two hex digits, an encoded `/`, `\`, `.`, `;` or `%`, any
+ * encoding that is not normalised (an encoded unreserved character, lowercase hex), an empty
+ * segment, a `.` or `..` segment. A trailing `/` is allowed.
+ */
+export function pathProblem(path: string): string | undefined {
+  if (/[\\;]/.test(path)) return 'a "\\" or ";"';
+  for (let i = path.indexOf('%'); i >= 0; i = path.indexOf('%', i + 1)) {
+    const hex = path.slice(i + 1, i + 3);
+    if (!/^[0-9A-Fa-f]{2}$/.test(hex)) return 'a "%" without two hex digits';
+    const ch = String.fromCharCode(parseInt(hex, 16));
+    if ('/\\.;%'.includes(ch)) return 'an encoded "/", "\\", ".", ";" or "%"';
+    if (UNRESERVED.test(ch)) return 'an encoded letter, digit or "-._~" (not normalised)';
+    if (hex !== hex.toUpperCase()) return 'a lowercase percent-encoding (not normalised)';
+  }
+  const segments = path.split('/').slice(1);
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg === '' && i < segments.length - 1) return 'an empty segment ("//")';
+    if (seg === '.' || seg === '..') return 'a "." or ".." segment';
+  }
+  return undefined;
+}
+
+/**
+ * Does a secret's `inject` apply to this URL: the exact origin, and with `paths` a path equal to one
+ * or below it on a segment boundary. An empty `paths` list matches nothing (the schema refuses one;
+ * an installation from before that rule never gets its secret sent anywhere).
+ */
 export function injectMatches(inject: { origin: string; paths?: string[] }, url: URL): boolean {
   if (url.origin !== inject.origin) return false;
-  if (!inject.paths?.length) return true;
+  if (inject.paths === undefined) return true;
   const path = url.pathname;
-  return inject.paths.some(p => path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`));
+  return inject.paths.some(p => p !== '' && (path === p || path.startsWith(p.endsWith('/') ? p : `${p}/`)));
 }
 
 // ---------- removing secrets from a response ----------
@@ -202,6 +262,8 @@ export function secretForms(values: string[]): Buffer[] {
     forms.add(v);
     forms.add(encodeURIComponent(v));
     forms.add(encodeURIComponent(v).replace(/%20/g, '+'));
+    // application/x-www-form-urlencoded (URLSearchParams, HTML forms) also encodes !'()~
+    forms.add(new URLSearchParams({ k: v }).toString().slice(2));
     forms.add(JSON.stringify(v).slice(1, -1));
     const raw = Buffer.from(v, 'utf8');
     forms.add(raw.toString('hex'));
@@ -288,7 +350,13 @@ export function systemNet(tlsExtra: { ca?: string | Buffer } = {}): NetDeps {
       return all.map(a => ({ address: a.address, family: a.family }));
     },
     connect: ({ address, port, servername }) => {
-      const socket = tlsConnect({ host: address, port, servername, ALPNProtocols: ['http/1.1'], minVersion: 'TLSv1.2', ...tlsExtra });
+      const socket = tlsConnect({
+        host: address, port, servername, ALPNProtocols: ['http/1.1'], minVersion: 'TLSv1.2', ...tlsExtra,
+        // Set here, never inherited: NODE_TLS_REJECT_UNAUTHORIZED=0 in the environment changes nothing,
+        // and the certificate must name the origin's host (the socket is opened to an IP literal)
+        rejectUnauthorized: true,
+        checkServerIdentity: (_host, cert) => checkServerIdentity(servername, cert),
+      });
       // The socket must reach the address that was checked, nothing else
       socket.once('secureConnect', () => {
         const remote = (socket.remoteAddress ?? '').replace(/^::ffff:(?=\d+\.)/, '');
@@ -299,44 +367,63 @@ export function systemNet(tlsExtra: { ca?: string | Buffer } = {}): NetDeps {
   };
 }
 
-/** Resolve once, refuse any non-public address, then connect to the address that was checked. */
+/** RFC 7050: the name whose AAAA answers show the network's own NAT64 prefixes (DNS64). */
+export const NAT64_DISCOVERY_NAME = 'ipv4only.arpa';
+
+/**
+ * Resolve once, refuse any non-public address, then connect to the address that was checked. When
+ * an answer is IPv6, the network's own NAT64 prefixes are discovered once per backend (one run)
+ * through the same resolver (RFC 7050), so an address that a translator would carry to a private
+ * IPv4 address is refused too; a failed discovery adds no prefix.
+ */
 export function networkBackend(net: NetDeps): Backend {
-  return async (req, signal, deadline) => {
+  let prefixes: Promise<Nat64Prefix[]> | undefined;
+  const discover = (signal: AbortSignal, until: number) => (prefixes ??= withTimeout(net.lookup(NAT64_DISCOVERY_NAME), signal, until)
+    .then(all => {
+      const out: Nat64Prefix[] = [];
+      for (const a of all) {
+        const p = nat64Prefix(a.address);
+        if (p && !out.some(x => x.text === p.text)) out.push(p);
+      }
+      return out;
+    }, () => []));
+  return async (req, signal, until) => {
     const host = req.url.hostname;
     const literal = host.replace(/^\[|\]$/g, '');
     let addresses: { address: string; family: number }[];
     if (isIP(literal)) addresses = [{ address: literal, family: isIP(literal) }];
     else {
       try {
-        addresses = await withTimeout(net.lookup(host), signal, deadline);
+        addresses = await withTimeout(net.lookup(host), signal, until);
       } catch (e) {
         if (e instanceof HostError) throw e;
         throw new HostError('network', `Could not resolve ${host}: ${(e as Error).message}`);
       }
     }
     if (!addresses.length) throw new HostError('network', `${host} has no address`);
+    const nat64 = addresses.some(a => isIP(a.address.replace(/%.*$/, '')) === 6) ? await discover(signal, until) : [];
+    if (signal.aborted) throw new HostError('cancelled', 'The run ended');
     // Every address must be public: one private answer makes the whole name suspect
     for (const a of addresses) {
-      const why = addressProblem(a.address);
+      const why = addressProblem(a.address, nat64);
       if (why) throw new HostError('network_denied', `${host} resolves to ${a.address} (${why}); plugins reach public addresses only`);
     }
     const target = addresses[0];
     const port = req.url.port ? Number(req.url.port) : 443;
-    return exchange(() => net.connect({ address: target.address, family: target.family, port, servername: host }), req, signal, deadline);
+    return exchange(() => net.connect({ address: target.address, family: target.family, port, servername: host }), req, signal, until);
   };
 }
 
-/** A request ends a little before the run's deadline, so the plugin still gets its `timeout` error. */
-const DEADLINE_MARGIN_MS = 250;
+const remainingMs = (until: number) => Math.max(0, until - Date.now());
 
-function remainingMs(deadline: number): number {
-  return Math.max(0, Math.min(HTTP_LIMITS.timeoutMs, deadline - Date.now() - DEADLINE_MARGIN_MS));
-}
-
-function withTimeout<T>(p: Promise<T>, signal: AbortSignal, deadline: number): Promise<T> {
+/** `p`, or `timeout` at the request's deadline, or `cancelled` when the run ends. */
+export function withTimeout<T>(p: Promise<T>, signal: AbortSignal, until: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    if (signal.aborted) return reject(new HostError('cancelled', 'The run ended'));
-    const timer = setTimeout(() => reject(new HostError('timeout', 'The request took too long')), remainingMs(deadline));
+    if (signal.aborted) {
+      p.catch(() => {});
+      return reject(new HostError('cancelled', 'The run ended'));
+    }
+    const timer = setTimeout(() => reject(new HostError('timeout', 'The request took too long')), remainingMs(until));
     const onAbort = () => reject(new HostError('cancelled', 'The run ended'));
     signal.addEventListener('abort', onAbort, { once: true });
     p.then(resolve, reject).finally(() => {
@@ -362,14 +449,56 @@ export function requestHead(req: CheckedRequest, extra: [string, string][]): str
 }
 
 const tooLarge = () => new HostError('response_too_large', `The response is larger than ${HTTP_LIMITS.responseBytes} bytes`);
+// A server-supplied value is never put into an error: error messages reach the sandbox unstripped
 const badResponse = (why: string) => new HostError('bad_response', `The server's response is not valid HTTP/1.1: ${why}`);
 
+/** What one response may spend on everything that is not body (HTTP_LIMITS.headerBytes, .chunks). */
+class Overhead {
+  private bytes = 0;
+  private chunks = 0;
+  /** false once the response spent more than its budget. */
+  spend(n: number): boolean {
+    this.bytes += n;
+    return this.bytes <= HTTP_LIMITS.headerBytes;
+  }
+  /** Would `n` more bytes still fit (a head whose end has not arrived yet)? */
+  fits(n: number): boolean {
+    return this.bytes + n <= HTTP_LIMITS.headerBytes;
+  }
+  chunk(): boolean {
+    return ++this.chunks <= HTTP_LIMITS.chunks;
+  }
+}
+
+/** The body in one buffer that grows by doubling (never one buffer per socket read or per chunk). */
+class BodySink {
+  private buf = Buffer.alloc(0);
+  length = 0;
+  /** false when the body passed the limit. */
+  push(b: Buffer): boolean {
+    if (!b.length) return true;
+    if (this.length + b.length > HTTP_LIMITS.responseBytes) return false;
+    if (this.length + b.length > this.buf.length) {
+      const next = Buffer.alloc(Math.min(HTTP_LIMITS.responseBytes, Math.max(16 * 1024, this.buf.length * 2, this.length + b.length)));
+      this.buf.copy(next, 0, 0, this.length);
+      this.buf = next;
+    }
+    b.copy(this.buf, this.length);
+    this.length += b.length;
+    return true;
+  }
+  bytes(): Buffer {
+    return this.buf.subarray(0, this.length);
+  }
+}
+
 /**
- * One HTTP/1.1 exchange on a fresh TLS socket: send, read the head (≤ 64 KB, interim 1xx skipped),
- * read the body by Content-Length, chunked or until close (≤ 1 MB on the wire), then decompress
- * (≤ 1 MB, stopping at the limit). Secrets are added to the head here (`req.inject`).
+ * One HTTP/1.1 exchange on a fresh TLS socket: send, read the head (interim 1xx skipped), read the
+ * body by Content-Length, chunked or until close (≤ 1 MB on the wire, in one buffer), then
+ * decompress (≤ 1 MB, stopping at the limit). Heads, chunk lines and trailers share one 64 KB
+ * budget. Secrets are added to the head here (`req.inject`). `until`: the request's deadline.
  */
-export function exchange(open: () => TLSSocket, req: OutgoingRequest, signal: AbortSignal, deadline: number): Promise<RawResponse> {
+export function exchange(open: () => TLSSocket, req: OutgoingRequest, signal: AbortSignal, until: number): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
     if (signal.aborted) return reject(new HostError('cancelled', 'The run ended'));
     let socket: TLSSocket;
@@ -383,7 +512,7 @@ export function exchange(open: () => TLSSocket, req: OutgoingRequest, signal: Ab
       if (err) reject(err);
       else resolve(value!);
     };
-    const timer = setTimeout(() => finish(new HostError('timeout', 'The request took too long')), remainingMs(deadline));
+    const timer = setTimeout(() => finish(new HostError('timeout', 'The request took too long')), remainingMs(until));
     const onAbort = () => finish(new HostError('cancelled', 'The run ended'));
     signal.addEventListener('abort', onAbort, { once: true });
     let head: string;
@@ -403,39 +532,35 @@ export function exchange(open: () => TLSSocket, req: OutgoingRequest, signal: Ab
     let status = 0;
     let headers: [string, string][] = [];
     let framing: { kind: 'length'; left: number } | { kind: 'chunked'; parser: ChunkParser } | { kind: 'close' } | { kind: 'none' } | undefined;
-    const bodyParts: Buffer[] = [];
-    let bodyBytes = 0;
-    const pushBody = (b: Buffer): boolean => {
-      bodyBytes += b.length;
-      if (bodyBytes > HTTP_LIMITS.responseBytes) {
-        finish(tooLarge());
-        return false;
-      }
-      bodyParts.push(b);
-      return true;
-    };
+    const overhead = new Overhead();
+    const body = new BodySink();
     // The body is complete: the socket is no longer read, only the decoding can still fail
     let ended = false;
     const done = () => {
       ended = true;
       socket.destroy();
-      const raw = Buffer.concat(bodyParts);
-      decompress(raw, headerValue(headers, 'content-encoding')).then(body => finish(undefined, { status, headers, body }), e => finish(e as Error));
+      let decoded: Promise<Buffer>;
+      try {
+        decoded = decompress(body.bytes(), headerValue(headers, 'content-encoding'));
+      } catch (e) {
+        decoded = Promise.reject(e instanceof HostError ? e : badResponse('the body could not be decoded'));
+      }
+      decoded.then(b => finish(undefined, { status, headers, body: b }), e => finish(e instanceof HostError ? e : badResponse('the body could not be decoded')));
     };
     const feedBody = (chunk: Buffer) => {
       if (!framing) return;
       if (framing.kind === 'length') {
         const take = chunk.subarray(0, framing.left);
         framing.left -= take.length;
-        if (!pushBody(take)) return;
+        if (!body.push(take)) return finish(tooLarge());
         if (framing.left === 0) done();
       } else if (framing.kind === 'chunked') {
-        const r = framing.parser.feed(chunk);
-        if (r.error) return finish(badResponse(r.error));
-        for (const part of r.data) if (!pushBody(part)) return;
-        if (r.done) done();
+        const r = framing.parser.feed(chunk, body, overhead);
+        if (r === 'too-large') return finish(tooLarge());
+        if (typeof r === 'object') return finish(badResponse(r.error));
+        if (r === 'done') done();
       } else if (framing.kind === 'close') {
-        pushBody(chunk);
+        if (!body.push(chunk)) finish(tooLarge());
       }
     };
     socket.on('data', (chunk: Buffer) => {
@@ -445,10 +570,12 @@ export function exchange(open: () => TLSSocket, req: OutgoingRequest, signal: Ab
       for (;;) {
         const end = buf.indexOf('\r\n\r\n');
         if (end < 0) {
-          if (buf.length > HTTP_LIMITS.headerBytes) finish(badResponse('the headers are longer than 64 KB'));
+          // What is buffered counts against the budget too, before its end is seen
+          if (!overhead.fits(buf.length)) finish(badResponse('the headers are longer than 64 KB'));
           return;
         }
-        if (end > HTTP_LIMITS.headerBytes) return finish(badResponse('the headers are longer than 64 KB'));
+        // Every head, the interim ones included, spends the one budget
+        if (!overhead.spend(end + 4)) return finish(badResponse('the headers are longer than 64 KB'));
         const parsed = parseHead(buf.subarray(0, end).toString('latin1'));
         if ('error' in parsed) return finish(badResponse(parsed.error));
         buf = buf.subarray(end + 4);
@@ -507,12 +634,10 @@ function bodyFraming(method: string, status: number, headers: [string, string][]
   if (method === 'HEAD' || status === 204 || status === 304) return { kind: 'none' };
   const te = headerValue(headers, 'transfer-encoding');
   if (te !== undefined) {
-    const codings = te.toLowerCase().split(',').map(s => s.trim());
-    if (codings.at(-1) === 'chunked') {
-      if (codings.length > 1) return { error: 'a transfer coding other than chunked' };
-      return { kind: 'chunked', parser: new ChunkParser() };
-    }
-    return { kind: 'close' };
+    // Only chunked: the host cannot undo any other transfer coding (gzip on the wire would hide
+    // an echoed secret from the stripper and the size limit from the body)
+    if (te.trim().toLowerCase() !== 'chunked') return { error: 'a transfer coding other than chunked' };
+    return { kind: 'chunked', parser: new ChunkParser() };
   }
   const lengths = headers.filter(([n]) => n.toLowerCase() === 'content-length').flatMap(([, v]) => v.split(',').map(s => s.trim()));
   if (lengths.length) {
@@ -522,81 +647,93 @@ function bodyFraming(method: string, status: number, headers: [string, string][]
   return { kind: 'close' };
 }
 
-/** Chunked transfer coding, parsed as bytes arrive. */
+/** Chunked transfer coding, parsed as bytes arrive, written straight into the body's buffer. */
 class ChunkParser {
   private state: 'size' | 'data' | 'data-crlf' | 'trailer' | 'done' = 'size';
   private line = '';
   private left = 0;
 
-  feed(chunk: Buffer): { data: Buffer[]; done: boolean; error?: string } {
-    const data: Buffer[] = [];
+  feed(chunk: Buffer, body: BodySink, overhead: Overhead): 'more' | 'done' | 'too-large' | { error: string } {
     let i = 0;
     while (i < chunk.length && this.state !== 'done') {
       if (this.state === 'data') {
         const take = chunk.subarray(i, i + this.left);
-        data.push(take);
+        if (!body.push(take)) return 'too-large';
         this.left -= take.length;
         i += take.length;
         if (this.left === 0) this.state = 'data-crlf';
         continue;
       }
+      // Size lines with their extensions, the CRLF after each chunk and trailers: all overhead
       const c = chunk[i++];
+      if (!overhead.spend(1)) return { error: 'the chunk lines and trailers are longer than 64 KB' };
       this.line += String.fromCharCode(c);
-      if (this.line.length > 4096) return { data, done: false, error: 'a chunk line is too long' };
+      if (this.line.length > 4096) return { error: 'a chunk line is too long' };
       if (!this.line.endsWith('\r\n')) continue;
       const line = this.line.slice(0, -2);
       this.line = '';
       if (this.state === 'data-crlf') {
-        if (line !== '') return { data, done: false, error: 'a chunk does not end with CRLF' };
+        if (line !== '') return { error: 'a chunk does not end with CRLF' };
         this.state = 'size';
       } else if (this.state === 'size') {
         const m = /^([0-9a-fA-F]{1,8})(;.*)?$/.exec(line);
-        if (!m) return { data, done: false, error: 'a bad chunk size' };
+        if (!m) return { error: 'a bad chunk size' };
         this.left = parseInt(m[1], 16);
+        if (this.left > 0 && !overhead.chunk()) return { error: `more than ${HTTP_LIMITS.chunks} chunks` };
         this.state = this.left === 0 ? 'trailer' : 'data';
       } else if (this.state === 'trailer') {
         if (line === '') this.state = 'done';
       }
     }
-    return { data, done: this.state === 'done' };
+    return this.state === 'done' ? 'done' : 'more';
   }
 }
+
+/** The decoders the host asked for (`Accept-Encoding`); a Map, so no inherited name is a decoder. */
+const DECODERS = new Map<string, () => Gunzip>([
+  ['gzip', () => createGunzip()],
+  ['x-gzip', () => createGunzip()],
+  ['deflate', () => createInflate() as unknown as Gunzip],
+  ['br', () => createBrotliDecompress() as unknown as Gunzip],
+]);
 
 /** The body decoded by its Content-Encoding, stopping as soon as it passes the limit (a gzip bomb ends there). */
 export function decompress(raw: Buffer, encoding: string | undefined): Promise<Buffer> {
   const enc = (encoding ?? 'identity').trim().toLowerCase();
   if (enc === '' || enc === 'identity') return Promise.resolve(raw);
-  const make: Record<string, () => Gunzip> = {
-    gzip: () => createGunzip(),
-    'x-gzip': () => createGunzip(),
-    deflate: () => createInflate() as unknown as Gunzip,
-    br: () => createBrotliDecompress() as unknown as Gunzip,
-  };
+  const make = DECODERS.get(enc);
   // The server's value is not repeated: it never reaches the sandbox unstripped
-  if (!make[enc]) return Promise.reject(badResponse('a content encoding that was not asked for'));
-  const run = (z: Gunzip) => new Promise<Buffer>((resolve, reject) => {
-    const parts: Buffer[] = [];
-    let n = 0;
+  if (!make) return Promise.reject(badResponse('a content encoding that was not asked for'));
+  const run = (create: () => Gunzip) => new Promise<Buffer>((resolve, reject) => {
+    let z: Gunzip;
+    try {
+      z = create();
+    } catch {
+      reject(badResponse('the body could not be decoded'));
+      return;
+    }
+    const out = new BodySink();
     let over = false;
     z.on('data', (b: Buffer) => {
       if (over) return;
-      n += b.length;
-      if (n > HTTP_LIMITS.responseBytes) {
+      if (!out.push(b)) {
         over = true;
         z.destroy();
         reject(tooLarge());
-        return;
       }
-      parts.push(b);
     });
     z.on('error', e => { if (!over) reject(e); });
-    z.on('end', () => { if (!over) resolve(Buffer.concat(parts)); });
-    z.end(raw);
+    z.on('end', () => { if (!over) resolve(Buffer.from(out.bytes())); });
+    try {
+      z.end(raw);
+    } catch {
+      reject(badResponse('the body could not be decoded'));
+    }
   });
-  return run(make[enc]()).catch(e => {
-    if (e instanceof HostError) throw e;
+  return run(make).catch(e => {
+    if (e instanceof HostError && e.code !== 'bad_response') throw e;
     // "deflate" is sometimes sent without its zlib wrapper
-    if (enc === 'deflate') return run(createInflateRaw() as unknown as Gunzip).catch(e2 => { throw e2 instanceof HostError ? e2 : badResponse('the deflate body is damaged'); });
+    if (enc === 'deflate') return run(() => createInflateRaw() as unknown as Gunzip).catch(e2 => { throw e2 instanceof HostError && e2.code === 'response_too_large' ? e2 : badResponse('the deflate body is damaged'); });
     throw badResponse(`the ${enc} body is damaged`);
   });
 }

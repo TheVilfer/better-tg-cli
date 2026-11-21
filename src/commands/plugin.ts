@@ -15,10 +15,11 @@ import { DEFAULT_QUOTA_BYTES, markdownSection, type Manifest } from '../plugins/
 import { fetchGithubSnapshot, parseSource, readLocalSnapshot, type Fetch, type Snapshot } from '../plugins/source.js';
 import {
   assertApprovedInstall, assertCanSign, commitInstall, cursorLoad, cursorSave, dataDelete, dataDeleteGuarded, dataGet, dataKeyProblem, dataList,
-  dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, readLock, removeInstall, settingsRead, settingsWrite,
+  dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, pendingSecrets, readLock, removeInstall, settingsRead, settingsWrite,
+  settlePendingSecrets, withCurrentInstall,
 } from '../plugins/store.js';
-import { humanCommand, humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, type Confirm } from '../plugins/human.js';
-import { deletePluginSecret, getPluginSecret, secretStates, setPluginSecret } from '../plugins/secrets.js';
+import { humanCommand, humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, secretPathsLabel, type Confirm } from '../plugins/human.js';
+import { deletePluginSecret, getPluginSecret, getPluginSecretAsync, secretStates, setPluginSecret } from '../plugins/secrets.js';
 import { devBackend, runBackend } from '../plugins/http-backend.js';
 import { validate } from '../plugins/json-schema.js';
 import { oneLine } from '../approval-action.js';
@@ -251,7 +252,7 @@ function showOverview(entry: LockEntry, m: Manifest, asJson: boolean): void {
   console.log(`  Network:  ${out.network.length ? out.network.join(', ') : 'none'}`);
   if (!secrets.length) console.log('  Secrets:  none');
   for (const x of secrets) {
-    console.log(`  Secret ${x.name}: ${x.state} (sent only to ${x.origin}${x.paths ? ` ${x.paths.join(', ')}` : ''} as ${x.header}) [${out.source}] ${x.description}`);
+    console.log(`  Secret ${x.name}: ${x.state} (sent only to ${x.origin} ${secretPathsLabel(x.paths)} as ${x.header}) [${out.source}] ${x.description}`);
     if (x.set) console.log(`    → the user sets it: ${humanCommand(x.set)}`);
   }
   for (const x of settings) console.log(`  Setting ${x.key} (${x.type}) = ${JSON.stringify(x.value)}${x.stored ? '' : ' (default)'}  [${out.source}] ${x.description}`);
@@ -508,7 +509,7 @@ const runCommand = runOptions(new Command('run')
         ...(sends ? {
           network: {
             backend: runBackend(),
-            secret: (secret: string) => getPluginSecret(installed.installId, secret),
+            secret: (secret: string, signal: AbortSignal) => getPluginSecretAsync(installed.installId, secret, signal),
             setCommand: (secret: string) => ['plugin', 'secret', 'set', name, secret],
           },
         } : {}),
@@ -674,17 +675,42 @@ function declaredSecret(m: Manifest, secret: string) {
   return d;
 }
 
-/** Deletes the secrets of an installation that was removed; returns the names that could not be deleted. */
-function removeSecrets(entry: LockEntry): string[] {
-  const left: string[] = [];
-  for (const secret of entry.accepted.secrets) {
-    try {
-      if (getPluginSecret(entry.installId, secret) !== null && !deletePluginSecret(entry.installId, secret)) left.push(secret);
-    } catch {
-      left.push(secret);
+/**
+ * Deletes the secrets of removed installations that `plugin remove` recorded (its own, and any an
+ * earlier remove could not delete); returns, per installation, the names still in the store. A
+ * name is settled only once the store said it is gone.
+ */
+function cleanupPendingSecrets(only?: (p: { name: string; installId: string }) => boolean): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const installed = new Set(Object.values(readLock().plugins).map(e => e.installId));
+  for (const p of pendingSecrets()) {
+    if (only && !only(p)) continue;
+    // Still installed (its removal did not complete): its secrets are live, the record is dropped
+    if (installed.has(p.installId)) {
+      settlePendingSecrets(p.installId, []);
+      continue;
     }
+    const left: string[] = [];
+    for (const secret of p.secrets) {
+      try {
+        if (getPluginSecret(p.installId, secret) !== null && !deletePluginSecret(p.installId, secret)) left.push(secret);
+      } catch {
+        left.push(secret);
+      }
+    }
+    settlePendingSecrets(p.installId, left);
+    out.set(p.installId, left);
   }
-  return left;
+  return out;
+}
+
+/** Before every plugin command: finish a secret cleanup an earlier `plugin remove` left; silent, never fails the command. */
+function retryPendingSecrets(): void {
+  try {
+    if (pendingSecrets().length) cleanupPendingSecrets();
+  } catch {
+    // tried again on the next plugin command
+  }
 }
 
 const secretSetCommand = new Command('set')
@@ -706,11 +732,13 @@ const secretSetCommand = new Command('set')
       }
       console.error([
         `Secret "${d.name}" of the plugin ${m.name} ${m.version} (installation ${entry.installId})`,
-        `  Sent only to: ${d.inject.origin}${d.inject.paths ? ` (paths ${d.inject.paths.join(', ')})` : ''}, as the header ${d.inject.header}`,
+        `  Sent only to: ${d.inject.origin} ${secretPathsLabel(d.inject.paths)}, as the header ${d.inject.header}`,
         `  The plugin never sees the value. In the plugin's own words: ${oneLine(d.description)}`,
       ].join('\n'));
       const value = await (pluginDeps.readSecret ?? promptHidden)(`Value for ${d.name} (input hidden): `);
-      setPluginSecret(entry.installId, d.name, value);
+      // The prompt may have waited long: stored only for the installation that is still registered
+      // (a `plugin remove` meanwhile would otherwise leave the value under a removed installation)
+      withCurrentInstall(entry, 'the secret was not stored', () => setPluginSecret(entry.installId, d.name, value));
       auditLog({
         timestamp: new Date().toISOString(), command: 'plugin secret set', target: name,
         plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, key: d.name },
@@ -732,6 +760,16 @@ const secretRmCommand = new Command('rm')
     const argv = ['plugin', 'secret', 'rm', name, secret];
     try {
       if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw secretHumanRequired(argv, 'Plugin secrets are managed by the user in their own terminal, never over MCP');
+      // A removed plugin whose secret is still in the store (its cleanup failed): delete that one
+      if (!own(readLock().plugins, name)) {
+        const orphans = pendingSecrets().filter(p => p.name === name && p.secrets.includes(secret));
+        if (!orphans.length) findEntry(name);
+        const left = cleanupPendingSecrets(p => p.name === name);
+        if (orphans.some(p => left.get(p.installId)?.includes(secret))) throw new CliError(`Could not delete the secret ${secret} of the removed plugin ${name} from the secret store`, 'secret_store_unavailable', EXIT.ERROR);
+        if (options.json) console.log(json({ ok: true, action: 'plugin secret rm', plugin: name, secret, removedPlugin: true }));
+        else console.log(chalk.green(`✓ Deleted what was left of the secrets of the removed plugin ${name}`));
+        return;
+      }
       const { entry, manifest: m } = loadPlugin(name, cliVersion());
       const d = declaredSecret(m, secret);
       const existed = getPluginSecret(entry.installId, d.name) !== null;
@@ -769,8 +807,9 @@ const removeCommand = new Command('remove')
       if (!(await humanConfirms(question, argv, pluginDeps.confirm))) throw new CliError('Not confirmed by the user. Nothing was removed.', 'not_confirmed', EXIT.ERROR);
       // Under the lock, and only if this is still the installation the human was shown
       removeInstall(entry, !!options.keepData);
-      // Its secrets go with it (they belong to this installation, kept data or not)
-      const secretsLeft = removeSecrets(entry);
+      // Its secrets go with it (they belong to this installation, kept data or not); removeInstall
+      // recorded them first, so what the store fails to delete now is retried by the next command
+      const secretsLeft = cleanupPendingSecrets(p => p.installId === entry.installId).get(entry.installId) ?? [];
       auditLog({
         timestamp: new Date().toISOString(), command: 'plugin remove', target: name,
         plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, keepData: !!options.keepData },
@@ -779,7 +818,7 @@ const removeCommand = new Command('remove')
       if (options.json) console.log(json({ ok: true, action: 'plugin remove', name, keepData: !!options.keepData, ...(secretsLeft.length ? { secretsNotRemoved: secretsLeft } : {}) }));
       else {
         console.log(chalk.green(`✓ Removed ${name}${options.keepData ? ' (data kept)' : ''}`));
-        if (secretsLeft.length) console.error(chalk.yellow(`Could not remove its secrets from the secret store: ${secretsLeft.join(', ')}`));
+        if (secretsLeft.length) console.error(chalk.yellow(`Could not remove its secrets from the secret store yet: ${secretsLeft.join(', ')} (the next plugin command tries again; or: telegram plugin secret rm ${name} <secret>)`));
       }
     } catch (error) {
       fail(error);
@@ -813,6 +852,7 @@ const validateCommand = new Command('validate')
 
 export const pluginCommand = new Command('plugin')
   .description('Plugins: instructions and resources that extend the agent (install and remove are the user\'s)')
+  .hook('preAction', retryPendingSecrets)
   .addCommand(listCommand)
   .addCommand(showCommand)
   .addCommand(dataCommand)

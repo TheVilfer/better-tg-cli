@@ -237,7 +237,12 @@ const lockBusy = (path: string) => new CliError('Another telegram process is cha
  * quota check with its write never interleave with another process. Never held across a dialog or
  * a download. `fn` must not exit the process.
  */
+/** This process holds the lock right now (its holder runs synchronously, so nothing interleaves). */
+let lockHeld = false;
+
 export function withPluginLock<T>(fn: () => T): T {
+  // Re-entrant within this process: a store write inside a section that already holds it
+  if (lockHeld) return fn();
   const root = home(true)!;
   const path = join(root, '.plugins.lock');
   const token = `${process.pid} ${hostname()} ${randomUUID()}`;
@@ -247,9 +252,11 @@ export function withPluginLock<T>(fn: () => T): T {
     if (Date.now() >= deadline) throw lockBusy(path);
     sleep(50);
   }
+  lockHeld = true;
   try {
     return fn();
   } finally {
+    lockHeld = false;
     releaseLock(path, token);
   }
 }
@@ -287,9 +294,11 @@ async function withPluginLockGuarded<T>(guard: WriteGuard, what: string, fn: () 
     if (Date.now() >= busyAt) throw lockBusy(path);
     await new Promise(r => setTimeout(r, Math.max(1, Math.min(50, guard.deadline - Date.now()))));
   }
+  lockHeld = true;
   try {
     return fn();
   } finally {
+    lockHeld = false;
     releaseLock(path, token);
   }
 }
@@ -548,11 +557,25 @@ export function commitInstall(snapshot: Snapshot, now = new Date()): LockEntry {
  * kept, its data. Under the lock it must still be the registered one: a removal confirmed for one
  * installation never removes another that took its name meanwhile.
  */
+/**
+ * Runs `fn` under the plugin lock only while `entry` is still the registered installation (same
+ * installId and revision); otherwise `plugin_changed` and `fn` never runs.
+ */
+export function withCurrentInstall<T>(entry: LockEntry, nothing: string, fn: () => T): T {
+  return withPluginLock(() => {
+    assertCurrent(readLock(), entry, nothing);
+    return fn();
+  });
+}
+
 export function removeInstall(entry: LockEntry, keepData: boolean): void {
   if (!UUID_RE.test(entry.installId)) throw lockInvalid(`bad entry "${entry.name}"`);
   withPluginLock(() => {
     const { lock, key } = readLockKeyed();
     assertCurrent(lock, entry, 'nothing was removed');
+    // Its secrets are deleted after the lock is let go (the store is slow and may fail): recorded
+    // first, in the same section that drops the entry, so a deletion that fails is retried later
+    if (entry.accepted.secrets.length) addPendingSecrets({ name: entry.name, installId: entry.installId, secrets: [...entry.accepted.secrets] });
     const plugins = bare<LockEntry>();
     for (const [k, v] of Object.entries(lock.plugins)) if (k !== entry.name) plugins[k] = v;
     writeLock(plugins, key!);
@@ -561,6 +584,59 @@ export function removeInstall(entry: LockEntry, keepData: boolean): void {
     if (!keepData) removeTree(root, `plugin-data/${entry.installId}`);
     // The host's own state of this installation goes with it, kept data or not
     removeTree(root, `plugin-state/${entry.installId}`);
+  });
+}
+
+// ---------- secrets of removed installations, still to delete ----------
+
+/** Secrets of a removed installation that are not deleted from the secret store yet. */
+export interface PendingSecrets { name: string; installId: string; secrets: string[] }
+
+const PENDING_REL = 'plugin-state/pending-secret-cleanup.json';
+
+/** The installations whose secrets `plugin remove` has not deleted yet. */
+export function pendingSecrets(): PendingSecrets[] {
+  const root = home();
+  if (!root) return [];
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = readRegular(root, PENDING_REL, { singleLink: true, maxBytes: 1024 * 1024 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    return dataUnsafe(e);
+  }
+  if (!bytes) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((p): p is PendingSecrets => !!p && typeof p === 'object' && typeof p.name === 'string' && typeof p.installId === 'string'
+    && UUID_RE.test(p.installId) && strings(p.secrets) && p.secrets.every((x: string) => KEY_RE.test(x)));
+}
+
+function writePending(list: PendingSecrets[]): void {
+  const root = home(true)!;
+  try {
+    if (list.length) writeRegular(root, PENDING_REL, JSON.stringify(list));
+    else removeRegular(root, PENDING_REL);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') dataUnsafe(e);
+  }
+}
+
+function addPendingSecrets(p: PendingSecrets): void {
+  withPluginLock(() => writePending([...pendingSecrets().filter(x => x.installId !== p.installId), p]));
+}
+
+/** After a deletion attempt: `left` are the secrets of this installation still in the store. */
+export function settlePendingSecrets(installId: string, left: string[]): void {
+  withPluginLock(() => {
+    const list = pendingSecrets();
+    const next = list.flatMap(x => (x.installId !== installId ? [x] : left.length ? [{ ...x, secrets: x.secrets.filter(n => left.includes(n)) }] : []));
+    if (JSON.stringify(next) !== JSON.stringify(list)) writePending(next);
   });
 }
 
@@ -778,6 +854,9 @@ export function onboardingState(entry: LockEntry, manifest: Manifest, userId: st
 
 // ---------- non-secret settings per installation ----------
 
+/** The most a settings file may hold (what settingsRead reads), checked before every write. */
+export const SETTINGS_BYTES = 256 * 1024;
+
 function settingsRel(entry: Pick<LockEntry, 'installId'>): string {
   if (!UUID_RE.test(entry.installId)) throw new CliError('Invalid installation ID', 'plugin_lock_invalid', EXIT.ERROR);
   return `plugin-state/${entry.installId}/settings.json`;
@@ -790,7 +869,7 @@ export function settingsRead(entry: Pick<LockEntry, 'installId'>): Record<string
   if (!root) return out;
   let bytes: Uint8Array | undefined;
   try {
-    bytes = readRegular(root, settingsRel(entry), { singleLink: true, maxBytes: 256 * 1024 });
+    bytes = readRegular(root, settingsRel(entry), { singleLink: true, maxBytes: SETTINGS_BYTES });
   } catch (e) {
     return dataUnsafe(e);
   }
@@ -814,8 +893,16 @@ export function settingsWrite(entry: LockEntry, key: string, value: unknown): vo
     assertCurrent(readLock(), entry, 'nothing was saved');
     const all = settingsRead(entry);
     all[key] = value;
+    const text = JSON.stringify(all);
+    // Over the limit the file could no longer be read: refused, the previous file stays as it was
+    const bytes = Buffer.byteLength(text, 'utf8');
+    if (bytes > SETTINGS_BYTES) {
+      throw new CliError(`The settings of "${entry.name}" would take ${bytes} bytes with this value; the limit is ${SETTINGS_BYTES}. Nothing was saved`, 'settings_too_large', EXIT.USAGE, {
+        hint: `Use a shorter value, or shorten another setting first: telegram plugin settings get ${entry.name}`,
+      });
+    }
     try {
-      writeRegular(home(true)!, settingsRel(entry), JSON.stringify(all));
+      writeRegular(home(true)!, settingsRel(entry), text);
     } catch (e) {
       dataUnsafe(e);
     }

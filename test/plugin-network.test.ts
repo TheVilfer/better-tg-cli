@@ -436,7 +436,7 @@ describe('secrets the plugin never sees', () => {
     const t = testNet();
     for (const path of ['/v1/..%2fadmin', '/v1/..%2Fadmin', '/v1/..%5cadmin', '/v1/%2e%2e%2fadmin', '/v1/x;y=../admin', '/v1/a%2Eb']) {
       const r = await fetchVia(t.net, `https://api.example.com${path}`);
-      expect(r, path).toMatchObject({ ok: false, error: { code: 'network_denied' } });
+      expect(r, path).toMatchObject({ ok: false, error: { code: 'ambiguous_path' } });
     }
     expect(seen).toEqual([]);
     // The parser resolves plain and encoded dot segments itself: /v1/%2e%2e/admin is /admin, without the secret

@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { platform, userInfo } from 'node:os';
 import { secretPrefix } from './paths.js';
+import { spawnAsync, type SpawnResult } from './spawn-async.js';
 
 const SECURITY_PATH = '/usr/bin/security';
 export const SECRET_KEYS = new Set(['apiHash', 'sessionString', 'writeEnabled']);
@@ -59,6 +60,16 @@ export function keychainGetStrict(key: string): StrictRead {
   const r = spawnSync(SECURITY_PATH, ['find-generic-password', '-s', secretPrefix(), '-a', key, '-w'], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000,
   });
+  return keychainRead(r);
+}
+
+/** keychainGetStrict without blocking the event loop; `security` is killed when `signal` aborts. */
+export async function keychainGetStrictAsync(key: string, signal?: AbortSignal): Promise<StrictRead> {
+  if (!isKeychainAvailable()) return { ok: false, reason: 'the macOS Keychain is not available' };
+  return keychainRead(await spawnAsync(SECURITY_PATH, ['find-generic-password', '-s', secretPrefix(), '-a', key, '-w'], { timeout: 30_000, signal }));
+}
+
+function keychainRead(r: SpawnResult): StrictRead {
   if (r.status === 0 && !r.error) return { ok: true, value: r.stdout.trimEnd() || null };
   if (r.status === 44) return { ok: true, value: null };
   const why = (r.error?.message || r.stderr || '').trim().split('\n')[0];

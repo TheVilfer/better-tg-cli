@@ -4,6 +4,7 @@ import { platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import { configFile } from './paths.js';
 import type { StrictRead } from './keychain.js';
+import { spawnAsync } from './spawn-async.js';
 
 /**
  * Windows secret store: every secret sits in one file (`secrets.dpapi` in the config dir),
@@ -49,14 +50,23 @@ function runPowerShell(script: string, input: string): string {
   return res.stdout.trim();
 }
 
+async function runPowerShellAsync(script: string, input: string, signal?: AbortSignal): Promise<string> {
+  const res = await spawnAsync(PS, ['-NoProfile', '-NonInteractive', '-NoLogo', '-EncodedCommand', encodedCommand(script)], { input, timeout: 20_000, signal });
+  if (res.status !== 0 || res.error) throw new Error('Windows DPAPI via PowerShell failed');
+  return res.stdout.trim();
+}
+
 export interface Crypter {
   protect(plainBase64: string): string;
   unprotect(blobBase64: string): string;
+  /** unprotect without blocking the event loop (a slow PowerShell start), stopped by `signal`. */
+  unprotectAsync?(blobBase64: string, signal?: AbortSignal): Promise<string>;
 }
 
 const powershellCrypter: Crypter = {
   protect: b64 => runPowerShell(dpapiScript('Protect'), b64),
   unprotect: b64 => runPowerShell(dpapiScript('Unprotect'), b64),
+  unprotectAsync: (b64, signal) => runPowerShellAsync(dpapiScript('Unprotect'), b64, signal),
 };
 
 /** The store itself, with the crypto passed in so tests run on any OS. */
@@ -94,6 +104,25 @@ export function dpapiStore(file: () => string, crypter: Crypter = powershellCryp
         return load(fresh)[key] ?? null;
       } catch {
         return null;
+      }
+    },
+    /** getStrict without blocking the event loop: the cached copy, else the file decrypted asynchronously. */
+    async getStrictAsync(key: string, signal?: AbortSignal): Promise<StrictRead> {
+      const path = file();
+      try {
+        let map = cache.get(path);
+        if (!map) {
+          map = {};
+          if (existsSync(path)) {
+            const blob = readFileSync(path, 'utf8').trim();
+            const plain = crypter.unprotectAsync ? await crypter.unprotectAsync(blob, signal) : crypter.unprotect(blob);
+            map = JSON.parse(Buffer.from(plain, 'base64').toString('utf8')) as Record<string, string>;
+          }
+          cache.set(path, map);
+        }
+        return { ok: true, value: map[key] ?? null };
+      } catch {
+        return { ok: false, reason: 'Windows DPAPI read failed: secrets.dpapi could not be decrypted or parsed' };
       }
     },
     /** Like get, but a file that cannot be decrypted or parsed is an error, not a missing key. */
@@ -140,5 +169,7 @@ export function isDpapiAvailable(): boolean {
 export const dpapiGet = (key: string, fresh = false) => (isDpapiAvailable() ? store.get(key, fresh) : null);
 export const dpapiGetStrict = (key: string): StrictRead =>
   (isDpapiAvailable() ? store.getStrict(key) : { ok: false, reason: 'Windows DPAPI is not available' });
+export const dpapiGetStrictAsync = async (key: string, signal?: AbortSignal): Promise<StrictRead> =>
+  (isDpapiAvailable() ? store.getStrictAsync(key, signal) : { ok: false, reason: 'Windows DPAPI is not available' });
 export const dpapiSet = (key: string, value: string) => isDpapiAvailable() && store.set(key, value);
 export const dpapiDelete = (key: string) => isDpapiAvailable() && store.delete(key);

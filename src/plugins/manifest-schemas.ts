@@ -162,7 +162,9 @@ export const MANIFEST_SCHEMAS: Record<string, Record<string, unknown>> = {
                   "pattern": "^[\\x20-\\x7e]*\\{value\\}[\\x20-\\x7e]*$"
                 },
                 "paths": {
+                  "description": "Only these paths and the paths below them (on a segment boundary) get the secret; leave it out for every path of the origin. At least one path when given.",
                   "type": "array",
+                  "minItems": 1,
                   "maxItems": 20,
                   "items": {
                     "type": "string",

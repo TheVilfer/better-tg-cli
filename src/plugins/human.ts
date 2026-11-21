@@ -71,6 +71,13 @@ export async function humanConfirms(question: string, argv: string[], confirm: C
 const clip = (s: string, n: number) => oneLine(s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** Where a plugin came from, as one line: a folder name or a registry field may hold a line break or a terminal escape. */
+/** Where on its origin a secret goes, for a human: the paths (and below), or every path. */
+export function secretPathsLabel(paths: string[] | undefined): string {
+  if (paths === undefined) return '(any path)';
+  if (!paths.length) return '(no path: an empty list sends it nowhere)';
+  return `(only the paths ${paths.map(p => oneLine(p)).join(', ')} and below them)`;
+}
+
 export function originLabel(s: ResolvedSource): string {
   return oneLine(s.type === 'github' ? `github:${s.owner}/${s.repo}${s.ref ? `@${s.ref}` : ''}` : `local folder ${s.path}`);
 }
@@ -128,7 +135,7 @@ export function installSummary(s: Snapshot): string {
     ? `  Sends data:  may send ${listed ?? 'what its commands compute'} to: ${network.map(o => oneLine(o)).join(', ')}`
     : '  Sends data:  nowhere (no network access)');
   for (const x of m.secrets ?? []) {
-    lines.push(`  Secret ${oneLine(x.name)}: sent by the host only to ${oneLine(x.inject.origin)}${x.inject.paths ? ` (paths ${x.inject.paths.map(oneLine).join(', ')})` : ''} as ${oneLine(x.inject.header)}; the plugin never sees it`);
+    lines.push(`  Secret ${oneLine(x.name)}: sent by the host only to ${oneLine(x.inject.origin)} ${secretPathsLabel(x.inject.paths)} as ${oneLine(x.inject.header)}; the plugin never sees it`);
   }
   if (m.secrets?.length) lines.push(`  Secrets:     you type them yourself later: telegram plugin secret set ${oneLine(m.name)} <name>`);
   if (m.main) lines.push('  Code:        it ships code, which runs in an isolated sandbox with only the access listed here');

@@ -1,6 +1,6 @@
 import { MANIFEST_SCHEMAS } from './manifest-schemas.js';
 import { commandSchemaProblems, validate } from './json-schema.js';
-import { originProblem, secretHeaderProblem } from './http.js';
+import { originProblem, pathProblem as urlPathProblem, secretHeaderProblem } from './http.js';
 import { InvalidRangeError, parseRange, satisfies } from './semver.js';
 
 /**
@@ -255,6 +255,11 @@ function semanticErrors(m: Manifest): string[] {
     if (secretNames.has(s.name)) errors.push(`secrets: "${s.name}" is declared twice`);
     secretNames.add(s.name);
     if (!origins.has(s.inject.origin)) errors.push(`secrets.${s.name}: origin ${s.inject.origin} is not in network`);
+    for (const p of s.inject.paths ?? []) {
+      const why = urlPathProblem(p);
+      if (why) errors.push(`secrets.${s.name}: inject.paths "${p}" holds ${why}`);
+    }
+    if (s.inject.paths && !s.inject.paths.length) errors.push(`secrets.${s.name}: inject.paths is empty; leave it out to send the secret to every path`);
     const hp = secretHeaderProblem(s.inject.header);
     if (hp) errors.push(`secrets.${s.name}: inject.header ${hp}`);
     const at = `${s.inject.origin} ${s.inject.header.toLowerCase()}`;

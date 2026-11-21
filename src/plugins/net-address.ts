@@ -2,7 +2,8 @@
  * Which IP addresses a plugin's request may connect to (docs/plugins.md §6): public unicast only.
  * Loopback, private, link-local, CGNAT, multicast, unspecified, reserved and documentation ranges are
  * refused, and so is any IPv6 form that carries one of those IPv4 addresses (IPv4-mapped,
- * IPv4-compatible, NAT64 64:ff9b::/96, 6to4). Pure functions: no DNS, no sockets.
+ * IPv4-compatible, NAT64 64:ff9b::/96 and the network's own NAT64 prefixes, 6to4). Pure functions:
+ * no DNS, no sockets (the caller discovers the NAT64 prefixes, RFC 7050, and passes them in).
  */
 import { isIP } from 'node:net';
 
@@ -61,8 +62,60 @@ export function v6Groups(ip: string): number[] | undefined {
   return all.map(x => parseInt(x, 16));
 }
 
+/** A NAT64 prefix of the network (RFC 6052: 32, 40, 48, 56, 64 or 96 bits), found by RFC 7050 discovery. */
+export interface Nat64Prefix {
+  bytes: number[];
+  bits: 32 | 40 | 48 | 56 | 64 | 96;
+  /** `prefix/bits` for messages and de-duplication. */
+  text: string;
+}
+
+const NAT64_LENGTHS = [96, 64, 56, 48, 40, 32] as const;
+
+const bytesOf = (g: number[]) => g.flatMap(x => [x >> 8, x & 0xff]);
+
+/** The IPv4 address embedded after a prefix of `bits` (RFC 6052 §2.2: bits 64-71 are skipped). */
+function embeddedV4(bytes: number[], bits: number): number {
+  const out: number[] = [];
+  for (let i = bits / 8; out.length < 4; i++) if (i !== 8) out.push(bytes[i]);
+  return ((out[0] << 24) >>> 0) + (out[1] << 16) + (out[2] << 8) + out[3];
+}
+
+/** The well-known IPv4 addresses of ipv4only.arpa (RFC 7050 §2.2). */
+const IPV4ONLY = new Set([0xc00000aa, 0xc00000ab]);
+
+/**
+ * The NAT64 prefix an AAAA answer for ipv4only.arpa shows: the length at which 192.0.0.170 or
+ * 192.0.0.171 is embedded (RFC 7050 §3), or undefined (not a synthesized answer).
+ */
+export function nat64Prefix(address: string): Nat64Prefix | undefined {
+  if (isIP(address) !== 6) return undefined;
+  const g = v6Groups(address);
+  if (!g) return undefined;
+  const bytes = bytesOf(g);
+  for (const bits of NAT64_LENGTHS) {
+    // The u octet (bits 64-71) is zero in every RFC 6052 address
+    if (bits < 96 && bytes[8] !== 0) continue;
+    if (!IPV4ONLY.has(embeddedV4(bytes, bits))) continue;
+    const prefix = bytes.slice(0, bits / 8);
+    const groups: string[] = [];
+    for (let i = 0; i < 16; i += 2) groups.push((((prefix[i] ?? 0) << 8) | (prefix[i + 1] ?? 0)).toString(16));
+    return { bytes: prefix, bits, text: `${groups.join(':')}/${bits}` };
+  }
+  return undefined;
+}
+
 /** Why an IPv6 address is refused, or undefined for a public one. */
-function v6Problem(g: number[]): string | undefined {
+function v6Problem(g: number[], nat64: Nat64Prefix[] = []): string | undefined {
+  // The network's own NAT64 prefix (any range, even 2000::/3): the translator connects to the
+  // embedded IPv4 address, so that address decides
+  const bytes = bytesOf(g);
+  for (const p of nat64) {
+    if (!p.bytes.every((b, i) => bytes[i] === b)) continue;
+    const v4 = embeddedV4(bytes, p.bits);
+    const why = v4Problem(v4);
+    return why ? `NAT64 (${p.text}) of ${v4Text(v4)}, ${why}` : undefined;
+  }
   const embedded = (hi: number, lo: number) => hi * 65536 + lo;
   const zeros = (from: number, to: number) => g.slice(from, to).every(x => x === 0);
   if (zeros(0, 8)) return 'unspecified';
@@ -100,14 +153,17 @@ function v6Problem(g: number[]): string | undefined {
   return undefined;
 }
 
-/** Why the host must not connect to `ip`, or undefined when it is a public unicast address. */
-export function addressProblem(ip: string): string | undefined {
+/**
+ * Why the host must not connect to `ip`, or undefined when it is a public unicast address.
+ * `nat64`: the network's own NAT64 prefixes (discovered per RFC 7050), besides the well-known one.
+ */
+export function addressProblem(ip: string, nat64: Nat64Prefix[] = []): string | undefined {
   const kind = isIP(ip.includes('%') ? ip.slice(0, ip.indexOf('%')) : ip);
   if (kind === 4) return v4Problem(v4Number(ip));
   if (kind === 6) {
     if (ip.includes('%')) return 'scoped (zone) address';
     const g = v6Groups(ip);
-    return g ? v6Problem(g) : 'unreadable IPv6 address';
+    return g ? v6Problem(g, nat64) : 'unreadable IPv6 address';
   }
   return 'not an IP address';
 }

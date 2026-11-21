@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 // Before any module under test is imported: a temp HOME and a real (non-mock) profile name, so the
@@ -24,7 +24,7 @@ vi.mock('../src/secrets.js', () => {
   const trap = (name: string) => () => { traps.calls.push(name); throw new Error(`the real secret store was reached: ${name}`); };
   return {
     isSecretKey: () => false,
-    isSecretStoreAvailable: trap('isSecretStoreAvailable'), secretGet: trap('secretGet'), secretGetStrict: trap('secretGetStrict'),
+    isSecretStoreAvailable: trap('isSecretStoreAvailable'), secretGet: trap('secretGet'), secretGetStrict: trap('secretGetStrict'), secretGetStrictAsync: trap('secretGetStrictAsync'),
     secretSet: trap('secretSet'), secretDelete: trap('secretDelete'),
   };
 });
@@ -35,7 +35,7 @@ vi.mock('node:child_process', async () => {
 });
 
 import { pluginCommand, pluginDeps } from '../src/commands/plugin.js';
-import { storeDeps, commitInstall, readLock, removeInstall } from '../src/plugins/store.js';
+import { storeDeps, commitInstall, pendingSecrets, pluginHome, readLock, removeInstall } from '../src/plugins/store.js';
 import { readLocalSnapshot } from '../src/plugins/source.js';
 import {
   deletePluginSecret, getPluginSecret, pluginSecretDeps, pluginSecretKey, secretStates, setPluginSecret, type PluginSecretStore,
@@ -185,7 +185,7 @@ describe('plugin secret set / rm / show with an injected store', () => {
     const ok = await cli(['secret', 'set', 'net-lab', 'apikey', '--json']);
     expect(ok.code, ok.err).toBe(0);
     expect(JSON.parse(ok.out)).toEqual({ ok: true, action: 'plugin secret set', plugin: 'net-lab', secret: 'apikey' });
-    expect(ok.err).toContain('Sent only to: https://api.example.com (paths /v1), as the header Authorization');
+    expect(ok.err).toContain('Sent only to: https://api.example.com (only the paths /v1 and below them), as the header Authorization');
     expect(ok.out + ok.err).not.toContain('never-used-value');
     expect([...store.items]).toEqual([[pluginSecretKey(entry.installId, 'apikey'), 'never-used-value']]);
     expect(pluginSecretKey(entry.installId, 'apikey')).toBe(`plugin-secret-plugin-secrets-${entry.installId}-apikey`);
@@ -208,6 +208,92 @@ describe('plugin secret set / rm / show with an injected store', () => {
       delete pluginDeps.confirm;
     }
     expect(store.items.size).toBe(0);
+  });
+
+  it('review #7: a remove while the prompt waits makes set refuse; nothing is stored under the removed installation', async () => {
+    const store = memoryStore();
+    pluginSecretDeps.store = store;
+    const entry = installLab();
+    pluginDeps.tty = true;
+    // Another terminal removes the plugin while this one waits for the hidden input
+    pluginDeps.readSecret = async () => {
+      removeInstall(readLock().plugins['net-lab'], false);
+      return 'typed-after-remove-123';
+    };
+    const r = await cli(['secret', 'set', 'net-lab', 'apikey', '--json']);
+    expect(r.code).toBe(1);
+    expect(JSON.parse(r.out).error).toMatchObject({ code: 'plugin_changed' });
+    expect(JSON.parse(r.out).error.message).toMatch(/the secret was not stored/);
+    expect(store.items.size).toBe(0);
+    expect(store.get(pluginSecretKey(entry.installId, 'apikey'))).toBeNull();
+    // A reinstall in between is refused the same way (another installId)
+    installLab();
+    pluginDeps.readSecret = async () => {
+      removeInstall(readLock().plugins['net-lab'], false);
+      installLab();
+      return 'typed-after-reinstall-1';
+    };
+    expect(JSON.parse((await cli(['secret', 'set', 'net-lab', 'apikey', '--json'])).out).error).toMatchObject({ code: 'plugin_changed' });
+    expect(store.items.size).toBe(0);
+  });
+
+  it('review #7: secrets the store failed to delete on remove are recorded and deleted by the next plugin command', async () => {
+    const store = memoryStore();
+    let failures = 1;
+    pluginSecretDeps.store = { ...store, delete: k => { if (failures > 0) { failures--; throw new Error('store busy'); } return store.delete(k); } };
+    const entry = installLab();
+    store.set(pluginSecretKey(entry.installId, 'apikey'), 'stored-value-12345');
+    pluginDeps.confirm = async () => true;
+    try {
+      const rm = await cli(['remove', 'net-lab', '--json']);
+      expect(rm.code, rm.err).toBe(0);
+      expect(JSON.parse(rm.out)).toMatchObject({ ok: true, secretsNotRemoved: ['apikey'] });
+    } finally {
+      delete pluginDeps.confirm;
+    }
+    expect(store.items.size).toBe(1);
+    expect(pendingSecrets()).toEqual([{ name: 'net-lab', installId: entry.installId, secrets: ['apikey'] }]);
+    // Any next plugin command finishes it, silently
+    const list = await cli(['list', '--json']);
+    expect(list.code).toBe(0);
+    expect(JSON.parse(list.out)).toBeTypeOf('object');
+    expect(store.items.size).toBe(0);
+    expect(pendingSecrets()).toEqual([]);
+  });
+
+  it('review #7: a pending record for an installation that is still registered is dropped, its secrets kept', async () => {
+    const store = memoryStore();
+    pluginSecretDeps.store = store;
+    const entry = installLab();
+    store.set(pluginSecretKey(entry.installId, 'apikey'), 'live-value-123456');
+    // As if a remove recorded it and then failed before the lock changed
+    mkdirSync(join(pluginHome(), 'plugin-state'), { recursive: true });
+    writeFileSync(join(pluginHome(), 'plugin-state', 'pending-secret-cleanup.json'), JSON.stringify([{ name: 'net-lab', installId: entry.installId, secrets: ['apikey'] }]));
+    expect(pendingSecrets()).toHaveLength(1);
+    expect((await cli(['settings', 'get', 'net-lab', '--json'])).code).toBe(0);
+    expect(store.get(pluginSecretKey(entry.installId, 'apikey'))).toBe('live-value-123456');
+    expect(pendingSecrets()).toEqual([]);
+  });
+
+  it('review #7: secret rm deletes a secret a removed plugin left behind (only one recorded as pending)', async () => {
+    const store = memoryStore();
+    let failures = 2; // the remove itself and the retry before `secret rm`
+    pluginSecretDeps.store = { ...store, delete: k => { if (failures > 0) { failures--; throw new Error('store busy'); } return store.delete(k); } };
+    const entry = installLab();
+    store.set(pluginSecretKey(entry.installId, 'apikey'), 'stored-value-12345');
+    pluginDeps.confirm = async () => true;
+    try {
+      expect(JSON.parse((await cli(['remove', 'net-lab', '--json'])).out)).toMatchObject({ secretsNotRemoved: ['apikey'] });
+    } finally {
+      delete pluginDeps.confirm;
+    }
+    const rm = await cli(['secret', 'rm', 'net-lab', 'apikey', '--json']);
+    expect(rm.code, rm.out + rm.err).toBe(0);
+    expect(JSON.parse(rm.out)).toMatchObject({ ok: true, removedPlugin: true });
+    expect(store.items.size).toBe(0);
+    expect(pendingSecrets()).toEqual([]);
+    // Nothing pending and nothing installed: an ordinary "not installed"
+    expect(JSON.parse((await cli(['secret', 'rm', 'net-lab', 'apikey', '--json'])).out).error.code).toBe('plugin_not_found');
   });
 
   it('over MCP (TG_MCP, TG_READ_ONLY) set and rm are refused with the command for the human, before any prompt', async () => {

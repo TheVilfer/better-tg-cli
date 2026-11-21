@@ -13,7 +13,7 @@
 import { mkdirSync } from 'node:fs';
 import { isMock, profile } from '../paths.js';
 import { CliError, EXIT } from '../errors.js';
-import { isSecretStoreAvailable, secretDelete, secretGetStrict, secretSet } from '../secrets.js';
+import { isSecretStoreAvailable, secretDelete, secretGetStrict, secretGetStrictAsync, secretSet } from '../secrets.js';
 import { secretStoreHint } from '../write-store.js';
 import { KEY_RE } from './manifest.js';
 import { anchor, readRegular, writeRegular } from './safe-fs.js';
@@ -22,6 +22,8 @@ import { pluginHome, withPluginLock } from './store.js';
 export interface PluginSecretStore {
   /** The value, or null when none is set. Throws when the store cannot be read. */
   get(key: string): string | null;
+  /** get without blocking the event loop, stopped when `signal` aborts (a request's deadline). */
+  getAsync?(key: string, signal: AbortSignal): Promise<string | null>;
   set(key: string, value: string): boolean;
   delete(key: string): boolean;
 }
@@ -111,6 +113,12 @@ const systemStore: PluginSecretStore = {
     if (!r.ok) throw unavailable(r.reason);
     return r.value;
   },
+  getAsync: async (key, signal) => {
+    if (!isSecretStoreAvailable()) throw unavailable('no macOS Keychain, Secret Service, DPAPI or 1Password here');
+    const r = await secretGetStrictAsync(key, signal);
+    if (!r.ok) throw unavailable(r.reason);
+    return r.value;
+  },
   set: (key, value) => {
     if (!isSecretStoreAvailable()) throw unavailable('no macOS Keychain, Secret Service, DPAPI or 1Password here');
     return secretSet(key, value);
@@ -128,6 +136,13 @@ export function pluginSecretStore(): PluginSecretStore {
 /** The value of a declared secret of an installation, or null when the human has not set it. */
 export function getPluginSecret(installId: string, name: string): string | null {
   return pluginSecretStore().get(pluginSecretKey(installId, name));
+}
+
+/** getPluginSecret for a request: asynchronous where the store can be, stopped when `signal` aborts. */
+export async function getPluginSecretAsync(installId: string, name: string, signal: AbortSignal): Promise<string | null> {
+  const key = pluginSecretKey(installId, name);
+  const store = pluginSecretStore();
+  return store.getAsync ? store.getAsync(key, signal) : store.get(key);
 }
 
 export function setPluginSecret(installId: string, name: string, value: string): void {

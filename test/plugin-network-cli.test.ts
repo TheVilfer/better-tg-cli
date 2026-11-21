@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { cliArgs } from './cli.js';
@@ -79,8 +79,8 @@ describe('install, run and audit of a network plugin (mock account, fixtures)', 
     const h = newHome();
     const { summary } = install(h);
     expect(summary).toContain('Sends data:  may send your own messages, your name and ID, its saved data and its settings to: https://api.example.com, https://other.example.com, https://wrong.example.net');
-    expect(summary).toMatch(/Secret apikey: .*only to https:\/\/api\.example\.com \(paths \/v1\) as Authorization/);
-    expect(summary).toMatch(/Secret other: .*only to https:\/\/other\.example\.com as X-Api-Key/);
+    expect(summary).toMatch(/Secret apikey: .*only to https:\/\/api\.example\.com \(only the paths \/v1 and below them\) as Authorization/);
+    expect(summary).toMatch(/Secret other: .*only to https:\/\/other\.example\.com \(any path\) as X-Api-Key/);
     expect(summary).toContain('you type them yourself later: telegram plugin secret set net-lab <name>');
   });
 
@@ -224,33 +224,53 @@ describe('the guard in each mode and transport (mock account)', { timeout: 60_00
     }
   });
 
-  for (const worker of [false, true]) {
-    it(`MCP mode "ask" (${worker ? 'worker thread' : 'child process'}): approval_required names the destinations; the code runs it`, async () => {
+  /** A real `telegram mcp` server over stdio (as the P2 cancellation tests run it). */
+  function server(home: string, extra: Record<string, string> = {}) {
+    const p = spawn(process.execPath, [...cliArgs(), 'mcp'], { env: homeEnv(home, extra), stdio: ['pipe', 'pipe', 'pipe'] });
+    const replies = new Map<unknown, (m: unknown) => void>();
+    let buf = '';
+    p.stdout.on('data', d => {
+      buf += d;
+      for (let i; (i = buf.indexOf('\n')) >= 0;) {
+        const m = JSON.parse(buf.slice(0, i)) as { id?: unknown };
+        buf = buf.slice(i + 1);
+        replies.get(m.id)?.(m);
+      }
+    });
+    const request = (id: number, m: object) => new Promise<any>(r => { replies.set(id, r); p.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, ...m })}\n`); });
+    const exited = new Promise<number | null>(r => p.on('exit', code => r(code)));
+    return { p, request, exited };
+  }
+
+  // Review #12: through a real MCP server, so the worker transport (TG_MCP_WORKER) itself carries
+  // the approval and the approved retry, not a stand-in that always starts a child process
+  for (const [label, extra] of [['child process', {}], ['worker thread', { TG_MCP_WORKER: '1' }]] as const) {
+    it(`MCP mode "ask" through a real server (${label}): approval_required names the destinations; the code runs it once`, async () => {
       const h = newHome();
       install(h);
       mockHttp(h, ECHO);
-      const help = spawnSync(process.execPath, [...cliArgs(), 'help-all'], { encoding: 'utf8', env: homeEnv(h) }).stdout;
-      const names = help.split('\n').filter(l => /^[a-z]/.test(l) && l.includes(' — ')).map(l => l.slice(0, l.indexOf(' — ')).split(' ').filter((_w, i, all) => !all.slice(0, i + 1).some(x => /^[<[]/.test(x))).join(' '));
-      setKnownCommands([...new Set(names.flatMap(p => p.split(' ').map((_, i, w) => w.slice(0, i + 1).join(' '))))]);
-      const vars: Record<string, string> = { HOME: h, USERPROFILE: h, APPDATA: join(h, 'AppData'), TG_MOCK: join(h, 'mock-state.json'), TG_MOCK_ASK: '1', ...(worker ? { TG_MCP_WORKER: '1' } : {}) };
-      const saved = Object.fromEntries(Object.keys(vars).map(k => [k, process.env[k]]));
-      Object.assign(process.env, vars);
+      const s = server(h, { TG_MOCK_ASK: '1', ...extra });
       try {
-        const run = async (plan: Parameters<typeof childEnv>[0]) => {
-          const r = spawnSync(process.execPath, [...cliArgs(), ...plan.argv], { encoding: 'utf8', input: plan.stdin ?? '', env: childEnv(plan) });
-          return result(plan, { code: r.status, timedOut: false, out: r.stdout, err: r.stderr } as RunOutput);
-        };
-        type Reply = { result: { content: { text: string }[]; isError?: boolean; structuredContent?: Record<string, any> } };
+        // No elicitation capability: the server answers approval_required with a code
+        await s.request(0, { method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {} } });
         const args = ['plugin', 'run', 'net-lab', 'fetch', '--input', '{"url":"https://api.example.com/v2/open"}', '--json'];
-        const call = (extra: Record<string, unknown> = {}) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'telegram_write', arguments: { args, ...extra } } });
-        const first = (await handleMessage(call(), run) as Reply).result.structuredContent!;
+        const call = (id: number, more: Record<string, unknown> = {}) => s.request(id, { method: 'tools/call', params: { name: 'telegram_write', arguments: { args, ...more } } });
+        const first = (await call(1)).result.structuredContent;
         expect(first.status).toBe('approval_required');
         expect(first.action.description).toMatch(/Effects: network[\s\S]*Sends to: https:\/\/api\.example\.com, https:\/\/other\.example\.com, https:\/\/wrong\.example\.net/);
-        const ok = await handleMessage(call({ approval: first.code }), run) as Reply;
-        expect(ok.result.isError, ok.result.content[0].text).toBeUndefined();
-        expect(ok.result.content[0].text).toContain('open');
+        // No run happened yet
+        expect(existsSync(join(profileDir(h, 'tg-mock'), 'audit.jsonl')) ? audit(h).filter(a => a.command === 'plugin run') : []).toEqual([]);
+        const ok = (await call(2, { approval: first.code })).result;
+        expect(ok.isError, ok.content[0].text).toBeUndefined();
+        expect(ok.content[0].text).toContain('open');
+        // Once: the same code again is refused
+        const again = (await call(3, { approval: first.code })).result;
+        expect(again.structuredContent?.status === 'approval_required' || again.isError).toBe(true);
+        expect(audit(h).filter(a => a.command === 'plugin run' && a.result.success)).toHaveLength(1);
+        expect(audit(h).find(a => a.command === 'plugin run').plugin.network).toEqual({ requests: 1, origins: ['https://api.example.com'] });
       } finally {
-        for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+        s.p.stdin.end();
+        await s.exited;
       }
     });
   }
@@ -272,10 +292,38 @@ describe('settings', { timeout: 60_000 }, () => {
     expect(cli(h, ['plugin', 'settings', 'get', 'net-lab', '--json']).json.settings).toEqual([
       { key: 'mode', type: 'string', value: 'slow', stored: true },
       { key: 'count', type: 'integer', value: 3, stored: false },
+      { key: 'note1', type: 'string', value: null, stored: false },
+      { key: 'note2', type: 'string', value: null, stored: false },
+      { key: 'note3', type: 'string', value: null, stored: false },
     ]);
     // Over the MCP read tool it is a write
     expect(cli(h, ['plugin', 'settings', 'set', 'net-lab', 'count', '5', '--json'], { TG_READ_ONLY: '1', TG_MCP: '1' }).json.error.code).toBe('write_on_read_tool');
     expect(audit(h).filter(a => a.command === 'plugin settings set').map(a => a.plugin.key)).toEqual(['mode']);
+  });
+});
+
+describe('settings file size (review #11)', { timeout: 60_000 }, () => {
+  it('a value that would take the file past 256 KB (in bytes) is refused; the previous file and every reader keep working', () => {
+    const h = newHome();
+    const { installId } = install(h);
+    // 30 000 characters, 90 000 bytes in UTF-8: one argument stays under Linux's 128 KB per
+    // argument and Windows' 32 767 characters per command line; three of them pass 256 KB
+    const long = JSON.stringify('€'.repeat(30_000));
+    expect(cli(h, ['plugin', 'settings', 'set', 'net-lab', 'note1', long, '--json']).json).toMatchObject({ ok: true });
+    expect(cli(h, ['plugin', 'settings', 'set', 'net-lab', 'note2', long, '--json']).json).toMatchObject({ ok: true });
+    const file = readFileSync(join(plugins(h), 'plugin-state', installId, 'settings.json'));
+    const r = cli(h, ['plugin', 'settings', 'set', 'net-lab', 'note3', long, '--json']);
+    expect(r.code).toBe(2);
+    expect(r.json.error).toMatchObject({ code: 'settings_too_large' });
+    expect(r.json.error.message).toMatch(/limit is 262144/);
+    expect(readFileSync(join(plugins(h), 'plugin-state', installId, 'settings.json'))).toEqual(file);
+    // Still readable: get, show, and a smaller value replaces a long one
+    const got = cli(h, ['plugin', 'settings', 'get', 'net-lab', '--json']);
+    expect(got.code, got.err).toBe(0);
+    expect(got.json.settings.find((s: { key: string }) => s.key === 'note2').value).toHaveLength(30_000);
+    expect(cli(h, ['plugin', 'show', 'net-lab', '--json']).code).toBe(0);
+    expect(cli(h, ['plugin', 'settings', 'set', 'net-lab', 'note1', '"short"', '--json']).json).toMatchObject({ ok: true });
+    expect(cli(h, ['plugin', 'settings', 'set', 'net-lab', 'note3', long, '--json']).json).toMatchObject({ ok: true });
   });
 });
 
