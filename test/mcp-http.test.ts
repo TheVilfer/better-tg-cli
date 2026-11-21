@@ -62,6 +62,11 @@ describe('telegram mcp --http', () => {
     const init = await post(full.url, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } });
     expect(init.status).toBe(200);
     expect((await init.json()).result.serverInfo.name).toBe('better-tg-cli');
+    // A session id for the client to send back (it scopes plugin run cancellation)
+    const session = init.headers.get('mcp-session-id');
+    expect(session).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    expect((await post(full.url, { jsonrpc: '2.0', id: 9, method: 'ping' }, { ...auth, 'Mcp-Session-Id': session! })).status).toBe(200);
+    expect((await post(full.url, { jsonrpc: '2.0', id: 9, method: 'ping' }, { ...auth, 'Mcp-Session-Id': 'bad id' })).status).toBe(400);
     expect((await post(full.url, { jsonrpc: '2.0', method: 'notifications/initialized' })).status).toBe(202);
     const list = await (await post(full.url, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json();
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual(['telegram_help', 'telegram_read', 'telegram_write', 'telegram_setup']);

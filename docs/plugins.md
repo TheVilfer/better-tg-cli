@@ -15,7 +15,7 @@ Plugin support lands in steps. Parts marked **(coming)** are specified here but 
 | Step | What | Status |
 |---|---|---|
 | P1 | Manifest, install by snapshot, `list`, `show`, `data`, `remove`, `validate`, human confirmation | **available** |
-| P2 | Sandboxed plugin code (QuickJS-WASM), host API, `plugin run` ([#153](https://github.com/TheVilfer/better-tg-cli/issues/153)) | coming |
+| P2 | Sandboxed plugin code (QuickJS-WASM), host API, `plugin run`, `plugin dev --mock` ([#153](https://github.com/TheVilfer/better-tg-cli/issues/153)) | **available** |
 | P3 | Network access and secrets the plugin never sees ([#154](https://github.com/TheVilfer/better-tg-cli/issues/154)) | coming |
 | P4 | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155)) | coming |
 | P5 | SDK and template repository ([#156](https://github.com/TheVilfer/better-tg-cli/issues/156)) | coming |
@@ -24,13 +24,13 @@ Plugin support lands in steps. Parts marked **(coming)** are specified here but 
 
 ## 1. Principles
 
-1. **Isolated by default.** Plugin code **(coming, P2)** runs in a QuickJS-WASM sandbox inside the
+1. **Isolated by default.** Plugin code runs in a QuickJS-WASM sandbox inside the
    CLI. It has no files, processes, environment, Telegram session or direct network: only the host
    API its permissions grant.
 2. **Explicit permissions and effects.** Every permission is declared in the manifest, shown to the
    human at install and checked by the host on every call. Everything else is denied. A command that
    changes something or sends data out declares it as an effect and goes through the write path.
-3. **Only the core writes to Telegram.** A plugin proposes a typed action **(coming, P2)**; the host
+3. **Only the core writes to Telegram.** A plugin proposes a typed action; the host
    builds the command and its confirmation text, and the agent runs it through the write guard.
 4. **The human decides what is installed and which secrets are given.** Install, update, remove and
    entering secrets are the human's. An installed snapshot is pinned by hashes.
@@ -45,16 +45,16 @@ human: "install plugin X"
 agent: telegram plugin install github:owner/x    → summary: permissions, effects, where data goes → the human confirms
 agent: telegram plugin list --json               → triggers, onboarding, each with a ready argv (data with its source)
 agent: telegram plugin show x --onboarding       → onboarding steps
-agent: telegram plugin run x collect …           → (coming, P2) a read in the sandbox → result with a cursor
+agent: telegram plugin run x collect …           → a read in the sandbox → result with a cursor
 agent: telegram plugin data set x style -        → save what the model wrote (a local write)
 ...when a trigger fits:
 agent: telegram plugin show x --trigger compose  → instructions
-agent: telegram plugin run x <cmd> …             → (coming, P2) proposals: [{ type: "reply", argv, stdin, confirm }]
+agent: telegram plugin run x <cmd> …             → proposals: [{ type: "reply", argv, stdin, confirm }]
 agent: telegram reply …                          → guard and confirmation as the write mode says (section 7)
 ```
 
-In P1 the agent follows the instructions with the CLI's own commands (`read`, `send`, `reply`, …)
-and keeps what the model wrote with `plugin data set`.
+The agent follows the instructions with the CLI's own commands (`read`, `send`, `reply`, …), runs
+the plugin's commands with `plugin run`, and keeps what the model wrote with `plugin data set`.
 
 ## 3. The plugin package
 
@@ -62,7 +62,7 @@ and keeps what the model wrote with `plugin data set`.
 tg-plugin.json        the manifest
 SKILL.md              instructions for the agent; Agent Skills format (frontmatter: name = plugin name, description)
 *.md, templates/*     resources
-dist/plugin.js        optional code: one ES2023 module without imports, for QuickJS (runs from P2 on)
+dist/plugin.js        optional code: one ES2023 module without imports, run in the QuickJS sandbox
 ```
 
 **Path rules.** `files` is the complete list; nothing else is installed or read. Each path is:
@@ -135,38 +135,61 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
 - **`triggers[]`**: `id`, `when` and the resource with the instructions. **`onboarding`**: its
   resource and `doneWhen.storage`, a declared storage key; onboarding is done once that key holds
   data for the current Telegram account.
-- **`input`/`output` schemas** (used from P2 on): JSON Schema 2020-12, self-contained: `$defs` inside
-  their own schema, no external `$ref`, no `$id`, no `$schema` other than 2020-12. `input` is an
-  object. The host checks the input before a call and the output after it, with a time limit.
+- **`input`/`output` schemas**: JSON Schema 2020-12, self-contained: `$defs` inside their own schema,
+  no external `$ref`, no `$id`, no `$schema` other than 2020-12. A `$ref` may point only at a
+  subschema position (`#`, `#/$defs/…`, `#/properties/…`, `#/items`, `#/allOf/0` and so on), never
+  into an annotation or any other value (`#/default`, `#/examples/0`, `#/properties/a/const`): the
+  manifest is refused at install, and such a schema is refused again when it checks a value. A
+  `$ref` cycle that never descends into the value ends the check with `plugin_error`. `input` is an object. Only the
+  keywords the host implements are allowed (an unknown one makes the manifest invalid), and no
+  regular expressions (`pattern`, `patternProperties`): the host checks plugin values on its own
+  thread, where a runaway expression could not be stopped; check such values in the plugin's code.
+  The host checks the input before a call (a failure is exit 2, `invalid_argument` with `issues`)
+  and the output after it (`plugin_error` with `issues`), each check limited to 2 s.
 - **`effects`**: a subset of `["storage", "network", "actions"]`, each needing its permission
   (`storage:write`, `network`, `actions`). An empty list means the command only reads (section 8).
   Commands need `main`.
 - **`network`** lists origins only with the `network` permission and vice versa; every secret's
   `inject.origin` is in `network` (section 6).
 
-## 4. Runtime (coming, P2)
+## 4. Runtime
 
-- **Engine.** QuickJS in WebAssembly (`quickjs-emscripten`, the single-file variant with embedded
-  WASM), bundled in the CLI (about +240 KB compressed). It works the same in the standalone binary,
-  the npm install and the Claude Desktop `.mcpb`.
+- **Engine.** QuickJS in WebAssembly (`quickjs-emscripten-core` with the single-file variant
+  `@jitl/quickjs-singlefile-mjs-release-sync`, WASM embedded), bundled in the CLI: the npm bundle
+  grew by about 0.3 MB compressed (0.61 → 0.92 MB). It is loaded only when a plugin command runs.
+  The same code runs in the npm install (node), the standalone Bun binaries and the MCP server's
+  worker threads (Claude Desktop `.mcpb`).
 - **Globals.** ECMAScript and `host` only: no `require`, `process`, `fetch`, `WebAssembly`, `Bun`,
-  `std`/`os`, `setTimeout`.
-- **Isolation.** Every `run` gets a new runtime and context, both destroyed afterwards. Nothing
-  survives between runs except `host.storage`.
+  `std`/`os`, `setTimeout`, no `import`. `host` is deeply frozen.
+- **Isolation.** Every run gets a new WebAssembly instance, runtime and context, all dropped
+  afterwards. Nothing survives between runs except `host.storage`. Values cross the boundary only as
+  JSON text: the plugin never holds a host object, and the host parses everything the plugin returns
+  itself (a plugin that swaps `JSON` or a prototype only changes its own values).
 - **Async.** Host calls return guest Promises. The host runs the job queue right after calling the
-  command and after each host operation completes, until the result is ready or an iteration limit is
-  reached.
-- **Deadline.** 60 s for the whole run, waiting for Telegram and HTTP included. When it passes or the
-  run is cancelled (MCP cancel, a closed channel), the host interrupts the engine, cancels started
-  operations and performs no late writes.
-- **Default limits:** 64 MB memory; 200 host calls per run, at most 4 at a time; up to 1 MB of
-  arguments per call and 1 MB of result handed into the sandbox; command output up to 60,000
-  characters after serialization. Exceeding one gives `plugin_limit` with the limit's name.
-- **Contract.** The module exports `commands`. The host calls `commands[name](input, host)` and checks
-  the result with the `output` schema.
+  command and after each host operation completes, until the command's promise settles. With no host
+  operation in flight and the promise still pending, nothing can settle it: the run ends with
+  `plugin_error` at once (so `await 0` never hangs, and neither does a promise nobody resolves).
+- **Deadline.** 60 s for the whole run, waiting for Telegram included. When it passes or the run is
+  cancelled (MCP cancel, a closed channel, SIGTERM/SIGINT in a terminal), the host interrupts the
+  engine, aborts the operations in flight, starts no new ones and drops late results (no late writes).
+  Connecting to Telegram and looking up the account happen on first use inside the run, so they
+  count against the same 60 s. A storage write waits for the store's lock only until the deadline
+  and checks the deadline and the cancellation once more under the lock, right before the file
+  changes: a write that would land after them changes nothing.
+- **Default limits:** 64 MB memory; 256 KB of guest stack; 200 host calls per run, at most 4 at a
+  time (a fifth concurrent call ends the run); up to 1 MB of arguments per call and 1 MB of result
+  handed into the sandbox; 1,000,000 promise jobs between two host operations; the whole output
+  envelope up to 60,000 characters after serialization. Exceeding one gives `plugin_limit` with the
+  limit's name in `limit` (`timeout`, `memory`, `stack`, `hostCalls`, `concurrentCalls`,
+  `callBytes`, `jobs`, `output`, `schema`). A limit ends the run even if the plugin catches the error.
+- **Contract.** The module exports `commands`. The host calls `commands[name](input, host)` (an own
+  property that is a function) and checks the result with the `output` schema.
 - **Output envelope.** The host prints `{"data": <the plugin's result>, "proposals": [...]}`. Only the
-  host builds `proposals` (section 7); a plugin cannot put it in its result.
-- **Lossless JSON.** Plugin output keeps `null` and empty values.
+  host builds `proposals` (section 7); a `proposals` field inside the plugin's result stays in `data`.
+- **Lossless JSON.** Plugin output keeps `null` and empty values (it is never passed through the
+  CLI's `formatJson()`). The output is always one line of compact JSON, with or without `--json`:
+  exactly the string whose length was checked against the 60,000-character limit, so no other
+  serialization can outgrow it.
 
 ```js
 export const commands = {
@@ -177,7 +200,7 @@ export const commands = {
 };
 ```
 
-## 5. Host API and permissions (coming, P2)
+## 5. Host API and permissions
 
 | Permission | API | What it gives |
 |---|---|---|
@@ -189,26 +212,62 @@ export const commands = {
 | `messages:read-target` | `host.target.message()` or `host.target.thread({limit, before})` | only what the agent passed to this run: `--target <chat>:<msgId>` (one message), `--target <chat>:<msgId> --thread` or `--target <chat>@<topic>` (a thread or topic) |
 | `storage:read` | `host.storage.get(key)`, `host.storage.list()` | this installation's data for the current owner |
 | `storage:write` (effect `storage`) | `host.storage.set(key, value)`, `host.storage.delete(key)` | atomic writes within the total `quotaBytes` |
-| `network` (effect `network`) | `host.http.fetch(url, {method, headers, body})` | only the origins in `network` (section 6) |
-| `settings:read` | `host.settings.get(key)` | non-secret settings from the `settings` schema |
+| `network` (effect `network`) | `host.http.fetch(url, {method, headers, body})` | only the origins in `network` (section 6; coming, P3: until then a command with the effect `network` is refused with `plugin_unsupported`) |
+| `settings:read` | `host.settings.get(key)` | non-secret settings from the `settings` schema (until `plugin settings set` arrives in P3, each setting's `default`) |
 | `actions` (effect `actions`) | `host.actions.propose(action)` | a typed proposal (section 7) |
 
-**`messages.mine`** returns only messages the owner wrote: forwards, text quoted from others,
-messages from 777000 and 489000 and service events are dropped before any text is read. Each
-message has its text, date and chat type, no other participants. Chats are walked by last activity,
-each from newest to oldest. A page is capped by serialized size (about 40,000 characters) and
-returns `{messages, count, cursor, done}` with an opaque cursor.
+**What a command gets** is its manifest's permissions and its own effects together: a command with
+`effects: []` has no `storage.set`/`storage.delete` and no `actions.propose`, even when the plugin
+holds `storage:write` or `actions`. An API that is not granted does not exist on `host`.
+
+**Arguments.** A chat is a numeric ID or an `@username`, never a title. `limit` is at most 100 for
+`read`, `search` and `target.thread` (default 20), at most 2000 for `mine` (default 100), at most 500
+for `chats.list` (default 100). Storage values are strings (the same text `plugin data get` prints;
+`JSON.stringify` an object first), under the keys the manifest declares.
+
+**What the read APIs return.** A narrow shape built by the host, never Telegram's own objects (no
+buttons, entities, quotes or link previews): `read` and `target.thread` give
+`{chatId, messages: [{id, date, out, senderId?, text, forwarded?, service?, replyToMsgId?}], before}`
+(pass `before` for the next page; `null` at the start of the history), `search` gives the same
+messages with their `chatId`, `target.message` gives `{chatId, message}`, `chats.list` gives
+`{chats: [{id, title, type, muted, unreadCount}]}`, `me` gives `{id, name, username?}`.
+
+**`messages.mine({limit, types, since, cursor})`** returns only messages the owner wrote:
+forwards, replies that quote another chat's message from 777000/489000, messages in the chats of
+777000 and 489000, service events and messages without text are dropped before any text is read.
+`types` are `private` (people, not bots; the default) and `group` (groups and supergroups); `since`
+is an ISO date or Unix seconds. Each message has its text, date and chat type, no other
+participants. Chats are walked by last activity (the first 100 that match, fixed on the first page),
+each from newest to oldest. A page is capped by serialized size (about 40,000 characters) and by 20
+Telegram requests (every one counts: the dialog list, the account, resolving each chat, each history
+batch), and returns `{messages, count, cursor, done}`. `cursor` is an opaque random id (128 bits,
+base64url): the walk itself (the chats, the position, the filters, the account and the installation)
+stays with the host, in a private folder of the installation (`plugin-state/<installId>/`, never
+plugin data, so `plugin data` does not show it; removed with the plugin), so the plugin never sees
+which chats were walked and cannot change them. A cursor lasts 24 hours, an installation keeps the
+latest 64, and each page hands out a new one (an earlier cursor still repeats its page). An unknown,
+expired or malformed id, or one of another account or installation, fails with `invalid_cursor`. In
+`plugin dev` cursors live in memory, so one never continues in the next `plugin dev` run. The last
+page has `done: true` and `cursor: null`. A cancelled or timed-out run starts no further request.
 
 **Masking before the sandbox**, for every read API, in the shell and over MCP alike: messages from
-or quoting 777000/489000 get the `service` mask (`mine` drops them); ordinary messages the `echo`
-mask (codes after "code:", gift links). Plugin output over MCP is also masked with `maskForModel`.
+777000/489000, forwards of them, messages saved from their chats (`savedFromPeer`/`savedFromId` of
+the forward or quote header) and replies quoting them get the `service` mask and `service: true`
+(`mine` drops them); ordinary messages the `echo` mask (codes after "code:", gift links). Over MCP
+the plugin's `data` and the proposal texts are masked with `maskForModel` (`echo`) as well.
 
-**FLOOD_WAIT.** Calls from plugins never sleep: they fail with
-`{code: "flood_wait", retryAfterSeconds, cursor, partial: {messages, count}}`, where `cursor` is
-where to go on.
+**FLOOD_WAIT.** Calls from plugins never sleep (`floodSleepThreshold = 0`): they fail with
+`{code: "flood_wait", retryAfterSeconds, cursor, partial: {messages, count}}`; for `mine`, `cursor`
+continues right after `partial`, so nothing is lost or repeated. If the command passes the error on,
+`plugin run` fails with the same `flood_wait`, `retryAfterSeconds`, `cursor` and `partial`, taken from
+the host's own record of the call, never from what the plugin threw.
 
-**Errors** are `{code, message, retryAfterSeconds?}` with the CLI's codes. **Logs**: `host.log` exists
-only in `plugin dev` and writes to a local debug file, never to the command's output or MCP.
+**Errors** reach the plugin as thrown `Error`s with `code`, `message` (masked) and their other fields
+(`retryAfterSeconds`, `cursor`, `partial`): the CLI's codes plus `permission_denied`,
+`invalid_argument`, `invalid_cursor`, `no_target`, `not_available` (the target is a message, not a thread, or the
+reverse), `not_found`, `invalid_proposal`. An error the command does not catch ends the run with
+`plugin_error`. **Logs**: `host.log(...)` exists only in `plugin dev` and appends to
+`<tmp>/better-tg-cli-plugin-dev/<name>.log`, never to the command's output or MCP.
 
 ## 6. Network and secrets (coming, P3)
 
@@ -229,7 +288,7 @@ only in `plugin dev` and writes to a local debug file, never to the command's ou
   headers before the sandbox sees them.
 - **The install summary** names every data source with its destinations.
 
-## 7. Action proposals (coming, P2)
+## 7. Action proposals
 
 A plugin never writes. With the `actions` permission and effect it returns typed proposals; the
 host checks them and builds the command:
@@ -240,8 +299,12 @@ host checks them and builds the command:
 | `reply` | `chat`, `msgId`, `text`, `topic?` | `reply <chat> <msgId> -` |
 | `react` | `chat`, `msgId`, `emoji` | `react <chat> <msgId> <emoji>` |
 
-The result holds `proposals: [{id, type, summary, argv, stdin, confirm: true}]`, all built by the
-host from the same fields, so a plugin cannot describe one action and run another. v1 has no file
+The result holds `proposals: [{id, type, summary, argv, stdin, confirm: true}]` (`react` has no
+`stdin`), all built by the host from the same checked fields, so a plugin cannot describe one action
+and run another: `chat` is an ID or `@username`, `msgId` and `topic` positive integers, `text` 1–4096
+characters, `emoji` one reaction (never an option); any other field is refused (`invalid_proposal`).
+A reply's `topic` is accepted but needs no flag (a reply lands where its message is). At most 20
+proposals per run. `host.actions.propose` returns `{id}`. v1 has no file
 actions, admin commands, raw API, write-mode changes or plugin management. The agent runs a proposal
 like any write: in mode `ask` the user approves the exact action (MCP dialog, `approval_required`,
 or exit 3 and `TG_APPROVE` in the shell); in `on`, `confirm: true` obliges the agent to show the
@@ -258,15 +321,27 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 | `plugin install <github:owner/repo[@ref] \| ./dir [--expect sha256-…]>` | management | human | available |
 | `plugin remove <name> [--keep-data]` | management | human | available |
 | `plugin validate <dir> [--json]` | for authors | anyone (not over MCP) | available |
-| `plugin run <name> <cmd>`, command with `effects: []` | read | anyone | coming, P2 |
-| `plugin run <name> <cmd>`, effect `storage` and/or `actions` | local write | anyone | coming, P2 |
+| `plugin run <name> <cmd> [--input <json> \| -] [--target <ref> [--thread]] [--json]`, command with `effects: []` | read | anyone | available |
+| `plugin run <name> <cmd> …`, effect `storage` and/or `actions` | local write | anyone | available |
 | `plugin run <name> <cmd>`, effect `network` | **sends data out**: a write in every transport, the shell too | anyone | coming, P3 |
 | `plugin settings set <name> <key> <value>` | local write | anyone | coming, P3 |
 | `plugin secret set <name> <secret>` | human's terminal only | human | coming, P3 |
 | `plugin update [name]` | management | human | coming, P4 |
-| `plugin dev <dir> --mock` | for authors | anyone | coming, P5 |
+| `plugin dev <dir> <cmd> --mock [--input …] [--target …] [--json]` | for authors | anyone (not over MCP) | available |
 
-- **Local writes** (`plugin data set|delete`): in a terminal they need no write access, like
+- **`plugin run`** loads the installed snapshot once (checked against the lock) and runs those
+  bytes. `--input` is the command's input as a JSON object (`-` reads it from stdin; absent: `{}`).
+  Over MCP `telegram_read` passes no stdin, so a read command takes its input inline
+  (`["plugin","run","x","collect","--input","{\"limit\":300}"]`); `telegram_write` passes `stdin`.
+  `--target` is for plugins with `messages:read-target` only; the message, topic or thread ID in it
+  is an integer from 1 to 2147483647 (anything else is exit 2), and `host.target.thread()` reads that
+  topic or thread only, never the rest of the chat. `plugin list --json` lists each command
+  with `access` (`read`, `local write`), its `input` schema and the `argv` to run.
+- **`plugin dev <dir> <cmd> --mock`** checks the folder as `validate` does and runs a command against
+  the built-in mock account in memory: no confirmations, nothing installed or written, no profile,
+  session or secret store touched; storage starts empty, settings are their defaults, and `host.log`
+  works (section 5). Without `--mock` it is refused: for a live check, install the folder.
+- **Local writes** (`plugin data set|delete`, `plugin run` of a command with effects): in a terminal they need no write access, like
   `download`. Over MCP they run only through `telegram_write` and follow the write mode
   (`assertLocalWriteAllowed`): refused on a read-only server or in mode `read-only`, approved each
   time in `ask` (the approval shows the plugin, the key and the full value, and covers exactly that
@@ -285,13 +360,34 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   no summary is too long for it. The MCP dialog for this, with
   elicitation, is **coming (P4)**; it will refuse on a `--read-only` server and pin the CLI version
   (`npx better-tg-cli@X.Y.Z …`) where there is no `telegram` binary.
-- **Binding to the snapshot** (approvals of `plugin run`, **coming**): classification, the approval
-  and the run itself are bound to `installId` and the snapshot hash; an update in between voids the
-  approval.
+- **Binding to the snapshot.** The approval of a `plugin run` (in mode `ask`: the MCP dialog,
+  `approval_required` or `TG_APPROVE`) shows the plugin, the command, the installation and revision,
+  the effects and the input, and its hash covers the `installId`, the revision, the command's effects
+  and the input. The run checks that the installation it loaded is the approved one
+  (`plugin_changed`), so a plugin removed and installed again (or updated) in between needs a new
+  approval. The MCP server classifies from the installed manifest, and the run decides again from
+  the snapshot it loaded: a command that gained an effect is refused on `telegram_read`
+  (`write_on_read_tool`).
+- **Cancellation over MCP.** `notifications/cancelled` is handled as soon as it arrives, past the
+  request queue: a plugin run in progress is stopped (the child CLI gets SIGTERM, a worker thread a
+  message and a flag in shared memory its sandbox polls; either is killed if it has not stopped
+  after 2 s), a run still waiting in the queue never starts, and neither gets a response. A plugin
+  run is cancellable from the moment it leaves the queue, approval included: a cancel while its
+  describe run or approval dialog is open ends the wait at once (the server tells the client its
+  dialog is cancelled and ignores a late answer), nothing runs and the next call is answered. Over
+  stdio a closed channel cancels the plugin runs too; over Streamable HTTP only the client's
+  notification does, and only within its own session: `initialize` answers with an
+  `Mcp-Session-Id`, and a cancellation reaches only the runs of the session it was sent with
+  (requests without the header share a scope of their own). Other commands are not cancelled this way.
+- **The installation a call was checked by.** For `plugin run` the server passes the child the
+  installation ID and revision it classified (and, in mode `ask`, approved) the call by, in an
+  environment variable the model cannot set. The child refuses any other installation of the same
+  name (`plugin_changed`) before anything of it runs, whatever effects its command has now.
 - **MCP.** `telegram_read` runs exactly `plugin list`, `plugin show`, `plugin data get` and
-  `plugin data list` (from P2 also `plugin run` for commands without effects, known from the lock file
-  before the run). Everything else goes through `telegram_write` or is refused; a new subcommand is
-  refused until it is classified.
+  `plugin data list`, and `plugin run` for commands without effects (known from the installed
+  manifest before the run). Everything else goes through `telegram_write` or is refused (`validate`
+  and `dev` read a folder and stay in the terminal); a new subcommand is refused until it is
+  classified.
 - **Discovery.** `check --json` has `plugins: [{name, version, status, onboarding?}]` (from the local
   lock file, no network; `onboarding` is `done|pending|unknown` for the current account), and text
   `check` one line. MCP `initialize` instructions carry one static line: see `telegram_read
@@ -327,7 +423,7 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   (`secret_store_unavailable`); a registry whose key is missing or whose signature does not match is
   refused as a whole (`plugin_lock_invalid`). An empty or missing registry is never signed or
   checked, so a profile without plugins never touches the store. Before `list`, `show`, `data` and
-  (from P2) `run`, the host also checks that the folder holds exactly the locked files with their
+  `run`, the host also checks that the folder holds exactly the locked files with their
   hashes, no links, and a manifest that declares nothing beyond what was accepted. On a mismatch the
   plugin is disabled with `plugin_tampered`; `plugin remove` still works. The registry is still read
   as untrusted input: names, IDs and paths in it are checked before use, and it is a map without a
@@ -371,9 +467,10 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   from a fork installs as a third-party plugin, and the summary says why. The mark grants nothing:
   install still asks the human.
 - **Audit** (`audit.jsonl` of the profile): install (also a declined one), remove, `data set` and
-  `data delete` with the plugin, version, revision, installation ID, key and size; from P2 on also
-  every `run` and from P3 settings and secrets (names only). Bodies, values, headers and secrets are
-  never written.
+  `data delete` with the plugin, version, revision, installation ID, key and size; every `run` with
+  the plugin, revision, installation, command, the names of the host APIs it called, the types of the
+  proposals it returned and the outcome (an error code); from P3 settings and secrets (names only).
+  Inputs, results, bodies, values, headers and secrets are never written.
 - **Onboarding** is per Telegram account: another account on the same profile starts `pending`.
 
 ## 10. Versions and compatibility
@@ -385,10 +482,11 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **Error codes:** `plugin_invalid` (the plugin breaks the spec; `validate` lists every problem),
   `plugin_unsupported`, `plugin_not_found`, `plugin_exists`, `plugin_tampered`,
   `plugin_revision_mismatch`, `plugin_source_not_found`, `plugin_lock_invalid`, `plugin_limit`
-  (storage quota), `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
+  (a sandbox limit or the storage quota, named in `limit`), `plugin_error` (the command failed, or
+  its result broke the output schema), `cancelled`, `flood_wait`, `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
   `dialog_failed` (the Windows dialog could not be shown; not the same as the human's No),
   `human_required`, `no_human_channel`, `not_confirmed`, `rate_limited` (GitHub API).
-- **Exit codes, as the CLI's:** 2 bad arguments (from P2 also an input that fails its schema);
+- **Exit codes, as the CLI's:** 2 bad arguments, an unknown command or an input that fails its schema;
   1 a plugin error or a limit; 3 and 4 only for actions the agent runs.
 - **Acceptance test of the spec** (coming, P6): `plugin validate` accepts the published Tone of Voice,
   and the SDK and the CLI check the same `collect` answer against its schema alike.
@@ -400,9 +498,9 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   `runCommand('collect', {limit: 10}, {mock: true})`.
 - **Template** `TheVilfer/tg-plugin-template`: manifest, `SKILL.md`, an example command, tests, CI with
   `plugin validate` and a mock test.
-- **`plugin dev <dir> --mock`**: no confirmations; Telegram, storage, settings and secrets are mock
-  data and HTTP answers from local fixtures (`dev/fixtures/*.json`). For a live check, install from the
-  folder.
+- **`plugin dev <dir> <cmd> --mock`** (available, section 8): no confirmations; Telegram, storage and
+  settings are mock data. Secrets and HTTP answers from local fixtures (`dev/fixtures/*.json`) come
+  with network access (P3). For a live check, install from the folder.
 - **Reference plugin**: Tone of Voice, written only from this spec.
 
 ## 12. The official Tone of Voice plugin (coming, P6)

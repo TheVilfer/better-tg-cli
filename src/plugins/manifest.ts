@@ -1,5 +1,5 @@
 import { MANIFEST_SCHEMAS } from './manifest-schemas.js';
-import { validate } from './json-schema.js';
+import { commandSchemaProblems, validate } from './json-schema.js';
 import { InvalidRangeError, parseRange, satisfies } from './semver.js';
 
 /**
@@ -221,6 +221,7 @@ function semanticErrors(m: Manifest): string[] {
     }
     for (const [which, schema] of [['input', c.input], ['output', c.output]] as const) {
       for (const p of schemaSelfContainedProblems(schema)) errors.push(`commands.${c.name}.${which}: ${p}`);
+      for (const p of commandSchemaProblems(schema)) errors.push(`commands.${c.name}.${which}: ${p}`);
     }
     if (c.input.type !== 'object') errors.push(`commands.${c.name}.input: the root must be {"type": "object"}`);
   }

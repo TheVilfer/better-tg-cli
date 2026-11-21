@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   closeSync, constants, linkSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync,
 } from 'node:fs';
@@ -24,6 +24,8 @@ import {
  *   plugins/plugin.lock.json                         the install registry, signed (HMAC-SHA256)
  *   plugins/<installId>/<name>/…                     the snapshot (the folder name is the plugin name, as Agent Skills wants)
  *   plugin-data/<installId>/<telegram-user-id>/k-<key>   data the model saved (`plugin data set`)
+ *   plugin-state/<installId>/cursors/c-<hash>        the host's own walk state behind a cursor
+ *                                                    (never plugin data: `plugin data` does not see it)
  *   .plugins.lock                                    held while the registry or data changes
  *
  * The plugin home is the profile's configDir() and, under TG_MOCK, a folder next to the mock state
@@ -208,6 +210,28 @@ function breakStale(path: string): boolean {
   return true;
 }
 
+/** One attempt at the lock file: true when taken, false when someone else holds it. */
+function tryLock(path: string, token: string): boolean {
+  try {
+    const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW, 0o600);
+    try { writeSync(fd, token); } finally { closeSync(fd); }
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    return false;
+  }
+}
+
+function releaseLock(path: string, token: string): void {
+  try {
+    if (readFileSync(path, 'utf8') === token) unlinkSync(path);
+  } catch { /* already gone */ }
+}
+
+const lockBusy = (path: string) => new CliError('Another telegram process is changing plugins right now', 'plugin_busy', EXIT.ERROR, {
+  hint: `Try again in a moment. If no other telegram process is running, delete ${path}.`,
+});
+
 /**
  * Runs `fn` while holding the plugin home's lock file (O_EXCL), so changes to the registry and the
  * quota check with its write never interleave with another process. Never held across a dialog or
@@ -218,28 +242,55 @@ export function withPluginLock<T>(fn: () => T): T {
   const path = join(root, '.plugins.lock');
   const token = `${process.pid} ${hostname()} ${randomUUID()}`;
   const deadline = Date.now() + storeDeps.lockTimeoutMs;
-  for (;;) {
-    try {
-      const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW, 0o600);
-      try { writeSync(fd, token); } finally { closeSync(fd); }
-      break;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-      if (breakStale(path)) continue;
-      if (Date.now() >= deadline) {
-        throw new CliError('Another telegram process is changing plugins right now', 'plugin_busy', EXIT.ERROR, {
-          hint: `Try again in a moment. If no other telegram process is running, delete ${path}.`,
-        });
-      }
-      sleep(50);
-    }
+  while (!tryLock(path, token)) {
+    if (breakStale(path)) continue;
+    if (Date.now() >= deadline) throw lockBusy(path);
+    sleep(50);
   }
   try {
     return fn();
   } finally {
-    try {
-      if (readFileSync(path, 'utf8') === token) unlinkSync(path);
-    } catch { /* already gone */ }
+    releaseLock(path, token);
+  }
+}
+
+/**
+ * What a plugin run's storage write must still hold when it changes the file: the run's absolute
+ * deadline and its cancellation (an AbortSignal, the MCP server's shared flag).
+ */
+export interface WriteGuard {
+  deadline: number;
+  aborted: () => boolean;
+}
+
+/** Throws when the run behind `guard` ended: cancelled, or past its deadline. */
+export function assertGuard(guard: WriteGuard | undefined, what: string): void {
+  if (!guard) return;
+  if (guard.aborted()) throw new CliError(`The plugin run was cancelled before the write; ${what}`, 'cancelled', EXIT.ERROR);
+  if (Date.now() >= guard.deadline) throw new CliError(`The plugin run reached its time limit before the write; ${what}`, 'plugin_limit', EXIT.ERROR, { fields: { limit: 'timeout' } });
+}
+
+/**
+ * withPluginLock for a plugin run's storage write: the wait yields to the event loop between
+ * attempts, so a cancellation (SIGTERM, an abort) and the deadline are seen while it waits, and both
+ * are checked once more under the lock (`fn` calls assertGuard right before it changes the file).
+ */
+async function withPluginLockGuarded<T>(guard: WriteGuard, what: string, fn: () => T): Promise<T> {
+  const root = home(true)!;
+  const path = join(root, '.plugins.lock');
+  const token = `${process.pid} ${hostname()} ${randomUUID()}`;
+  const busyAt = Date.now() + storeDeps.lockTimeoutMs;
+  for (;;) {
+    assertGuard(guard, what);
+    if (tryLock(path, token)) break;
+    if (breakStale(path)) continue;
+    if (Date.now() >= busyAt) throw lockBusy(path);
+    await new Promise(r => setTimeout(r, Math.max(1, Math.min(50, guard.deadline - Date.now()))));
+  }
+  try {
+    return fn();
+  } finally {
+    releaseLock(path, token);
   }
 }
 
@@ -508,6 +559,8 @@ export function removeInstall(entry: LockEntry, keepData: boolean): void {
     const root = home(true)!;
     removeTree(root, `plugins/${entry.installId}`);
     if (!keepData) removeTree(root, `plugin-data/${entry.installId}`);
+    // The host's own state of this installation goes with it, kept data or not
+    removeTree(root, `plugin-state/${entry.installId}`);
   });
 }
 
@@ -582,7 +635,9 @@ export function dataGet(entry: LockEntry, userId: string, key: string): Uint8Arr
  * Saves a value under a declared storage key, within the plugin's total quota for this account. The
  * quota check and the write happen under the lock, for the installation that is still registered.
  */
-export function dataSet(entry: LockEntry, manifest: Manifest, userId: string, key: string, value: Uint8Array): { bytes: number; usedBytes: number; quotaBytes: number } {
+type SetResult = { bytes: number; usedBytes: number; quotaBytes: number };
+
+function setUnderLock(entry: LockEntry, manifest: Manifest, userId: string, key: string, value: Uint8Array, guard?: WriteGuard): () => SetResult {
   const keys = manifest.storage?.keys ?? [];
   if (!keys.includes(key)) {
     throw new CliError(`Plugin "${entry.name}" does not declare the storage key "${key}"`, 'invalid_argument', EXIT.USAGE, {
@@ -591,7 +646,7 @@ export function dataSet(entry: LockEntry, manifest: Manifest, userId: string, ke
   }
   const rel = userDataRel(entry, userId);
   const quota = manifest.storage?.quotaBytes ?? DEFAULT_QUOTA_BYTES;
-  return withPluginLock(() => {
+  return () => {
     assertCurrent(readLock(), entry, 'nothing was saved');
     const others = dataList(entry, userId).filter(i => i.key !== key).reduce((n, i) => n + i.bytes, 0);
     if (others + value.length > quota) {
@@ -599,28 +654,119 @@ export function dataSet(entry: LockEntry, manifest: Manifest, userId: string, ke
         hint: 'Save a shorter value, or delete another key first.',
       });
     }
+    // The last look before the file changes: a run that ended meanwhile writes nothing
+    assertGuard(guard, 'nothing was saved');
     try {
       writeRegular(home(true)!, `${rel}/k-${key}`, value);
     } catch (e) {
       dataUnsafe(e);
     }
     return { bytes: value.length, usedBytes: others + value.length, quotaBytes: quota };
-  });
+  };
 }
 
-export function dataDelete(entry: LockEntry, userId: string, key: string): boolean {
+function deleteUnderLock(entry: LockEntry, userId: string, key: string, guard?: WriteGuard): () => boolean {
   const rel = userDataRel(entry, userId);
   if (dataKeyProblem(key)) throw new CliError(dataKeyProblem(key)!, 'invalid_argument', EXIT.USAGE);
-  return withPluginLock(() => {
+  return () => {
     assertCurrent(readLock(), entry, 'nothing was deleted');
     const root = home();
     if (!root) return false;
+    assertGuard(guard, 'nothing was deleted');
     try {
       return removeRegular(root, `${rel}/k-${key}`);
     } catch (e) {
       return dataUnsafe(e);
     }
-  });
+  };
+}
+
+export function dataSet(entry: LockEntry, manifest: Manifest, userId: string, key: string, value: Uint8Array): SetResult {
+  return withPluginLock(setUnderLock(entry, manifest, userId, key, value));
+}
+
+export function dataDelete(entry: LockEntry, userId: string, key: string): boolean {
+  return withPluginLock(deleteUnderLock(entry, userId, key));
+}
+
+/** dataSet for a plugin run: the lock wait and the write itself hold to the run's deadline and cancellation. */
+export function dataSetGuarded(entry: LockEntry, manifest: Manifest, userId: string, key: string, value: Uint8Array, guard: WriteGuard): Promise<SetResult> {
+  return withPluginLockGuarded(guard, 'nothing was saved', setUnderLock(entry, manifest, userId, key, value, guard));
+}
+
+/** dataDelete for a plugin run, held to the run's deadline and cancellation as dataSetGuarded. */
+export function dataDeleteGuarded(entry: LockEntry, userId: string, key: string, guard: WriteGuard): Promise<boolean> {
+  return withPluginLockGuarded(guard, 'nothing was deleted', deleteUnderLock(entry, userId, key, guard));
+}
+
+// ---------- the host's walk state behind a cursor ----------
+
+/** How long a cursor stays valid, and how many one installation keeps (the oldest go first). */
+export const CURSOR_TTL_MS = 24 * 3600e3;
+export const CURSOR_MAX = 64;
+/** Test seam: the clock cursors are dated by. */
+export const cursorDeps: { now: () => number } = { now: () => Date.now() };
+/** A cursor id: 128 random bits as base64url. */
+export const CURSOR_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+
+function cursorDir(entry: Pick<LockEntry, 'installId'>): string {
+  if (!UUID_RE.test(entry.installId)) throw new CliError('Invalid installation ID', 'plugin_lock_invalid', EXIT.ERROR);
+  return `plugin-state/${entry.installId}/cursors`;
+}
+
+/** The file of an id: a hex hash, so ids that differ only in case never meet on a case-insensitive disk. */
+const cursorFile = (id: string) => `c-${createHash('sha256').update(id).digest('hex').slice(0, 40)}`;
+
+/**
+ * Keeps `state` for this installation behind a new random id and returns the id. Expired entries
+ * and the oldest beyond CURSOR_MAX are dropped first (best effort: another run may drop them too).
+ */
+export function cursorSave(entry: Pick<LockEntry, 'installId'>, state: unknown): string {
+  const dir = cursorDir(entry);
+  const root = home(true)!;
+  const now = cursorDeps.now();
+  try {
+    const files = listDir(root, dir).filter(e => e.kind === 'file' && /^c-[0-9a-f]{40}$/.test(e.name)).sort((a, b) => a.mtime.getTime() - b.mtime.getTime());
+    files.forEach((f, i) => {
+      if (now - f.mtime.getTime() > CURSOR_TTL_MS || files.length - i >= CURSOR_MAX) {
+        try { removeRegular(root, `${dir}/${f.name}`); } catch { /* gone meanwhile */ }
+      }
+    });
+  } catch (e) {
+    dataUnsafe(e);
+  }
+  const id = randomBytes(16).toString('base64url');
+  try {
+    writeRegular(root, `${dir}/${cursorFile(id)}`, JSON.stringify({ id, installId: entry.installId, createdAt: now, state }));
+  } catch (e) {
+    dataUnsafe(e);
+  }
+  return id;
+}
+
+/** The state behind a cursor id of this installation; undefined when unknown, expired or not this installation's. */
+export function cursorLoad(entry: Pick<LockEntry, 'installId'>, id: string): unknown {
+  if (!CURSOR_ID_RE.test(id)) return undefined;
+  const dir = cursorDir(entry);
+  const root = home();
+  if (!root) return undefined;
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = readRegular(root, `${dir}/${cursorFile(id)}`, { singleLink: true, maxBytes: 1024 * 1024 });
+  } catch (e) {
+    return dataUnsafe(e);
+  }
+  if (!bytes) return undefined;
+  let rec: { id?: unknown; installId?: unknown; createdAt?: unknown; state?: unknown };
+  try {
+    rec = JSON.parse(new TextDecoder().decode(bytes)) as typeof rec;
+  } catch {
+    return undefined;
+  }
+  const now = cursorDeps.now();
+  if (rec?.id !== id || rec.installId !== entry.installId || typeof rec.createdAt !== 'number') return undefined;
+  if (rec.createdAt > now + 60_000 || now - rec.createdAt > CURSOR_TTL_MS) return undefined;
+  return rec.state;
 }
 
 /** Onboarding per Telegram account: done once the doneWhen key holds data for this account. */

@@ -7,9 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fetchGithubSnapshot, readLocalSnapshot, type Fetch } from '../src/plugins/source.js';
 import {
-  commitInstall, dataDelete, dataGet, dataList, dataSet, installDir, loadPlugin, lockMac, onboardingState, pluginsRoot, readLock, removeInstall,
-  storeDeps, verifyInstalled, type KeyStore,
+  commitInstall, CURSOR_MAX, CURSOR_TTL_MS, cursorDeps, cursorLoad, cursorSave, dataDelete, dataDeleteGuarded, dataGet, dataList, dataSet, dataSetGuarded,
+  installDir, loadPlugin, lockMac, onboardingState, pluginsRoot, readLock, removeInstall, storeDeps, verifyInstalled, type KeyStore,
 } from '../src/plugins/store.js';
+import { hostname } from 'node:os';
 import { describeEntry } from '../src/plugins/catalog.js';
 import { installSummary } from '../src/plugins/human.js';
 
@@ -386,3 +387,77 @@ function readdirNames(dir: string): string[] {
     return [];
   }
 }
+
+describe('review fixes: guarded storage writes (#6) and the host-side cursor folder (#3)', () => {
+  /** Holds the plugin home's lock as another live telegram process would (this pid: never "stale"). */
+  function holdLock(): string {
+    const path = join(pluginsRoot(), '..', '.plugins.lock');
+    writeFileSync(path, `${process.pid} ${hostname()} someone-else`);
+    return path;
+  }
+
+  it('a write waiting for the lock past the run deadline changes nothing, and gives up at the deadline', async () => {
+    const entry = install();
+    const m = loadPlugin('tone-of-voice').manifest;
+    const key = m.storage!.keys![0];
+    dataSet(entry, m, '1000', key, new TextEncoder().encode('before'));
+    const lock = holdLock();
+    const started = Date.now();
+    // The lock is released after the deadline: an unguarded wait would then write
+    setTimeout(() => rmSync(lock, { force: true }), 400);
+    await expect(dataSetGuarded(entry, m, '1000', key, new TextEncoder().encode('after'), { deadline: started + 150, aborted: () => false }))
+      .rejects.toMatchObject({ code: 'plugin_limit' });
+    expect(Date.now() - started).toBeLessThan(1000);
+    await new Promise(r => setTimeout(r, 500));
+    expect(new TextDecoder().decode(dataGet(entry, '1000', key))).toBe('before');
+  });
+
+  it('a run cancelled while it waits for the lock writes nothing once the lock is free; the check repeats under the lock', async () => {
+    const entry = install();
+    const m = loadPlugin('tone-of-voice').manifest;
+    const key = m.storage!.keys![0];
+    dataSet(entry, m, '1000', key, new TextEncoder().encode('before'));
+    const lock = holdLock();
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 100);
+    setTimeout(() => rmSync(lock, { force: true }), 300);
+    await expect(dataSetGuarded(entry, m, '1000', key, new TextEncoder().encode('after'), { deadline: Date.now() + 10_000, aborted: () => ac.signal.aborted }))
+      .rejects.toMatchObject({ code: 'cancelled' });
+    expect(new TextDecoder().decode(dataGet(entry, '1000', key))).toBe('before');
+    // Free lock, the run ends between taking it and writing: still nothing written
+    let looks = 0;
+    await expect(dataDeleteGuarded(entry, '1000', key, { deadline: Date.now() + 10_000, aborted: () => ++looks > 1 })).rejects.toMatchObject({ code: 'cancelled' });
+    expect(new TextDecoder().decode(dataGet(entry, '1000', key))).toBe('before');
+    // Within its deadline it writes as before
+    await dataSetGuarded(entry, m, '1000', key, new TextEncoder().encode('after'), { deadline: Date.now() + 10_000, aborted: () => false });
+    expect(new TextDecoder().decode(dataGet(entry, '1000', key))).toBe('after');
+  });
+
+  it('cursor state: a random id, 24 h, bounded, bound to the installation, invisible to plugin data, removed with the plugin', () => {
+    const entry = install();
+    const id = cursorSave(entry, { c: ['1001', '1002'] });
+    expect(id).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(cursorLoad(entry, id)).toEqual({ c: ['1001', '1002'] });
+    expect(cursorLoad(entry, 'A'.repeat(22))).toBeUndefined();
+    expect(cursorLoad(entry, '../../x')).toBeUndefined();
+    // The id in another case is another id (the file is named by a hash)
+    const swapped = id.replace(/[a-z]/, c => c.toUpperCase());
+    if (swapped !== id) expect(cursorLoad(entry, swapped)).toBeUndefined();
+    expect(cursorLoad({ ...entry, installId: '00000000-0000-4000-8000-000000000000' }, id)).toBeUndefined();
+    expect(dataList(entry, '1000')).toEqual([]);
+    const saved = cursorDeps.now;
+    try {
+      const t = Date.now();
+      cursorDeps.now = () => t + CURSOR_TTL_MS + 1;
+      expect(cursorLoad(entry, id)).toBeUndefined();
+    } finally {
+      cursorDeps.now = saved;
+    }
+    const ids = Array.from({ length: CURSOR_MAX + 5 }, (_, i) => cursorSave(entry, { i }));
+    const dir = join(pluginsRoot(), '..', 'plugin-state', entry.installId, 'cursors');
+    expect(readdirSync(dir).length).toBeLessThanOrEqual(CURSOR_MAX);
+    expect(cursorLoad(entry, ids.at(-1)!)).toEqual({ i: CURSOR_MAX + 4 });
+    removeInstall(entry, true);
+    expect(() => readdirSync(dir)).toThrow();
+  });
+});
