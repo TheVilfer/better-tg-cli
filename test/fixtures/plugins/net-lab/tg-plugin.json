@@ -1,0 +1,182 @@
+{
+  "$schema": "https://better-tg-cli.com/schemas/tg-plugin/2026-11-21.json",
+  "name": "net-lab",
+  "version": "0.1.0",
+  "description": "Exercises host.http.fetch, secrets and settings (tests only)",
+  "main": "code/net.js",
+  "files": [
+    "tg-plugin.json",
+    "SKILL.md",
+    "code/net.js"
+  ],
+  "permissions": [
+    "identity:read",
+    "messages:read-own",
+    "storage:read",
+    "network",
+    "settings:read"
+  ],
+  "network": [
+    "https://api.example.com",
+    "https://other.example.com",
+    "https://wrong.example.net"
+  ],
+  "secrets": [
+    {
+      "name": "apikey",
+      "description": "API key of api.example.com",
+      "inject": {
+        "origin": "https://api.example.com",
+        "paths": [
+          "/v1"
+        ],
+        "header": "Authorization",
+        "format": "Bearer {value}"
+      }
+    },
+    {
+      "name": "other",
+      "description": "Key of other.example.com",
+      "inject": {
+        "origin": "https://other.example.com",
+        "header": "X-Api-Key",
+        "format": "{value}"
+      }
+    }
+  ],
+  "settings": {
+    "mode": {
+      "type": "string",
+      "description": "Which mode",
+      "enum": [
+        "fast",
+        "slow"
+      ],
+      "default": "fast"
+    },
+    "count": {
+      "type": "integer",
+      "description": "How many",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 3
+    }
+  },
+  "commands": [
+    {
+      "name": "fetch",
+      "description": "Fetches one URL; an error comes back as data",
+      "effects": [
+        "network"
+      ],
+      "input": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "opts": {
+            "type": "object"
+          },
+          "times": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "fetch-raw",
+      "description": "Fetches one URL; an error ends the run",
+      "effects": [
+        "network"
+      ],
+      "input": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "opts": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "size",
+      "description": "Fetches one URL and returns only the sizes",
+      "effects": [
+        "network"
+      ],
+      "input": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "opts": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "setting",
+      "description": "Reads one setting",
+      "effects": [],
+      "input": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "no-net",
+      "description": "A read-only command: host.http is not granted",
+      "effects": [],
+      "input": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object"
+      }
+    }
+  ]
+}

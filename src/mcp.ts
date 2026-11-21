@@ -84,11 +84,15 @@ export const PLUGIN_PATHS: Readonly<Record<string, 'read' | 'write' | 'human' | 
   'plugin data list': 'read',
   'plugin data set': 'write',
   'plugin data delete': 'write',
+  'plugin settings get': 'read',
+  'plugin settings set': 'write',
   'plugin run': 'run',
   'plugin install': 'human',
   'plugin remove': 'human',
+  'plugin secret set': 'human',
+  'plugin secret rm': 'human',
 };
-const PLUGIN_GROUPS = new Set(['plugin', 'plugin data']);
+const PLUGIN_GROUPS = new Set(['plugin', 'plugin data', 'plugin settings', 'plugin secret']);
 
 /** Commands registered on the CLI (set by index.ts), with `group sub` paths for groups; a write
  * must also be registered. */
@@ -264,11 +268,30 @@ function pluginRunGroup(rest: string[]): { group: 'read' | 'write'; plugin?: Plu
  * strictly; anything else is not echoed back as a command.
  */
 export function pluginManagementRefusal(path: string, rest: string[]): string {
+  if (path === 'plugin secret set' || path === 'plugin secret rm') {
+    const lead = `"${path}" is the user's to run, not over MCP: a plugin secret is typed by a human in their own terminal (hidden), and the plugin never sees it.`;
+    const argv = secretArgv(path, rest);
+    return argv
+      ? `${lead} Ask the user to run this in a terminal on this computer and type the value there: ${humanCommand(argv)}`
+      : `${lead} Ask the user to run it in a terminal on this computer (telegram ${path} <plugin> <secret>).`;
+  }
   const lead = `"${path}" is the user's to run, not over MCP: plugins are installed and removed only by a human, who sees what the plugin may do.`;
   const argv = path === 'plugin install' ? installArgv(rest) : path === 'plugin remove' ? removeArgv(rest) : undefined;
   return argv
     ? `${lead} Ask the user to run this in a terminal on this computer: ${humanCommand(argv)}`
     : `${lead} Ask the user to run it in a terminal on this computer (telegram ${path} github:owner/repo[@ref] | <folder> | <name>).`;
+}
+
+/**
+ * `plugin secret set|rm <plugin> <secret>`, only with names that parse strictly: a value the model
+ * may have added (a third operand) gives no command, so it is never echoed into one.
+ */
+function secretArgv(path: string, rest: string[]): string[] | undefined {
+  const operands = rest.filter(a => a !== '--json');
+  if (operands.length !== 2) return undefined;
+  const [plugin, secret] = operands;
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(plugin) || plugin.length > 64 || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(secret)) return undefined;
+  return [...path.split(' '), plugin, secret];
 }
 
 const REVISION_RE = /^sha256-[A-Za-z0-9+/]{43}=$/;

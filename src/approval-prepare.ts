@@ -7,6 +7,7 @@ import { descriptorOf, oneLine, type ParsedAction } from './approval-action.js';
 import { expectInstall, loadPlugin } from './plugins/store.js';
 import { revisionLabel } from './plugins/human.js';
 import { readStdinOnce, stdinBody } from './text.js';
+import { createHash } from 'node:crypto';
 
 /**
  * The parts of an action that only Telegram or the disk can tell, read before an approval is shown
@@ -100,7 +101,7 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
       prepared.onApproved = () => expectButton(fingerprint);
     }
   }
-  if (action.command === 'plugin data set' || action.command === 'plugin data delete') {
+  if (action.command === 'plugin data set' || action.command === 'plugin data delete' || action.command === 'plugin settings set') {
     // The approval covers this installation of the plugin: one installed under the same name later
     // (another source, other code) does not inherit it
     const { entry } = loadPlugin(arg(action, 'name') ?? '');
@@ -115,9 +116,24 @@ export async function prepareAction(action: ParsedAction): Promise<Prepared> {
     const command = (manifest.commands ?? []).find(c => c.name === arg(action, 'command'));
     const input = action.options.find(([k]) => k === 'input')?.[1];
     const inputText = input === '-' ? stdinBody(readStdinOnce()) : typeof input === 'string' ? input : '{}';
-    prepared.bound.push(['plugin', entry.installId, entry.revision, command?.effects ?? []]);
+    const effects = command?.effects ?? [];
+    // Where the run may send data: the manifest's origins, and the secrets the host would attach
+    const origins = effects.includes('network') ? [...(manifest.network ?? [])].sort() : [];
+    const secrets = effects.includes('network') ? (manifest.secrets ?? []).map(s => `${s.name} → ${s.inject.origin}${s.inject.paths ? ` ${s.inject.paths.join(',')}` : ''}`).sort() : [];
+    const inputHash = createHash('sha256').update(inputText).digest('base64');
+    prepared.bound.push(['plugin', entry.installId, entry.revision, command?.name ?? arg(action, 'command'), effects, origins, secrets, inputHash]);
     prepared.lines.push(`  Installation: ${entry.installId} (${revisionLabel(entry.source, entry.revision)})`);
-    prepared.lines.push(`  Effects: ${command?.effects.join(', ') || 'none'} (it can save this plugin's data${command?.effects.includes('actions') ? ' and propose Telegram actions you confirm separately' : ''})`);
+    const does = [
+      effects.includes('storage') && 'save this plugin\'s data',
+      effects.includes('network') && 'send data to the internet',
+      effects.includes('actions') && 'propose Telegram actions you confirm separately',
+    ].filter(Boolean).join(', ');
+    prepared.lines.push(`  Effects: ${effects.join(', ') || 'none'}${does ? ` (it can ${does})` : ''}`);
+    if (origins.length) {
+      const reads = (manifest.permissions ?? []).filter(p => ['messages:read-own', 'messages:read', 'messages:read-target', 'chats:read', 'identity:read', 'storage:read'].includes(p));
+      prepared.lines.push(`  Sends to: ${origins.join(', ')}${reads.length ? ` (what it reads: ${reads.join(', ')})` : ''}`);
+      if (secrets.length) prepared.lines.push(`  Secrets the host attaches: ${secrets.join('; ')} (the plugin never sees them)`);
+    }
     prepared.lines.push(`  Input: ${oneLine(inputText)}`);
     prepared.onApproved = () => expectInstall(entry);
   }

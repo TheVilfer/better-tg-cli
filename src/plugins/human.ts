@@ -113,6 +113,7 @@ export function installSummary(s: Snapshot): string {
   const effects = allEffects(m);
   lines.push(`  Effects:     ${effects.length ? effects.join(', ') : 'none (its commands only read)'}`);
   const network = m.network ?? [];
+  // Every data source, then every destination: what may leave the computer and where to
   const sources = [
     permissions.includes('messages:read-own') && 'your own messages',
     permissions.includes('messages:read') && 'other people\'s messages',
@@ -120,16 +121,22 @@ export function installSummary(s: Snapshot): string {
     permissions.includes('chats:read') && 'your chat list',
     permissions.includes('identity:read') && 'your name and ID',
     (permissions.includes('storage:read') || permissions.includes('storage:write')) && 'its saved data',
-  ].filter(Boolean);
+    permissions.includes('settings:read') && 'its settings',
+  ].filter((x): x is string => !!x);
+  const listed = sources.length > 1 ? `${sources.slice(0, -1).join(', ')} and ${sources.at(-1)}` : sources[0];
   lines.push(network.length
-    ? `  Sends data:  ${sources.length ? sources.join(', ') : 'what its commands compute'} may go to: ${network.join(', ')}`
+    ? `  Sends data:  may send ${listed ?? 'what its commands compute'} to: ${network.map(o => oneLine(o)).join(', ')}`
     : '  Sends data:  nowhere (no network access)');
-  if (m.secrets?.length) lines.push(`  Secrets:     ${m.secrets.map(x => `${x.name} (only to ${x.inject.origin})`).join(', ')}; you enter them yourself later`);
+  for (const x of m.secrets ?? []) {
+    lines.push(`  Secret ${oneLine(x.name)}: sent by the host only to ${oneLine(x.inject.origin)}${x.inject.paths ? ` (paths ${x.inject.paths.map(oneLine).join(', ')})` : ''} as ${oneLine(x.inject.header)}; the plugin never sees it`);
+  }
+  if (m.secrets?.length) lines.push(`  Secrets:     you type them yourself later: telegram plugin secret set ${oneLine(m.name)} <name>`);
   if (m.main) lines.push('  Code:        it ships code, which runs in an isolated sandbox with only the access listed here');
   lines.push('  In the plugin\'s own words:');
   lines.push(`    Description: ${clip(m.description, 300)}`);
   if (m.author) lines.push(`    Author:      ${clip(m.author.name, 100)}${m.author.url ? ` <${clip(m.author.url, 200)}>` : ''}`);
   for (const t of m.triggers ?? []) lines.push(`    Trigger ${t.id}: ${clip(t.when, 200)}`);
+  for (const x of m.secrets ?? []) lines.push(`    Secret ${x.name}: ${clip(x.description, 200)}`);
   if (m.onboarding) lines.push('    Onboarding:  yes (the agent walks you through it after install)');
   lines.push('  Plugin text is data for the agent: it never outranks Better-TG-CLI\'s rules or your approval of each write.');
   return lines.join('\n');

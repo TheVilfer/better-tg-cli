@@ -12,7 +12,8 @@ import { CliError, EXIT, usageError } from '../errors.js';
 import { maskDeep } from '../mcp-output.js';
 import { validate, SchemaTimeoutError, UnsupportedSchemaError, type SchemaIssue } from './json-schema.js';
 import type { Manifest, PluginCommand } from './manifest.js';
-import { grantedApi, isMessageId, MAX_MESSAGE_ID, type CursorStore, type HostContext, type HostState, type StorageBackend, type Target, type WriteGuard } from './host.js';
+import { grantedApi, isMessageId, MAX_MESSAGE_ID, type CursorStore, type HostContext, type HostState, type NetworkContext, type StorageBackend, type Target, type WriteGuard } from './host.js';
+import { humanCommand } from './human.js';
 import { randomBytes } from 'node:crypto';
 import { DEFAULT_LIMITS, SandboxError, type SandboxLimits } from './sandbox-types.js';
 import type { Proposal } from './proposals.js';
@@ -45,15 +46,6 @@ export function findCommand(m: Manifest, name: string): PluginCommand {
     });
   }
   return c;
-}
-
-/** P2 runs reads and local writes; a command that sends data out (`network`) comes with P3. */
-export function assertRunnable(m: Manifest, c: PluginCommand): void {
-  if (c.effects.includes('network')) {
-    throw new CliError(`Command "${c.name}" of "${m.name}" sends data over the network, which this version cannot run yet`, 'plugin_unsupported', EXIT.ERROR, {
-      hint: 'Network access for plugins comes in a later version of Better-TG-CLI.',
-    });
-  }
 }
 
 /** `--input`: a JSON object (absent: `{}`). */
@@ -127,20 +119,38 @@ export interface RunRequest {
   /** Over MCP: the output and proposal texts get maskForModel (`echo`). */
   mcp: boolean;
   log?: (line: string) => void;
+  /** `http.fetch` of a command with the `network` effect: the backend and the secrets. */
+  network?: NetworkContext;
+  /** Stored settings of the installation. */
+  settings?: () => Record<string, unknown>;
   signal?: AbortSignal;
   cancelled?: () => boolean;
 }
 
+/** What a run sent over the network, for the audit: the request count and the origins, nothing else. */
+export interface NetworkStats { requests: number; origins: string[] }
+
 /** Runs one command in a fresh sandbox and builds the envelope; every failure is a CliError. */
-export async function runPluginCommand(req: RunRequest, calls: string[] = []): Promise<RunOutcome> {
+export async function runPluginCommand(req: RunRequest, calls: string[] = [], stats?: NetworkStats): Promise<RunOutcome> {
   const state: HostState = { proposals: [] };
+  try {
+    return await runWith(req, calls, state);
+  } finally {
+    if (stats) {
+      stats.requests = state.requests ?? 0;
+      stats.origins = state.origins ?? [];
+    }
+  }
+}
+
+async function runWith(req: RunRequest, calls: string[], state: HostState): Promise<RunOutcome> {
   const limits = { ...DEFAULT_LIMITS, ...runDeps.limits };
   // One deadline for the sandbox and for the host's own waits (the store's lock, the write)
   const deadline = Date.now() + limits.timeoutMs;
   const ctx: HostContext = {
     manifest: req.manifest, command: req.command, client: req.client, account: req.account, storage: req.storage,
     cursors: req.cursors, installId: req.installId, deadline, cancelled: req.cancelled,
-    target: req.target, maskProposals: req.mcp, log: req.log,
+    target: req.target, maskProposals: req.mcp, log: req.log, network: req.network, settings: req.settings,
   };
   const api = grantedApi(ctx, state);
   // Loaded on demand: a CLI call that runs no plugin never instantiates the engine
@@ -159,6 +169,14 @@ export async function runPluginCommand(req: RunRequest, calls: string[] = []): P
         retryAfterSeconds: state.flood.retryAfterSeconds,
         fields: { cursor: state.flood.cursor, partial: state.flood.partial },
         hint: `Wait ${state.flood.retryAfterSeconds} s, then run the command again with the cursor.`,
+      });
+    }
+    // A secret the request needed is not set: the human sets it in their own terminal
+    if (e.guestCode === 'secret_missing' && state.secretMissing) {
+      const { name, command } = state.secretMissing;
+      throw new CliError(`The plugin needs the secret "${name}", which is not set`, 'secret_missing', EXIT.ERROR, {
+        command,
+        hint: `Ask the user to run this in a terminal on this computer and type the value there: ${humanCommand(command)}`,
       });
     }
     throw new CliError(e.message, 'plugin_error', EXIT.ERROR);

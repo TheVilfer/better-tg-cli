@@ -149,8 +149,9 @@ export async function runInSandbox(run: SandboxRun): Promise<SandboxResult> {
     /** The reply a host call settles with, `{value}` or `{error}` as JSON, at most callBytes. */
     const reply = (body: { value: unknown } | { error: unknown }, name: string): string => {
       const json = JSON.stringify(body);
-      if (bytes(json) > limits.callBytes) {
-        fail(new SandboxError('plugin_limit', `The result of host.${name} exceeded ${limits.callBytes} bytes`, 'callBytes'));
+      const max = name === 'http.fetch' ? limits.httpReplyBytes : limits.callBytes;
+      if (bytes(json) > max) {
+        fail(new SandboxError('plugin_limit', `The result of host.${name} exceeded ${max} bytes`, 'callBytes'));
       }
       return json;
     };

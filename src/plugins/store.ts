@@ -775,3 +775,49 @@ export function onboardingState(entry: LockEntry, manifest: Manifest, userId: st
   if (!userId) return 'unknown';
   return dataGet(entry, userId, manifest.onboarding.doneWhen.storage) !== undefined ? 'done' : 'pending';
 }
+
+// ---------- non-secret settings per installation ----------
+
+function settingsRel(entry: Pick<LockEntry, 'installId'>): string {
+  if (!UUID_RE.test(entry.installId)) throw new CliError('Invalid installation ID', 'plugin_lock_invalid', EXIT.ERROR);
+  return `plugin-state/${entry.installId}/settings.json`;
+}
+
+/** The values `plugin settings set` stored for this installation (an object without a prototype). */
+export function settingsRead(entry: Pick<LockEntry, 'installId'>): Record<string, unknown> {
+  const out = bare<unknown>();
+  const root = home();
+  if (!root) return out;
+  let bytes: Uint8Array | undefined;
+  try {
+    bytes = readRegular(root, settingsRel(entry), { singleLink: true, maxBytes: 256 * 1024 });
+  } catch (e) {
+    return dataUnsafe(e);
+  }
+  if (!bytes) return out;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return out;
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    for (const [k, v] of Object.entries(parsed)) if (KEY_RE.test(k)) out[k] = v;
+  }
+  return out;
+}
+
+/** Stores one setting (already checked against the manifest) for the installation still registered. */
+export function settingsWrite(entry: LockEntry, key: string, value: unknown): void {
+  if (!KEY_RE.test(key)) throw new CliError(`Invalid setting "${key}"`, 'invalid_argument', EXIT.USAGE);
+  withPluginLock(() => {
+    assertCurrent(readLock(), entry, 'nothing was saved');
+    const all = settingsRead(entry);
+    all[key] = value;
+    try {
+      writeRegular(home(true)!, settingsRel(entry), JSON.stringify(all));
+    } catch (e) {
+      dataUnsafe(e);
+    }
+  });
+}
