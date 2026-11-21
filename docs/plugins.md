@@ -16,7 +16,7 @@ Plugin support lands in steps. Parts marked **(coming)** are specified here but 
 |---|---|---|
 | P1 | Manifest, install by snapshot, `list`, `show`, `data`, `remove`, `validate`, human confirmation | **available** |
 | P2 | Sandboxed plugin code (QuickJS-WASM), host API, `plugin run`, `plugin dev --mock` ([#153](https://github.com/TheVilfer/better-tg-cli/issues/153)) | **available** |
-| P3 | Network access and secrets the plugin never sees ([#154](https://github.com/TheVilfer/better-tg-cli/issues/154)) | coming |
+| P3 | Network access and secrets the plugin never sees ([#154](https://github.com/TheVilfer/better-tg-cli/issues/154)) | **available** |
 | P4 | Plugin management over MCP (a dialog), `plugin update` ([#155](https://github.com/TheVilfer/better-tg-cli/issues/155)) | coming |
 | P5 | SDK and template repository ([#156](https://github.com/TheVilfer/better-tg-cli/issues/156)) | coming |
 | P6 | The official Tone of Voice plugin ([#157](https://github.com/TheVilfer/better-tg-cli/issues/157)) | coming |
@@ -150,7 +150,17 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
   (`storage:write`, `network`, `actions`). An empty list means the command only reads (section 8).
   Commands need `main`.
 - **`network`** lists origins only with the `network` permission and vice versa; every secret's
-  `inject.origin` is in `network` (section 6).
+  `inject.origin` is in `network` (section 6). An origin is `https://` and a host name with a
+  top-level domain, in its canonical form (lower case, no trailing dot, no path, no user info, no
+  `:443`): no IP address (also not written as a number, `https://2130706433`), no `localhost`,
+  `.local`, `.internal`, `.arpa`. Another port is written explicitly (`https://api.example.com:8443`).
+- **`secrets[].inject`**: `header` is a token and not one the host sets itself (`Host`, `Cookie`,
+  `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Upgrade`, `Proxy-*`, …; `Authorization`
+  is allowed); `format` is one line of printable ASCII holding `{value}`; two secrets never go to the
+  same origin in the same header.
+- **`settings`**: each one a small JSON Schema: `type` (`string`, `integer`, `number`, `boolean`),
+  `description`, optional `enum`, `minimum`/`maximum` (numbers), `minLength`/`maxLength` (strings)
+  and `default`, which must itself be a valid value.
 
 ## 4. Runtime
 
@@ -212,8 +222,8 @@ export const commands = {
 | `messages:read-target` | `host.target.message()` or `host.target.thread({limit, before})` | only what the agent passed to this run: `--target <chat>:<msgId>` (one message), `--target <chat>:<msgId> --thread` or `--target <chat>@<topic>` (a thread or topic) |
 | `storage:read` | `host.storage.get(key)`, `host.storage.list()` | this installation's data for the current owner |
 | `storage:write` (effect `storage`) | `host.storage.set(key, value)`, `host.storage.delete(key)` | atomic writes within the total `quotaBytes` |
-| `network` (effect `network`) | `host.http.fetch(url, {method, headers, body})` | only the origins in `network` (section 6; coming, P3: until then a command with the effect `network` is refused with `plugin_unsupported`) |
-| `settings:read` | `host.settings.get(key)` | non-secret settings from the `settings` schema (until `plugin settings set` arrives in P3, each setting's `default`) |
+| `network` (effect `network`) | `host.http.fetch(url, {method, headers, body \| bodyBase64, responseType})` | `{status, headers, body \| bodyBase64}`, only to the origins in `network` (section 6) |
+| `settings:read` | `host.settings.get(key)` | the value `plugin settings set` stored, else the setting's `default` (else `null`) |
 | `actions` (effect `actions`) | `host.actions.propose(action)` | a typed proposal (section 7) |
 
 **What a command gets** is its manifest's permissions and its own effects together: a command with
@@ -269,24 +279,133 @@ reverse), `not_found`, `invalid_proposal`. An error the command does not catch e
 `plugin_error`. **Logs**: `host.log(...)` exists only in `plugin dev` and appends to
 `<tmp>/better-tg-cli-plugin-dev/<name>.log`, never to the command's output or MCP.
 
-## 6. Network and secrets (coming, P3)
+## 6. Network and secrets
 
-- **`network`** lists exact HTTPS origins (`"https://api.example.com"`, port 443 by default). The host
-  resolves the address itself and refuses loopback, private, link-local and multicast IPs; redirects
-  are off; requests up to 256 KB, responses up to 1 MB after decompression; no cookies; the headers
-  `Host`, `Cookie` and `Authorization` cannot be set by the plugin.
-- **Secrets** are never visible to the plugin. The manifest says where the host injects the value:
+A command with the effect `network` (and the permission) gets `host.http.fetch(url, options)`:
 
-  ```json
-  "secrets": [ { "name": "openai", "description": "API key", "inject": { "origin": "https://api.openai.com", "header": "Authorization", "format": "Bearer {value}" } } ]
-  ```
+```js
+const r = await host.http.fetch('https://api.example.com/v1/chat', {
+  method: 'POST',                      // GET (default), HEAD, POST, PUT, PATCH, DELETE, OPTIONS
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ text }),      // or bodyBase64; only POST, PUT, PATCH, DELETE
+  responseType: 'text',                // or 'base64'
+});
+// r = { status: 200, headers: { 'content-type': 'application/json', … }, body: '…' }  (or bodyBase64)
+```
 
-  Only the human enters the value: `plugin secret set <name> <secret>` in their terminal, input
-  hidden (never MCP form elicitation). It is kept in the system secret store under a key the core
-  builds from the profile, the installation ID and the secret name. `inject.paths` can narrow it to
-  some paths. The host removes the exact value and its formatted form from the response body and
-  headers before the sandbox sees them.
-- **The install summary** names every data source with its destinations.
+- **Only the manifest's exact origins.** The URL is parsed and its origin (scheme, host, port) must
+  equal one in `network`: `https` only, no user name or password in the URL, another port or a
+  trailing dot is another origin, and a lookalike host (`аpi` in Cyrillic) is punycode, so another
+  origin too. Anything else is `network_denied`, before any DNS lookup.
+- **The address is checked, then pinned.** The host resolves the name once per request and refuses
+  it (`network_denied`) if **any** answer is loopback, private (RFC 1918, IPv6 unique local),
+  link-local, carrier-grade NAT (100.64/10), multicast, unspecified, broadcast, reserved,
+  documentation or benchmarking, or an IPv6 form that carries one of those IPv4 addresses
+  (IPv4-mapped `::ffff:…`, IPv4-compatible, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`; Teredo and local
+  NAT64 `64:ff9b:1::/48` always). When an answer is IPv6, the host also asks the same resolver for
+  `ipv4only.arpa` once per run (RFC 7050) to learn the network's own NAT64 prefixes (any range, a
+  global one too); an address inside one of them is judged by the IPv4 address it carries (RFC 6052,
+  every prefix length). If that discovery fails, no prefix is added and the request goes on. It then
+  opens a TLS connection to exactly that IP (verified for the host name, SNI) and checks the socket
+  reached it, so a second DNS answer (rebinding) is never used. The certificate is always verified
+  against the system's CAs and the host name: `NODE_TLS_REJECT_UNAUTHORIZED=0` or any other
+  variable cannot turn that off. Proxy variables (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY`, …) are not
+  read.
+- **No redirects.** A `3xx` comes back as it is, with its `location` header; nothing follows it.
+- **Sizes.** A request body up to 256 KB (`request_too_large`). A response body up to 1 MB on the
+  wire and 1 MB after decompression (`gzip`, `deflate`, `br`; the host sends `Accept-Encoding` itself):
+  reading stops at the limit (`response_too_large`), so a gzip bomb ends there. A
+  `Transfer-Encoding` other than exactly `chunked` and a `Content-Encoding` the host did not ask for
+  are `bad_response` (the size limit and the secret stripping always see the decoded body). Everything
+  of a response that is not body shares one budget of 64 KB: the status lines and headers of every
+  interim `1xx` answer and the final one, chunk-size lines with their extensions, the line break after
+  each chunk and the trailers; a chunked body has at most 8192 chunks (`bad_response` past either).
+  A body that is valid UTF-8 comes as `body`, anything else (or `responseType: 'base64'`) as
+  `bodyBase64`. One `http.fetch` result may be up to 2 MB inside the sandbox, so a 1 MB body always fits.
+- **Headers.** Names are tokens and values printable ASCII without line breaks (`invalid_argument`).
+  The plugin cannot set `Host`, `Cookie`, `Authorization`, `Proxy-*`, `Connection`, `Keep-Alive`,
+  `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade`, `Content-Length`, `Expect`, `Accept-Encoding`,
+  `Range`, `If-Range`, `Sec-*`, nor a header one of its secrets goes in (`network_denied`). All its
+  headers together are at most 16 KB (`request_too_large`). The response headers come without
+  `Set-Cookie`, `Content-Encoding`, `Content-Length` and `Transfer-Encoding` (the body is decoded). The host sets `Host`,
+  `Content-Length`, `Accept-Encoding`, `Connection: close` and a `User-Agent` (unless given).
+- **No cookies.** None is kept or sent, and `Set-Cookie` is removed from the response headers.
+- **Time.** A request has one deadline, fixed when `http.fetch` is called: 30 s, or 250 ms before the
+  run's deadline, whichever is first (`timeout`). Reading its secrets from the store (asynchronously;
+  a slow store is stopped), DNS, connecting, TLS and the response all count against it. A cancelled
+  run stops it (`cancelled`). Every request is a host call and counts against
+  the run's host-call limits.
+- **Errors** (catchable, `{code, message}`): `network_denied`, `ambiguous_path`, `invalid_argument`,
+  `request_too_large`, `response_too_large`, `timeout`, `network` (DNS, TLS, connection),
+  `bad_response` (not HTTP/1.1), `secret_missing`, `secret_store_unavailable`, `cancelled`.
+
+### Secrets
+
+The plugin never sees a secret. The manifest says where the host puts it:
+
+```json
+"secrets": [ { "name": "openai", "description": "API key", "inject": { "origin": "https://api.openai.com", "paths": ["/v1"], "header": "Authorization", "format": "Bearer {value}" } } ]
+```
+
+- **Only the human enters it**, in their own terminal, input hidden:
+  `telegram plugin secret set <plugin> <secret>`. There is no argument for the value, it is never read
+  from a pipe or the environment, and without a terminal the command is refused with
+  `human_required` and the command to run. Over MCP it is refused before any prompt, with the exact
+  command for the human's terminal (with the profile, or the mock's `TG_MOCK=…`); MCP form
+  elicitation is never used for it. A value is 8 to 4096 characters of printable ASCII (it goes into
+  a header). The value is stored only if the installation the human was shown is still the
+  registered one when they finish typing (checked under the plugin lock; a `plugin remove` or a new
+  install meanwhile gives `plugin_changed` and nothing is stored). `plugin secret rm <plugin> <secret>`
+  deletes it (also the human's). `plugin show <plugin>` lists each secret as `set` or `not set` (never
+  the value), and `plugin remove` deletes the secrets of the installation: it records them in the
+  host's state (`plugin-state/pending-secret-cleanup.json`, names only) in the same locked step that
+  removes the installation, so a secret the store fails to delete is deleted by the next plugin
+  command, silently; `plugin secret rm <plugin> <secret>` also deletes one a removed plugin left.
+- **Where it is kept**: the profile's secret store (macOS Keychain, Linux Secret Service, Windows
+  DPAPI or 1Password, the one that holds the session) under a key the core builds from the profile,
+  the installation ID and the secret name (`plugin-secret-<profile>-<installId>-<name>`). Without a
+  store a secret cannot be set (`secret_store_unavailable`). Under `TG_MOCK` it is a `0600` file next
+  to the mock state, never a real store.
+- **Where it goes**: the host adds the header (`format` with `{value}` replaced) only to a request
+  whose origin is `inject.origin` and, with `paths`, whose path equals one of them or starts with it
+  followed by `/` (`/v1` covers `/v1/chat`, not `/v1x`). Without `paths` it goes to every path of the
+  origin; `paths` has at least one entry (an empty list is refused at install, and one already
+  installed sends the secret nowhere). A request that would carry a secret limited to some paths is
+  refused with `ambiguous_path`, before the secret is read or anything is sent, when its path as the
+  plugin wrote it or as the URL parser resolved it holds anything a server could read as another
+  path: a `\` or `;`, a `%` without two hex digits, an encoded `/`, `\`, `.`, `;` or `%` (such as
+  `/v1/..%2fadmin`), an encoding that is not normalised (an encoded letter, digit or `-._~`, lowercase
+  hex), an empty segment (`//`), or a `.` or `..` segment (also `/v2/../v1/x`, which the parser would
+  turn into `/v1/x`). A trailing `/` is fine. The manifest's own `paths` follow the same rules. A partial response (`206`) to a request that carried a secret is refused
+  (`bad_response`). A request
+  that needs a secret that is not set is not sent: `secret_missing` with `command` (an uncaught one
+  ends the run with `secret_missing` and the command for the human's terminal).
+- **Stripped from the response.** Before the sandbox sees a response, every form of each secret
+  value and formatted header sent in the run is replaced with `[secret]` in the body and the header
+  values (a header whose name holds one is dropped): as is, URL-encoded (`%20` and `+`, and the
+  `application/x-www-form-urlencoded` form `URLSearchParams` writes, which also encodes `!'()~`), JSON-escaped,
+  hex, and base64 / base64url, whole and at each byte alignment inside a longer base64 text (so
+  `Basic base64(user:key)` or an echoed `Authorization: …` line is found). At an alignment edge up to
+  two base64 characters next to the marker may remain; they carry no more than 6 bits of the value.
+  This guards against an API that echoes what it was sent; it is no defence against an endpoint
+  that transforms the value on purpose (the value was sent to it, so it has it anyway).
+
+### Settings
+
+`plugin settings set <plugin> <key> <json>` stores a non-secret setting (`'"warm"'`, `3`, `true`)
+after checking it against the setting's schema (exit 2 with `issues` otherwise); it is a local write,
+like `plugin data set` (over MCP through `telegram_write` and the write mode). `plugin settings get
+<plugin> [key]` prints the values (stored or default). `host.settings.get(key)` returns the stored
+value, else the default. Settings live in `plugin-state/<installId>/settings.json` and go with the
+installation. All settings of an installation together are at most 256 KB as UTF-8 JSON: a value that
+would pass that is refused (`settings_too_large`, exit 2) and the stored settings stay as they were.
+
+### The install summary
+
+It names every data source with the destinations, for example: `Sends data: may send your own
+messages, your name and ID and its saved data to: https://api.example.com`, then one line per secret
+(`sent by the host only to https://api.example.com (paths /v1) as Authorization; the plugin never
+sees it`) and how to set them. The secret's description is shown under the plugin's own words.
 
 ## 7. Action proposals
 
@@ -315,7 +434,7 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 | Command | Class | Who | Status |
 |---|---|---|---|
 | `plugin list [--json]` | read | anyone | available |
-| `plugin show <name> (--trigger <id> \| --onboarding \| --resource <key>) [--json]` | read | anyone | available |
+| `plugin show <name> [--trigger <id> \| --onboarding \| --resource <key>] [--json]` | read | anyone | available (no flag: network, secrets set or not, settings) |
 | `plugin data get\|list <name> [key] [--json]` | read | anyone | available |
 | `plugin data set <name> <key> [-]`, `plugin data delete <name> <key>` | local write | anyone | available |
 | `plugin install <github:owner/repo[@ref] \| ./dir [--expect sha256-…]>` | management | human | available |
@@ -323,9 +442,10 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 | `plugin validate <dir> [--json]` | for authors | anyone (not over MCP) | available |
 | `plugin run <name> <cmd> [--input <json> \| -] [--target <ref> [--thread]] [--json]`, command with `effects: []` | read | anyone | available |
 | `plugin run <name> <cmd> …`, effect `storage` and/or `actions` | local write | anyone | available |
-| `plugin run <name> <cmd>`, effect `network` | **sends data out**: a write in every transport, the shell too | anyone | coming, P3 |
-| `plugin settings set <name> <key> <value>` | local write | anyone | coming, P3 |
-| `plugin secret set <name> <secret>` | human's terminal only | human | coming, P3 |
+| `plugin run <name> <cmd>`, effect `network` | **sends data out**: a write in every transport, the shell too | anyone | available |
+| `plugin settings get <name> [key] [--json]` | read | anyone | available |
+| `plugin settings set <name> <key> <json>` | local write | anyone | available |
+| `plugin secret set <plugin> <secret>`, `plugin secret rm <plugin> <secret>` | human's terminal only (hidden input) | human | available |
 | `plugin update [name]` | management | human | coming, P4 |
 | `plugin dev <dir> <cmd> --mock [--input …] [--target …] [--json]` | for authors | anyone (not over MCP) | available |
 
@@ -340,7 +460,23 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **`plugin dev <dir> <cmd> --mock`** checks the folder as `validate` does and runs a command against
   the built-in mock account in memory: no confirmations, nothing installed or written, no profile,
   session or secret store touched; storage starts empty, settings are their defaults, and `host.log`
-  works (section 5). Without `--mock` it is refused: for a live check, install the folder.
+  works (section 5). HTTP is answered from the folder's `dev/fixtures/*.json` (not part of `files` or
+  the revision; regular files only, no links, up to 2 MB and 200 files): each file one fixture or a
+  list, `{"request": {"method": "GET", "url": "https://…?q=1"}, "response": {"status": 200,
+  "headers": {…}, "body": "…" | "bodyBase64": "…" | "json": …}}`, matched by method and exact URL;
+  an unmatched request is `fixture_missing`, never the network. Origin, header and size rules apply
+  as in a real run. Secrets are the placeholders `dev-secret-<name>`, injected and stripped like real
+  ones. Without `--mock` it is refused: for a live check, install the folder.
+- **Under `TG_MOCK`** an installed plugin's requests are answered the same way from
+  `<state>.plugins/mock-http/*.json` (no fixture: `fixture_missing`), and its secrets come from the
+  mock's own file: nothing reaches the network, as nothing reaches Telegram.
+- **Sending data out** (`plugin run` of a command with the effect `network`) is a write in every
+  transport, the shell included: it goes through the write guard (`assertWriteEnabled`). Mode
+  `read-only` refuses it (`write_disabled`, exit 4), the MCP read tool and a `--read-only` server
+  refuse it, `ask` needs an approval, `on` runs it. The approval shows, besides the installation,
+  command, effects and input, where data may go (`Sends to: <origins>`, with what the plugin reads)
+  and which secrets the host attaches; its hash covers the installation, revision, command, effects,
+  origins, secret destinations and a hash of the input.
 - **Local writes** (`plugin data set|delete`, `plugin run` of a command with effects): in a terminal they need no write access, like
   `download`. Over MCP they run only through `telegram_write` and follow the write mode
   (`assertLocalWriteAllowed`): refused on a read-only server or in mode `read-only`, approved each
@@ -383,11 +519,14 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   installation ID and revision it classified (and, in mode `ask`, approved) the call by, in an
   environment variable the model cannot set. The child refuses any other installation of the same
   name (`plugin_changed`) before anything of it runs, whatever effects its command has now.
-- **MCP.** `telegram_read` runs exactly `plugin list`, `plugin show`, `plugin data get` and
-  `plugin data list`, and `plugin run` for commands without effects (known from the installed
-  manifest before the run). Everything else goes through `telegram_write` or is refused (`validate`
-  and `dev` read a folder and stay in the terminal); a new subcommand is refused until it is
-  classified.
+- **MCP.** `telegram_read` runs exactly `plugin list`, `plugin show`, `plugin data get`,
+  `plugin data list`, `plugin settings get`, and `plugin run` for commands without effects (known from
+  the installed manifest before the run). `plugin data set|delete`, `plugin settings set` and
+  `plugin run` with effects (`network` included) go through `telegram_write`. `plugin secret set|rm`,
+  install and remove are refused with the command for the human's terminal (a secret's command is
+  built only from a plugin and secret name that parse strictly, so a value the model added is never
+  echoed); `validate` and `dev` read a folder and stay in the terminal; a new subcommand is refused
+  until it is classified.
 - **Discovery.** `check --json` has `plugins: [{name, version, status, onboarding?}]` (from the local
   lock file, no network; `onboarding` is `done|pending|unknown` for the current account), and text
   `check` one line. MCP `initialize` instructions carry one static line: see `telegram_read
@@ -469,7 +608,9 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **Audit** (`audit.jsonl` of the profile): install (also a declined one), remove, `data set` and
   `data delete` with the plugin, version, revision, installation ID, key and size; every `run` with
   the plugin, revision, installation, command, the names of the host APIs it called, the types of the
-  proposals it returned and the outcome (an error code); from P3 settings and secrets (names only).
+  proposals it returned and the outcome (an error code), and for a run that sent requests
+  `network: {requests, origins}` (never a URL, a path, a query, a header or a body);
+  `plugin settings set` and `plugin secret set|rm` with the key or secret name only.
   Inputs, results, bodies, values, headers and secrets are never written.
 - **Onboarding** is per Telegram account: another account on the same profile starts `pending`.
 
@@ -485,7 +626,11 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   (a sandbox limit or the storage quota, named in `limit`), `plugin_error` (the command failed, or
   its result broke the output schema), `cancelled`, `flood_wait`, `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
   `dialog_failed` (the Windows dialog could not be shown; not the same as the human's No),
-  `human_required`, `no_human_channel`, `not_confirmed`, `rate_limited` (GitHub API).
+  `human_required`, `no_human_channel`, `not_confirmed`, `rate_limited` (GitHub API), `secret_missing`
+  (a request needs a secret the human has not set; `command` sets it), `settings_too_large`
+  (`plugin settings set` past 256 KB in all). Inside the sandbox
+  `http.fetch` also gives `network_denied`, `ambiguous_path`, `request_too_large`, `response_too_large`, `timeout`,
+  `network`, `bad_response` and, in `plugin dev`/`TG_MOCK`, `fixture_missing`.
 - **Exit codes, as the CLI's:** 2 bad arguments, an unknown command or an input that fails its schema;
   1 a plugin error or a limit; 3 and 4 only for actions the agent runs.
 - **Acceptance test of the spec** (coming, P6): `plugin validate` accepts the published Tone of Voice,
@@ -499,8 +644,8 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 - **Template** `TheVilfer/tg-plugin-template`: manifest, `SKILL.md`, an example command, tests, CI with
   `plugin validate` and a mock test.
 - **`plugin dev <dir> <cmd> --mock`** (available, section 8): no confirmations; Telegram, storage and
-  settings are mock data. Secrets and HTTP answers from local fixtures (`dev/fixtures/*.json`) come
-  with network access (P3). For a live check, install from the folder.
+  settings are mock data, HTTP is answered from local fixtures (`dev/fixtures/*.json`) and secrets are
+  placeholders. For a live check, install from the folder.
 - **Reference plugin**: Tone of Voice, written only from this spec.
 
 ## 12. The official Tone of Voice plugin (coming, P6)

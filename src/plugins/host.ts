@@ -20,6 +20,7 @@ import { maskForModel } from '../mcp-output.js';
 import { HostError, type HostFunction } from './sandbox-types.js';
 import type { Manifest, Permission, PluginCommand } from './manifest.js';
 import { buildProposal, type Proposal } from './proposals.js';
+import { checkRequest, injectMatches, pathProblem, requestDeadline, secretForms, shapeResponse, withTimeout, type Backend } from './http.js';
 
 /** Serialized characters a page of messages may take (spec: about 40 000). */
 export const PAGE_CHARS = 40_000;
@@ -91,12 +92,33 @@ export interface HostContext {
   maskProposals: boolean;
   /** `plugin dev` only: host.log appends here, never to the command's output. */
   log?: (line: string) => void;
+  /** What `http.fetch` uses (a command with the `network` effect): the backend and the secrets. */
+  network?: NetworkContext;
+  /** The values `plugin settings set` stored (missing: the manifest default). */
+  settings?: () => Record<string, unknown>;
+}
+
+export interface NetworkContext {
+  /** The network itself, or fixtures (`plugin dev --mock`, TG_MOCK). */
+  backend: Backend;
+  /**
+   * The value of a declared secret, or null when the human has not set it. Never handed to the
+   * plugin. Read asynchronously: `signal` aborts when the request ends (its deadline, the run's end).
+   */
+  secret(name: string, signal: AbortSignal): string | null | Promise<string | null>;
+  /** The command a human runs to set a secret (argv after `telegram`). */
+  setCommand(name: string): string[];
 }
 
 export interface HostState {
   proposals: Proposal[];
   /** The last flood_wait a host call reported, as the host built it (never the guest's copy). */
   flood?: { retryAfterSeconds: number; cursor: string | null; partial: unknown };
+  /** `http.fetch` for the audit: requests made and the origins they went to (never URLs, bodies or secrets). */
+  requests?: number;
+  origins?: string[];
+  /** The last secret a request needed and did not find, as the host recorded it. */
+  secretMissing?: { name: string; command: string[] };
 }
 
 const invalid = (message: string) => new HostError('invalid_argument', message);
@@ -384,9 +406,66 @@ export function grantedApi(ctx: HostContext, state: HostState): Record<string, H
   if (perms.has('settings:read')) {
     api['settings.get'] = ([key]) => {
       if (typeof key !== 'string' || !Object.hasOwn(ctx.manifest.settings ?? {}, key)) throw invalid(`settings.get: "${String(key)}" is not a setting this plugin declares`);
-      // Changing settings comes with `plugin settings set` (P3); until then each has its default
+      // The value `plugin settings set` stored, else the manifest's default
+      const stored = ctx.settings?.();
+      if (stored && Object.hasOwn(stored, key)) return stored[key];
       const d = ctx.manifest.settings![key].default;
       return d === undefined ? null : d;
+    };
+  }
+
+  if (perms.has('network') && effects.has('network') && ctx.network) {
+    const net = ctx.network;
+    /** Every secret value this run put into a request, in each form: stripped from every response. */
+    const used: string[] = [];
+    api['http.fetch'] = async ([url, o], signal) => {
+      // One deadline for the whole request, fixed on entry: secret reads, DNS, connect, TLS, response
+      const until = requestDeadline(ctx.deadline);
+      const req = checkRequest(ctx.manifest, url, o);
+      const matching = (ctx.manifest.secrets ?? []).filter(s => injectMatches(s.inject, req.url));
+      // A secret limited to some paths goes only with a path every server reads the same way
+      if (matching.some(s => s.inject.paths !== undefined)) {
+        const why = pathProblem(req.rawPath) ?? pathProblem(req.url.pathname);
+        if (why) {
+          throw new HostError('ambiguous_path', `The path holds ${why}, which a server may read as another path; a secret of this origin is sent only to some paths, so the request was not sent`);
+        }
+      }
+      // Aborted at the request's deadline or when the run ends: a slow secret store is stopped too
+      const ac = new AbortController();
+      const stop = () => ac.abort();
+      signal.addEventListener('abort', stop, { once: true });
+      const timer = setTimeout(stop, Math.max(0, until - Date.now()));
+      try {
+        const inject: [string, string][] = [];
+        for (const s of matching) {
+          let value: string | null;
+          try {
+            value = await withTimeout(Promise.resolve().then(() => net.secret(s.name, ac.signal)), signal, until);
+          } catch (e) {
+            if (e instanceof HostError) throw e;
+            throw new HostError('secret_store_unavailable', `The secret "${s.name}" could not be read: ${(e as Error).message}`);
+          }
+          if (value === null) {
+            const command = net.setCommand(s.name);
+            state.secretMissing = { name: s.name, command };
+            throw new HostError('secret_missing', `The secret "${s.name}" is not set. Ask the user to run in their own terminal: telegram ${command.join(' ')}`, { secret: s.name, command });
+          }
+          const formatted = s.inject.format.split('{value}').join(value);
+          inject.push([s.inject.header, formatted]);
+          used.push(value, formatted);
+        }
+        state.requests = (state.requests ?? 0) + 1;
+        state.origins = [...new Set([...(state.origins ?? []), req.url.origin])];
+        if (signal.aborted) throw new HostError('cancelled', 'The run ended');
+        if (Date.now() >= until) throw new HostError('timeout', 'The request took too long');
+        const raw = await net.backend({ ...req, inject }, signal, until);
+        // A part of a body (206) could hold a cut secret no form matches: refused where one was sent
+        if (inject.length && raw.status === 206) throw new HostError('bad_response', 'A partial response (206) to a request that carried a secret is not handed in');
+        return shapeResponse(raw, secretForms(used), req.responseType);
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', stop);
+      }
     };
   }
 

@@ -1,5 +1,6 @@
 import { MANIFEST_SCHEMAS } from './manifest-schemas.js';
 import { commandSchemaProblems, validate } from './json-schema.js';
+import { originProblem, pathProblem as urlPathProblem, secretHeaderProblem } from './http.js';
 import { InvalidRangeError, parseRange, satisfies } from './semver.js';
 
 /**
@@ -44,6 +45,18 @@ export interface PluginCommand {
   output: Record<string, unknown>;
 }
 
+/** One non-secret setting: a small JSON Schema (`plugin settings set` checks a value against it). */
+export interface SettingSchema {
+  type: 'string' | 'integer' | 'number' | 'boolean';
+  description: string;
+  default?: unknown;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+}
+
 export interface Manifest {
   $schema: string;
   name: string;
@@ -58,7 +71,7 @@ export interface Manifest {
   permissions?: Permission[];
   network?: string[];
   secrets?: { name: string; description: string; inject: { origin: string; header: string; format: string; paths?: string[] } }[];
-  settings?: Record<string, { type: string; description: string; default?: unknown; enum?: unknown[] }>;
+  settings?: Record<string, SettingSchema>;
   resources?: Record<string, string>;
   storage?: { keys: string[]; quotaBytes?: number };
   commands?: PluginCommand[];
@@ -229,12 +242,42 @@ function semanticErrors(m: Manifest): string[] {
   const origins = new Set(m.network ?? []);
   if (permissions.has('network') && !origins.size) errors.push('the permission "network" needs at least one origin in network');
   if (origins.size && !permissions.has('network')) errors.push('network lists origins, but permissions lack "network"');
-  for (const o of origins) if (/:443$/.test(o)) errors.push(`network: write "${o.replace(/:443$/, '')}" without the default port`);
+  for (const o of origins) {
+    if (/:443$/.test(o)) errors.push(`network: write "${o.replace(/:443$/, '')}" without the default port`);
+    else {
+      const p = originProblem(o);
+      if (p) errors.push(`network: "${o}" ${p}`);
+    }
+  }
   const secretNames = new Set<string>();
+  const injected = new Set<string>();
   for (const s of m.secrets ?? []) {
     if (secretNames.has(s.name)) errors.push(`secrets: "${s.name}" is declared twice`);
     secretNames.add(s.name);
     if (!origins.has(s.inject.origin)) errors.push(`secrets.${s.name}: origin ${s.inject.origin} is not in network`);
+    for (const p of s.inject.paths ?? []) {
+      const why = urlPathProblem(p);
+      if (why) errors.push(`secrets.${s.name}: inject.paths "${p}" holds ${why}`);
+    }
+    if (s.inject.paths && !s.inject.paths.length) errors.push(`secrets.${s.name}: inject.paths is empty; leave it out to send the secret to every path`);
+    const hp = secretHeaderProblem(s.inject.header);
+    if (hp) errors.push(`secrets.${s.name}: inject.header ${hp}`);
+    const at = `${s.inject.origin} ${s.inject.header.toLowerCase()}`;
+    if (injected.has(at)) errors.push(`secrets.${s.name}: another secret already goes to ${s.inject.origin} as ${s.inject.header}`);
+    injected.add(at);
+  }
+  for (const [key, d] of Object.entries(m.settings ?? {})) {
+    const numeric = d.type === 'integer' || d.type === 'number';
+    if (!numeric && (d.minimum !== undefined || d.maximum !== undefined)) errors.push(`settings.${key}: minimum/maximum need type integer or number`);
+    if (d.type !== 'string' && (d.minLength !== undefined || d.maxLength !== undefined)) errors.push(`settings.${key}: minLength/maxLength need type string`);
+    if (d.type === 'boolean' && d.enum) errors.push(`settings.${key}: a boolean takes no enum`);
+    for (const v of d.enum ?? []) {
+      if (validate({ type: d.type }, v, 1).length) errors.push(`settings.${key}: enum value ${JSON.stringify(v)} is not of type ${d.type}`);
+    }
+    if (d.default !== undefined) {
+      const issues = validate(d as unknown as Record<string, unknown>, d.default, 3);
+      if (issues.length) errors.push(`settings.${key}: the default ${JSON.stringify(d.default)} is not a valid value (${issues.map(i => i.message).join('; ')})`);
+    }
   }
   return errors;
 }

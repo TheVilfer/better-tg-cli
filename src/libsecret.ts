@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { platform } from 'node:os';
 import { secretPrefix } from './paths.js';
 import type { StrictRead } from './keychain.js';
+import { spawnAsync, type SpawnResult } from './spawn-async.js';
 
 /**
  * Linux Secret Service (GNOME Keyring, KWallet, KeePassXC) through `secret-tool`
@@ -37,7 +38,15 @@ export function libsecretGet(key: string): string | null {
 
 /** A lookup that finds nothing exits 1 with an empty stderr (see the probe); anything else failed. */
 export function libsecretGetStrict(key: string): StrictRead {
-  const r = run(['lookup', 'service', secretPrefix(), 'account', key]);
+  return libsecretRead(run(['lookup', 'service', secretPrefix(), 'account', key]));
+}
+
+/** libsecretGetStrict without blocking the event loop; `secret-tool` is killed when `signal` aborts. */
+export async function libsecretGetStrictAsync(key: string, signal?: AbortSignal): Promise<StrictRead> {
+  return libsecretRead(await spawnAsync('secret-tool', ['lookup', 'service', secretPrefix(), 'account', key], { timeout: 10_000, signal }));
+}
+
+function libsecretRead(r: SpawnResult): StrictRead {
   if (!r.error && r.status === 0) return { ok: true, value: r.stdout.replace(/\n$/, '') || null };
   if (!r.error && r.status === 1 && !r.stderr.trim()) return { ok: true, value: null };
   const why = (r.error?.message || r.stderr || '').trim().split('\n')[0];

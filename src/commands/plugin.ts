@@ -5,7 +5,8 @@ import { disconnectClient, getClient, getMe } from '../client.js';
 import { isConfigured, loadConfig } from '../config.js';
 import { isMock } from '../paths.js';
 import { auditLog } from '../audit.js';
-import { assertLocalWriteAllowed } from '../guard.js';
+import { assertLocalWriteAllowed, assertWriteEnabled } from '../guard.js';
+import { promptHidden } from '../prompt.js';
 import { readStdinOnce, stdinBody } from '../text.js';
 import { CliError, EXIT, ExitSignal, fail, shellCommand, usageError } from '../errors.js';
 import chalk from '../colors.js';
@@ -14,11 +15,16 @@ import { DEFAULT_QUOTA_BYTES, markdownSection, type Manifest } from '../plugins/
 import { fetchGithubSnapshot, parseSource, readLocalSnapshot, type Fetch, type Snapshot } from '../plugins/source.js';
 import {
   assertApprovedInstall, assertCanSign, commitInstall, cursorLoad, cursorSave, dataDelete, dataDeleteGuarded, dataGet, dataKeyProblem, dataList,
-  dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, readLock, removeInstall,
+  dataSet, dataSetGuarded, findEntry, loadPlugin, onboardingState, own, pendingSecrets, readLock, removeInstall, settingsRead, settingsWrite,
+  settlePendingSecrets, withCurrentInstall,
 } from '../plugins/store.js';
-import { humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, type Confirm } from '../plugins/human.js';
+import { humanCommand, humanConfirms, humanRequired, installSummary, originLabel, removeQuestion, revisionLabel, secretPathsLabel, type Confirm } from '../plugins/human.js';
+import { deletePluginSecret, getPluginSecret, getPluginSecretAsync, secretStates, setPluginSecret } from '../plugins/secrets.js';
+import { devBackend, runBackend } from '../plugins/http-backend.js';
+import { validate } from '../plugins/json-schema.js';
+import { oneLine } from '../approval-action.js';
 import { listPlugins, PLUGIN_NOTICE, pluginSource } from '../plugins/catalog.js';
-import { assertRunnable, checkInput, devLog, findCommand, memoryCursors, memoryStorage, parseInput, parseTarget, runPluginCommand, type RunOutcome } from '../plugins/run.js';
+import { checkInput, devLog, findCommand, memoryCursors, memoryStorage, parseInput, parseTarget, runPluginCommand, type NetworkStats, type RunOutcome } from '../plugins/run.js';
 import type { CursorStore, StorageBackend } from '../plugins/host.js';
 import type { LockEntry } from '../plugins/store.js';
 
@@ -30,8 +36,11 @@ import type { LockEntry } from '../plugins/store.js';
 
 const json = (value: unknown) => JSON.stringify(value);
 
-/** Test seams, set only by in-process tests: the GitHub fetch and the human's answer. */
-export const pluginDeps: { fetch?: Fetch; confirm?: Confirm; cliVersion?: string } = {};
+/**
+ * Test seams, set only by in-process tests: the GitHub fetch, the human's answer, and the hidden
+ * terminal prompt of `plugin secret set` (with `tty` saying whether there is a terminal at all).
+ */
+export const pluginDeps: { fetch?: Fetch; confirm?: Confirm; cliVersion?: string; readSecret?: (question: string) => Promise<string>; tty?: boolean } = {};
 const cliVersion = () => pluginDeps.cliVersion ?? VERSION;
 
 /** The Telegram account the data belongs to; `soft` gives undefined instead of failing (not logged in, offline). */
@@ -177,8 +186,13 @@ const showCommand = new Command('show')
   .action(async (name: string, options: { trigger?: string; onboarding?: boolean; resource?: string; json?: boolean }) => {
     try {
       const chosen = [options.trigger !== undefined, !!options.onboarding, options.resource !== undefined].filter(Boolean).length;
-      if (chosen !== 1) throw usageError('Pass exactly one of --trigger <id>, --onboarding or --resource <key>', `See: telegram plugin list (triggers and onboarding of "${name}")`);
+      if (chosen > 1) throw usageError('Pass at most one of --trigger <id>, --onboarding or --resource <key>', `See: telegram plugin list (triggers and onboarding of "${name}")`);
       const { entry, manifest: m, files } = loadPlugin(name, cliVersion());
+      if (chosen === 0) {
+        showOverview(entry, m, !!options.json);
+        await done();
+        return;
+      }
       let kind: 'trigger' | 'onboarding' | 'resource';
       let id: string;
       let resource: string;
@@ -209,6 +223,41 @@ const showCommand = new Command('show')
       fail(error);
     }
   });
+
+/**
+ * `plugin show <name>`: where it may send data, which secrets are set (never a value) and its
+ * settings. Host lines only; the plugin's descriptions are one line each.
+ */
+function showOverview(entry: LockEntry, m: Manifest, asJson: boolean): void {
+  const states = secretStates(entry.installId, (m.secrets ?? []).map(x => x.name));
+  const stored = settingsRead(entry);
+  const secrets = (m.secrets ?? []).map(x => ({
+    name: x.name, description: oneLine(x.description), origin: x.inject.origin, header: x.inject.header,
+    ...(x.inject.paths ? { paths: x.inject.paths } : {}), state: states[x.name],
+    ...(states[x.name] !== 'set' ? { set: ['plugin', 'secret', 'set', m.name, x.name] } : {}),
+  }));
+  const settings = Object.entries(m.settings ?? {}).map(([key, d]) => ({
+    key, type: d.type, description: oneLine(d.description), value: Object.hasOwn(stored, key) ? stored[key] : d.default ?? null, stored: Object.hasOwn(stored, key),
+  }));
+  const out = {
+    source: pluginSource(m.name, m.version), kind: 'overview', name: m.name, version: m.version, origin: originLabel(entry.source),
+    installId: entry.installId, network: m.network ?? [], secrets, settings,
+    commands: (m.commands ?? []).map(c => ({ name: c.name, effects: c.effects })),
+  };
+  if (asJson) {
+    console.log(json(out));
+    return;
+  }
+  console.log(`${chalk.bold(m.name)} ${m.version}  ${out.origin}  (installation ${entry.installId})`);
+  console.log(`  Network:  ${out.network.length ? out.network.join(', ') : 'none'}`);
+  if (!secrets.length) console.log('  Secrets:  none');
+  for (const x of secrets) {
+    console.log(`  Secret ${x.name}: ${x.state} (sent only to ${x.origin} ${secretPathsLabel(x.paths)} as ${x.header}) [${out.source}] ${x.description}`);
+    if (x.set) console.log(`    → the user sets it: ${humanCommand(x.set)}`);
+  }
+  for (const x of settings) console.log(`  Setting ${x.key} (${x.type}) = ${JSON.stringify(x.value)}${x.stored ? '' : ' (default)'}  [${out.source}] ${x.description}`);
+  for (const c of out.commands) console.log(`  Command ${c.name}: effects ${c.effects.join(', ') || 'none'}`);
+}
 
 // ---------- data ----------
 
@@ -409,6 +458,7 @@ const runCommand = runOptions(new Command('run')
   .argument('<command>', 'Command name, from `plugin list`'))
   .action(async (name: string, cmd: string, options: RunOptions) => {
     const calls: string[] = [];
+    const stats: NetworkStats = { requests: 0, origins: [] };
     let entry: LockEntry | undefined;
     let proposals: string[] = [];
     let error: string | undefined = 'error';
@@ -420,7 +470,6 @@ const runCommand = runOptions(new Command('run')
       assertExpectedInstall(entry);
       const m = loaded.manifest;
       const c = findCommand(m, cmd);
-      assertRunnable(m, c);
       const target = parseTarget(options.target, !!options.thread);
       if (target && !(m.permissions ?? []).includes('messages:read-target')) {
         throw usageError(`Plugin "${name}" reads no target (it lacks the permission messages:read-target); drop --target`);
@@ -428,7 +477,14 @@ const runCommand = runOptions(new Command('run')
       const fromStdin = options.input === '-';
       const input = parseInput(fromStdin ? stdinBody(readStdinOnce()) : options.input);
       checkInput(c, input);
-      if (c.effects.length) {
+      const sends = c.effects.includes('network');
+      if (sends) {
+        // Data leaves the computer: in every transport, the shell too, this is a write through the
+        // guard (read-only refuses, "ask" needs an approval bound to the installation, command,
+        // input and origins, "on" runs). One guard call: an approval code is used once.
+        await assertWriteEnabled(undefined, fromStdin ? { readsStdin: true } : {});
+        assertApprovedInstall(entry);
+      } else if (c.effects.length) {
         // A local write: over MCP it follows the write mode (refused when read-only, approved in
         // "ask"), and an approval covers this installation and snapshot only
         await assertLocalWriteAllowed(undefined, { fixedDestination: true, readsStdin: fromStdin });
@@ -448,8 +504,17 @@ const runCommand = runOptions(new Command('run')
         manifest: m, command: c, code: new TextDecoder().decode(loaded.files.get(m.main!)), filename: m.main!, input,
         client: telegram, account, storage: async () => installStorage(installed, m, await account()),
         cursors: installCursors(installed), installId: installed.installId, target,
-        mcp: !!(process.env.TG_MCP || process.env.TG_READ_ONLY), ...cancellation(),
-      }, calls);
+        mcp: !!(process.env.TG_MCP || process.env.TG_READ_ONLY),
+        settings: () => settingsRead(installed),
+        ...(sends ? {
+          network: {
+            backend: runBackend(),
+            secret: (secret: string, signal: AbortSignal) => getPluginSecretAsync(installed.installId, secret, signal),
+            setCommand: (secret: string) => ['plugin', 'secret', 'set', name, secret],
+          },
+        } : {}),
+        ...cancellation(),
+      }, calls, stats);
       proposals = outcome.envelope.proposals.map(p => p.type);
       error = undefined;
       printOutcome(outcome);
@@ -463,7 +528,11 @@ const runCommand = runOptions(new Command('run')
       if (entry) {
         auditLog({
           timestamp: new Date().toISOString(), command: 'plugin run', target: name,
-          plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, command: cmd, apis: [...new Set(calls)], proposals },
+          plugin: {
+            name, version: entry.version, revision: entry.revision, installId: entry.installId, command: cmd, apis: [...new Set(calls)], proposals,
+            // Origins and a count only: never a URL, a query, a header, a body or a secret
+            ...(stats.requests ? { network: { requests: stats.requests, origins: stats.origins } } : {}),
+          },
           result: { success: !error, ...(error ? { error } : {}) },
         });
       }
@@ -483,7 +552,6 @@ const devCommand = runOptions(new Command('dev')
       const snap = readLocalSnapshot(dir, cliVersion());
       const m = snap.manifest;
       const c = findCommand(m, cmd);
-      assertRunnable(m, c);
       const target = parseTarget(options.target, !!options.thread);
       const input = parseInput(options.input === '-' ? stdinBody(readStdinOnce()) : options.input);
       checkInput(c, input);
@@ -498,13 +566,230 @@ const devCommand = runOptions(new Command('dev')
         manifest: m, command: c, code: new TextDecoder().decode(snap.files.get(m.main!)), filename: m.main!, input,
         client: async () => client, account: async () => String(world.me), storage: async () => storage,
         cursors: memoryCursors(), installId: 'plugin-dev', target,
-        mcp: false, log: log.write, ...cancellation(),
+        mcp: false, log: log.write,
+        // HTTP from dev/fixtures/*.json, never the network; secrets are fake placeholders
+        ...(c.effects.includes('network') ? {
+          network: { backend: devBackend(dir), secret: (secret: string) => `dev-secret-${secret}`, setCommand: (secret: string) => ['plugin', 'secret', 'set', m.name, secret] },
+        } : {}),
+        ...cancellation(),
       });
       printOutcome(outcome);
     } catch (e) {
       fail(e);
     }
   });
+
+// ---------- settings ----------
+
+/** A setting the plugin declares, or a usage error listing them. */
+function declaredSetting(m: Manifest, key: string) {
+  const d = m.settings && own(m.settings, key) ? m.settings[key] : undefined;
+  if (!d) {
+    throw new CliError(`Plugin "${m.name}" has no setting "${key}"`, 'invalid_argument', EXIT.USAGE, {
+      hint: `Its settings: ${Object.keys(m.settings ?? {}).join(', ') || 'none'}`,
+    });
+  }
+  return d;
+}
+
+const settingsGetCommand = new Command('get')
+  .description('Print the settings of a plugin (stored values, or the defaults)')
+  .argument('<name>', 'Plugin name')
+  .argument('[key]', 'One setting')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, key: string | undefined, options: { json?: boolean }) => {
+    try {
+      const { entry, manifest: m } = loadPlugin(name, cliVersion());
+      const stored = settingsRead(entry);
+      const keys = key === undefined ? Object.keys(m.settings ?? {}) : [key];
+      const items = keys.map(k => {
+        const d = declaredSetting(m, k);
+        return { key: k, type: d.type, value: own(stored, k) ? stored[k] : d.default ?? null, stored: own(stored, k) };
+      });
+      if (options.json) console.log(json({ plugin: name, settings: items }));
+      else {
+        if (!items.length) console.log(`${name} has no settings`);
+        for (const i of items) console.log(`${i.key} = ${JSON.stringify(i.value)}${i.stored ? '' : ' (default)'}`);
+      }
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+const settingsSetCommand = new Command('set')
+  .description('Change a non-secret setting of a plugin (a local write: over MCP it follows the write mode)')
+  .argument('<name>', 'Plugin name')
+  .argument('<key>', 'Setting the plugin declares')
+  .argument('<value>', 'The value as JSON: "warm" (quoted string), 3, true')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, key: string, valueText: string, options: { json?: boolean }) => {
+    await assertLocalWriteAllowed(undefined, { fixedDestination: true });
+    try {
+      const { entry, manifest: m } = loadPlugin(name, cliVersion());
+      assertApprovedInstall(entry);
+      const d = declaredSetting(m, key);
+      let value: unknown;
+      try {
+        value = JSON.parse(valueText);
+      } catch {
+        throw usageError(`The value is not JSON: ${oneLine(valueText.slice(0, 100))}`, d.type === 'string' ? `A string is quoted: telegram plugin settings set ${name} ${key} '"${valueText.replace(/'/g, '')}"'` : undefined);
+      }
+      const issues = validate(d as unknown as Record<string, unknown>, value, 5, 2000);
+      if (issues.length) {
+        throw new CliError(`"${key}" does not take this value: ${issues.map(i => `${i.path || '/'} ${i.message}`).join('; ')}`, 'invalid_argument', EXIT.USAGE, { fields: { issues } });
+      }
+      settingsWrite(entry, key, value);
+      auditLog({
+        timestamp: new Date().toISOString(), command: 'plugin settings set', target: name,
+        plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, key },
+        result: { success: true },
+      });
+      if (options.json) console.log(json({ ok: true, action: 'plugin settings set', plugin: name, key, value }));
+      else console.log(chalk.green(`✓ ${name}: ${key} = ${JSON.stringify(value)}`));
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+const settingsCommand = new Command('settings')
+  .description('Non-secret settings of a plugin')
+  .addCommand(settingsGetCommand)
+  .addCommand(settingsSetCommand);
+
+// ---------- secrets ----------
+
+/** A secret is the human's: over MCP or without a terminal the agent gets the command for the human's terminal. */
+const secretHumanRequired = (argv: string[], why: string) => new CliError(why, 'human_required', EXIT.ERROR, {
+  hint: `Ask the user to run this in a terminal on this computer and type the value there: ${humanCommand(argv)}`,
+  command: argv,
+});
+
+/** The declared secret of a plugin, or a usage error listing them. */
+function declaredSecret(m: Manifest, secret: string) {
+  const d = (m.secrets ?? []).find(x => x.name === secret);
+  if (!d) {
+    throw new CliError(`Plugin "${m.name}" has no secret "${secret}"`, 'invalid_argument', EXIT.USAGE, {
+      hint: `Its secrets: ${(m.secrets ?? []).map(x => x.name).join(', ') || 'none'}`,
+    });
+  }
+  return d;
+}
+
+/**
+ * Deletes the secrets of removed installations that `plugin remove` recorded (its own, and any an
+ * earlier remove could not delete); returns, per installation, the names still in the store. A
+ * name is settled only once the store said it is gone.
+ */
+function cleanupPendingSecrets(only?: (p: { name: string; installId: string }) => boolean): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const installed = new Set(Object.values(readLock().plugins).map(e => e.installId));
+  for (const p of pendingSecrets()) {
+    if (only && !only(p)) continue;
+    // Still installed (its removal did not complete): its secrets are live, the record is dropped
+    if (installed.has(p.installId)) {
+      settlePendingSecrets(p.installId, []);
+      continue;
+    }
+    const left: string[] = [];
+    for (const secret of p.secrets) {
+      try {
+        if (getPluginSecret(p.installId, secret) !== null && !deletePluginSecret(p.installId, secret)) left.push(secret);
+      } catch {
+        left.push(secret);
+      }
+    }
+    settlePendingSecrets(p.installId, left);
+    out.set(p.installId, left);
+  }
+  return out;
+}
+
+/** Before every plugin command: finish a secret cleanup an earlier `plugin remove` left; silent, never fails the command. */
+function retryPendingSecrets(): void {
+  try {
+    if (pendingSecrets().length) cleanupPendingSecrets();
+  } catch {
+    // tried again on the next plugin command
+  }
+}
+
+const secretSetCommand = new Command('set')
+  .description('The user types a plugin secret in their own terminal (hidden); never an argument, a pipe, the environment or MCP')
+  .argument('<name>', 'Plugin name')
+  .argument('<secret>', 'Secret name the plugin declares')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, secret: string, options: { json?: boolean }) => {
+    const argv = ['plugin', 'secret', 'set', name, secret];
+    try {
+      if (process.env.TG_MCP || process.env.TG_READ_ONLY) {
+        throw secretHumanRequired(argv, 'A plugin secret is entered by the user in their own terminal, never over MCP');
+      }
+      const { entry, manifest: m } = loadPlugin(name, cliVersion());
+      const d = declaredSecret(m, secret);
+      const tty = pluginDeps.tty ?? Boolean(process.stdin.isTTY && process.stderr.isTTY);
+      if (!tty) {
+        throw secretHumanRequired(argv, 'A plugin secret is typed by the user in a terminal, hidden; it is never read from a pipe, an argument or the environment');
+      }
+      console.error([
+        `Secret "${d.name}" of the plugin ${m.name} ${m.version} (installation ${entry.installId})`,
+        `  Sent only to: ${d.inject.origin} ${secretPathsLabel(d.inject.paths)}, as the header ${d.inject.header}`,
+        `  The plugin never sees the value. In the plugin's own words: ${oneLine(d.description)}`,
+      ].join('\n'));
+      const value = await (pluginDeps.readSecret ?? promptHidden)(`Value for ${d.name} (input hidden): `);
+      // The prompt may have waited long: stored only for the installation that is still registered
+      // (a `plugin remove` meanwhile would otherwise leave the value under a removed installation)
+      withCurrentInstall(entry, 'the secret was not stored', () => setPluginSecret(entry.installId, d.name, value));
+      auditLog({
+        timestamp: new Date().toISOString(), command: 'plugin secret set', target: name,
+        plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, key: d.name },
+        result: { success: true },
+      });
+      if (options.json) console.log(json({ ok: true, action: 'plugin secret set', plugin: name, secret: d.name }));
+      else console.log(chalk.green(`✓ Saved the secret ${d.name} of ${name} in the secret store`));
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+const secretRmCommand = new Command('rm')
+  .description('Delete a plugin secret from the secret store (the user\'s, not over MCP)')
+  .argument('<name>', 'Plugin name')
+  .argument('<secret>', 'Secret name')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, secret: string, options: { json?: boolean }) => {
+    const argv = ['plugin', 'secret', 'rm', name, secret];
+    try {
+      if (process.env.TG_MCP || process.env.TG_READ_ONLY) throw secretHumanRequired(argv, 'Plugin secrets are managed by the user in their own terminal, never over MCP');
+      // A removed plugin whose secret is still in the store (its cleanup failed): delete that one
+      if (!own(readLock().plugins, name)) {
+        const orphans = pendingSecrets().filter(p => p.name === name && p.secrets.includes(secret));
+        if (!orphans.length) findEntry(name);
+        const left = cleanupPendingSecrets(p => p.name === name);
+        if (orphans.some(p => left.get(p.installId)?.includes(secret))) throw new CliError(`Could not delete the secret ${secret} of the removed plugin ${name} from the secret store`, 'secret_store_unavailable', EXIT.ERROR);
+        if (options.json) console.log(json({ ok: true, action: 'plugin secret rm', plugin: name, secret, removedPlugin: true }));
+        else console.log(chalk.green(`✓ Deleted what was left of the secrets of the removed plugin ${name}`));
+        return;
+      }
+      const { entry, manifest: m } = loadPlugin(name, cliVersion());
+      const d = declaredSecret(m, secret);
+      const existed = getPluginSecret(entry.installId, d.name) !== null;
+      if (existed && !deletePluginSecret(entry.installId, d.name)) throw new CliError(`Could not delete the secret ${d.name} from the secret store`, 'secret_store_unavailable', EXIT.ERROR);
+      auditLog({
+        timestamp: new Date().toISOString(), command: 'plugin secret rm', target: name,
+        plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, key: d.name },
+        result: { success: true },
+      });
+      if (options.json) console.log(json({ ok: true, action: 'plugin secret rm', plugin: name, secret: d.name, existed }));
+      else console.log(chalk.green(existed ? `✓ Deleted the secret ${d.name} of ${name}` : `The secret ${d.name} of ${name} was not set`));
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+const secretCommand = new Command('secret')
+  .description('Secrets of a plugin, typed by the user in a terminal; the plugin never sees them')
+  .addCommand(secretSetCommand)
+  .addCommand(secretRmCommand);
 
 // ---------- remove / validate ----------
 
@@ -522,13 +807,19 @@ const removeCommand = new Command('remove')
       if (!(await humanConfirms(question, argv, pluginDeps.confirm))) throw new CliError('Not confirmed by the user. Nothing was removed.', 'not_confirmed', EXIT.ERROR);
       // Under the lock, and only if this is still the installation the human was shown
       removeInstall(entry, !!options.keepData);
+      // Its secrets go with it (they belong to this installation, kept data or not); removeInstall
+      // recorded them first, so what the store fails to delete now is retried by the next command
+      const secretsLeft = cleanupPendingSecrets(p => p.installId === entry.installId).get(entry.installId) ?? [];
       auditLog({
         timestamp: new Date().toISOString(), command: 'plugin remove', target: name,
         plugin: { name, version: entry.version, revision: entry.revision, installId: entry.installId, keepData: !!options.keepData },
         result: { success: true },
       });
-      if (options.json) console.log(json({ ok: true, action: 'plugin remove', name, keepData: !!options.keepData }));
-      else console.log(chalk.green(`✓ Removed ${name}${options.keepData ? ' (data kept)' : ''}`));
+      if (options.json) console.log(json({ ok: true, action: 'plugin remove', name, keepData: !!options.keepData, ...(secretsLeft.length ? { secretsNotRemoved: secretsLeft } : {}) }));
+      else {
+        console.log(chalk.green(`✓ Removed ${name}${options.keepData ? ' (data kept)' : ''}`));
+        if (secretsLeft.length) console.error(chalk.yellow(`Could not remove its secrets from the secret store yet: ${secretsLeft.join(', ')} (the next plugin command tries again; or: telegram plugin secret rm ${name} <secret>)`));
+      }
     } catch (error) {
       fail(error);
     }
@@ -561,9 +852,12 @@ const validateCommand = new Command('validate')
 
 export const pluginCommand = new Command('plugin')
   .description('Plugins: instructions and resources that extend the agent (install and remove are the user\'s)')
+  .hook('preAction', retryPendingSecrets)
   .addCommand(listCommand)
   .addCommand(showCommand)
   .addCommand(dataCommand)
+  .addCommand(settingsCommand)
+  .addCommand(secretCommand)
   .addCommand(runCommand)
   .addCommand(installCommand)
   .addCommand(removeCommand)

@@ -144,7 +144,10 @@ describe('list, show, data, remove (mock account)', { timeout: 60_000 }, () => {
     // Logical names only, never a path
     expect(cli(h, ['plugin', 'show', 'tone-of-voice', '--resource', 'templates/style.md', '--json']).json.error.code).toBe('invalid_argument');
     expect(cli(h, ['plugin', 'show', 'tone-of-voice', '--resource', '../../../etc/passwd', '--json']).code).toBe(2);
-    expect(cli(h, ['plugin', 'show', 'tone-of-voice', '--json']).code).toBe(2);
+    // No flag: the overview (network, secrets set or not, settings), never a value of a secret
+    const overview = cli(h, ['plugin', 'show', 'tone-of-voice', '--json']);
+    expect(overview.code).toBe(0);
+    expect(JSON.parse(overview.out)).toMatchObject({ kind: 'overview', name: 'tone-of-voice', network: [], secrets: [] });
     expect(cli(h, ['plugin', 'show', 'tone-of-voice', '--onboarding', '--trigger', 'compose', '--json']).code).toBe(2);
     expect(cli(h, ['plugin', 'show', 'nope', '--onboarding', '--json']).json.error.code).toBe('plugin_not_found');
   });

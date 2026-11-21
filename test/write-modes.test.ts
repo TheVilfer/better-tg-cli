@@ -464,3 +464,100 @@ describe('MCP in mode "ask"', () => {
     expect(asked).toBe(false);
   });
 });
+
+describe('a plugin command with the network effect is a write in the shell too', () => {
+  let program: import('commander').Command | undefined;
+  /** `telegram plugin run net-lab <cmd>` in this process, on this test's (non-mock) profile. */
+  async function pluginRun(args: string[]) {
+    const { pluginCommand, pluginDeps } = await import('../src/commands/plugin.js');
+    if (!program) {
+      // A program of its own with the guard's hook, as index.ts builds it
+      const { Command } = await import('commander');
+      const { trackActiveCommand } = await import('../src/approval-action.js');
+      program = new Command('telegram').addCommand(pluginCommand);
+      trackActiveCommand(program);
+    }
+    const { ExitSignal } = await import('../src/errors.js');
+    pluginDeps.cliVersion = '99.0.0';
+    let err = '';
+    let out = '';
+    vi.spyOn(console, 'error').mockImplementation((...a) => { err += a.join(' ') + '\n'; });
+    vi.spyOn(console, 'log').mockImplementation((...a) => { out += a.join(' ') + '\n'; });
+    // An ExitSignal, as installDrainingExit throws: the command passes it on with its code
+    vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw Object.assign(new ExitSignal(), { code }); }) as never);
+    const argv = process.argv;
+    process.argv = [argv[0], 'telegram', 'plugin', 'run', ...args];
+    try {
+      await program.parseAsync(['plugin', 'run', ...args], { from: 'user' });
+      return { code: null as number | null, err, out };
+    } catch (e) {
+      return { code: (e as { code?: number }).code ?? -1, err, out };
+    } finally {
+      process.argv = argv;
+      vi.restoreAllMocks();
+    }
+  }
+
+  async function installNetLab() {
+    const { commitInstall } = await import('../src/plugins/store.js');
+    const { readLocalSnapshot } = await import('../src/plugins/source.js');
+    return commitInstall(readLocalSnapshot('test/fixtures/plugins/net-lab', '99.0.0'));
+  }
+
+  it('read-only refuses before any request; "ask" shows the origins and needs a code; "on" runs; a read command never asks', async () => {
+    const { httpDeps } = await import('../src/plugins/http-backend.js');
+    const { fixtureBackend, parseFixtures } = await import('../src/plugins/http.js');
+    const requests: string[] = [];
+    const backend = fixtureBackend(parseFixtures({ request: { url: 'https://api.example.com/v2/x' }, response: { body: 'hello' } }, 'test'), 'test');
+    httpDeps.backend = async (req, signal, deadline) => { requests.push(req.url.href); return backend(req, signal, deadline); };
+    try {
+      await installNetLab();
+      const input = ['--input', '{"url":"https://api.example.com/v2/x"}'];
+      // Read-only (the default): the guard stops it, nothing is sent
+      const ro = await pluginRun(['net-lab', 'fetch', ...input, '--json']);
+      expect(ro.code).toBe(EXIT.WRITE_DISABLED);
+      expect(JSON.parse(ro.out).error.code).toBe('write_disabled');
+      expect(requests).toEqual([]);
+      // A command without effects is a read: it runs in read-only
+      expect((await pluginRun(['net-lab', 'setting', '--input', '{"key":"mode"}'])).code).toBeNull();
+      // Ask: an approval with the destinations, no request before it
+      store.values.set('writeEnabled', 'ask');
+      const ask = await pluginRun(['net-lab', 'fetch', ...input, '--json']);
+      expect(ask.code).toBe(EXIT_NEEDS_APPROVAL);
+      const desc = JSON.parse(ask.out).action.description as string;
+      expect(desc).toContain('Sends to: https://api.example.com, https://other.example.com, https://wrong.example.net');
+      expect(desc).toContain('Secrets the host attaches: apikey → https://api.example.com /v1; other → https://other.example.com');
+      expect(desc).toContain('Input: {"url":"https://api.example.com/v2/x"}');
+      expect(requests).toEqual([]);
+      const code = codeIn(ask.err)!;
+      // The code is bound to the input: another URL with it is refused (a new approval is printed)
+      process.env.TG_APPROVE = code;
+      const other = await pluginRun(['net-lab', 'fetch', '--input', '{"url":"https://other.example.com/x"}', '--json']);
+      expect(other.code).toBe(EXIT_NEEDS_APPROVAL);
+      expect(requests).toEqual([]);
+      // A fresh code for the input as shown, then the run
+      delete process.env.TG_APPROVE;
+      process.env.TG_APPROVE = codeIn((await pluginRun(['net-lab', 'fetch', ...input, '--json'])).err)!;
+      const ok = await pluginRun(['net-lab', 'fetch', ...input, '--json']);
+      expect(ok.code, ok.err).toBeNull();
+      expect(JSON.parse(ok.out).data).toMatchObject({ ok: true, response: { status: 200, body: 'hello' } });
+      expect(requests).toEqual(['https://api.example.com/v2/x']);
+      // Used once
+      expect((await pluginRun(['net-lab', 'fetch', ...input, '--json'])).code).toBe(EXIT_NEEDS_APPROVAL);
+      delete process.env.TG_APPROVE;
+      // On: runs without a question
+      store.values.set('writeEnabled', 'true');
+      expect((await pluginRun(['net-lab', 'fetch', ...input, '--json'])).code).toBeNull();
+      expect(requests).toHaveLength(2);
+      const audit = readFileSync(join(dir, 'audit.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+      const runs = audit.filter(a => a.command === 'plugin run' && a.plugin.command === 'fetch');
+      expect(runs.map(r => [r.result.success, r.writeMode, r.plugin.network])).toEqual([
+        [true, 'ask', { requests: 1, origins: ['https://api.example.com'] }],
+        [true, 'on', { requests: 1, origins: ['https://api.example.com'] }],
+      ]);
+      expect(JSON.stringify(audit)).not.toContain('/v2/x');
+    } finally {
+      delete httpDeps.backend;
+    }
+  });
+});

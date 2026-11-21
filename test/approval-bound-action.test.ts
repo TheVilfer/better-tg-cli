@@ -317,7 +317,7 @@ describe('the approval knows every write and every recipient in it (scan)', () =
     }
     const { PLUGIN_PATHS } = await import('../src/mcp.js');
     const pluginWrites = Object.entries(PLUGIN_PATHS).filter(([, k]) => k === 'write').map(([p]) => p);
-    expect(pluginWrites).toEqual(['plugin data set', 'plugin data delete']);
+    expect(pluginWrites).toEqual(['plugin data set', 'plugin data delete', 'plugin settings set']);
     const writes = [...WRITE_COMMANDS, ...WRITE_SUBCOMMANDS, ...pluginWrites, 'transfer-owner'].filter(w => commands.has(w));
     expect(writes.length).toBeGreaterThan(45);
     const peerName = /^(chat|user|users|group|target|fromChat|toChat|peer|bot|channel|member|members)$/;

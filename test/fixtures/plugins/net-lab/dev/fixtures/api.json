@@ -1,0 +1,10 @@
+[
+  {
+    "request": { "method": "GET", "url": "https://api.example.com/v1/hello?q=1" },
+    "response": { "status": 200, "headers": { "x-seen": "Bearer dev-secret-apikey" }, "json": { "hello": "world", "echo": "Bearer dev-secret-apikey" } }
+  },
+  {
+    "request": { "method": "POST", "url": "https://other.example.com/items" },
+    "response": { "status": 201, "body": "created" }
+  }
+]

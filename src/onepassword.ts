@@ -2,6 +2,7 @@ import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { configFile, secretPrefix } from './paths.js';
 import type { StrictRead } from './keychain.js';
+import { spawnAsync, type SpawnResult } from './spawn-async.js';
 
 let opAvailableCache: boolean | null = null;
 let opBinaryPath: string | null = null;
@@ -133,6 +134,19 @@ export function opGetStrict(key: string, fileHasValue = false): StrictRead {
     timeout: 60_000,
     env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
   });
+  return opRead(r, fileHasValue);
+}
+
+/** opGetStrict without blocking the event loop; `op` is killed when `signal` aborts. */
+export async function opGetStrictAsync(key: string, signal?: AbortSignal): Promise<StrictRead> {
+  if (!isOnePasswordAvailable()) return { ok: false, reason: '1Password is not available' };
+  const r = await spawnAsync(getOpBinary()!, ['read', `op://${resolveVault()!}/${itemName(key)}/credential`], {
+    timeout: 60_000, signal, env: { ...process.env, OP_SERVICE_ACCOUNT_TOKEN: getToken()! },
+  });
+  return opRead(r, false);
+}
+
+function opRead(r: SpawnResult, fileHasValue: boolean): StrictRead {
   if (r.status === 0 && !r.error) return { ok: true, value: r.stdout.trim() || null };
   if (!fileHasValue && !r.error && r.status === 1 && /isn['\u2019]t an item/.test(r.stderr ?? '')) {
     return { ok: true, value: null };

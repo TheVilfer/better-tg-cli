@@ -13,6 +13,11 @@ export interface SandboxLimits {
   concurrentCalls: number;
   /** UTF-8 bytes of one call's arguments, and of one result handed into the sandbox. */
   callBytes: number;
+  /**
+   * UTF-8 bytes of one `http.fetch` result: a 1 MB body (the response limit) arrives as text or
+   * base64 with its headers, more than `callBytes` once escaped.
+   */
+  httpReplyBytes: number;
   /** Characters of the command's result after serialization. */
   outputChars: number;
   /** Jobs run in one drain of the queue (a promise loop that never yields to the host). */
@@ -27,6 +32,7 @@ export const DEFAULT_LIMITS: SandboxLimits = {
   hostCalls: 200,
   concurrentCalls: 4,
   callBytes: 1024 * 1024,
+  httpReplyBytes: 2 * 1024 * 1024,
   outputChars: 60_000,
   jobsPerDrain: 1_000_000,
 };

@@ -150,17 +150,21 @@ export const MANIFEST_SCHEMAS: Record<string, Record<string, unknown>> = {
                   "$ref": "#/$defs/origin"
                 },
                 "header": {
+                  "description": "The request header the host sets to the formatted value. Not one the host sets itself (Host, Cookie, Content-Length, Transfer-Encoding, Connection, Proxy-*, …); Authorization is allowed.",
                   "type": "string",
                   "maxLength": 100,
                   "pattern": "^[A-Za-z0-9-]+$"
                 },
                 "format": {
+                  "description": "The header value: printable ASCII with {value} where the secret goes, e.g. \"Bearer {value}\".",
                   "type": "string",
                   "maxLength": 200,
-                  "pattern": "\\{value\\}"
+                  "pattern": "^[\\x20-\\x7e]*\\{value\\}[\\x20-\\x7e]*$"
                 },
                 "paths": {
+                  "description": "Only these paths and the paths below them (on a segment boundary) get the secret; leave it out for every path of the origin. At least one path when given.",
                   "type": "array",
+                  "minItems": 1,
                   "maxItems": 20,
                   "items": {
                     "type": "string",
@@ -174,7 +178,7 @@ export const MANIFEST_SCHEMAS: Record<string, Record<string, unknown>> = {
         }
       },
       "settings": {
-        "description": "Non-secret settings the user may change.",
+        "description": "Non-secret settings the user may change (`plugin settings set`): each one a small JSON Schema (type, enum, minimum, maximum, minLength, maxLength, default).",
         "type": "object",
         "maxProperties": 50,
         "propertyNames": {
@@ -201,6 +205,7 @@ export const MANIFEST_SCHEMAS: Record<string, Record<string, unknown>> = {
               "maxLength": 200
             },
             "default": {
+              "description": "Must itself be a valid value of this setting.",
               "type": [
                 "string",
                 "integer",
@@ -210,7 +215,9 @@ export const MANIFEST_SCHEMAS: Record<string, Record<string, unknown>> = {
             },
             "enum": {
               "type": "array",
+              "minItems": 1,
               "maxItems": 50,
+              "uniqueItems": true,
               "items": {
                 "type": [
                   "string",
@@ -218,6 +225,22 @@ export const MANIFEST_SCHEMAS: Record<string, Record<string, unknown>> = {
                   "number"
                 ]
               }
+            },
+            "minimum": {
+              "type": "number"
+            },
+            "maximum": {
+              "type": "number"
+            },
+            "minLength": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "maxLength": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
             }
           }
         }
@@ -377,6 +400,7 @@ export const MANIFEST_SCHEMAS: Record<string, Record<string, unknown>> = {
         "pattern": "^(?!\\.{1,2}(/|#|$))(?!.*/\\.{1,2}(/|#|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*(#[a-z0-9]+(-[a-z0-9]+)*)?$"
       },
       "origin": {
+        "description": "An exact https origin by host name (no path, no user info, no trailing dot, no IP address, no :443).",
         "type": "string",
         "maxLength": 200,
         "pattern": "^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?$"

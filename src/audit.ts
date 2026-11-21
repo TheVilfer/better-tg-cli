@@ -27,6 +27,8 @@ export interface AuditEntry {
     name: string; version?: string; revision?: string; installId?: string; source?: string; key?: string; bytes?: number; keepData?: boolean;
     /** `plugin run`: the command, the host API names it called (each once) and the proposal types it returned */
     command?: string; apis?: string[]; proposals?: string[];
+    /** `plugin run` that sent requests: how many and to which origins (never a URL, path, query, header or body) */
+    network?: { requests: number; origins: string[] };
   };
 }
 

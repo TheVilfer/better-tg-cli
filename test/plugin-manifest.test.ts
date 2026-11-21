@@ -139,6 +139,40 @@ describe('checkManifest: the schema plus the rules it cannot express', () => {
     expect(errs(m => { delete m.main; })).toMatch(/commands need "main"/);
   });
 
+  it('network origins, secret injection and settings defaults (P3): only what the host can keep safe', () => {
+    const errs = (mutate: (m: Manifest) => void) => { const m = base(); m.permissions!.push('network'); m.network = ['https://api.example.com']; mutate(m); return check(m).errors.join('\n'); };
+    const secret = (inject: Record<string, unknown>) => (m: Manifest) => {
+      m.secrets = [{ name: 'key', description: 'API key', inject: { origin: 'https://api.example.com', header: 'Authorization', format: 'Bearer {value}', ...inject } as never }];
+    };
+    expect(errs(() => {})).toBe('');
+    // Origins: a host name, not an IP (also in decimal), not local, canonical
+    for (const o of ['https://2130706433', 'https://127.0.0.1', 'https://localhost', 'https://printer.local', 'https://intranet', 'https://10.0.0.1:8443']) {
+      expect(errs(m => { m.network = [o]; }), o).toMatch(/network(\/0: does not match|: ")/);
+    }
+    // Secret header: not one the host sets itself; Authorization and custom headers are fine
+    for (const h of ['Host', 'Cookie', 'Content-Length', 'Transfer-Encoding', 'Connection', 'Proxy-Authorization', 'Proxy-Foo', 'TE']) {
+      expect(errs(secret({ header: h })), h).toMatch(/inject\.header "[^"]+" is a header the host sets itself/);
+    }
+    expect(errs(secret({ header: 'X-Api-Key' }))).toBe('');
+    // Format: printable, one line, {value} in it
+    expect(errs(secret({ format: 'Bearer {value}\r\nX-Evil: 1' }))).toMatch(/format: does not match/);
+    expect(errs(secret({ format: 'Bearer' }))).toMatch(/format: does not match/);
+    // Two secrets in the same header of the same origin
+    expect(errs(m => {
+      secret({})(m);
+      m.secrets!.push({ name: 'key2', description: 'x', inject: { origin: 'https://api.example.com', header: 'authorization', format: '{value}' } });
+    })).toMatch(/key2: another secret already goes to https:\/\/api\.example\.com as authorization/);
+    // Settings: the default must be a valid value; keywords fit the type
+    const setting = (d: Record<string, unknown>) => (m: Manifest) => { m.settings = { s: { type: 'string', description: 'x', ...d } as never }; };
+    expect(errs(setting({ enum: ['a', 'b'], default: 'c' }))).toMatch(/settings\.s: the default "c" is not a valid value/);
+    expect(errs(setting({ type: 'integer', minimum: 1, maximum: 5, default: 9 }))).toMatch(/the default 9 is not a valid value/);
+    expect(errs(setting({ type: 'integer', default: 'x' }))).toMatch(/the default "x" is not a valid value/);
+    expect(errs(setting({ minimum: 1 }))).toMatch(/minimum\/maximum need type integer or number/);
+    expect(errs(setting({ type: 'integer', maxLength: 3 }))).toMatch(/minLength\/maxLength need type string/);
+    expect(errs(setting({ type: 'integer', enum: ['a'] }))).toMatch(/enum value "a" is not of type integer/);
+    expect(errs(setting({ maxLength: 3, default: 'abc' }))).toBe('');
+  });
+
   it('command schemas are self-contained: no external $ref, no other $schema, no $id; the input is an object', () => {
     const errs = (input: Record<string, unknown>) => { const m = base(); m.commands![0].input = input; return check(m).errors.join('\n'); };
     expect(errs({ type: 'object', properties: { a: { $ref: 'https://example.com/a.json' } } })).toMatch(/\$ref "https:\/\/example\.com\/a\.json" at \/properties\/a is external/);
