@@ -106,6 +106,10 @@ A stable tag runs `.github/workflows/release.yml`:
 7. Windows: `windows-x64` is cross-compiled and zipped on Linux, run on `windows-latest` in
    `windows-smoke` (it gates the GitHub Release), and `scripts/scoop-manifest.mjs` pushes
    `bucket/better-tg-cli.json` to `TheVilfer/scoop-bucket` with the `SCOOP_DEPLOY_KEY` deploy key
+8. `@better-tg/plugin-sdk` (job `plugin-sdk`, stable releases only): built in CI and published by
+   npm trusted publishing (OIDC, provenance) when the version in `packages/plugin-sdk/package.json`
+   is not on npm yet. To ship a new SDK, bump that version in a PR before the release; never
+   publish it from a local machine (local builds would carry the builder's paths).
 
 Windows specifics: secrets in `%APPDATA%\tg\secrets.dpapi` (DPAPI through the built-in
 PowerShell 5.1, `src/dpapi.ts`), `write-access` asks in a MessageBox, every spawn sets
