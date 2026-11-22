@@ -77,10 +77,12 @@ interface Step {
 /**
  * - `create`: Create a missing folder (0700) instead of failing
  * - `exactCase`: Each name must be listed in its folder with exactly this case (a case-insensitive disk would find another)
+ * - `createMode`: The mode of a folder it creates (default 0700)
  */
 export interface WalkOptions {
   create?: boolean;
   exactCase?: boolean;
+  createMode?: number;
 }
 
 const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
@@ -154,7 +156,7 @@ function walk(
     let st = component(cur, segments[i], at, opts.exactCase);
     if (!st && opts.create) {
       try {
-        mkdirSync(path, { mode: 0o700 });
+        mkdirSync(path, { mode: opts.createMode ?? 0o700 });
       } catch (error) {
         if (code(error) !== "EEXIST") {
           throw error;
@@ -349,19 +351,29 @@ export function listDir(root: string, dirRel: string): Entry[] {
   return out;
 }
 
+/** The modes `writeRegular` gives what it creates: `fileMode` (default 0600), `dirMode` (default 0700). */
+export interface WriteModes {
+  fileMode?: number;
+  dirMode?: number;
+}
+
 /**
- * Writes `data` as the regular file `rel` below `root` (folders created 0700, the file 0600): a temp
- * file opened with O_EXCL|O_NOFOLLOW in the checked folder, then one rename. The folders are
- * checked again before and after the rename.
+ * Writes `data` as the regular file `rel` below `root` (folders created 0700, the file 0600 unless
+ * `modes` says otherwise): a temp file opened with O_EXCL|O_NOFOLLOW in the checked folder, then one
+ * rename. The folders are checked again before and after the rename.
  */
 export function writeRegular(
   root: string,
   rel: string,
-  data: Uint8Array | string
+  data: Uint8Array | string,
+  modes: WriteModes = {}
 ): void {
   const segments = split(rel);
   const leaf = segments.pop()!;
-  const steps = walk(root, segments, { create: true });
+  const steps = walk(root, segments, {
+    create: true,
+    createMode: modes.dirMode,
+  });
   const dir = steps[steps.length - 1].path;
   const existing = component(dir, leaf, rel, false);
   if (existing && !existing.isFile()) {
@@ -381,7 +393,7 @@ export function writeRegular(
     fd = openSync(
       tmp,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW,
-      0o600
+      modes.fileMode ?? 0o600
     );
   } catch (error) {
     if (code(error) === "ELOOP" || code(error) === "EEXIST") {

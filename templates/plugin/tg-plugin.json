@@ -73,7 +73,8 @@
           "samples": { "type": "array", "items": { "type": "string" } },
           "cursor": { "type": ["string", "null"] },
           "remaining": { "type": "integer", "minimum": 0 },
-          "done": { "type": "boolean" }
+          "done": { "type": "boolean" },
+          "retryAfterSeconds": { "type": "integer", "minimum": 0 }
         },
         "required": [
           "count",

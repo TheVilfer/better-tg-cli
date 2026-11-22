@@ -13,6 +13,8 @@ format is described in [docs/plugins.md](https://github.com/TheVilfer/better-tg-
 | `dev/fixtures/*.json`      | HTTP answers for `plugin dev` and the tests; nothing reaches the network                 |
 | `test/plugin.test.ts`      | Tests on the mock account through the SDK's test host                                    |
 | `.github/workflows/ci.yml` | Build, check that `dist/plugin.js` is committed, typecheck, `plugin validate`, tests     |
+| `tsconfig.json`            | Typecheck of the plugin code: ES2023 only, no Node or DOM types, as the sandbox runs it  |
+| `tsconfig.test.json`       | Typecheck of the tests (Node types)                                                      |
 
 ## Start
 
@@ -26,6 +28,7 @@ format is described in [docs/plugins.md](https://github.com/TheVilfer/better-tg-
 ```bash
 npm install
 npm run build        # bundles src/plugin.ts into dist/plugin.js (needs Bun: https://bun.sh)
+npm run typecheck    # plugin code as ES2023 alone, then the tests
 npm test             # runs the commands on the mock account with the fixtures
 npm run validate     # telegram plugin validate .
 npm run dev          # telegram plugin dev . summary --mock --input '{"limit":20}'
@@ -51,7 +54,12 @@ export const { commands } = definePlugin({
 
 Only what the manifest's permissions and the command's own `effects` grant exists on `host`, so
 check an API before calling it. The sandbox has ECMAScript and `host` only: no `fetch`, `process`,
-timers or modules. A command returns plain JSON, which the host checks against its `output` schema.
+timers or modules, and `tsconfig.json` types `src/` that way, so using one fails the typecheck. A
+command returns plain JSON, which the host checks against its `output` schema.
+
+A host call can fail with `flood_wait` when Telegram asks to slow down. For `messages.mine` the
+error carries `partial` (what was read before it) and `cursor` (right after it); `summary` turns
+that into a page with `retryAfterSeconds`, so the agent counts it and waits before going on.
 
 ## Testing
 

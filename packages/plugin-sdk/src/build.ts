@@ -1,6 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
+
+import {
+  anchor,
+  UnsafePath,
+  writeRegular,
+} from "../../../src/plugins/safe-fs.js";
+import { checkBundle, withoutModuleMarkers } from "./bundle-check.js";
 
 /** The size limit of one plugin file (docs/plugins.md §3). */
 export const MAX_FILE_BYTES = 1024 * 1024;
@@ -23,8 +30,11 @@ export interface BuildResult {
 interface BunBuildOutput {
   success: boolean;
   logs: unknown[];
-  outputs: { text(): Promise<string> }[];
-  metafile?: { inputs?: Record<string, unknown> };
+  outputs: { kind: string; path: string; text(): Promise<string> }[];
+  metafile?: {
+    inputs?: Record<string, unknown>;
+    outputs?: Record<string, { exports?: string[] }>;
+  };
 }
 
 interface BunRuntime {
@@ -54,12 +64,16 @@ function builtinCatcher(found: Set<string>) {
   };
 }
 
-function withoutModuleMarkers(code: string, inputs: string[]): string {
-  const markers = new Set(inputs.map((path) => `// ${path}`));
-  return code
-    .split("\n")
-    .filter((line) => !markers.has(line))
-    .join("\n");
+function theOneModule(result: BunBuildOutput): BunBuildOutput["outputs"][0] {
+  const modules = result.outputs.filter(
+    (o) => o.kind === "entry-point" && /\.m?js$/.test(o.path)
+  );
+  if (modules.length !== 1 || result.outputs.length !== 1) {
+    throw new Error(
+      `The build gave ${result.outputs.map((o) => `${o.path} (${o.kind})`).join(", ")}; a plugin is one JavaScript file, so inline what it imports (no assets, chunks or source maps)`
+    );
+  }
+  return modules[0];
 }
 
 function bunRuntime(): BunRuntime {
@@ -93,9 +107,12 @@ function inside(dir: string, path: string, what: string): string {
 /**
  * Bundles the plugin's source into one ES module without imports (`dist/plugin.js`): everything it
  * imports, the SDK's `definePlugin` included, is inlined, and the module exports `commands`. The
- * syntax and the author's strings are passed through as written (QuickJS runs ES2023); only Bun's
- * per-module path comments are dropped, so the output is the same on every machine for the same Bun
- * version. A Node or Bun built-in is refused, never polyfilled. Runs under Bun only.
+ * syntax and the author's strings are passed through as written; only Bun's per-module path comment
+ * tokens are dropped, so the output is the same on every machine for the same Bun version. The
+ * result is refused unless it is exactly one JavaScript file that parses as ES2023 (what QuickJS
+ * runs) and loads no module (`import`, `export … from`, `import()`, `require`). A Node or Bun
+ * built-in is refused, never polyfilled. The file is written only as a real file below the folder,
+ * never through a link. Runs under Bun only.
  */
 export async function buildPlugin(
   dir: string,
@@ -128,13 +145,20 @@ export async function buildPlugin(
       `The plugin imports ${[...builtins].sort().join(", ")}: the sandbox has no Node or Bun modules (no files, processes or network of its own), so use the host API instead`
     );
   }
+  const artifact = theOneModule(result);
   const code = `${withoutModuleMarkers(
-    await result.outputs[0].text(),
+    await artifact.text(),
     Object.keys(result.metafile?.inputs ?? {})
   ).trim()}\n`;
-  if (!/\bexport\s*\{[^}]*\bcommands\b[^}]*\}/.test(code)) {
+  const exported = checkBundle(code);
+  const meta = Object.entries(result.metafile?.outputs ?? {});
+  if (
+    meta.length !== 1 ||
+    !meta[0][1].exports?.includes("commands") ||
+    meta[0][1].exports.length !== exported.length
+  ) {
     throw new Error(
-      "The bundle does not export `commands`: export it from the entry (export const { commands } = definePlugin({ … }))"
+      `The bundle does not export \`commands\` (Bun reports ${meta.map(([, o]) => (o.exports ?? []).join(", ") || "nothing").join("; ") || "no output"})`
     );
   }
   const bytes = Buffer.byteLength(code);
@@ -143,7 +167,17 @@ export async function buildPlugin(
       `The bundle is ${bytes} bytes; a plugin file may have at most ${MAX_FILE_BYTES}`
     );
   }
-  mkdirSync(dirname(outfile), { recursive: true });
-  writeFileSync(outfile, code);
-  return { outfile: relative(root, outfile).split("\\").join("/"), bytes };
+  const rel = relative(root, outfile).split("\\").join("/");
+  try {
+    writeRegular(anchor(root), rel, code, { fileMode: 0o644, dirMode: 0o755 });
+  } catch (error) {
+    if (error instanceof UnsafePath) {
+      throw new Error(
+        `The output is not written: ${error.message} (a build writes only real files and folders inside the plugin folder, never through a link)`,
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+  return { outfile: rel, bytes };
 }

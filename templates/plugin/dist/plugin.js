@@ -8,6 +8,35 @@ async function sampleCount(host) {
   const value = await host.settings?.get?.("samples");
   return typeof value === "number" ? value : 0;
 }
+function floodPage(error) {
+  const e = error;
+  if (e?.code !== "flood_wait" || !e.partial || !e.cursor) {
+    return;
+  }
+  return {
+    messages: e.partial.messages,
+    count: e.partial.count,
+    cursor: e.cursor,
+    done: false,
+    wait: e.retryAfterSeconds ?? 0
+  };
+}
+async function tally(input, messages, host) {
+  const byType = { private: 0, group: 0 };
+  let chars = 0;
+  for (const m of messages) {
+    byType[m.chatType] += 1;
+    chars += m.text.length;
+  }
+  const samples = messages.slice(0, await sampleCount(host)).map((m) => m.text.slice(0, SAMPLE_CHARS));
+  return {
+    count: messages.length,
+    chars,
+    byType,
+    samples,
+    remaining: Math.max(0, input.limit - messages.length)
+  };
+}
 var { commands } = definePlugin({
   commands: {
     async summary(input, host) {
@@ -15,25 +44,28 @@ var { commands } = definePlugin({
       if (!mine) {
         throw new Error("This plugin needs the messages:read-own permission");
       }
-      const page = await mine({
-        limit: input.limit,
-        types: input.types,
-        cursor: input.cursor
-      });
-      const byType = { private: 0, group: 0 };
-      let chars = 0;
-      for (const m of page.messages) {
-        byType[m.chatType] += 1;
-        chars += m.text.length;
+      let page;
+      try {
+        page = await mine({
+          limit: input.limit,
+          types: input.types,
+          cursor: input.cursor
+        });
+      } catch (error) {
+        const flood = floodPage(error);
+        if (!flood) {
+          throw error;
+        }
+        return {
+          ...await tally(input, flood.messages, host),
+          cursor: flood.cursor,
+          done: false,
+          retryAfterSeconds: flood.wait
+        };
       }
-      const samples = page.messages.slice(0, await sampleCount(host)).map((m) => m.text.slice(0, SAMPLE_CHARS));
       return {
-        count: page.count,
-        chars,
-        byType,
-        samples,
+        ...await tally(input, page.messages, host),
         cursor: page.cursor,
-        remaining: Math.max(0, input.limit - page.count),
         done: page.done
       };
     },

@@ -12,6 +12,8 @@ import { join, resolve } from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
 
+import { errorDetails, errorJson } from "../src/errors.js";
+import { devPlugin, devRun } from "../src/plugins/dev.js";
 import { cliArgs } from "./cli.js";
 
 const env = await vi.hoisted(async () => {
@@ -717,7 +719,7 @@ describe("settings", { timeout: 60_000 }, () => {
 });
 
 describe("settings file size (review #11)", { timeout: 60_000 }, () => {
-  it("a value that would take the file past 256 KB (in bytes) is refused; the previous file and every reader keep working", () => {
+  it("a value that would take the file past 256 KB (in bytes) is refused; the previous file and every reader keep working; the SDK's settings option refuses the same object with the same line", async () => {
     const h = newHome();
     const { installId } = install(h);
     const long = JSON.stringify("€".repeat(30_000));
@@ -747,6 +749,15 @@ describe("settings file size (review #11)", { timeout: 60_000 }, () => {
     expect(
       readFileSync(join(plugins(h), "plugin-state", installId, "settings.json"))
     ).toEqual(file);
+    const value = JSON.parse(long) as string;
+    const viaDev = await devRun(devPlugin(LAB, "setting", "99.0.0"), {
+      input: { key: "note1" },
+      settings: { note1: value, note2: value, note3: value },
+    }).then(
+      () => undefined,
+      (error: unknown) => JSON.parse(errorJson(errorDetails(error)))
+    );
+    expect(viaDev).toEqual(r.json);
     const got = cli(h, ["plugin", "settings", "get", "net-lab", "--json"]);
     expect(got.code, got.err).toBe(0);
     expect(

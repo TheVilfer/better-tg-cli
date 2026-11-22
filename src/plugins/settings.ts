@@ -41,3 +41,26 @@ export function checkSettingValue(
     );
   }
 }
+
+/** The most a settings file may hold (what settingsRead reads), checked before every write. */
+export const SETTINGS_BYTES = 256 * 1024;
+
+/** The settings as the file holds them (compact JSON), or `settings_too_large` (exit 2) past SETTINGS_BYTES. */
+export function settingsText(
+  name: string,
+  all: Record<string, unknown>
+): string {
+  const text = JSON.stringify(all);
+  const bytes = Buffer.byteLength(text, "utf-8");
+  if (bytes > SETTINGS_BYTES) {
+    throw new CliError(
+      `The settings of "${name}" would take ${bytes} bytes; the limit is ${SETTINGS_BYTES}`,
+      "settings_too_large",
+      EXIT.USAGE,
+      {
+        hint: `Use a shorter value, or shorten another setting first: telegram plugin settings get ${name}`,
+      }
+    );
+  }
+  return text;
+}

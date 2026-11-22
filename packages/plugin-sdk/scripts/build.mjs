@@ -2,10 +2,14 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -16,8 +20,21 @@ import { shrink } from "../../../scripts/bundle-shrink.mjs";
 
 const pkg = resolve(import.meta.dirname, "..");
 const repo = resolve(pkg, "../..");
+const own = join(pkg, "dist");
 const outArg = process.argv[2];
-const out = outArg ? resolve(outArg) : join(pkg, "dist");
+const out = outArg ? resolve(outArg) : own;
+
+function emptyFolder(path) {
+  const st = lstatSync(path);
+  return st.isDirectory() && readdirSync(path).length === 0;
+}
+
+if (out !== own && existsSync(out) && !emptyFolder(out)) {
+  console.error(
+    `${out} exists and is not an empty folder: the SDK builds into packages/plugin-sdk/dist, or into a new or empty folder, and never replaces anything else`
+  );
+  process.exit(2);
+}
 const stage = mkdtempSync(join(dirname(out), ".sdk-build-"));
 
 const PUBLIC_TYPES = [
@@ -92,7 +109,11 @@ try {
     text.startsWith("#!") ? text : `#!/usr/bin/env bun\n${text}`
   );
   chmodSync(bin, 0o755);
-  rmSync(out, { recursive: true, force: true });
+  if (out === own) {
+    rmSync(out, { recursive: true, force: true });
+  } else if (existsSync(out)) {
+    rmdirSync(out);
+  }
   renameSync(stage, out);
   chmodSync(out, 0o755);
 } finally {

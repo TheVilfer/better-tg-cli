@@ -37,6 +37,7 @@ function notImplemented(what: string): never {
 export class MockClient {
   readonly connected = true;
   readonly session = { save: () => "" };
+  private historyReads = 0;
 
   constructor(
     readonly world: MockWorld,
@@ -600,7 +601,7 @@ export class MockClient {
         return m ? this.message(chat, m) : undefined;
       });
     }
-    mockHistoryFlood();
+    mockHistoryFlood(this.historyReads++);
     let list = this.newest(chat);
     if (params.filter?.className === "InputMessagesFilterPinned") {
       list = list.filter((m) => m.pinned);
@@ -2160,16 +2161,9 @@ export function createMockClient(path = mockStatePath()): TelegramClient {
   ) as unknown as TelegramClient;
 }
 
-let historyCalls = 0;
-
-/** Tests: start counting history reads for TG_MOCK_FLOOD_HISTORY again. */
-export function resetMockHistoryFlood(): void {
-  historyCalls = 0;
-}
-
-function mockHistoryFlood(): void {
+function mockHistoryFlood(readsBefore: number): void {
   const m = /^(\d+):(\d+)$/.exec(process.env.TG_MOCK_FLOOD_HISTORY ?? "");
-  if (!m || historyCalls++ < Number(m[1])) {
+  if (!m || readsBefore < Number(m[1])) {
     return;
   }
   throw Object.assign(new Error(`RPCError 420: FLOOD_WAIT_${m[2]}`), {

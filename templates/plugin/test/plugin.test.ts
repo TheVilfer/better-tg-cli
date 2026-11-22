@@ -44,6 +44,34 @@ describe("my-plugin", () => {
     expect(r.data.cursor).toMatch(/^[\w-]{22}$/);
   });
 
+  it("summary turns a flood_wait after part of a page into a page of what was read", async () => {
+    const all = await runCommand<Summary>(
+      dir,
+      "summary",
+      { limit: 100, types: ["private", "group"] },
+      mock
+    );
+    process.env.TG_MOCK_FLOOD_HISTORY = "1:7";
+    let r: Awaited<ReturnType<typeof runCommand<Summary>>>;
+    try {
+      r = await runCommand<Summary>(
+        dir,
+        "summary",
+        { limit: 100, types: ["private", "group"] },
+        mock
+      );
+    } finally {
+      delete process.env.TG_MOCK_FLOOD_HISTORY;
+    }
+    expect(r.data.retryAfterSeconds).toBe(7);
+    expect(r.data.done).toBe(false);
+    expect(r.data.cursor).toMatch(/^[\w-]{22}$/);
+    expect(r.data.count).toBeGreaterThan(0);
+    expect(r.data.count).toBeLessThan(all.data.count);
+    expect(r.data.remaining).toBe(100 - r.data.count);
+    expect(r.data.byType.private + r.data.byType.group).toBe(r.data.count);
+  });
+
   it("summary quotes as many messages as the setting says", async () => {
     const r = await runCommand<Summary>(
       dir,

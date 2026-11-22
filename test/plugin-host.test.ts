@@ -1,7 +1,7 @@
 import type { TelegramClient } from "teleproto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MockClient, resetMockHistoryFlood } from "../src/mock/client.js";
+import { MockClient } from "../src/mock/client.js";
 import { seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { grantedApi, PAGE_CHARS } from "../src/plugins/host.js";
@@ -144,7 +144,6 @@ const texts = (v: unknown) => JSON.stringify(v);
 
 afterEach(() => {
   delete process.env.TG_MOCK_FLOOD_HISTORY;
-  resetMockHistoryFlood();
 });
 
 describe("host API: grants", () => {
@@ -413,7 +412,6 @@ describe("host API: messages.mine pages and cursor", () => {
       types: ["private", "group"],
     });
     process.env.TG_MOCK_FLOOD_HISTORY = "1:7";
-    resetMockHistoryFlood();
     const { call, state } = setup({ w });
     let error:
       | {

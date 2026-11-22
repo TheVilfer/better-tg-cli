@@ -16,7 +16,7 @@ import {
 import type { RunOutcome } from "./run.js";
 import { anchor } from "./safe-fs.js";
 import { secretValueProblem } from "./secrets.js";
-import { checkSettingValue } from "./settings.js";
+import { checkSettingValue, settingsText } from "./settings.js";
 import { readLocalSnapshot } from "./source.js";
 
 /** The installation ID `plugin dev` runs under: cursors are bound to it and live in memory. */
@@ -37,7 +37,7 @@ export interface DevPlugin {
  * One `plugin dev --mock` run, shared by the CLI and the plugin SDK's test host so both check and run
  * a command the same way. Without `settings`, `secrets` and `fixtures` it is exactly `plugin dev`.
  *
- * - `settings`: Stored settings (the test host's option), each checked as `plugin settings set` checks it.
+ * - `settings`: Stored settings (the test host's option), each value and their total size checked as `plugin settings set` checks them.
  * - `secrets`: Secret values instead of the `dev-secret-<name>` placeholders; `null` is a secret not set.
  * - `fixtures`: More HTTP fixtures in the `dev/fixtures` format, matched before the folder's own.
  */
@@ -119,6 +119,7 @@ export async function devRun(
     checkSettingValue(m, key, value);
     stored[key] = value;
   }
+  settingsText(m.name, stored);
   const secret = devSecrets(
     (m.secrets ?? []).map((s) => s.name),
     req.secrets

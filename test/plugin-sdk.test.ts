@@ -2,11 +2,13 @@ import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +17,10 @@ import { pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  checkBundle,
+  withoutModuleMarkers,
+} from "../packages/plugin-sdk/src/bundle-check.js";
 import { MANIFEST_SCHEMAS } from "../src/plugins/manifest-schemas.js";
 import { schemaUrl, SPEC_VERSION } from "../src/plugins/manifest.js";
 import { cliArgs } from "./cli.js";
@@ -50,6 +56,7 @@ function bun(args: string[], cwd = process.cwd()) {
     cwd,
     encoding: "utf-8",
     shell: process.platform === "win32",
+    env: env(),
   });
 }
 
@@ -396,16 +403,39 @@ const CASES: Case[] = [
   ],
   ["template: summary with a cursor", TEMPLATE, "summary", { limit: 2 }],
   ["template: summary input refused", TEMPLATE, "summary", { limit: 0 }],
+  [
+    "template: a target, which it has no permission for",
+    TEMPLATE,
+    "summary",
+    { limit: 10 },
+    "@mock_owner:1",
+  ],
   ["template: define", TEMPLATE, "define", { word: "plugin" }],
   ["template: define, 404", TEMPLATE, "define", { word: "zzz" }],
   ["template: define without a fixture", TEMPLATE, "define", { word: "other" }],
   [
-    "flood_wait with the cursor to go on from",
+    "template: flood_wait before anything was read, as a page to go on from",
     TEMPLATE,
     "summary",
     { limit: 100 },
     undefined,
     { TG_MOCK_FLOOD_HISTORY: "0:9" },
+  ],
+  [
+    "template: flood_wait after a partial page, counted",
+    TEMPLATE,
+    "summary",
+    { limit: 100, types: ["private", "group"] },
+    undefined,
+    { TG_MOCK_FLOOD_HISTORY: "1:9" },
+  ],
+  [
+    "flood_wait of messages.mine with the cursor and what was read",
+    LAB,
+    "probe",
+    lab("mine", [{ limit: 2000, types: ["private", "group"] }]),
+    undefined,
+    { TG_MOCK_FLOOD_HISTORY: "1:9" },
   ],
   [
     "flood_wait of messages.read",
@@ -633,6 +663,96 @@ describe("the SDK's own options", { timeout: 60_000 }, () => {
     );
     expect(e).toMatchObject({ code: "invalid_argument", exitCode: 2 });
   });
+
+  it("review #6: a target is refused unless the plugin has messages:read-target, in plugin dev and the SDK alike", async () => {
+    const message =
+      'Plugin "my-plugin" reads no target (it lacks the permission messages:read-target); drop --target';
+    const e = await fails(
+      sdk.runCommand(
+        TEMPLATE,
+        "summary",
+        { limit: 10 },
+        {
+          mock: true,
+          target: "@mock_owner:1",
+        }
+      )
+    );
+    expect(e).toMatchObject({ code: "invalid_argument", exitCode: 2, message });
+    const fromCli = viaCli(TEMPLATE, "summary", { limit: 10 }, "@mock_owner:1");
+    expect(fromCli.code).toBe(2);
+    expect(JSON.parse(fromCli.line).error.message).toBe(message);
+  });
+
+  it("review #11: settings past the 256 KiB a settings file may hold are refused as plugin settings set refuses them", async () => {
+    const e = await fails(
+      sdk.runCommand(LAB, "probe", lab("setting", ["tone"]), {
+        mock: true,
+        settings: { tone: "x".repeat(256 * 1024 + 1) },
+      })
+    );
+    expect(e).toMatchObject({ code: "settings_too_large", exitCode: 2 });
+    expect(e.message).toBe(
+      `The settings of "sandbox-lab" would take ${256 * 1024 + 12} bytes; the limit is ${256 * 1024}`
+    );
+    const fits = await sdk.runCommand(LAB, "probe", lab("me"), {
+      mock: true,
+      settings: { tone: "x".repeat(256 * 1024 - 11) },
+    });
+    expect(fits.data).toMatchObject({ op: "me" });
+  });
+
+  it("review #7: each run starts the mock account afresh, one after another and side by side", async () => {
+    const input = lab("mine", [{ limit: 2000, types: ["private", "group"] }]);
+    const flood = { TG_MOCK_FLOOD_HISTORY: "1:9" };
+    const fromCli = viaCli(LAB, "probe", input, undefined, flood);
+    expect(fromCli.line).toContain('"flood_wait"');
+    const first = await viaSdk(LAB, "probe", input, undefined, flood);
+    const second = await viaSdk(LAB, "probe", input, undefined, flood);
+    expect(stable(first.line)).toBe(stable(fromCli.line));
+    expect(stable(second.line)).toBe(stable(fromCli.line));
+    process.env.TG_MOCK_FLOOD_HISTORY = flood.TG_MOCK_FLOOD_HISTORY;
+    try {
+      const lines = await Promise.all(
+        [1, 2, 3].map(() =>
+          sdk.runCommand(LAB, "probe", input, { mock: true }).then(
+            () => "no error",
+            (error: SdkError) => error.json()
+          )
+        )
+      );
+      expect(lines.map(stable)).toEqual(
+        [1, 2, 3].map(() => stable(fromCli.line))
+      );
+    } finally {
+      delete process.env.TG_MOCK_FLOOD_HISTORY;
+    }
+  });
+
+  it("review #8: importing the test host and running a command leave the process's globals alone", () => {
+    expect(readFileSync(join(out, "test.mjs"), "utf-8")).not.toContain(
+      "localStorage"
+    );
+    const script = [
+      "const sentinel = { mine: true };",
+      'Object.defineProperty(globalThis, "localStorage", { value: sentinel, configurable: true, writable: true, enumerable: false });',
+      "const before = Reflect.ownKeys(globalThis).map(String).sort().join();",
+      `const sdk = await import(${JSON.stringify(pathToFileURL(join(out, "test.mjs")).href)});`,
+      'if (globalThis.localStorage !== sentinel) throw new Error("gone after import");',
+      `const r = await sdk.runCommand(${JSON.stringify(LAB)}, "probe", { op: "me" }, { mock: true });`,
+      'if (globalThis.localStorage !== sentinel) throw new Error("gone after runCommand");',
+      "const after = Reflect.ownKeys(globalThis).map(String).sort().join();",
+      "if (before !== after) throw new Error(`globals changed: ${before} -> ${after}`);",
+      "console.log(JSON.stringify(r.data));",
+    ].join("\n");
+    const r = spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      { encoding: "utf-8", env: env() }
+    );
+    expect(r.status, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ op: "me" });
+  });
 });
 
 describe("the SDK build", { timeout: 120_000 }, () => {
@@ -674,37 +794,175 @@ describe("the SDK build", { timeout: 120_000 }, () => {
     expect(built).not.toContain("// src/plugin.ts");
   });
 
-  it("a bundle that still imports a module, or exports no commands, is refused", () => {
-    const dir = join(root, "builds");
+  it("review #5: a template line equal to Bun's marker of the entry stays, and the command returns it", async () => {
+    const dir = join(root, "marker");
     mkdirSync(join(dir, "src"), { recursive: true });
-    const write = (name: string, text: string) =>
-      spawnSync(process.execPath, [
-        "-e",
-        `require("fs").writeFileSync(${JSON.stringify(join(dir, "src", name))}, ${JSON.stringify(text)})`,
-      ]);
-    write(
-      "fs.ts",
-      'import { readFileSync } from "node:fs";\nexport const commands = { a: () => readFileSync };\n'
+    const text = "before\n// src/plugin.ts\nafter";
+    writeFileSync(
+      join(dir, "src", "plugin.ts"),
+      `const s = \`${text}\`;\nexport const commands = { a: () => s };\n`
     );
-    write("none.ts", "export const other = 1;\n");
-    const fsBuild = bun([
-      join(out, "bin.mjs"),
-      "build",
-      dir,
-      "--entry",
-      "src/fs.ts",
-    ]);
-    expect(fsBuild.status).toBe(1);
-    expect(fsBuild.stderr).toContain("imports node:fs");
-    const none = bun([
-      join(out, "bin.mjs"),
-      "build",
-      dir,
-      "--entry",
-      "src/none.ts",
-    ]);
-    expect(none.status).toBe(1);
-    expect(none.stderr).toContain("does not export `commands`");
+    const r = bun([join(out, "bin.mjs"), "build", "."], dir);
+    expect(r.status, r.stderr).toBe(0);
+    const built = readFileSync(join(dir, "dist", "plugin.js"), "utf-8");
+    expect(
+      built.split("\n").filter((l) => l === "// src/plugin.ts")
+    ).toHaveLength(1);
+    const mod = (await import(
+      `${pathToFileURL(join(dir, "dist", "plugin.js")).href}?v=1`
+    )) as { commands: { a(): string } };
+    expect(mod.commands.a()).toBe(text);
+    expect(
+      withoutModuleMarkers(
+        `// src/plugin.ts\nvar s = \`x\n// src/plugin.ts\ny\`;\n`,
+        ["src/plugin.ts"]
+      )
+    ).toBe("var s = `x\n// src/plugin.ts\ny`;\n");
+  });
+
+  it("review #4: the bundle must parse as ES2023, load no module and export commands", () => {
+    const refused: [string, RegExp][] = [
+      ['import x from "y";\nexport const commands = {};', /import from "y"/],
+      ['export * from "y";\nexport const commands = {};', /export \* from "y"/],
+      [
+        'export { a } from "y";\nexport const commands = {};',
+        /export from "y"/,
+      ],
+      ["export const commands = { a: (n) => import(n) };", /import\(\)/],
+      ["export const commands = { a: (n) => require(n) };", /require/],
+      [
+        "var r = typeof require !== 'undefined' ? require : null;\nexport const commands = { r };",
+        /require/,
+      ],
+      ["export const commands = { a: () => /a/v.test('a') };", /not ES2023/],
+      ["const commands = {};\nexport { commands as other };", /exports other/],
+      ["export const other = 1;", /does not export `commands`/],
+    ];
+    for (const [code, error] of refused) {
+      expect(() => checkBundle(code), code).toThrow(error);
+    }
+    expect(
+      checkBundle(
+        "const o = { require: 1 };\nvar { commands } = { commands: { a: () => o.require } };\nexport { commands };"
+      )
+    ).toEqual(["commands"]);
+    expect(
+      checkBundle("export const { commands } = { commands: {} };")
+    ).toEqual(["commands"]);
+  });
+
+  it("review #4: tg-plugin build refuses what QuickJS could not run", () => {
+    const dir = join(root, "unrunnable");
+    mkdirSync(join(dir, "src"), { recursive: true });
+    const sources: Record<string, string> = {
+      "dynamic.ts":
+        "export const commands = { a: (name: string) => import(name) };\n",
+      "renamed.ts": "const commands = {};\nexport { commands as other };\n",
+      "asset.ts":
+        'import png from "./a.png";\nexport const commands = { a: () => png };\n',
+      "regex.ts": "export const commands = { a: () => /a/v.test('a') };\n",
+    };
+    writeFileSync(join(dir, "src", "a.png"), "PNG");
+    for (const [name, text] of Object.entries(sources)) {
+      writeFileSync(join(dir, "src", name), text);
+    }
+    const build = (entry: string) =>
+      bun([join(out, "bin.mjs"), "build", dir, "--entry", `src/${entry}`]);
+    const expected: Record<string, string> = {
+      "dynamic.ts": "import()",
+      "renamed.ts": "does not export `commands`",
+      "asset.ts": "one JavaScript file",
+      "regex.ts": "not ES2023",
+    };
+    for (const [entry, message] of Object.entries(expected)) {
+      const r = build(entry);
+      expect(r.status, `${entry}: ${r.stdout}`).toBe(1);
+      expect(r.stderr, entry).toContain(message);
+    }
+    expect(existsSync(join(dir, "dist"))).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "review #3: the output is never written through a link",
+    () => {
+      const outside = join(root, "outside");
+      mkdirSync(outside, { recursive: true });
+      const victim = join(outside, "plugin.js");
+      writeFileSync(victim, "keep me");
+      const make = (name: string) => {
+        const dir = join(root, name);
+        mkdirSync(join(dir, "src"), { recursive: true });
+        writeFileSync(
+          join(dir, "src", "plugin.ts"),
+          "export const commands = { a: () => 1 };\n"
+        );
+        return dir;
+      };
+      const linkedDir = make("linked-dist");
+      symlinkSync(outside, join(linkedDir, "dist"), "dir");
+      const linkedFile = make("linked-file");
+      mkdirSync(join(linkedFile, "dist"));
+      symlinkSync(victim, join(linkedFile, "dist", "plugin.js"), "file");
+      for (const dir of [linkedDir, linkedFile]) {
+        const r = bun([join(out, "bin.mjs"), "build", dir]);
+        expect(r.status, dir).toBe(1);
+        expect(r.stderr).toContain("never through a link");
+        expect(readFileSync(victim, "utf-8")).toBe("keep me");
+      }
+      expect(
+        lstatSync(join(linkedFile, "dist", "plugin.js")).isSymbolicLink()
+      ).toBe(true);
+    }
+  );
+
+  it("review #2: the SDK build replaces only its own dist; another folder must be new or empty", () => {
+    const busy = join(root, "busy");
+    mkdirSync(busy, { recursive: true });
+    writeFileSync(join(busy, "keep.txt"), "mine");
+    const r = bun([join(SDK, "scripts", "build.mjs"), busy]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("is not an empty folder");
+    expect(readFileSync(join(busy, "keep.txt"), "utf-8")).toBe("mine");
+    expect(
+      readdirSync(root).filter((f) => f.startsWith(".sdk-build-"))
+    ).toEqual([]);
+  });
+
+  it("review #10: plugin code typechecks as ES2023 alone (no setTimeout), the tests separately", () => {
+    const copy = join(resolve(".test-cli"), `template-types-${process.pid}`);
+    rmSync(copy, { recursive: true, force: true });
+    try {
+      for (const f of ["src", "test", "tsconfig.json", "tsconfig.test.json"]) {
+        cpSync(join(TEMPLATE, f), join(copy, f), { recursive: true });
+      }
+      const installed = join(copy, "node_modules", "@better-tg", "plugin-sdk");
+      cpSync(join(SDK, "package.json"), join(installed, "package.json"));
+      cpSync(out, join(installed, "dist"), { recursive: true });
+      const tsc = (config: string) =>
+        spawnSync(resolve("node_modules", ".bin", "tsc"), ["-p", config], {
+          cwd: copy,
+          encoding: "utf-8",
+          env: env(),
+          shell: process.platform === "win32",
+        });
+      writeFileSync(
+        join(copy, "test", "vitest-types.ts"),
+        'import type {} from "vitest/config";\n'
+      );
+      for (const config of ["tsconfig.json", "tsconfig.test.json"]) {
+        const ok = tsc(config);
+        expect(ok.status, config + ok.stdout).toBe(0);
+      }
+      writeFileSync(
+        join(copy, "src", "timer.ts"),
+        "export const later = () => setTimeout(() => undefined, 1);\n"
+      );
+      const bad = tsc("tsconfig.json");
+      expect(bad.status).not.toBe(0);
+      expect(bad.stdout).toContain("Cannot find name 'setTimeout'");
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
   });
 
   it("the public types reach nothing outside the SDK, and the built code has no comments a plugin would inherit", () => {
@@ -738,4 +996,77 @@ describe("the SDK build", { timeout: 120_000 }, () => {
     }
     expect(text).toContain(`SPEC_VERSION = "${SPEC_VERSION}"`);
   });
+});
+
+describe("review #12: the template's CI refuses a commit without dist/plugin.js", () => {
+  const workflow = readFileSync(
+    join(TEMPLATE, ".github", "workflows", "ci.yml"),
+    "utf-8"
+  );
+  const step =
+    /- name: dist\/plugin\.js is committed and matches the source\n(?:\s+#.*\n)*\s+run: \|\n((?:\s{10}.*\n)+)/.exec(
+      workflow
+    );
+  const script = (step?.[1] ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join("\n");
+
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync(
+      "git",
+      ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args],
+      { cwd, encoding: "utf-8", env: { ...env(), GIT_CONFIG_NOSYSTEM: "1" } }
+    );
+    expect(r.status, r.stderr).toBe(0);
+  };
+  const check = (cwd: string) =>
+    spawnSync("sh", ["-c", script], {
+      cwd,
+      encoding: "utf-8",
+      env: { ...env(), GIT_CONFIG_NOSYSTEM: "1" },
+    });
+  const repo = (name: string, commitDist: boolean) => {
+    const dir = join(root, `ci-${name}`);
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    writeFileSync(join(dir, "README.md"), "x\n");
+    git(dir, "init", "-q");
+    if (commitDist) {
+      writeFileSync(
+        join(dir, "dist", "plugin.js"),
+        "export const commands = {};\n"
+      );
+    }
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "init");
+    writeFileSync(
+      join(dir, "dist", "plugin.js"),
+      "export const commands = {};\n"
+    );
+    return dir;
+  };
+
+  it.skipIf(process.platform === "win32")(
+    "untracked, changed and clean",
+    () => {
+      expect(script).toContain(
+        "git ls-files --error-unmatch -- dist/plugin.js"
+      );
+      expect(script).toContain("git diff --exit-code HEAD -- dist/plugin.js");
+      const untracked = check(repo("untracked", false));
+      expect(untracked.status).not.toBe(0);
+      expect(untracked.stdout).toContain("is not in git");
+      const changedDir = repo("changed", true);
+      writeFileSync(
+        join(changedDir, "dist", "plugin.js"),
+        "export const commands = { a() {} };\n"
+      );
+      const changed = check(changedDir);
+      expect(changed.status).not.toBe(0);
+      expect(changed.stdout).toContain("commit dist/plugin.js");
+      const clean = check(repo("clean", true));
+      expect(clean.status, clean.stdout + clean.stderr).toBe(0);
+    }
+  );
 });

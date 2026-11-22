@@ -52,7 +52,7 @@ import {
   devLog,
   findCommand,
   parseInput,
-  parseTarget,
+  pluginTarget,
   runPluginCommand,
 } from "../plugins/run.js";
 import type { NetworkStats, RunOutcome } from "../plugins/run.js";
@@ -910,12 +910,7 @@ const runCommand = runOptions(
     assertExpectedInstall(entry);
     const m = loaded.manifest;
     const c = findCommand(m, cmd);
-    const target = parseTarget(options.target, !!options.thread);
-    if (target && !(m.permissions ?? []).includes("messages:read-target")) {
-      throw usageError(
-        `Plugin "${name}" reads no target (it lacks the permission messages:read-target); drop --target`
-      );
-    }
+    const target = pluginTarget(m, options.target, !!options.thread);
     const fromStdin = options.input === "-";
     const input = parseInput(
       fromStdin ? stdinBody(readStdinOnce()) : options.input
@@ -1054,7 +1049,11 @@ const devCommand = runOptions(
         );
       }
       const plugin = devPlugin(dir, cmd, cliVersion());
-      const target = parseTarget(options.target, !!options.thread);
+      const target = pluginTarget(
+        plugin.manifest,
+        options.target,
+        !!options.thread
+      );
       const input = parseInput(
         options.input === "-" ? stdinBody(readStdinOnce()) : options.input
       );
@@ -1208,7 +1207,10 @@ function declaredSecret(m: Manifest, secret: string) {
   return d;
 }
 
-function retryPendingSecrets(): void {
+function retryPendingSecrets(_plugin: Command, action: Command): void {
+  if (action === validateCommand || action === devCommand) {
+    return;
+  }
   try {
     if (pendingSecrets().length) {
       cleanupPendingSecrets();

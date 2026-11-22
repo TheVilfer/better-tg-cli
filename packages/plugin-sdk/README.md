@@ -39,9 +39,12 @@ bunx tg-plugin build [dir] [--entry src/plugin.ts] [--outfile dist/plugin.js]
 
 It bundles the entry and everything it imports into one ES module without imports, written to the
 manifest's `main`. A Node or Bun built-in is never polyfilled: the build fails, because the sandbox
-has no modules. The syntax and strings are kept as written (QuickJS runs ES2023), and the output is
-the same on every machine for the same Bun version, so CI can check that the committed file matches
-the source. The build runs under [Bun](https://bun.sh).
+has no modules. The syntax and strings are kept as written, and the output is the same on every
+machine for the same Bun version, so CI can check that the committed file matches the source. The
+build fails unless the result is one JavaScript file that parses as ES2023 (what QuickJS runs),
+loads no module (`import`, `export … from`, `import()`, `require`) and exports `commands`. It writes
+only a real file inside the plugin folder, never through a symbolic link. The build runs under
+[Bun](https://bun.sh).
 
 ## Test
 
@@ -63,10 +66,15 @@ limits, the built-in mock account, cursors in memory and HTTP from the folder's
 
 - `mock: true` (required);
 - `fixtures`: more HTTP fixtures in the `dev/fixtures` format, matched first;
-- `settings`: stored settings, checked as `plugin settings set` checks them;
+- `settings`: stored settings, checked as `plugin settings set` checks them (each value, and 256 KiB
+  for all of them as JSON);
 - `secrets`: values instead of the `dev-secret-<name>` placeholders, or `null` for a secret not set;
-- `target` and `thread`: as `--target` and `--thread`;
+- `target` and `thread`: as `--target` and `--thread` (refused unless the plugin has
+  `messages:read-target`);
 - `log`: gets each `host.log` line.
+
+Each run starts with a fresh mock account, as each `plugin dev` process does, and importing the
+test host changes no global of your test process.
 
 `CLI_VERSION` is the Better-TG-CLI version whose checks the SDK carries; `engines.better-tg-cli` is
 matched against it.

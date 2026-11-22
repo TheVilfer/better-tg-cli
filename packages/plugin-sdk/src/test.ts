@@ -1,7 +1,6 @@
-import "../../../src/env.js";
 import { errorDetails, errorJson, usageError } from "../../../src/errors.js";
 import { devPlugin, devRun } from "../../../src/plugins/dev.js";
-import { parseTarget } from "../../../src/plugins/run.js";
+import { pluginTarget } from "../../../src/plugins/run.js";
 import { readLocalSnapshot } from "../../../src/plugins/source.js";
 import { VERSION } from "../../../src/version.js";
 import type { Proposal } from "./host.js";
@@ -130,7 +129,11 @@ export async function runCommand<D = unknown>(
       );
     }
     const plugin = devPlugin(dir, command, CLI_VERSION);
-    const target = parseTarget(options.target, !!options.thread);
+    const target = pluginTarget(
+      plugin.manifest,
+      options.target,
+      !!options.thread
+    );
     const outcome = await devRun(plugin, {
       input: jsonInput(input),
       target,

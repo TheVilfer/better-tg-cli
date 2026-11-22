@@ -7,13 +7,14 @@
   "type": "module",
   "scripts": {
     "build": "tg-plugin build",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "validate": "telegram plugin validate .",
     "dev": "telegram plugin dev . summary --mock --input '{\"limit\":20}'"
   },
   "devDependencies": {
     "@better-tg/plugin-sdk": "file:../../packages/plugin-sdk",
+    "@types/node": "^26.6.2",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"
   }
