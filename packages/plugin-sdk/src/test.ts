@@ -1,6 +1,7 @@
 import { errorDetails, errorJson, usageError } from "../../../src/errors.js";
 import { devPlugin, devRun } from "../../../src/plugins/dev.js";
-import { pluginTarget } from "../../../src/plugins/run.js";
+import type { CursorStore } from "../../../src/plugins/host.js";
+import { memoryCursors, pluginTarget } from "../../../src/plugins/run.js";
 import { readLocalSnapshot } from "../../../src/plugins/source.js";
 import { VERSION } from "../../../src/version.js";
 import type { Proposal } from "./host.js";
@@ -22,7 +23,8 @@ export interface HttpFixture {
 
 /**
  * How the test host runs a command: what `telegram plugin dev <dir> <cmd> --mock` does, plus what a
- * test may set. Telegram is the built-in mock account, storage starts empty, cursors live in memory.
+ * test may set. Telegram is the built-in mock account, storage starts empty, cursors live in memory
+ * (for the run alone; createTestHost keeps them between runs).
  *
  * - `mock`: Must be `true`, as `plugin dev` runs only with `--mock`.
  * - `fixtures`: HTTP fixtures matched before the folder's `dev/fixtures/*.json`.
@@ -110,23 +112,19 @@ function jsonInput(input: unknown): unknown {
   return JSON.parse(text);
 }
 
-/**
- * Runs one command of a plugin folder in the same QuickJS sandbox, with the same checks, mock
- * account and HTTP fixtures as `telegram plugin dev <dir> <command> --mock`, and gives the same
- * `{data, proposals}` (null fields kept). A failure throws PluginRunError with the CLI's code.
- * The folder's `main` (usually `dist/plugin.js`) runs: build it first.
- */
-export async function runCommand<D = unknown>(
+const mockOnly = () =>
+  usageError("The test host runs only on mock data: pass { mock: true }");
+
+async function runOnce<D>(
   dir: string,
   command: string,
   input: unknown,
-  options: RunCommandOptions
+  options: RunCommandOptions,
+  cursorsOf?: (plugin: string) => CursorStore
 ): Promise<CommandResult<D>> {
   try {
     if (options?.mock !== true) {
-      throw usageError(
-        "The test host runs only on mock data: pass { mock: true }"
-      );
+      throw mockOnly();
     }
     const plugin = devPlugin(dir, command, CLI_VERSION);
     const target = pluginTarget(
@@ -140,6 +138,7 @@ export async function runCommand<D = unknown>(
       settings: options.settings,
       secrets: options.secrets,
       fixtures: options.fixtures,
+      ...(cursorsOf ? { cursors: cursorsOf(plugin.manifest.name) } : {}),
       log: options.log ?? (() => undefined),
       signal: options.signal,
     });
@@ -148,6 +147,76 @@ export async function runCommand<D = unknown>(
   } catch (error) {
     throw asError(error);
   }
+}
+
+/**
+ * Runs one command of a plugin folder in the same QuickJS sandbox, with the same checks, mock
+ * account and HTTP fixtures as `telegram plugin dev <dir> <command> --mock`, and gives the same
+ * `{data, proposals}` (null fields kept). A failure throws PluginRunError with the CLI's code.
+ * The folder's `main` (usually `dist/plugin.js`) runs: build it first. Its cursors end with the run,
+ * as in `plugin dev`; to continue from one, use createTestHost.
+ */
+export function runCommand<D = unknown>(
+  dir: string,
+  command: string,
+  input: unknown,
+  options: RunCommandOptions
+): Promise<CommandResult<D>> {
+  return runOnce<D>(dir, command, input, options);
+}
+
+/** What one run of a TestHost may change: every option of RunCommandOptions except `mock`. */
+export type TestRunOptions = Omit<RunCommandOptions, "mock">;
+
+/**
+ * Runs that share cursors: a cursor (or a `flood_wait`'s cursor) one run hands out continues in the
+ * next, so a second page or a resume can be tested.
+ *
+ * - `run`: runCommand with the host's options, then `options` over them.
+ */
+export interface TestHost {
+  run<D = unknown>(
+    dir: string,
+    command: string,
+    input: unknown,
+    options?: TestRunOptions
+  ): Promise<CommandResult<D>>;
+}
+
+/**
+ * A test host whose runs keep the cursor store between them, one store per plugin, with the rules of
+ * an installation and `plugin dev`: random ids, 24 hours, the latest 64, bound to the account and to
+ * the plugin (another plugin's cursor is refused with `invalid_cursor`). Everything else starts afresh
+ * in each run, as in runCommand: the mock account, storage, settings.
+ */
+export function createTestHost(options: RunCommandOptions): TestHost {
+  if (options?.mock !== true) {
+    throw asError(mockOnly());
+  }
+  const stores = new Map<string, CursorStore>();
+  const cursorsOf = (plugin: string) => {
+    let store = stores.get(plugin);
+    if (!store) {
+      store = memoryCursors();
+      stores.set(plugin, store);
+    }
+    return store;
+  };
+  return {
+    run: <D>(
+      dir: string,
+      command: string,
+      input: unknown,
+      more: TestRunOptions = {}
+    ) =>
+      runOnce<D>(
+        dir,
+        command,
+        input,
+        { ...options, ...more, mock: true },
+        cursorsOf
+      ),
+  };
 }
 
 /** What `telegram plugin validate <dir> --json` prints for a valid plugin. */

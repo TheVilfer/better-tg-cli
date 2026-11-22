@@ -349,6 +349,32 @@ describe(
         all.json.data.messages.map((m: { text: string }) => m.text)
       );
     });
+
+    it("an invalid_cursor the command passes on keeps its code and the host's own message", () => {
+      const h = newHome();
+      install(h, TONE);
+      const collect = (input: unknown) =>
+        cli(h, [
+          "plugin",
+          "run",
+          "tone-of-voice",
+          "collect",
+          "--input",
+          JSON.stringify(input),
+          "--json",
+        ]);
+      const unknown = collect({ limit: 5, cursor: "AAAAAAAAAAAAAAAAAAAAAA" });
+      expect(unknown.code).toBe(1);
+      expect(unknown.json.error).toMatchObject({
+        code: "invalid_cursor",
+        message:
+          "cursor is unknown or expired (cursors last 24 hours); start again without one",
+      });
+      expect(collect({ limit: 5, cursor: "x" }).json.error).toMatchObject({
+        code: "invalid_cursor",
+        message: "cursor is not one this host returned",
+      });
+    });
   }
 );
 
@@ -361,6 +387,23 @@ describe(
 
     it("installs the lab", () => {
       labInstall = install(h, LAB);
+    });
+
+    it("an invalid_cursor or flood_wait the plugin throws itself is a plugin_error; the host's record wins", () => {
+      for (const code of ["invalid_cursor", "flood_wait"]) {
+        const forged = probe(h, "forge", [code, "made up"]);
+        expect(forged.code).toBe(1);
+        expect(forged.json.error.code).toBe("plugin_error");
+      }
+      const relabelled = probe(h, "mineThenForge", [
+        { cursor: "AAAAAAAAAAAAAAAAAAAAAA" },
+      ]);
+      expect(relabelled.json.error).toEqual({
+        code: "invalid_cursor",
+        message:
+          "cursor is unknown or expired (cursors last 24 hours); start again without one",
+        hint: "Run the command again without the cursor to start over.",
+      });
     });
 
     it("input is checked by the schema (exit 2) before anything runs; --input - reads stdin", () => {

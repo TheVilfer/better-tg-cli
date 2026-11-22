@@ -105,7 +105,7 @@ Limits: `tg-plugin.json` up to 64 KB, each file up to 1 MB, at most 200 files an
     "templates/style.md",
     "dist/plugin.js"
   ],
-  "permissions": ["messages:read-own", "storage:read"],
+  "permissions": ["messages:read-own"],
   "network": [],
   "secrets": [],
   "settings": {},
@@ -303,7 +303,8 @@ plugin data, so `plugin data` does not show it; removed with the plugin), so the
 which chats were walked and cannot change them. A cursor lasts 24 hours, an installation keeps the
 latest 64, and each page hands out a new one (an earlier cursor still repeats its page). An unknown,
 expired or malformed id, or one of another account or installation, fails with `invalid_cursor`. In
-`plugin dev` cursors live in memory, so one never continues in the next `plugin dev` run. The last
+`plugin dev` cursors live in memory, so one never continues in the next `plugin dev` run (the SDK's
+test host can keep them between its runs, section 11). The last
 page has `done: true` and `cursor: null`. A cancelled or timed-out run starts no further request.
 
 **Masking before the sandbox**, for every read API, in the shell and over MCP alike: messages from
@@ -318,11 +319,18 @@ continues right after `partial`, so nothing is lost or repeated. If the command 
 `plugin run` fails with the same `flood_wait`, `retryAfterSeconds`, `cursor` and `partial`, taken from
 the host's own record of the call, never from what the plugin threw.
 
+**`invalid_cursor`** is passed on the same way: if the command lets the host's `invalid_cursor`
+escape, `plugin run`, `plugin dev` and the SDK's test host fail with `invalid_cursor` (exit 1) and the
+host's own message (for example "cursor is unknown or expired (cursors last 24 hours); start again
+without one"), never the plugin's message or fields. An `invalid_cursor` or `flood_wait` the plugin
+makes up without the host raising one stays `plugin_error`.
+
 **Errors** reach the plugin as thrown `Error`s with `code`, `message` (masked) and their other fields
 (`retryAfterSeconds`, `cursor`, `partial`): the CLI's codes plus `permission_denied`,
 `invalid_argument`, `invalid_cursor`, `no_target`, `not_available` (the target is a message, not a thread, or the
 reverse), `not_found`, `invalid_proposal`. An error the command does not catch ends the run with
-`plugin_error`. **Logs**: `host.log(...)` exists only in `plugin dev` and appends to
+`plugin_error`, except a `flood_wait`, `invalid_cursor` or `secret_missing` the host itself raised,
+which keeps its code. **Logs**: `host.log(...)` exists only in `plugin dev` and appends to
 `<tmp>/better-tg-cli-plugin-dev/<name>.log`, never to the command's output or MCP.
 
 ## 6. Network and secrets
@@ -759,7 +767,8 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   `plugin_unsupported`, `plugin_not_found`, `plugin_exists`, `plugin_tampered`,
   `plugin_revision_mismatch`, `plugin_source_not_found`, `plugin_lock_invalid`, `plugin_limit`
   (a sandbox limit or the storage quota, named in `limit`), `plugin_error` (the command failed, or
-  its result broke the output schema), `cancelled`, `flood_wait`, `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
+  its result broke the output schema), `cancelled`, `flood_wait`, `invalid_cursor` (a cursor the host
+  refused, passed on by the command), `plugin_busy`, `plugin_changed`, `plugin_data_unsafe`, `secret_store_unavailable`,
   `dialog_failed` (the Windows dialog could not be shown; not the same as the human's No),
   `human_required`, `no_human_channel`, `not_confirmed`, `expect_required` (`plugin update` of a
   folder whose content changed, without `--expect`), `rate_limited` (GitHub API), `secret_missing`
@@ -798,7 +807,13 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
     total checked like `plugin settings set`), `secrets` (values instead of `dev-secret-<name>`,
     `null` for one not set), `target`/`thread` (refused without `messages:read-target`, as in
     `plugin run`) and a `log` callback. Each run starts with a fresh mock account, and importing it
-    changes no global of the test process. `validatePlugin(dir)` is `plugin validate --json`.
+    changes no global of the test process, and its cursors end with it, as in `plugin dev`.
+    `createTestHost({mock: true, …})` gives `host.run(dir, command, input, options?)` with the same
+    options, whose runs share one cursor store per plugin (random ids, 24 hours, the latest 64, bound
+    to the mock account and to the plugin, as an installation's): a second page, a resume from a
+    `flood_wait`'s cursor and an expired or foreign cursor (`invalid_cursor`) can be tested; the mock
+    account, storage and settings still start afresh in each run. `validatePlugin(dir)` is
+    `plugin validate --json`.
     `CLI_VERSION` is the CLI version whose checks the SDK carries.
 - **Template** ([`templates/plugin/`](../templates/plugin/README.md), to become the repository
   `TheVilfer/tg-plugin-template`): manifest, `SKILL.md`, a read command over `messages.mine` with a
@@ -816,13 +831,20 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
 
 ## 12. The official Tone of Voice plugin (coming, P6)
 
-- **Permissions:** `messages:read-own`, `storage:read`. No network, no other people's messages, no
-  `actions`: the agent's model writes the draft from the style document.
+- **Permissions:** `messages:read-own` only. No network, no other people's messages, no `actions`
+  and no `storage:*`: the plugin's code never reads the style; the agent reads it with
+  `plugin data get tone-of-voice style`, and the model writes the draft from it.
 - **Onboarding:** the agent asks for consent and how much to read (about 300 of the user's own
   messages from private chats by default); `plugin run tone-of-voice collect --input '{"limit":300}'`,
-  then further pages with `cursor` and `limit = remaining` until `remaining` is 0 or `done` (on
-  `flood_wait` it keeps the error's `partial`, lowers the remaining limit by its `count`, waits
-  `retryAfterSeconds` and goes on from the error's `cursor`); it fills the
+  then further pages with `cursor` and `limit = remaining` until `remaining` is 0 or `done`. A
+  continuation is `cursor` + `limit` only: `types` (and `since`) are fixed by the first page and kept
+  in the cursor, so passing them again changes nothing. A `flood_wait` after part of a page comes
+  back, as in the template, as a page: the messages read before it, `done: false`, the error's
+  `cursor` and `retryAfterSeconds`; the agent counts it, tells the user the wait and goes on from
+  that cursor only once the user agrees (never a loop of retries; a cursor lasts 24 hours). A
+  `flood_wait` before anything was read has no cursor and fails the run with `flood_wait`: the same
+  command again after the wait. An expired cursor fails with `invalid_cursor`: start without one. It
+  fills the
   template (`plugin show tone-of-voice --resource template`), shows the document and saves it with
   `plugin data set tone-of-voice style -`. On a read-only MCP server it cannot be saved: the agent says
   so and suggests onboarding where writes are allowed.

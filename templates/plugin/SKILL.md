@@ -16,9 +16,11 @@ When the user asks how much or how they write in Telegram:
 2. While `done` is false and `remaining` is above 0, run it again with the `cursor` it returned and
    `"limit"` set to `remaining`, and add each page to the totals the same way.
 3. A page with `retryAfterSeconds` holds what was read before Telegram asked to slow down: add it to
-   the totals like any page, wait that many seconds, then go on as in step 2 with its `cursor` and
-   `remaining`. If the command fails with `flood_wait` instead, nothing was counted: wait
-   `retryAfterSeconds` and run the same command again.
+   the totals like any page and tell the user the wait. Only if they agree to go on, wait that many
+   seconds, then continue as in step 2 with its `cursor` and `remaining`; never retry in a loop. If
+   the command fails with `flood_wait` instead, nothing was counted: tell the user the wait and, once
+   they agree, run the same command again after it. On `invalid_cursor` the cursor has expired: start
+   again without one.
 4. Tell the user the totals and quote the `samples` only if they asked to see examples.
 
 ## Define

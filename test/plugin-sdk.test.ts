@@ -45,6 +45,14 @@ interface SdkTest {
     options: Record<string, unknown>
   ): Promise<{ data: unknown; proposals: unknown[]; json: string }>;
   validatePlugin(dir: string): Record<string, unknown>;
+  createTestHost(options: Record<string, unknown>): {
+    run(
+      dir: string,
+      command: string,
+      input: unknown,
+      options?: Record<string, unknown>
+    ): Promise<{ data: unknown; proposals: unknown[]; json: string }>;
+  };
 }
 
 const root = mkdtempSync(join(tmpdir(), "tg-plugin-sdk-"));
@@ -276,6 +284,24 @@ const CASES: Case[] = [
     LAB,
     "probe",
     lab("mine", [{ cursor: "AAAAAAAAAAAAAAAAAAAAAA" }]),
+  ],
+  [
+    "a cursor this host never returned",
+    LAB,
+    "probe",
+    lab("mine", [{ cursor: "x" }]),
+  ],
+  [
+    "an invalid_cursor the plugin relabels keeps the host's message",
+    LAB,
+    "probe",
+    lab("mineThenForge", [{ cursor: "AAAAAAAAAAAAAAAAAAAAAA" }]),
+  ],
+  [
+    "an invalid_cursor the plugin makes up is a plugin_error",
+    LAB,
+    "probe",
+    lab("forge", ["invalid_cursor", "made up"]),
   ],
   ["chats", LAB, "probe", lab("chats", [{ limit: 3 }])],
   ["search", LAB, "probe", lab("search", ["Thursday"])],
@@ -515,6 +541,131 @@ describe("the SDK's own options", { timeout: 60_000 }, () => {
   it("runs only on mock data", async () => {
     const e = await fails(sdk.runCommand(LAB, "probe", lab("me"), {}));
     expect(e).toMatchObject({ code: "invalid_argument", exitCode: 2 });
+    expect(() => sdk.createTestHost({})).toThrow(
+      expect.objectContaining({
+        name: "PluginRunError",
+        code: "invalid_argument",
+      })
+    );
+  });
+
+  it("a cursor of runCommand ends with its run and reaches the caller as invalid_cursor", async () => {
+    const first = await sdk.runCommand(
+      LAB,
+      "probe",
+      lab("mine", [{ limit: 2 }]),
+      { mock: true }
+    );
+    const { cursor } = (first.data as { result: { cursor: string } }).result;
+    expect(cursor).toMatch(CURSOR);
+    const e = await fails(
+      sdk.runCommand(LAB, "probe", lab("mine", [{ cursor }]), { mock: true })
+    );
+    expect(e).toMatchObject({ code: "invalid_cursor", exitCode: 1 });
+    expect(e.body.message).toBe(
+      "cursor is unknown or expired (cursors last 24 hours); start again without one"
+    );
+  });
+
+  it("a test host keeps cursors between runs: the second page continues the first", async () => {
+    const both = ["private", "group"];
+    const page = (r: { data: unknown }) =>
+      (
+        r.data as {
+          result: {
+            messages: { text: string }[];
+            cursor: string | null;
+            done: boolean;
+          };
+        }
+      ).result;
+    const all = page(
+      await sdk.runCommand(
+        LAB,
+        "probe",
+        lab("mine", [{ limit: 2000, types: both }]),
+        { mock: true }
+      )
+    );
+    const host = sdk.createTestHost({ mock: true });
+    const texts: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const r = page(
+        await host.run(
+          LAB,
+          "probe",
+          lab("mine", [
+            cursor ? { limit: 2, cursor } : { limit: 2, types: both },
+          ])
+        )
+      );
+      texts.push(...r.messages.map((m) => m.text));
+      cursor = r.cursor;
+      pages += 1;
+    } while (cursor && pages < 50);
+    expect(pages).toBeGreaterThan(1);
+    expect(texts).toEqual(all.messages.map((m) => m.text));
+    const template = await host.run(TEMPLATE, "summary", { limit: 2 });
+    const next = (template.data as { cursor: string }).cursor;
+    expect(
+      (await host.run(TEMPLATE, "summary", { limit: 2, cursor: next })).data
+    ).toMatchObject({ count: expect.any(Number) });
+    const elsewhere = await fails(
+      host.run(LAB, "probe", lab("mine", [{ cursor: next }]))
+    );
+    expect(elsewhere.code).toBe("invalid_cursor");
+    const otherHost = await fails(
+      sdk
+        .createTestHost({ mock: true })
+        .run(TEMPLATE, "summary", { limit: 2, cursor: next })
+    );
+    expect(otherHost.code).toBe("invalid_cursor");
+  });
+
+  it("a test host resumes from a flood_wait's cursor with nothing lost or repeated", async () => {
+    const input = lab("mine", [{ limit: 2000, types: ["private", "group"] }]);
+    const all = (
+      (await sdk.runCommand(LAB, "probe", input, { mock: true })).data as {
+        result: { messages: { text: string }[] };
+      }
+    ).result.messages;
+    const host = sdk.createTestHost({ mock: true });
+    process.env.TG_MOCK_FLOOD_HISTORY = "1:9";
+    let e: SdkError;
+    try {
+      e = await fails(host.run(LAB, "probe", input));
+    } finally {
+      delete process.env.TG_MOCK_FLOOD_HISTORY;
+    }
+    expect(e.code).toBe("flood_wait");
+    const { cursor, partial } = e.body as {
+      cursor: string;
+      partial: { messages: { text: string }[] };
+    };
+    expect(cursor).toMatch(CURSOR);
+    const rest = (
+      (await host.run(LAB, "probe", lab("mine", [{ limit: 2000, cursor }])))
+        .data as { result: { messages: { text: string }[] } }
+    ).result.messages;
+    expect([...partial.messages, ...rest].map((m) => m.text)).toEqual(
+      all.map((m) => m.text)
+    );
+  });
+
+  it("a test host's options apply to every run, and a run's own options go over them", async () => {
+    const host = sdk.createTestHost({ mock: true, settings: { tone: "dry" } });
+    expect(
+      (await host.run(LAB, "probe", lab("setting", ["tone"]))).data
+    ).toMatchObject({ result: "dry" });
+    expect(
+      (
+        await host.run(LAB, "probe", lab("setting", ["tone"]), {
+          settings: { tone: "warm" },
+        })
+      ).data
+    ).toMatchObject({ result: "warm" });
   });
 
   it("settings are checked as plugin settings set checks them", async () => {

@@ -1,8 +1,12 @@
-import { runCommand, validatePlugin } from "@better-tg/plugin-sdk/test";
+import {
+  createTestHost,
+  runCommand,
+  validatePlugin,
+} from "@better-tg/plugin-sdk/test";
 import type { PluginRunError } from "@better-tg/plugin-sdk/test";
 import { describe, expect, it } from "vitest";
 
-import type { Summary } from "../src/plugin.js";
+import type { Summary, SummaryInput } from "../src/plugin.js";
 
 const dir = ".";
 const mock = { mock: true } as const;
@@ -42,6 +46,25 @@ describe("my-plugin", () => {
     const r = await runCommand<Summary>(dir, "summary", { limit: 2 }, mock);
     expect(r.data).toMatchObject({ count: 2, remaining: 0, done: false });
     expect(r.data.cursor).toMatch(/^[\w-]{22}$/);
+  });
+
+  it("summary goes on from its cursor with limit = remaining", async () => {
+    const host = createTestHost(mock);
+    const types: SummaryInput["types"] = ["private", "group"];
+    const first = await host.run<Summary>(dir, "summary", { limit: 2, types });
+    expect(first.data).toMatchObject({ count: 2, done: false });
+    const second = await host.run<Summary>(dir, "summary", {
+      limit: 4 - first.data.count,
+      cursor: first.data.cursor,
+    });
+    expect(second.data).toMatchObject({ count: 2, remaining: 0 });
+    const both = await runCommand<Summary>(
+      dir,
+      "summary",
+      { limit: 4, types },
+      mock
+    );
+    expect(first.data.chars + second.data.chars).toBe(both.data.chars);
   });
 
   it("summary turns a flood_wait after part of a page into a page of what was read", async () => {

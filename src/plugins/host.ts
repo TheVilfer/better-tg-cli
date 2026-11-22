@@ -133,6 +133,7 @@ export interface NetworkContext {
 
 /**
  * - `flood`: The last flood_wait a host call reported, as the host built it (never the guest's copy).
+ * - `invalidCursor`: The last cursor a host call refused, with the host's own message (never the guest's copy).
  * - `requests`: `http.fetch` for the audit: requests made and the origins they went to (never URLs, bodies or secrets).
  * - `secretMissing`: The last secret a request needed and did not find, as the host recorded it.
  */
@@ -143,6 +144,7 @@ export interface HostState {
     cursor: string | null;
     partial: unknown;
   };
+  invalidCursor?: { message: string };
   requests?: number;
   origins?: string[];
   secretMissing?: { name: string; command: string[] };
@@ -1017,6 +1019,9 @@ async function mine(
     }
     return page(cur.i >= cur.c.length);
   } catch (error) {
+    if (error instanceof HostError && error.code === "invalid_cursor") {
+      state.invalidCursor = { message: error.message };
+    }
     const wait = floodSeconds(error);
     if (wait === undefined || signal.aborted) {
       throw hostFailure(error);

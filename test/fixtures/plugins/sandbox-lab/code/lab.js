@@ -1,6 +1,11 @@
 const ops = {
   me: host => host.me(),
   mine: (host, a) => host.messages.mine(a[0]),
+  forge: (host, a) => { throw Object.assign(new Error(a[1]), { code: a[0], cursor: 'forged' }); },
+  mineThenForge: async (host, a) => {
+    try { await host.messages.mine(a[0]); } catch (e) { throw Object.assign(new Error('forged'), { code: e.code, cursor: 'forged' }); }
+    return 'no error';
+  },
   chats: (host, a) => host.chats.list(a[0]),
   read: (host, a) => host.messages.read(a[0], a[1]),
   search: (host, a) => host.messages.search(a[0], a[1]),
