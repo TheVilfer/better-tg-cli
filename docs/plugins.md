@@ -600,7 +600,7 @@ recipient and the full text and wait for a yes; in `read-only` it shows the draf
   `.cmd` shim (`" % ^ & | < > !`), gives no command, and the human types the folder themselves. The
   same builder makes every command in a hint, such as the `plugin validate` of `expect_required`.
   The result has `structuredContent: {status: "human_required", commands: [{operation, name, argv,
-  command}]}`.
+  command}], output}` (`output` is the result text, as in every MCP result).
 - **Folder paths.** A network share (`\\server\share`, `//server/share`), a Windows namespace path
   (`\\?\`, `\\.\`, `\??\`) or a device name (`CON`, `NUL`, `COM1`, … in any part) is not a
   plugin source, on every platform and before any file is touched (`invalid_argument`): Windows would

@@ -1039,6 +1039,7 @@ describe("without a dialog the model gets the exact command for the terminal on 
         },
       ],
     });
+    expect(res.structuredContent!.output).toBe(res.content[0].text);
     const cmd = res.structuredContent!.commands[0].command as string;
     expect(cmd).toMatch(
       /^TG_PROFILE=mock TG_MOCK=\S+ telegram plugin install '.+my plugin' --expect \S+$/
