@@ -3,6 +3,9 @@ export const generatedCode = [
   "src/skill-files.ts",
   "src/plugins/manifest-schemas.ts",
   "src/generated/**",
+  "packages/plugin-sdk/src/generated/**",
+  "packages/plugin-sdk/dist/**",
+  "templates/plugin/dist/**",
 ];
 
 export const generatedData = [

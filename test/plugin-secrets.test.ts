@@ -458,6 +458,60 @@ describe("plugin secret set / rm / show with an injected store", () => {
     expect(pendingSecrets()).toEqual([]);
   });
 
+  it("review P5 #1: plugin validate and plugin dev never touch the secret store or a pending cleanup", async () => {
+    const calls: string[] = [];
+    const store = memoryStore();
+    pluginSecretDeps.store = {
+      get: (k) => (calls.push(`get ${k}`), store.get(k)),
+      set: (k, v) => (calls.push(`set ${k}`), store.set(k, v)),
+      delete: (k) => (calls.push(`delete ${k}`), store.delete(k)),
+    };
+    const gone = "00000000-0000-4000-8000-000000000001";
+    store.set(pluginSecretKey(gone, slot("apikey")), "left-behind-1234");
+    const record = JSON.stringify([
+      {
+        name: "net-lab",
+        installId: gone,
+        secrets: [`apikey:${slot("apikey").gen}`],
+      },
+    ]);
+    const file = join(
+      pluginHome(),
+      "plugin-state",
+      "pending-secret-cleanup.json"
+    );
+    mkdirSync(join(pluginHome(), "plugin-state"), { recursive: true });
+    writeFileSync(file, record);
+    calls.length = 0;
+    const validate = await cli(["validate", LAB, "--json"]);
+    expect(validate.code, validate.err).toBe(0);
+    const dev = await cli(["dev", LAB, "no-net", "--mock", "--json"]);
+    expect(dev.code, dev.err).toBe(0);
+    expect(calls).toEqual([]);
+    expect(readFileSync(file, "utf-8")).toBe(record);
+    expect((await cli(["list", "--json"])).code).toBe(0);
+    expect(calls).toContain(`delete ${pluginSecretKey(gone, slot("apikey"))}`);
+    expect(pendingSecrets()).toEqual([]);
+  });
+
+  it("review P5 #6: plugin run refuses a target the plugin has no permission for, as plugin dev and the SDK do", async () => {
+    installLab();
+    const r = await cli([
+      "run",
+      "net-lab",
+      "no-net",
+      "--target",
+      "@mock_owner:1",
+      "--json",
+    ]);
+    expect(r.code).toBe(2);
+    expect(JSON.parse(r.out.split("\n").at(-1)!).error).toMatchObject({
+      code: "invalid_argument",
+      message:
+        'Plugin "net-lab" reads no target (it lacks the permission messages:read-target); drop --target',
+    });
+  });
+
   it("review #7: a pending record for an installation that is still registered is dropped, its secrets kept", async () => {
     const store = memoryStore();
     pluginSecretDeps.store = store;

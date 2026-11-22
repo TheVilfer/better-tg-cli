@@ -173,6 +173,24 @@ export function parseTarget(
 }
 
 /**
+ * `--target`/`--thread` of a run of this plugin, parsed and allowed: a target is refused unless the
+ * plugin has `messages:read-target`. One check for `plugin run`, `plugin dev` and the SDK's test host.
+ */
+export function pluginTarget(
+  m: Manifest,
+  text: string | undefined,
+  thread: boolean
+): Target | undefined {
+  const target = parseTarget(text, thread);
+  if (target && !(m.permissions ?? []).includes("messages:read-target")) {
+    throw usageError(
+      `Plugin "${m.name}" reads no target (it lacks the permission messages:read-target); drop --target`
+    );
+  }
+  return target;
+}
+
+/**
  * - `account`: Fetched on first use (storage, messages.mine), inside the run's deadline.
  * - `mcp`: Over MCP: the output and proposal texts get maskForModel (`echo`).
  * - `network`: `http.fetch` of a command with the `network` effect: the backend and the secrets.

@@ -68,6 +68,8 @@
     "pretest": "node scripts/gen-version.mjs",
     "typecheck": "tsc --noEmit",
     "coverage:api": "node scripts/api-coverage.mjs --check --min 90",
+    "sdk:build": "bun packages/plugin-sdk/scripts/build.mjs",
+    "template:check": "node scripts/plugin-template.mjs",
     "typecheck:watch": "tsc --noEmit --watch --preserveWatchOutput",
     "lint": "oxlint && oxlint -c scripts/lint/fixtures.oxlintrc.json test/fixtures && node scripts/lint/no-comments-sh.mjs && oxfmt --check",
     "format": "oxfmt",

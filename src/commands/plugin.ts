@@ -24,8 +24,9 @@ import {
   PLUGIN_NOTICE,
   pluginSource,
 } from "../plugins/catalog.js";
+import { devPlugin, devRun } from "../plugins/dev.js";
 import type { CursorStore, StorageBackend } from "../plugins/host.js";
-import { devBackend, runBackend } from "../plugins/http-backend.js";
+import { runBackend } from "../plugins/http-backend.js";
 import {
   humanCommand,
   humanConfirms,
@@ -35,7 +36,6 @@ import {
   secretPathsLabel,
 } from "../plugins/human.js";
 import type { Confirm } from "../plugins/human.js";
-import { validate } from "../plugins/json-schema.js";
 import {
   applyPrepared,
   cleanupPendingSecrets,
@@ -51,10 +51,8 @@ import {
   checkInput,
   devLog,
   findCommand,
-  memoryCursors,
-  memoryStorage,
   parseInput,
-  parseTarget,
+  pluginTarget,
   runPluginCommand,
 } from "../plugins/run.js";
 import type { NetworkStats, RunOutcome } from "../plugins/run.js";
@@ -68,6 +66,7 @@ import {
   slotIn,
   slotOf,
 } from "../plugins/secrets.js";
+import { checkSettingValue, declaredSetting } from "../plugins/settings.js";
 import { readLocalSnapshot } from "../plugins/source.js";
 import type { Fetch } from "../plugins/source.js";
 import {
@@ -911,12 +910,7 @@ const runCommand = runOptions(
     assertExpectedInstall(entry);
     const m = loaded.manifest;
     const c = findCommand(m, cmd);
-    const target = parseTarget(options.target, !!options.thread);
-    if (target && !(m.permissions ?? []).includes("messages:read-target")) {
-      throw usageError(
-        `Plugin "${name}" reads no target (it lacks the permission messages:read-target); drop --target`
-      );
-    }
+    const target = pluginTarget(m, options.target, !!options.thread);
     const fromStdin = options.input === "-";
     const input = parseInput(
       fromStdin ? stdinBody(readStdinOnce()) : options.input
@@ -1054,49 +1048,19 @@ const devCommand = runOptions(
           `For a check on the real account install the folder: telegram plugin install ${dir}`
         );
       }
-      const snap = readLocalSnapshot(dir, cliVersion());
-      const m = snap.manifest;
-      const c = findCommand(m, cmd);
-      const target = parseTarget(options.target, !!options.thread);
+      const plugin = devPlugin(dir, cmd, cliVersion());
+      const target = pluginTarget(
+        plugin.manifest,
+        options.target,
+        !!options.thread
+      );
       const input = parseInput(
         options.input === "-" ? stdinBody(readStdinOnce()) : options.input
       );
-      checkInput(c, input);
-      const { MockClient } = await import("../mock/client.js");
-      const { seedWorld } = await import("../mock/world.js");
-      const world = seedWorld();
-      const client = new MockClient(world) as unknown as TelegramClient;
-      const storage = memoryStorage(m);
-      const log = devLog(m.name);
-      const outcome = await runPluginCommand({
-        manifest: m,
-        command: c,
-        code: new TextDecoder().decode(snap.files.get(m.main!)),
-        filename: m.main!,
+      const outcome = await devRun(plugin, {
         input,
-        client: async () => client,
-        account: async () => String(world.me),
-        storage: async () => storage,
-        cursors: memoryCursors(),
-        installId: "plugin-dev",
         target,
-        mcp: false,
-        log: log.write,
-        ...(c.effects.includes("network")
-          ? {
-              network: {
-                backend: devBackend(dir),
-                secret: (secret: string) => `dev-secret-${secret}`,
-                setCommand: (secret: string) => [
-                  "plugin",
-                  "secret",
-                  "set",
-                  m.name,
-                  secret,
-                ],
-              },
-            }
-          : {}),
+        log: devLog(plugin.manifest.name).write,
         ...cancellation(),
       });
       printOutcome(outcome);
@@ -1105,21 +1069,6 @@ const devCommand = runOptions(
     }
   }
 );
-
-function declaredSetting(m: Manifest, key: string) {
-  const d = m.settings && own(m.settings, key) ? m.settings[key] : undefined;
-  if (!d) {
-    throw new CliError(
-      `Plugin "${m.name}" has no setting "${key}"`,
-      "invalid_argument",
-      EXIT.USAGE,
-      {
-        hint: `Its settings: ${Object.keys(m.settings ?? {}).join(", ") || "none"}`,
-      }
-    );
-  }
-  return d;
-}
 
 const settingsGetCommand = new Command("get")
   .description(
@@ -1196,20 +1145,7 @@ const settingsSetCommand = new Command("set")
               : undefined
           );
         }
-        const issues = validate(
-          d as unknown as Record<string, unknown>,
-          value,
-          5,
-          2000
-        );
-        if (issues.length) {
-          throw new CliError(
-            `"${key}" does not take this value: ${issues.map((i) => `${i.path || "/"} ${i.message}`).join("; ")}`,
-            "invalid_argument",
-            EXIT.USAGE,
-            { fields: { issues } }
-          );
-        }
+        checkSettingValue(m, key, value);
         settingsWrite(entry, key, value);
         auditLog({
           timestamp: new Date().toISOString(),
@@ -1271,7 +1207,10 @@ function declaredSecret(m: Manifest, secret: string) {
   return d;
 }
 
-function retryPendingSecrets(): void {
+function retryPendingSecrets(_plugin: Command, action: Command): void {
+  if (action === validateCommand || action === devCommand) {
+    return;
+  }
   try {
     if (pendingSecrets().length) {
       cleanupPendingSecrets();

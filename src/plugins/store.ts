@@ -52,6 +52,7 @@ import {
   secretGenerations,
   slotText,
 } from "./secret-slots.js";
+import { SETTINGS_BYTES, settingsText } from "./settings.js";
 import { sha256 } from "./source.js";
 import type { ResolvedSource, Snapshot } from "./source.js";
 
@@ -1613,9 +1614,6 @@ export function onboardingState(
     : "done";
 }
 
-/** The most a settings file may hold (what settingsRead reads), checked before every write. */
-export const SETTINGS_BYTES = 256 * 1024;
-
 function settingsRel(entry: Pick<LockEntry, "installId">): string {
   if (!UUID_RE.test(entry.installId)) {
     throw new CliError(
@@ -1681,18 +1679,7 @@ export function settingsWrite(
     assertCurrent(readLock(), entry, "nothing was saved");
     const all = settingsRead(entry);
     all[key] = value;
-    const text = JSON.stringify(all);
-    const bytes = Buffer.byteLength(text, "utf-8");
-    if (bytes > SETTINGS_BYTES) {
-      throw new CliError(
-        `The settings of "${entry.name}" would take ${bytes} bytes with this value; the limit is ${SETTINGS_BYTES}. Nothing was saved`,
-        "settings_too_large",
-        EXIT.USAGE,
-        {
-          hint: `Use a shorter value, or shorten another setting first: telegram plugin settings get ${entry.name}`,
-        }
-      );
-    }
+    const text = settingsText(entry.name, all);
     try {
       writeRegular(home(true)!, settingsRel(entry), text);
     } catch (error) {
