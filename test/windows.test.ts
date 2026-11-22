@@ -8,8 +8,16 @@ import { describe, expect, it } from "vitest";
 import { windowsConfirmScript } from "../src/commands/write-access.js";
 import { confirmOnWindows, windowsConfirmInput } from "../src/confirm.js";
 import type { Runner } from "../src/confirm.js";
-import { dpapiStore, encodedCommand } from "../src/dpapi.js";
+import {
+  DPAPI_POWERSHELL_TIMEOUT_MS,
+  dpapiStore,
+  encodedCommand,
+  powershellCrypter,
+} from "../src/dpapi.js";
 import type { Crypter } from "../src/dpapi.js";
+import { SPAWN_TIMEOUT, useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const fake: Crypter & { calls: number } = {
   calls: 0,
@@ -152,22 +160,41 @@ describe("DPAPI secret store", () => {
 
   it.runIf(process.platform === "win32")(
     "round-trips through real DPAPI",
-    async () => {
-      const { dpapiStore: real } = await import("../src/dpapi.js");
+    () => {
+      const failures: string[] = [];
+      const traced = (run: (b64: string) => string) => (b64: string) => {
+        try {
+          return run(b64);
+        } catch (error) {
+          failures.push((error as Error).message);
+          throw error;
+        }
+      };
+      const real: Crypter = {
+        protect: traced(powershellCrypter.protect),
+        unprotect: traced(powershellCrypter.unprotect),
+      };
       const file = join(
         mkdtempSync(join(tmpdir(), "tg-dpapi-")),
         "secrets.dpapi"
       );
-      const store = real(() => file);
       let t = Date.now();
-      expect(store.set("sessionString", "real-secret-ÄЖ")).toBe(true);
+      const saved = dpapiStore(() => file, real).set(
+        "sessionString",
+        "real-secret-ÄЖ"
+      );
       console.log(`DPAPI protect: ${Date.now() - t} ms`);
+      expect({ saved, failures }).toEqual({ saved: true, failures: [] });
       expect(readFileSync(file, "utf-8")).not.toContain("real-secret");
       t = Date.now();
-      expect(real(() => file).get("sessionString")).toBe("real-secret-ÄЖ");
+      const read = dpapiStore(() => file, real).get("sessionString");
       console.log(`DPAPI unprotect: ${Date.now() - t} ms`);
+      expect({ read, failures }).toEqual({
+        read: "real-secret-ÄЖ",
+        failures: [],
+      });
     },
-    60_000
+    2 * DPAPI_POWERSHELL_TIMEOUT_MS + SPAWN_TIMEOUT
   );
 });
 

@@ -17,6 +17,9 @@ import { TL_METHODS } from "../src/generated/tl-commands.js";
 import { seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const home = mkdtempSync(join(tmpdir(), "tg-agent-ux-r1-"));
 
@@ -68,13 +71,13 @@ describe("2/3 --json always yields one complete JSON object", () => {
     const r = cli(["folder", "NoSuchFolder", "--json"]);
     expect(r.code).toBe(1);
     expect(oneJson(r.out).error.code).toBe("folder_not_found");
-  }, 30_000);
+  });
 
   it("skill install with an unknown agent is a JSON usage error, exit 2", () => {
     const r = cli(["skill", "install", "-a", "xyz", "--json"]);
     expect(r.code).toBe(2);
     expect(oneJson(r.out).error.code).toBe("invalid_argument");
-  }, 30_000);
+  });
 
   it("a long error is written in full before the process exits, even to a slow reader", async () => {
     const long = "y".repeat(120_000);
@@ -97,20 +100,36 @@ describe("2/3 --json always yields one complete JSON object", () => {
       { env: env({}, state), stdio: ["ignore", "pipe", "ignore"] }
     );
     child.stdout.pause();
-    await new Promise((r) => setTimeout(r, 1500));
+    const closed = new Promise((r) => child.once("close", r));
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    while (
+      child.exitCode === null &&
+      child.stdout.readableLength < child.stdout.readableHighWaterMark
+    ) {
+      await sleep(20);
+    }
+    const exitedUnread = await Promise.race([
+      new Promise((r) => {
+        if (child.exitCode !== null) {
+          r(true);
+        }
+        child.once("exit", () => r(true));
+      }),
+      sleep(1000).then(() => false),
+    ]);
     let out = "";
     child.stdout.setEncoding("utf-8").on("data", (d) => {
       out += d;
     });
     child.stdout.resume();
-    const code = await new Promise((r) => child.on("close", r));
-    expect(code).toBe(2);
+    await expect(closed).resolves.toBe(2);
+    expect(exitedUnread).toBe(false);
     const { error } = oneJson(out);
     expect(error.code).toBe("ambiguous_chat");
     expect(
       error.candidates.map((c: { title: string }) => c.title).sort()
     ).toEqual([`Huge A ${long}`, `Huge B ${long}`]);
-  }, 30_000);
+  });
 
   it("sync with a chat that does not exist is an error with JSON, not a silent 0", () => {
     const r = cli([
@@ -123,7 +142,7 @@ describe("2/3 --json always yields one complete JSON object", () => {
     ]);
     expect(r.code).toBe(1);
     expect(oneJson(r.out).error.code).toBe("chat_not_found");
-  }, 30_000);
+  });
 });
 
 async function worldFile(extra: (w: MockWorld) => void): Promise<string> {
@@ -257,7 +276,7 @@ describe("8 links, candidates and hints", () => {
     expect(cli(["read", name]).err).toContain(
       `telegram chats -q 'it'\\''s "odd" $(x)' --preview 0`
     );
-  }, 30_000);
+  });
 });
 
 describe("2 a question to the user never lands on stdout", () => {
@@ -298,13 +317,13 @@ describe("7 --topic: bot forums count, and an empty unread page is checked like 
     const plain = cli(["read", "@demo_bot", "--topic", "1", "--json"]);
     expect(plain.code).toBe(2);
     expect(oneJson(plain.out).error.code).toBe("not_a_forum");
-  }, 30_000);
+  });
 
   it("read --unread --topic on a chat without topics is refused even with nothing unread", () => {
     const r = cli(["read", "me", "--unread", "--topic", "10", "--json"]);
     expect(r.code).toBe(2);
     expect(oneJson(r.out).error.code).toBe("not_a_forum");
-  }, 30_000);
+  });
 
   it("an empty --unread page still names its chat", () => {
     const r = cli(["read", "me", "--unread", "--json"]);
@@ -314,7 +333,7 @@ describe("7 --topic: bot forums count, and an empty unread page is checked like 
       chatId: "1000",
       messages: [],
     });
-  }, 30_000);
+  });
 });
 
 describe("11 hasMore only when a next page was seen", () => {
@@ -339,7 +358,7 @@ describe("11 hasMore only when a next page was seen", () => {
         ]).out
       ).messages.length
     ).toBeGreaterThan(0);
-  }, 30_000);
+  });
 
   it("search: exactly limit results is the end; one less says more exist", () => {
     const all = JSON.parse(cli(["search", "", "--json"]).out).messages.length;
@@ -360,7 +379,7 @@ describe("11 hasMore only when a next page was seen", () => {
           .out
       ).hasMore
     ).toBeUndefined();
-  }, 30_000);
+  });
 });
 
 describe("4 forward --json tells source IDs from destination IDs", () => {
@@ -391,7 +410,7 @@ describe("4 forward --json tells source IDs from destination IDs", () => {
     expect(copies.map((m: { text: string }) => m.text).sort()).toEqual(
       originals.map((m: { text: string }) => m.text).sort()
     );
-  }, 30_000);
+  });
 });
 
 describe("9 numbers and dates never silently become other values", () => {
@@ -405,15 +424,11 @@ describe("9 numbers and dates never silently become other values", () => {
     [["search", "x", "--since", "999999999999999999m", "--json"]],
     [["send", "me", "hi", "--schedule", "99999999d", "--json"]],
     [["mute", "Team", "-d", "99999999w", "--json"]],
-  ])(
-    "%j is a usage error, exit 2",
-    (args) => {
-      const r = cli(args);
-      expect(r.code, r.out + r.err).toBe(2);
-      expect(oneJson(r.out).error.code).toBe("invalid_argument");
-    },
-    30_000
-  );
+  ])("%j is a usage error, exit 2", (args) => {
+    const r = cli(args);
+    expect(r.code, r.out + r.err).toBe(2);
+    expect(oneJson(r.out).error.code).toBe("invalid_argument");
+  });
 
   it("write-access --for refuses a duration with no real end date", async () => {
     const { parseForDuration } = await import("../src/write-state.js");
@@ -427,21 +442,17 @@ describe("10 usage errors exit 2, and are found before the write guard", () => {
     const r = cli(["search", "coffee", "--from", "@alice_example", "--json"]);
     expect(r.code, r.out + r.err).toBe(2);
     expect(oneJson(r.out).error.code).toBe("invalid_argument");
-  }, 30_000);
+  });
 
   it.each([
     [["topic"], /missing subcommand|Usage: telegram topic/],
     [["api", "help.GetConfig", "-p", "oops"], /Invalid --params JSON/],
     [["api", "no.SuchMethod"], /Unknown namespace "no"/],
-  ])(
-    "%j exits 2",
-    (args, text) => {
-      const r = cli(args);
-      expect(r.code, r.out + r.err).toBe(2);
-      expect(r.err).toMatch(text);
-    },
-    30_000
-  );
+  ])("%j exits 2", (args, text) => {
+    const r = cli(args);
+    expect(r.code, r.out + r.err).toBe(2);
+    expect(r.err).toMatch(text);
+  });
 
   it("in mode ask a command line that cannot run gets exit 2, never an approval (exit 3)", () => {
     const profile = mkdtempSync(join(home, "ask-"));
@@ -501,7 +512,7 @@ describe("12 inbox -n 0 still gives the totals only", () => {
     });
     expect(inbox.totalUnread).toBeGreaterThan(0);
     expect(cli(["inbox", "-n", "-1", "--json"]).code).toBe(2);
-  }, 30_000);
+  });
 });
 
 describe("12 the skill says what the CLI does", () => {
@@ -548,7 +559,7 @@ describe("12 the skill says what the CLI does", () => {
     expect(cli(["messages", "send-message", "--help"]).out).toMatch(
       /Access in a terminal: write — needs write access \(mode "ask": the user approves each call\)/
     );
-  }, 30_000);
+  });
 
   it("every Get*-named write of src/api-methods.ts is named in the skill (api.md), api --help and the coverage doc", () => {
     const getWrites = TL_METHODS.map((m) => m[2]).filter(
@@ -565,7 +576,7 @@ describe("12 the skill says what the CLI does", () => {
       expect(api, `api --help: ${name}`).toContain(name);
       expect(coverage, `api-coverage.md: ${name}`).toContain(name);
     }
-  }, 30_000);
+  });
 });
 
 describe("sync --media: a failed download is a failure that --resume retries", () => {
@@ -628,7 +639,7 @@ describe("sync --media: a failed download is a failure that --resume retries", (
     expect(text.match(/\*#3\*/g)).toHaveLength(1);
     expect(text).toContain("*#5*");
     expect(existsSync(join(out, "media", "1001"))).toBe(true);
-  }, 30_000);
+  });
 });
 
 describe("sync --media: a file that never downloads holds the chat back only so often", () => {
@@ -743,7 +754,7 @@ describe("sync --media: the checkpoint follows message IDs, never past one that 
     expect(text.match(/\*#3\*/g)).toHaveLength(1);
     expect(text.match(/\*#4\*/g)).toHaveLength(1);
     expect(text.indexOf("*#3*")).toBeLessThan(text.indexOf("*#4*"));
-  }, 30_000);
+  });
 
   it("a failure on the very first message pins --resume to it, outside the --days window", async () => {
     const state = await worldFile((w) => {
@@ -804,7 +815,7 @@ describe("sync --media: the checkpoint follows message IDs, never past one that 
       JSON.parse(readFileSync(join(out, ".sync-meta.json"), "utf-8"))["1001"]
         .retryPin
     ).toBeUndefined();
-  }, 30_000);
+  });
 });
 
 describe("the write guard keeps how long to wait", () => {
@@ -818,7 +829,7 @@ describe("the write guard keeps how long to wait", () => {
       code: "flood_wait",
       retryAfterSeconds: 30,
     });
-  }, 30_000);
+  });
 });
 
 describe("10 usage errors come before any connection", () => {
@@ -837,5 +848,5 @@ describe("10 usage errors come before any connection", () => {
       code: "invalid_argument",
       message: expect.stringContaining("--from needs --chat"),
     });
-  }, 30_000);
+  });
 });

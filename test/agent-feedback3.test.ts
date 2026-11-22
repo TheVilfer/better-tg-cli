@@ -24,6 +24,9 @@ import { MockClient } from "../src/mock/client.js";
 import { saveWorld, seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const dir = mkdtempSync(join(tmpdir(), "tg-agent-feedback3-"));
 
@@ -202,7 +205,7 @@ describe("1 (CLI) inbox, then read <title> in a new process", () => {
     expect(read.err.match(/^dialog cache: .*$/gm)).toEqual([
       expect.stringMatching(/^dialog cache: hit "Team Design" -> -1004002 /),
     ]);
-  }, 30_000);
+  });
 
   it("chats -q saves the list too", () => {
     const state = worldFile();
@@ -215,7 +218,7 @@ describe("1 (CLI) inbox, then read <title> in a new process", () => {
     expect(read.err.match(/^dialog cache: .*$/gm)).toEqual([
       expect.stringMatching(/^dialog cache: hit "Teem" -> chat_not_found/),
     ]);
-  }, 30_000);
+  });
 });
 
 describe("2 the chat_not_found command keeps --json", () => {
@@ -237,14 +240,14 @@ describe("2 the chat_not_found command keeps --json", () => {
     const run = cli(error.command, state);
     expect(run.code).toBe(0);
     expect(() => JSON.parse(run.out)).not.toThrow();
-  }, 30_000);
+  });
 
   it("without --json it stays a text command", () => {
     const state = worldFile();
     const r = cli(["read", "Teem", "-n", "1"], state);
     expect(r.code).not.toBe(0);
     expect(r.err + r.out).toMatch(/chats -q Teem --preview 0(?! --json)/);
-  }, 30_000);
+  });
 
   it("sync --chat keeps --json too", () => {
     const state = worldFile();
@@ -269,7 +272,7 @@ describe("2 the chat_not_found command keeps --json", () => {
       "0",
       "--json",
     ]);
-  }, 30_000);
+  });
 });
 
 describe("3 TG_DEBUG_CACHE=1 prints only the dialog cache line", () => {
@@ -307,5 +310,5 @@ describe("3 TG_DEBUG_CACHE=1 prints only the dialog cache line", () => {
       expect.stringMatching(/^dialog cache: refresh "Team Design"/),
     ]);
     expect(r.out).not.toMatch(/dialog cache/);
-  }, 30_000);
+  });
 });

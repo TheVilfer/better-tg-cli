@@ -9,6 +9,9 @@ import {
   isShellScript,
   shellComments,
 } from "../scripts/lint/no-comments-sh.mjs";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const root = resolve(import.meta.dirname, "..");
 const dir = mkdtempSync(join(tmpdir(), "tg-no-comments-"));

@@ -145,6 +145,13 @@ Source mode skips the bundle's shrink plugin (TL re-encoding, stubs). Run `npm r
 `npm run build && npm test` before a release. `test/bundle-shrink.test.ts` and
 `test/sync-and-cli.test.ts` cover the bundle.
 
+A test file that starts processes (the CLI, node, PowerShell, `telegram mcp`, sh) calls
+`useSpawnTimeout()` from `test/helpers/spawn-timeout.ts` once after its imports: every test and
+hook of that file gets `SPAWN_TIMEOUT` (30 s, 60 s on Windows), because a CI runner starts a child in
+seconds, not milliseconds. Unit test files keep Vitest's 5 s. Give a test a larger explicit timeout
+only when it is heavier than that. A timing assertion checks order and cause (an injected clock, a
+flag set by the slow step), not a tight wall-clock window.
+
 `npm run coverage:api` (CI runs it after the build) runs `scripts/api-coverage.mjs --check
 --min 90`: TL schema reachability and Telethon 1.45.0 `TelegramClient` accounting (member list in
 `scripts/data/telethon-1.45.0-client-methods.tsv`) must each be at least 90%, every TL method must

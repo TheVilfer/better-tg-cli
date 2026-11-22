@@ -30,6 +30,9 @@ import { planCall } from "../src/mcp.js";
 import { setStrictChatResolution } from "../src/resolve-mode.js";
 import { methodDoc, paramDoc, docsUrl, TL_DOCS_META } from "../src/tl-docs.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const schemaFunctionCount = (
   apiDefinitions as unknown as { isFunction: boolean }[]
@@ -436,7 +439,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
       env,
       stdio: "ignore",
     });
-  }, 30_000);
+  });
 
   afterAll(async () => {
     await disconnectClient();
@@ -449,7 +452,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
       await run("channels", "get-full-channel", "--channel", "Team")
     );
     expect(json.chats[0].title).toBe("Team");
-  }, 30_000);
+  });
 
   it("short get-history form works (paging cursors default to 0 — no missing-required error)", async () => {
     const err = await fails(
@@ -461,7 +464,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
       "3"
     );
     expect(err).not.toMatch(/Missing required/);
-  }, 30_000);
+  });
 
   it("clash: stats <chat> is curated, stats <method> is the generated command", async () => {
     const curated = JSON.parse(await run("stats", "Team", "--json"));
@@ -471,7 +474,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
       await run("stats", "get-broadcast-stats", "--channel", "Team")
     );
     expect(generated.className).toBe("stats.BroadcastStats");
-  }, 30_000);
+  });
 
   it("clash: stories only treats an exact method name as the generated command", async () => {
     const generated = await fails(
@@ -483,7 +486,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
     expect(generated).not.toMatch(/unknown option/i);
     const curated = await fails("stories", "alice", "--peer", "x");
     expect(curated).toMatch(/unknown option/i);
-  }, 30_000);
+  });
 
   it("help: `help <method>` runs it, `help <command>` shows help", async () => {
     await expect(fails("help", "get-config")).resolves.toMatch(
@@ -493,20 +496,20 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
       /Usage: telegram stats/
     );
     await expect(run("help", "messages")).resolves.toMatch(/get-history/);
-  }, 30_000);
+  });
 
   it("root methods are top-level commands", async () => {
     const help = await run("ping", "--help");
     expect(help).toMatch(/Returns: Pong/);
     expect(help).toMatch(/--ping-id <value>\s+long, required/);
-  }, 30_000);
+  });
 
   it("a refused method refuses with a clear message and exit 1", async () => {
     await expect(fails("account", "delete-account")).resolves.toMatch(
       /Refused:.*irreversible/i
     );
     await expect(fails("auth", "send-code")).resolves.toMatch(/login|session/i);
-  }, 30_000);
+  });
 
   it("top-level --help stays small with an API-namespace summary (no 823 lines)", async () => {
     const help = await run("--help");
@@ -517,7 +520,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
     );
     expect(help).toMatch(/messages 259/);
     expect(help).not.toMatch(/TL API methods/);
-  }, 30_000);
+  });
 
   it("a namespace --help lists its methods with access marks + descriptions", async () => {
     const ns = await run("messages", "--help");
@@ -528,7 +531,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
     expect(ns).toMatch(/\[read\]/);
     expect(ns).toMatch(/\[write\]/);
     expect(ns).toMatch(/\[refused\]/);
-  }, 30_000);
+  });
 
   it("a method --help shows description, typed params, access, example and docs link", async () => {
     const method = await run("messages", "get-history", "--help");
@@ -555,7 +558,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
     );
     expect(method).toMatch(/core\.telegram\.org\/method\/messages\.getHistory/);
     expect(method).toMatch(/CHANNEL_INVALID/);
-  }, 30_000);
+  });
 
   it("a refused method --help states the refusal + reason (and never runs anything)", async () => {
     const help = await run("account", "delete-account", "--help");
@@ -564,7 +567,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
     );
     expect(help).toMatch(/Access over MCP: refused/);
     expect(help).toMatch(/Delete the user's account/);
-  }, 30_000);
+  });
 
   it("schema prints JSON for a method, a namespace, and the index", async () => {
     const method = JSON.parse(await run("schema", "messages", "get-history"));
@@ -591,7 +594,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
     expect(
       JSON.parse(await run("schema", "account.DeleteAccount"))
     ).toMatchObject({ access: "refused" });
-  }, 30_000);
+  });
 
   it("an auto-generated example invocation parses and satisfies required flags", async () => {
     const err = await fails(
@@ -603,7 +606,7 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
       "20"
     );
     expect(err).not.toMatch(/Missing required option|unknown option|error:/i);
-  }, 30_000);
+  });
 
   it("help output is clean when the pipe closes early (no EPIPE crash)", async () => {
     await Promise.all(
@@ -625,12 +628,12 @@ describe.concurrent("CLI, mock mode (top-level form, clashes, help)", () => {
         }
       )
     );
-  }, 30_000);
+  });
 
   it("a clash command --help shows curated usage plus a generated-methods pointer", async () => {
     const help = await run("stats", "--help");
     expect(help).toMatch(/Usage: telegram stats \[options\] <chat>/);
     expect(help).toMatch(/Generated API methods \(telegram stats <method>/);
     expect(help).toMatch(/get-broadcast-stats/);
-  }, 30_000);
+  });
 });

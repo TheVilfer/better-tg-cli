@@ -7,6 +7,9 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { TOOLS } from "../src/mcp.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const home = mkdtempSync(join(tmpdir(), "tg-agent-ux-"));
 
@@ -50,14 +53,14 @@ describe("discovery", () => {
     expect(buttons.code).toBe(0);
     expect(buttons.out).toMatch(/Press one with: telegram click "@demo_bot" 2/);
     expect(buttons.out).not.toMatch(/\btg click/);
-  }, 30_000);
+  });
 
   it('1.2 finds the history export by "export" and "backup"', () => {
     expect(cli(["help-all", "-g", "export"]).out).toMatch(
       /^sync — Export or incrementally sync chat history/m
     );
     expect(cli(["help-all", "-g", "backup"]).out).toMatch(/^sync /m);
-  }, 30_000);
+  });
 
   it("1.3 marks the commands that take --json / --markdown, and only those", () => {
     const all = cli(["help-all"]).out;
@@ -66,7 +69,7 @@ describe("discovery", () => {
     expect(all).toMatch(/^info <chat> — .* \[json\]$/m);
     expect(all).toMatch(/^onboard — .* \[json\]$/m);
     expect(all).toMatch(/^logout — [^[]*$/m);
-  }, 30_000);
+  });
 
   it("1.4 a search prints only its matches, and says so when there are none", () => {
     const none = cli(["help-all", "-g", "nonsensexyz"]);
@@ -75,17 +78,17 @@ describe("discovery", () => {
     );
     expect(cli(["help-all", "-g", "unread"]).out).not.toMatch(/Telegram API/);
     expect(cli(["help-all"]).out).toMatch(/Telegram API/);
-  }, 30_000);
+  });
 
   it("1.5 lists no hidden flag with an empty description", () => {
     expect(cli(["help-all"]).out).not.toMatch(/--invite \[key\] — $/m);
-  }, 30_000);
+  });
 
   it("1.6 send --help says what --markdown does not do", () => {
     expect(cli(["send", "--help"]).out).toMatch(
       /--markdown\s+Parse the message as GramJS Markdown.*links do not work, use --html/s
     );
-  }, 30_000);
+  });
 
   it("6.1 --help ends with the exit codes", () => {
     const help = cli(["--help"]).out;
@@ -93,7 +96,7 @@ describe("discovery", () => {
     expect(help).toMatch(
       /Exit codes:\n {2}0 {2}ok\n {2}1 {2}runtime error.*\n {2}2 {2}usage.*\n {2}3 {2}write approval needed.*\n {2}4 {2}write access is disabled.*\n {2}5 {2}not logged in/
     );
-  }, 30_000);
+  });
 });
 
 describe("input validation (exit 2, never a silent default)", () => {
@@ -117,22 +120,18 @@ describe("input validation (exit 2, never a silent default)", () => {
     [["mute", "Team", "-d", "soon"]],
     [["edit-permissions", "Team", "@alice", "--mute", "--until", "later"]],
     [["write-access", "ask", "--for", "3x"]],
-  ])(
-    "3.1/3.4 %j",
-    (args) => {
-      const r = cli(args);
-      expect(r.code).toBe(2);
-      expect(r.out).toBe("");
-      expect(r.err).toMatch(/^error: (option|command-argument|argument)/m);
-    },
-    30_000
-  );
+  ])("3.1/3.4 %j", (args) => {
+    const r = cli(args);
+    expect(r.code).toBe(2);
+    expect(r.out).toBe("");
+    expect(r.err).toMatch(/^error: (option|command-argument|argument)/m);
+  });
 
   it("3.1 --preview 0 stays valid (no preview)", () => {
     const r = cli(["chats", "--preview", "0", "-n", "2"]);
     expect(r.code).toBe(0);
     expect(r.out).not.toMatch(/\|/);
-  }, 30_000);
+  });
 
   it("4.6 a bad --reply-to or --topic stops the send before anything is sent", () => {
     const state = join(home, "state-46.json");
@@ -147,13 +146,13 @@ describe("input validation (exit 2, never a silent default)", () => {
     expect(
       JSON.parse(read.out).messages.map((m: { text: string }) => m.text)
     ).not.toContain("with --reply-to");
-  }, 30_000);
+  });
 
   it("4.6 a bad message ID list stops delete and forward", () => {
     expect(cli(["delete", "Team", "3,x"]).code).toBe(2);
     expect(cli(["forward", "Team", "abc", "me"]).code).toBe(2);
     expect(cli(["vote", "Team", "3", "first"]).code).toBe(2);
-  }, 30_000);
+  });
 
   it("4.8 a bad --schedule is a usage error, not a stack trace", () => {
     const r = cli(["send", "Team", "y", "--schedule", "soon"]);
@@ -162,7 +161,7 @@ describe("input validation (exit 2, never a silent default)", () => {
       /--schedule <when>' argument 'soon' is invalid\. Use "30m", "2h", "1d" or an ISO date/
     );
     expect(r.err).not.toMatch(/^\s+at /m);
-  }, 30_000);
+  });
 
   it("6.1 unknown options and commands exit 2; with --json the error is one JSON line on stdout", () => {
     expect(cli(["read", "Team", "--bogus"]).code).toBe(2);
@@ -176,7 +175,7 @@ describe("input validation (exit 2, never a silent default)", () => {
     const unknown = cli(["frobnicate", "--json"]);
     expect(unknown.code).toBe(2);
     expect(jsonError(unknown.out).code).toBe("usage");
-  }, 30_000);
+  });
 });
 
 describe("chat names", () => {
@@ -205,7 +204,7 @@ describe("chat names", () => {
     ]);
     expect(cli(["read", "Team", "-n", "1"]).code).toBe(0);
     expect(cli(["read", "Desig", "-n", "1"]).out).toMatch(/^# Team Design /m);
-  }, 30_000);
+  });
 
   it("3.2 a write to a partial title stays refused, now with exit 2 and the candidates in JSON", () => {
     const r = cli(["send", "Tea", "hi", "--json"]);
@@ -216,7 +215,7 @@ describe("chat names", () => {
       "-1004001",
       "-1004002",
     ]);
-  }, 30_000);
+  });
 
   it('3.3 "Chat not found" names the closest titles and the command to look further', () => {
     const r = cli(["read", "Tem"]);
@@ -234,7 +233,7 @@ describe("chat names", () => {
       command: ["chats", "-q", "Tem", "--preview", "0", "--json"],
     });
     expect(json.candidates[0]).toMatchObject({ id: "-1004001", title: "Team" });
-  }, 30_000);
+  });
 
   it("5.5 over MCP the error has no spinner glyph", () => {
     const r = cli(["read", "NoSuchChatAtAll"], { TG_MCP: "1" });
@@ -243,7 +242,7 @@ describe("chat names", () => {
     expect(r.err).toMatch(
       /^Chat not found: NoSuchChatAtAll\nList matching chats: telegram chats -q NoSuchChatAtAll --preview 0/
     );
-  }, 30_000);
+  });
 
   it("3.4 bots are a type of their own in chats and inbox; user still includes them", () => {
     const bots = JSON.parse(cli(["chats", "--type", "bot", "--json"]).out);
@@ -254,7 +253,7 @@ describe("chat names", () => {
     );
     const users = JSON.parse(cli(["chats", "--type", "user", "--json"]).out);
     expect(users.map((c: { title: string }) => c.title)).toContain("Demo Bot");
-  }, 30_000);
+  });
 });
 
 describe("output shapes", () => {
@@ -286,7 +285,7 @@ describe("output shapes", () => {
         chatTitle: expect.any(String),
       });
     }
-  }, 30_000);
+  });
 
   it("3.6 a full page says how to get the next one; a short page does not", () => {
     const page = JSON.parse(cli(["read", "Team", "-n", "2", "--json"]).out);
@@ -301,7 +300,7 @@ describe("output shapes", () => {
     const all = JSON.parse(cli(["read", "Team", "-n", "50", "--json"]).out);
     expect(all.hasMore).toBeUndefined();
     expect(all.nextBefore).toBeUndefined();
-  }, 30_000);
+  });
 
   it("3.8 a whole forum labels each message with its topic; --topic on a plain group is an error", () => {
     expect(cli(["read", "Dev Forum", "-n", "3"]).out).toMatch(
@@ -314,7 +313,7 @@ describe("output shapes", () => {
     const r = cli(["read", "Team", "--topic", "10"]);
     expect(r.code).toBe(2);
     expect(r.err).toMatch(/Team \(-1004001\) is not a forum/);
-  }, 30_000);
+  });
 
   it("4.7 write results share one shape: ok, action, chatId, chatTitle, messageId(s); old fields stay", () => {
     const state = join(home, "state-47.json");
@@ -362,7 +361,7 @@ describe("output shapes", () => {
     });
     const text = cli(["send", "Team", "again"], {}, state).out;
     expect(text).toMatch(/^Message ID: \d+ in Team \(-1004001\)$/m);
-  }, 30_000);
+  });
 
   it('3.9 sync --json names each chat\'s file and what was added; a second run says "up to date"', () => {
     const out = join(home, "sync-out");
@@ -401,7 +400,7 @@ describe("output shapes", () => {
       /Synced 0 new messages in 0 chats .*\(1 already up to date\)/
     );
     expect(readFileSync(report.chats[0].file, "utf-8")).toMatch(/^# Team/);
-  }, 30_000);
+  });
 
   it("3.6/3.7 search says when more exist and names the time zone of a global result list", () => {
     const r = cli(["search", "", "-n", "1"]);
@@ -415,7 +414,7 @@ describe("output shapes", () => {
       JSON.parse(cli(["search", "green", "--chat", "Team", "--json"]).out)
         .hasMore
     ).toBeUndefined();
-  }, 30_000);
+  });
 
   it("6.2 a message without media says how to look at it", () => {
     const r = cli(["download", "Team", "3", "--json"]);
@@ -426,7 +425,7 @@ describe("output shapes", () => {
       hint: "Check the message: telegram get Team 3 (media shows as [photo …] or [document …]).",
       command: ["get", "Team", "3"],
     });
-  }, 30_000);
+  });
 
   it("3.10 schema prints one line of JSON outside a terminal", () => {
     const r = cli(["schema", "messages", "get-history"]);
@@ -434,7 +433,7 @@ describe("output shapes", () => {
     expect(r.out.trim().split("\n")).toHaveLength(1);
     expect(JSON.parse(r.out)).toBeTypeOf("object");
     expect(cli(["schema", "nosuchns"]).code).toBe(2);
-  }, 30_000);
+  });
 
   it("4.9 an unknown button lists the ones there are", () => {
     const r = cli(["click", "@demo_bot", "2", "Nope"]);
@@ -442,7 +441,7 @@ describe("output shapes", () => {
     expect(r.err).toMatch(
       /Button "Nope" not found on message #2\nAvailable: \[1\] Catalog, \[2\] Status/
     );
-  }, 30_000);
+  });
 
   it("2.1 check shows the write mode and has --json", () => {
     expect(cli(["check"]).out).toMatch(/^Writes: ON — .*\(mock/m);
@@ -454,7 +453,7 @@ describe("output shapes", () => {
       writeMode: "on",
       account: { username: "mock_owner" },
     });
-  }, 30_000);
+  });
 
   it("mock refusals keep exit 2 and speak JSON with --json", () => {
     const r = cli(["write-access", "--json"]);
@@ -463,7 +462,7 @@ describe("output shapes", () => {
       code: "not_in_mock",
       hint: "Unset TG_MOCK to use a real account.",
     });
-  }, 30_000);
+  });
 });
 
 describe("MCP tool schema", () => {

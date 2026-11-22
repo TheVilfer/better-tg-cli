@@ -24,6 +24,13 @@ const PS = join(
 );
 const ENTROPY = "better-tg-cli";
 
+/**
+ * How long one PowerShell run of DPAPI may take before it is killed. A cold PowerShell 5.1 start
+ * takes about 3 s, but a Windows CI runner once took more than 20 s (the old limit); a run cut
+ * short reads as a missing session or a failed save, so this only guards against a hang.
+ */
+export const DPAPI_POWERSHELL_TIMEOUT_MS = 60_000;
+
 /** PowerShell reads the script as UTF-16LE base64, so no quoting can break it. */
 export function encodedCommand(script: string): string {
   return Buffer.from(script, "utf16le").toString("base64");
@@ -52,7 +59,7 @@ function runPowerShell(script: string, input: string): string {
     {
       input,
       encoding: "utf-8",
-      timeout: 20_000,
+      timeout: DPAPI_POWERSHELL_TIMEOUT_MS,
       windowsHide: true,
     }
   );
@@ -80,7 +87,7 @@ async function runPowerShellAsync(
       "-EncodedCommand",
       encodedCommand(script),
     ],
-    { input, timeout: 20_000, signal }
+    { input, timeout: DPAPI_POWERSHELL_TIMEOUT_MS, signal }
   );
   if (res.status !== 0 || res.error) {
     throw new Error("Windows DPAPI via PowerShell failed");
@@ -97,7 +104,8 @@ export interface Crypter {
   unprotectAsync?(blobBase64: string, signal?: AbortSignal): Promise<string>;
 }
 
-const powershellCrypter: Crypter = {
+/** The real crypto: DPAPI through the built-in PowerShell 5.1, one process per call. */
+export const powershellCrypter: Crypter = {
   protect: (b64) => runPowerShell(dpapiScript("Protect"), b64),
   unprotect: (b64) => runPowerShell(dpapiScript("Unprotect"), b64),
   unprotectAsync: (b64, signal) =>

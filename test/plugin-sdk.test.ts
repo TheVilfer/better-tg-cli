@@ -25,6 +25,9 @@ import { MANIFEST_SCHEMAS } from "../src/plugins/manifest-schemas.js";
 import { schemaUrl, SPEC_VERSION } from "../src/plugins/manifest.js";
 import { machinePaths, thisMachine } from "./build-paths.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const LAB = resolve("test/fixtures/plugins/sandbox-lab");
 const NET = resolve("test/fixtures/plugins/net-lab");

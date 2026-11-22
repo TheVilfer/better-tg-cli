@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const home = mkdtempSync(join(tmpdir(), "tg-mcp-result-"));
 
@@ -101,5 +104,5 @@ describe("5 MCP keeps the exit code and keeps stderr out of the JSON", () => {
       "ambiguous_chat"
     );
     expect(lines[1].result.structuredContent.stderr).toMatch(/^MOCK MODE/);
-  }, 30_000);
+  });
 });

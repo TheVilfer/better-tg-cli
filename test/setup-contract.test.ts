@@ -16,6 +16,7 @@ import { EXIT_NEEDS_APPROVAL } from "../src/approval.js";
 import { EXIT } from "../src/errors.js";
 import type { SetupResult } from "../src/setup-contract.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
 import {
   RUN_ALLOWLIST,
   SETUP_EXIT,
@@ -27,6 +28,8 @@ import {
   setupExitCode,
   setupResultErrors,
 } from "./setup-contract-check.js";
+
+useSpawnTimeout();
 
 const fixtures = JSON.parse(
   readFileSync("test/fixtures/setup-contract.json", "utf-8")
@@ -273,7 +276,7 @@ describe("setup contract, schema 1", () => {
     } finally {
       rmSync(h, { recursive: true, force: true });
     }
-  }, 30_000);
+  });
 
   it("the doc names exactly the commands of the allowlist", () => {
     const line = doc.slice(
@@ -350,7 +353,7 @@ describe("current consumers keep their output", () => {
     expect(Array.isArray(out)).toBe(true);
     expect(out.length).toBeGreaterThan(0);
     expect(out[0]).not.toHaveProperty("schema");
-  }, 30_000);
+  });
 
   it("skill status --json prints an array of agent rows", () => {
     const r = cli(["skill", "status", "--json"]);
@@ -364,7 +367,7 @@ describe("current consumers keep their output", () => {
       );
       expect(row).not.toHaveProperty("schema");
     }
-  }, 30_000);
+  });
 
   it("onboard --json prints its own JSON lines, without schema, ending in timeout", () => {
     const r = cli(["onboard", "--json", "--no-open", "--timeout", "0.02"]);
@@ -382,7 +385,7 @@ describe("current consumers keep their output", () => {
     for (const l of lines) {
       expect(l).not.toHaveProperty("schema");
     }
-  }, 30_000);
+  });
 
   it("telegram mcp writes only JSON-RPC messages to stdout", async () => {
     const child = spawn(process.execPath, [...cliArgs(), "mcp"], {
@@ -439,21 +442,17 @@ describe("current consumers keep their output", () => {
       expect(m.result.isError, `id ${m.id}`).toBeFalsy();
     }
     expect(messages[3].result.isError).toBe(true);
-  }, 30_000);
+  });
 
-  it.runIf(fakeOp)(
-    "a child asks only the fake secret store",
-    () => {
-      const log = join(home, "whoami-op-calls.log");
-      const r = cli(["whoami"], baseEnv(log));
-      expect(r.status, r.stderr).toBe(EXIT.NOT_LOGGED_IN);
-      const calls = opCalls(log);
-      expect(calls).toContain("whoami");
-      expect(calls.some((c) => c.startsWith("read "))).toBe(true);
-      for (const call of calls) {
-        expect(call).toMatch(ALLOWED_OP_CALL);
-      }
-    },
-    30_000
-  );
+  it.runIf(fakeOp)("a child asks only the fake secret store", () => {
+    const log = join(home, "whoami-op-calls.log");
+    const r = cli(["whoami"], baseEnv(log));
+    expect(r.status, r.stderr).toBe(EXIT.NOT_LOGGED_IN);
+    const calls = opCalls(log);
+    expect(calls).toContain("whoami");
+    expect(calls.some((c) => c.startsWith("read "))).toBe(true);
+    for (const call of calls) {
+      expect(call).toMatch(ALLOWED_OP_CALL);
+    }
+  });
 });

@@ -5,6 +5,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
+
 const TSV = "scripts/data/telethon-1.45.0-client-methods.tsv";
 const run = (...args: string[]) =>
   spawnSync(process.execPath, ["scripts/api-coverage.mjs", ...args], {
