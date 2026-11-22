@@ -1,7 +1,7 @@
 #!/bin/sh
 {
 
-VERSION='0.41.1'
+VERSION='0.41.2'
 REPO='TheVilfer/better-tg-cli'
 
 TAG="v$VERSION"
