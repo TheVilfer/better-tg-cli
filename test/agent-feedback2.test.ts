@@ -21,6 +21,9 @@ import type { MockWorld } from "../src/mock/world.js";
 import { setStrictChatResolution } from "../src/resolve-mode.js";
 import { writesTextLine } from "../src/status.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const dir = mkdtempSync(join(tmpdir(), "tg-agent-feedback2-"));
 
@@ -220,7 +223,7 @@ describe("2 TG_LOG_LEVEL=debug says whether chat lookup used the list on disk", 
     expect(cli(["read", "Team", "-n", "1", "--json"], state).err).not.toMatch(
       /dialog cache/
     );
-  }, 30_000);
+  });
 });
 
 describe("3 every candidate carries the command that re-runs the call with its ID", () => {
@@ -254,7 +257,7 @@ describe("3 every candidate carries the command that re-runs the call with its I
     for (const c of error.candidates) {
       expect(c).not.toHaveProperty("command");
     }
-  }, 30_000);
+  });
 });
 
 describe("4 inbox: people, then bots, then groups and channels, then muted", () => {
@@ -277,25 +280,21 @@ describe("4 inbox: people, then bots, then groups and channels, then muted", () 
     expect(chats.map(rank)).toEqual(chats.map(rank).sort());
     expect(chats.find((c) => c.id === "2001")).toMatchObject({ bot: true });
     expect(chats.map((c) => c.id).slice(0, 2)).toEqual(["1001", "2001"]);
-  }, 30_000);
+  });
 
   it("--no-bots hides bots", () => {
     const json = JSON.parse(cli(["inbox", "--no-bots", "--json"], state()).out);
     expect(json.chats.some((c: { bot?: boolean }) => c.bot)).toBe(false);
     expect(json.chats.length).toBeGreaterThan(3);
-  }, 30_000);
+  });
 });
 
 describe("5 check prints the write mode once", () => {
-  it.each([[{}], [{ TG_MOCK_ASK: "1" }]])(
-    "%j",
-    (extra) => {
-      const { out } = cli(["check"], worldFile(), extra);
-      expect(out).toMatch(/^Writes: (ON|ASK) — .*\(mock: /m);
-      expect(out).not.toMatch(/^Write mode/m);
-    },
-    30_000
-  );
+  it.each([[{}], [{ TG_MOCK_ASK: "1" }]])("%j", (extra) => {
+    const { out } = cli(["check"], worldFile(), extra);
+    expect(out).toMatch(/^Writes: (ON|ASK) — .*\(mock: /m);
+    expect(out).not.toMatch(/^Write mode/m);
+  });
 
   it("the real-account line keeps the time limit, the expiry and how to turn writes on", () => {
     const until = "2030-01-02T03:04:05.000Z";

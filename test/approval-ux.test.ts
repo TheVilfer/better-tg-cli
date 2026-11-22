@@ -12,6 +12,9 @@ import {
 import type { ParsedAction } from "../src/approval-action.js";
 import { isMockAsk } from "../src/paths.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const home = mkdtempSync(join(tmpdir(), "tg-approval-ux-"));
 

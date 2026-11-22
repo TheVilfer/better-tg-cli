@@ -368,8 +368,11 @@ file says why.
   input, result, URL, header, body or secret.
 - A failed secret read throws rather than falling back to the file copy, because that copy may
   belong to another account.
-- DPAPI through PowerShell is slow to start (about 0.3-0.6 s), hence the per-process cache; fresh
-  reads are synchronous spawns, used only on the deciding paths above. A change replaces the file
+- DPAPI through PowerShell is slow to start (about 0.3-0.6 s warm, about 3 s cold), hence the
+  per-process cache; fresh reads are synchronous spawns, used only on the deciding paths above.
+  One PowerShell run may take `DPAPI_POWERSHELL_TIMEOUT_MS` (60 s) before it is killed: a Windows
+  CI runner once took more than 20 s (the old limit) to start it, for no visible reason, and a run
+  cut short reads as no session or a failed save. A change replaces the file
   atomically (temp file in the same folder, then rename) under the lock file.
 - The approval signing key in the secret store raises the bar; it is not a wall (an agent with a
   shell that can read the store could still sign). Without a store the key sits in the profile,
@@ -555,7 +558,10 @@ file says why.
   body; "deflate" is sometimes sent without its zlib wrapper. One budget covers every head
   (including 103 Early Hints), chunk-size lines and trailers; the body grows by doubling. A request
   ends a little before the run's deadline so the plugin still gets its `timeout` error, and one
-  deadline covers secret reads, DNS, connect, TLS and response.
+  deadline covers secret reads, DNS, connect, TLS and response. A secret read that ends in an
+  error, the deadline included, aborts the store's signal itself: the deadline has two timers (the
+  request's own and `withTimeout`'s), and when `withTimeout` fired first the request cleared the
+  other before it told the store to stop.
 - **Secrets in requests:** values only a human enters, in the profile's secret store under a key
   the core builds. A secret limited to some paths goes only with a path every server reads the
   same way. Every form of every injected value (raw, URL and form encoding, which also encodes

@@ -23,6 +23,9 @@ import { seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { setStrictChatResolution } from "../src/resolve-mode.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const mock = (world: MockWorld = seedWorld()) =>
   new MockClient(world) as unknown as TelegramClient;
@@ -402,8 +405,7 @@ describe("api: paid reads and login tokens", () => {
         expect(r.status, JSON.stringify(extra)).toBe(1);
         expect(r.stderr).toMatch(/Refused over MCP: allowPaidStars/);
       }
-    },
-    30_000
+    }
   );
 
   it.each(PAID)(
@@ -413,8 +415,7 @@ describe("api: paid reads and login tokens", () => {
       expect([1, 4]).toContain(r.status);
       expect(r.stderr).not.toMatch(/Refused over MCP/);
       expect(r.stderr).toMatch(/Write access|secret store/);
-    },
-    30_000
+    }
   );
 
   it("mcpPaidStarsRefusal: only over MCP, any method class, only an own non-null field", () => {
@@ -587,7 +588,7 @@ describe("api: paid reads and login tokens", () => {
     });
     expect(r.stderr).not.toMatch(/Refused over MCP|cannot run as a read/);
     expect(r.stderr).toMatch(/not configured|not authenticated|auth/i);
-  }, 30_000);
+  });
 
   it("messages.GetEmojiURL (a login link) is refused", () => {
     expect(apiRefusalReason("messages.GetEmojiURL")).toMatch(/log/i);

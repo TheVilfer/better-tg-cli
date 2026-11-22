@@ -20,6 +20,9 @@ import { MockClient } from "../src/mock/client.js";
 import { seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { setStrictChatResolution } from "../src/resolve-mode.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const mock = (world: MockWorld = seedWorld()) =>
   new MockClient(world) as unknown as TelegramClient;

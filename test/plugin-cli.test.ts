@@ -13,6 +13,9 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { saveWorld, seedWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");

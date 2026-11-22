@@ -7,7 +7,15 @@ import type { Server, TLSSocket } from "node:tls";
 import { gzipSync } from "node:zlib";
 
 import type { TelegramClient } from "teleproto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   httpTiming,
@@ -607,8 +615,10 @@ describe("#9 an unknown Content-Encoding is bad_response, never a crash", () => 
 describe("#10 one deadline for the whole request", () => {
   it("slow DNS plus a slow response exceed the single deadline together", async () => {
     httpTiming.timeoutMs = 1000;
+    let replied = false;
     routes.set("/slow", async (_r, s) => {
       await new Promise((r) => setTimeout(r, 700));
+      replied = true;
       s.end(`${head("200 OK", { "Content-Length": "4" })}slow`);
     });
     const t = testNet({
@@ -617,34 +627,40 @@ describe("#10 one deadline for the whole request", () => {
         return [PUBLIC];
       },
     });
-    const started = Date.now();
     await expect(
       fetchVia(t.net, "https://api.example.com/slow")
     ).resolves.toMatchObject({ ok: false, error: { code: "timeout" } });
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(replied).toBe(false);
   });
 
   it("a slow secret store counts too, is read asynchronously and is told to stop", async () => {
     httpTiming.timeoutMs = 1000;
     let aborted = false;
+    let answered = false;
     const secret: SecretFn = (_n, signal) =>
       new Promise((r) => {
         signal.addEventListener("abort", () => {
           aborted = true;
         });
-        setTimeout(() => r(SECRET), 3000);
+        setTimeout(() => {
+          answered = true;
+          r(SECRET);
+        }, 3000);
       });
+    const realNow = Date.now.bind(Date);
+    let clockSkewMs = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + clockSkewMs++);
     let ticks = 0;
     const tick = setInterval(() => ticks++, 50);
-    const started = Date.now();
     try {
       await expect(
         fetchVia(testNet().net, "https://api.example.com/v1/echo", { secret })
       ).resolves.toMatchObject({ ok: false, error: { code: "timeout" } });
     } finally {
       clearInterval(tick);
+      vi.restoreAllMocks();
     }
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(answered).toBe(false);
     expect(aborted).toBe(true);
     expect(ticks).toBeGreaterThan(5);
     expect(seen).toEqual([]);

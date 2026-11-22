@@ -28,7 +28,10 @@ import {
   releaseBase,
 } from "./helpers/release-fixtures.js";
 import type { ReleaseFixtureOptions } from "./helpers/release-fixtures.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
 import { setupExitCode, setupResultErrors } from "./setup-contract-check.js";
+
+useSpawnTimeout();
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = join(ROOT, "install.sh");

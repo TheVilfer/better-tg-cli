@@ -12,6 +12,9 @@ import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it, test, vi } from "vitest";
 
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const env = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");

@@ -42,6 +42,9 @@ import {
   verifyInstalled,
 } from "../src/plugins/store.js";
 import type { KeyStore, LockEntry } from "../src/plugins/store.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const FIXTURE = "test/fixtures/plugins/tone-of-voice";
 const root = mkdtempSync(join(tmpdir(), "tg-plugin-fixes-"));
