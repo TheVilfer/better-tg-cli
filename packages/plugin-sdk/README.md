@@ -4,11 +4,11 @@ Write, build and test [Better-TG-CLI](https://github.com/TheVilfer/better-tg-cli
 plugin format is [docs/plugins.md](https://github.com/TheVilfer/better-tg-cli/blob/main/docs/plugins.md);
 a ready project to start from is the template (`templates/plugin` in the Better-TG-CLI repository).
 
-| Import                        | What                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `@better-tg/plugin-sdk`       | `definePlugin()`, `defineCommand()`, the types of `host` and of the manifest, `SPEC_VERSION` |
-| `@better-tg/plugin-sdk/build` | `buildPlugin(dir, {entry, outfile})`: the bundle the `tg-plugin build` command makes         |
-| `@better-tg/plugin-sdk/test`  | `runCommand()`, `validatePlugin()`, `PluginRunError`, `CLI_VERSION`: the test host           |
+| Import                        | What                                                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `@better-tg/plugin-sdk`       | `definePlugin()`, `defineCommand()`, the types of `host` and of the manifest, `SPEC_VERSION`           |
+| `@better-tg/plugin-sdk/build` | `buildPlugin(dir, {entry, outfile})`: the bundle the `tg-plugin build` command makes                   |
+| `@better-tg/plugin-sdk/test`  | `runCommand()`, `createTestHost()`, `validatePlugin()`, `PluginRunError`, `CLI_VERSION`: the test host |
 
 ## Write
 
@@ -74,7 +74,31 @@ limits, the built-in mock account, cursors in memory and HTTP from the folder's
 - `log`: gets each `host.log` line.
 
 Each run starts with a fresh mock account, as each `plugin dev` process does, and importing the
-test host changes no global of your test process.
+test host changes no global of your test process. A run's cursors end with it, so a cursor from one
+`runCommand` fails the next with `invalid_cursor`. To test a second page or a resume after
+`flood_wait`, use a test host whose runs share the cursor store:
+
+```ts
+import { createTestHost } from "@better-tg/plugin-sdk/test";
+
+const host = createTestHost({ mock: true });
+const first = await host.run<{ cursor: string | null }>(".", "collect", {
+  limit: 10,
+});
+const next = await host.run(".", "collect", {
+  limit: 10,
+  cursor: first.data.cursor,
+});
+```
+
+`host.run(dir, command, input, options?)` takes the same options, over the ones the host was made
+with. Cursors follow the rules of an installation: random ids, 24 hours, the latest 64, bound to the
+mock account and to the plugin. The mock account, storage and settings still start afresh in each
+run.
+
+A `flood_wait` or `invalid_cursor` the host raised keeps its code when the command lets it escape
+(`body` then holds the host's own message and fields, never the plugin's); any other uncaught error
+is `plugin_error`.
 
 `CLI_VERSION` is the Better-TG-CLI version whose checks the SDK carries; `engines.better-tg-cli` is
 matched against it.

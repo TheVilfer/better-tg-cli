@@ -307,6 +307,16 @@ async function runWith(
         }
       );
     }
+    if (error.guestCode === "invalid_cursor" && state.invalidCursor) {
+      throw new CliError(
+        state.invalidCursor.message,
+        "invalid_cursor",
+        EXIT.ERROR,
+        {
+          hint: "Run the command again without the cursor to start over.",
+        }
+      );
+    }
     if (error.guestCode === "secret_missing" && state.secretMissing) {
       const { name, command } = state.secretMissing;
       throw new CliError(
@@ -397,7 +407,8 @@ function assertMemoryGuard(guard: WriteGuard): void {
 
 /**
  * Cursor state in memory, for `plugin dev` and tests: the same random ids, expiry and bound as the
- * installation's folder, but gone with the process (a cursor never continues in the next run).
+ * installation's folder, but gone with the store (`plugin dev` makes one per run; the SDK's test host
+ * keeps one per plugin across its runs).
  */
 export function memoryCursors(
   max = 64,

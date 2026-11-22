@@ -1,7 +1,7 @@
 import type { TelegramClient } from "teleproto";
 
 import { CliError, EXIT, usageError } from "../errors.js";
-import type { Target } from "./host.js";
+import type { CursorStore, Target } from "./host.js";
 import { httpDeps, readFixtureDir } from "./http-backend.js";
 import { fixtureBackend, parseFixtures } from "./http.js";
 import type { Fixture } from "./http.js";
@@ -35,11 +35,12 @@ export interface DevPlugin {
 
 /**
  * One `plugin dev --mock` run, shared by the CLI and the plugin SDK's test host so both check and run
- * a command the same way. Without `settings`, `secrets` and `fixtures` it is exactly `plugin dev`.
+ * a command the same way. Without `settings`, `secrets`, `fixtures` and `cursors` it is exactly `plugin dev`.
  *
  * - `settings`: Stored settings (the test host's option), each value and their total size checked as `plugin settings set` checks them.
  * - `secrets`: Secret values instead of the `dev-secret-<name>` placeholders; `null` is a secret not set.
  * - `fixtures`: More HTTP fixtures in the `dev/fixtures` format, matched before the folder's own.
+ * - `cursors`: The cursor store to use (the test host's, shared by its runs); default a fresh one, so a cursor never outlives the run.
  */
 export interface DevRunRequest {
   input: unknown;
@@ -47,6 +48,7 @@ export interface DevRunRequest {
   settings?: Record<string, unknown>;
   secrets?: Record<string, string | null>;
   fixtures?: unknown;
+  cursors?: CursorStore;
   log?: (line: string) => void;
   signal?: AbortSignal;
   cancelled?: () => boolean;
@@ -149,7 +151,7 @@ export async function devRun(
     client: async () => client,
     account: async () => String(world.me),
     storage: async () => storage,
-    cursors: memoryCursors(),
+    cursors: req.cursors ?? memoryCursors(),
     installId: DEV_INSTALL_ID,
     target: req.target,
     mcp: false,

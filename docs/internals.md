@@ -681,7 +681,12 @@ file says why.
   random cursors and dates of the mock seed (counted from now) are the only values normalised.
   `flood_wait` comes from `TG_MOCK_FLOOD_HISTORY=<n>:<s>`, set for the child and for the SDK's run
   alike; the mock client counts history reads per instance, so every `runCommand` starts at zero as
-  a CLI process does, one after another or side by side. The test host does not import
+  a CLI process does, one after another or side by side. `createTestHost` only adds a cursor store
+  per plugin name (the CLI's `memoryCursors`) that `devRun` takes instead of its fresh one; the
+  installation ID stays `plugin-dev` and the mock world is seeded the same way each run, so a
+  cursor's chats and offsets mean the same in the next run. A host `invalid_cursor` is recorded in
+  `HostState.invalidCursor` by `messages.mine` and reported from there, as `flood_wait` and
+  `secret_missing` are, so a plugin cannot make one up or change its message. The test host does not import
   `src/env.ts`: the shrink stubs teleproto's `StoreSession`, the only path to `localStorage`, so
   importing the SDK leaves the test process's globals alone. The shared checks are one function
   each: `pluginTarget` (run, dev, SDK) and `settingsText` (`plugin settings set` and `devRun`).

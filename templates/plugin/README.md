@@ -59,7 +59,8 @@ command returns plain JSON, which the host checks against its `output` schema.
 
 A host call can fail with `flood_wait` when Telegram asks to slow down. For `messages.mine` the
 error carries `partial` (what was read before it) and `cursor` (right after it); `summary` turns
-that into a page with `retryAfterSeconds`, so the agent counts it and waits before going on.
+that into a page with `retryAfterSeconds`, so the agent counts it, tells the user the wait and goes
+on only once they agree.
 
 ## Testing
 
@@ -68,7 +69,9 @@ that into a page with `retryAfterSeconds`, so the agent counts it and waits befo
 limits and checks, the built-in mock account, HTTP from `dev/fixtures`. It returns
 `{ data, proposals, json }` or throws a `PluginRunError` with the CLI's `code`, `exitCode` and the
 error's fields (`body`). A test may also pass `settings`, `secrets` (a value, or `null` for a
-secret not set), more `fixtures` and a `target`.
+secret not set), more `fixtures` and a `target`. A run's cursors end with it; `createTestHost({ mock:
+true })` gives `host.run(dir, command, input)`, whose runs share them, so the test of a second page
+passes the first page's `cursor` and `limit = remaining`.
 
 ## Installing
 

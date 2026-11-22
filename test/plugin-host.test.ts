@@ -345,10 +345,13 @@ describe("host API: messages.mine pages and cursor", () => {
   });
 
   it("the cursor is an opaque random id: it reveals no chat, and garbage, forged, other-account and other-install ids are refused", async () => {
-    const { call } = setup();
+    const { call, state } = setup();
     await expect(
       call("messages.mine", { cursor: "not a cursor!" })
     ).rejects.toMatchObject({ code: "invalid_cursor" });
+    expect(state.invalidCursor).toEqual({
+      message: "cursor is not one this host returned",
+    });
     const first = await call("messages.mine", {
       limit: 1,
       types: ["private", "group"],
