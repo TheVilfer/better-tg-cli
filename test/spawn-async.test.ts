@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { spawnAsync } from "../src/spawn-async.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const node = process.execPath;
 

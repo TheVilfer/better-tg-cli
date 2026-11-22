@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, posix, relative, resolve } from "node:path";
 
 import {
   anchor,
@@ -108,7 +108,9 @@ function inside(dir: string, path: string, what: string): string {
  * Bundles the plugin's source into one ES module without imports (`dist/plugin.js`): everything it
  * imports, the SDK's `definePlugin` included, is inlined, and the module exports `commands`. The
  * syntax and the author's strings are passed through as written; only Bun's per-module path comment
- * tokens are dropped, so the output is the same on every machine for the same Bun version. The
+ * tokens are dropped, and `__filename`/`__dirname` of a bundled module (which Bun would replace with
+ * its absolute source path) become the output's path inside the plugin folder (`/dist/plugin.js`),
+ * so the output is the same on every machine for the same Bun version. The
  * result is refused unless it is exactly one JavaScript file that parses as ES2023 (what QuickJS
  * runs) and loads no module (`import`, `export … from`, `import()`, `require`). A Node or Bun
  * built-in is refused, never polyfilled. The file is written only as a real file below the folder,
@@ -126,6 +128,7 @@ export async function buildPlugin(
     options.outfile ?? manifestMain(root) ?? "dist/plugin.js",
     "The output"
   );
+  const rel = relative(root, outfile).split("\\").join("/");
   const builtins = new Set<string>();
   const result = await bun.build({
     entrypoints: [entry],
@@ -136,6 +139,10 @@ export async function buildPlugin(
     sourcemap: "none",
     metafile: true,
     plugins: [builtinCatcher(builtins)],
+    define: {
+      __filename: JSON.stringify(`/${rel}`),
+      __dirname: JSON.stringify(posix.dirname(`/${rel}`)),
+    },
   });
   if (!result.success) {
     throw new Error(`The build failed:\n${result.logs.map(String).join("\n")}`);
@@ -167,7 +174,6 @@ export async function buildPlugin(
       `The bundle is ${bytes} bytes; a plugin file may have at most ${MAX_FILE_BYTES}`
     );
   }
-  const rel = relative(root, outfile).split("\\").join("/");
   try {
     writeRegular(anchor(root), rel, code, { fileMode: 0o644, dirMode: 0o755 });
   } catch (error) {

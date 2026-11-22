@@ -14,6 +14,9 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { seedWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const home = mkdtempSync(join(tmpdir(), "tg-bound-"));
 

@@ -1,6 +1,6 @@
 {
   "name": "@better-tg/plugin-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Write, build and test Better-TG-CLI plugins: host and manifest types, definePlugin(), a bundler to dist/plugin.js and a test host on mock data.",
   "keywords": [

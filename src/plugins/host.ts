@@ -702,6 +702,7 @@ export function grantedApi(
               until
             );
           } catch (error) {
+            stop();
             if (error instanceof HostError) {
               throw error;
             }

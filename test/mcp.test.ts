@@ -21,6 +21,9 @@ import {
   setKnownCommands,
   useWorkers,
 } from "../src/mcp.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const CLI = "dist/telegram.mjs";
 const env = {
@@ -716,7 +719,7 @@ describe.concurrent.each([
     expect(lines[5].result.content[0].text).toMatch(
       /not configured|not authenticated|auth/i
     );
-  }, 30_000);
+  });
 
   it("refuses never and unknown calls without running anything or writing to disk", async () => {
     const home = mkdtempSync(join(tmpdir(), "tg-mcp-never-"));
@@ -787,5 +790,5 @@ describe.concurrent.each([
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
-  }, 30_000);
+  });
 });

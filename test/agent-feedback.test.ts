@@ -8,6 +8,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { seedWorld } from "../src/mock/world.js";
 import type { MockWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const home = mkdtempSync(join(tmpdir(), "tg-agent-feedback-"));
 
@@ -65,16 +68,12 @@ describe('1 hint is always a string; a command to run next is an argv in "comman
     [["read", "Tea", "--json"], "ambiguous_chat", undefined],
     [["folder", "NoSuchFolder", "--json"], "folder_not_found", ["folders"]],
     [["download", "Team", "3", "--json"], "no_media", ["get", "Team", "3"]],
-  ] as const)(
-    "%j",
-    (args, code, command) => {
-      const { error } = JSON.parse(cli([...args]).out);
-      expect(error.code).toBe(code);
-      expect(error.hint).toBeTypeOf("string");
-      expect(error.command).toEqual(command);
-    },
-    30_000
-  );
+  ] as const)("%j", (args, code, command) => {
+    const { error } = JSON.parse(cli([...args]).out);
+    expect(error.code).toBe(code);
+    expect(error.hint).toBeTypeOf("string");
+    expect(error.command).toEqual(command);
+  });
 });
 
 describe("4 Saved Messages is titled so, and the account's own messages are outgoing", () => {
@@ -100,7 +99,7 @@ describe("4 Saved Messages is titled so, and the account's own messages are outg
     for (const m of json.messages) {
       expect(m.isOutgoing, m.text).toBe(true);
     }
-  }, 30_000);
+  });
 
   it("a message from the account in a group is outgoing without msg.out; others are not", () => {
     const json = JSON.parse(
@@ -113,7 +112,7 @@ describe("4 Saved Messages is titled so, and the account's own messages are outg
     )) {
       expect(m.isOutgoing).toBe(false);
     }
-  }, 30_000);
+  });
 
   it('chats, inbox and global search name the self chat "Saved Messages"', () => {
     const s = state();
@@ -129,7 +128,7 @@ describe("4 Saved Messages is titled so, and the account's own messages are outg
       chatTitle: "Saved Messages",
       isOutgoing: true,
     });
-  }, 30_000);
+  });
 });
 
 describe("5 inbox: unmuted chats first, each marked muted or not", () => {
@@ -160,7 +159,7 @@ describe("5 inbox: unmuted chats first, each marked muted or not", () => {
     });
     expect(json.chats[0].muted).toBe(false);
     expect(json.totalUnread).toBeGreaterThanOrEqual(900);
-  }, 30_000);
+  });
 
   it("--unmuted drops the muted ones; text marks a muted chat", () => {
     const s = state();
@@ -173,7 +172,7 @@ describe("5 inbox: unmuted chats first, each marked muted or not", () => {
     const text = cli(["inbox"], {}, s).out;
     expect(text).toMatch(/ muted .*Huge Muted/);
     expect(text.trimEnd().split("\n").at(-1)).toMatch(/muted/);
-  }, 30_000);
+  });
 });
 
 describe("6 check says plainly whether writes go out", () => {
@@ -187,7 +186,7 @@ describe("6 check says plainly whether writes go out", () => {
     expect(cli(["check"]).out).toMatch(
       /^Writes: ON — messages are sent without confirmation/m
     );
-  }, 30_000);
+  });
 
   it('mock in mode ask: "writes":"with-approval"', () => {
     const json = JSON.parse(cli(["check", "--json"], { TG_MOCK_ASK: "1" }).out);
@@ -195,7 +194,7 @@ describe("6 check says plainly whether writes go out", () => {
     expect(cli(["check"], { TG_MOCK_ASK: "1" }).out).toMatch(
       /^Writes: ASK — /m
     );
-  }, 30_000);
+  });
 
   it("the mapping covers every write mode", async () => {
     const { writesOf } = await import("../src/status.js");

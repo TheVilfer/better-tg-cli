@@ -44,6 +44,9 @@ import type { MockWorld } from "../src/mock/world.js";
 import { profile } from "../src/paths.js";
 import { setStrictChatResolution } from "../src/resolve-mode.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const mock = (
   world: MockWorld = seedWorld(),
@@ -446,5 +449,5 @@ describe("CLI in mock mode (from src/)", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
-  }, 30_000);
+  });
 });

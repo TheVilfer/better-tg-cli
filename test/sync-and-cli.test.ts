@@ -4,6 +4,9 @@ import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { buildSyncFetchOptions } from "../src/commands/sync.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 describe("sync fetch options", () => {
   const week = new Date(Date.now() - 7 * 86_400e3);

@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { SKILL_FILES } from "../src/skill-files.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const root = new URL("../", import.meta.url);
 const skillDir = new URL("skills/better-tg-cli/", root);

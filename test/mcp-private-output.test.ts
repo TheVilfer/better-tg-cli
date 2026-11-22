@@ -25,6 +25,9 @@ import { maskGiftCodes } from "../src/mcp-output.js";
 import { classifyCall, cliResult as mcpToolResult } from "../src/mcp.js";
 import { seedWorld } from "../src/mock/world.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const saved = { ...process.env };
 afterEach(() => {
@@ -599,16 +602,12 @@ describe("end to end on a mock account with a login code from 777000", () => {
     ["search", ["search", "Login", "--chat", "777000", "--json"]],
     ["chats", ["chats", "--json"]],
     ["inbox", ["inbox", "--json"]],
-  ])(
-    "%s over MCP never prints the code",
-    (_what, args) => {
-      const r = run(args);
-      expect(r.status, r.stderr).toBe(0);
-      expect(r.stdout).not.toMatch(/52813/);
-      expect(r.stdout).toMatch(/login code hidden/);
-    },
-    30_000
-  );
+  ])("%s over MCP never prints the code", (_what, args) => {
+    const r = run(args);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).not.toMatch(/52813/);
+    expect(r.stdout).toMatch(/login code hidden/);
+  });
 
   it("a terminal still shows it", () => {
     const r = run(["read", "777000", "--json"], {
@@ -617,7 +616,7 @@ describe("end to end on a mock account with a login code from 777000", () => {
     });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/52813/);
-  }, 30_000);
+  });
 });
 
 describe("click --data over MCP finds only what the model was shown", () => {
@@ -1103,8 +1102,7 @@ describe("gift-code links on every MCP output", () => {
         expect(
           mcpToolResult(0, false, terminal.stdout, "").content[0].text
         ).not.toMatch(/AbC123xyz|QwE_rty-1|ZxC987/);
-      },
-      30_000
+      }
     );
   });
 });

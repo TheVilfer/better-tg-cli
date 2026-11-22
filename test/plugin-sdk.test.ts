@@ -23,7 +23,11 @@ import {
 } from "../packages/plugin-sdk/src/bundle-check.js";
 import { MANIFEST_SCHEMAS } from "../src/plugins/manifest-schemas.js";
 import { schemaUrl, SPEC_VERSION } from "../src/plugins/manifest.js";
+import { machinePaths, thisMachine } from "./build-paths.js";
 import { cliArgs } from "./cli.js";
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
 
 const LAB = resolve("test/fixtures/plugins/sandbox-lab");
 const NET = resolve("test/fixtures/plugins/net-lab");
@@ -943,6 +947,42 @@ describe("the SDK build", { timeout: 120_000 }, () => {
     const built = readFileSync(join(dir, "dist", "plugin.js"), "utf-8");
     expect(built).toContain(text);
     expect(built).not.toContain("// src/plugin.ts");
+  });
+
+  it("names no path of the build machine in the SDK's bundles", () => {
+    for (const name of ["index", "build", "bin", "test"]) {
+      const text = readFileSync(join(out, `${name}.mjs`), "utf-8");
+      expect(machinePaths(text, thisMachine()), name).toEqual([]);
+    }
+  });
+
+  it("a bundled package's __filename and __dirname become the output's path in the plugin folder", async () => {
+    const dir = join(root, "paths");
+    const pkg = join(dir, "node_modules", "where");
+    mkdirSync(join(dir, "src"), { recursive: true });
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({ name: "where", main: "index.js" })
+    );
+    writeFileSync(
+      join(pkg, "index.js"),
+      "module.exports = () => [__filename, __dirname];\n"
+    );
+    writeFileSync(
+      join(dir, "src", "plugin.ts"),
+      'import where from "where";\nexport const commands = { a: () => where() };\n'
+    );
+    const r = bun([join(out, "bin.mjs"), "build", dir]);
+    expect(r.status, r.stderr).toBe(0);
+    const built = readFileSync(join(dir, "dist", "plugin.js"), "utf-8");
+    expect(built).not.toContain(dir);
+    expect(built).not.toContain(dir.replaceAll("\\", "\\\\"));
+    expect(machinePaths(built, thisMachine())).toEqual([]);
+    const mod = (await import(
+      `${pathToFileURL(join(dir, "dist", "plugin.js")).href}?v=paths`
+    )) as { commands: { a(): string[] } };
+    expect(mod.commands.a()).toEqual(["/dist/plugin.js", "/dist"]);
   });
 
   it("review #5: a template line equal to Bun's marker of the entry stays, and the command returns it", async () => {

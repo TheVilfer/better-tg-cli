@@ -13,6 +13,10 @@ import {
   vi,
 } from "vitest";
 
+import { useSpawnTimeout } from "./helpers/spawn-timeout.js";
+
+useSpawnTimeout();
+
 const assertWriteEnabled = vi.hoisted(() => vi.fn());
 const getClient = vi.hoisted(() => vi.fn(async () => ({})));
 const invokeApi = vi.hoisted(() =>
