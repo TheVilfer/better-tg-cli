@@ -95,8 +95,9 @@ yourself.
 - Never over MCP: `auth`, `onboard`, `logout`, `transfer-owner`, `update`, `skill`, and changing
   `write-access`. A misrouted call says which tool to use (`"send" changes something; use
   telegram_write`).
-- The result text is the CLI's stdout; `structuredContent` has `{exitCode, stderr?}`, so a failure
-  keeps its exit code. A write waiting for approval is not an error: `{status:"approval_required", …}`
+- The result text is the CLI's stdout. `structuredContent` has the same text as `output` (with
+  `--json`, parse it) plus `{exitCode, stderr?}`, so a failure keeps its exit code. A write waiting
+  for approval is not an error: `{status:"approval_required", …}`
   ([writing.md](writing.md#approval-in-mode-ask)).
 - Calls run one at a time, time out after 120 s and are capped at 100 KB of output. `watch` needs
   `-t` or `-n`.

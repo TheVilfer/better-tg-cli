@@ -153,6 +153,10 @@ describe("telegram mcp --http", () => {
       })
     ).json();
     expect(read.result.content[0].text).toBe("ran whoami");
+    expect(read.result.structuredContent).toEqual({ output: "ran whoami" });
+    for (const tool of list.result.tools) {
+      expect(tool.outputSchema.required).toEqual(["output"]);
+    }
   });
 
   it("answers batches and bad JSON", async () => {
