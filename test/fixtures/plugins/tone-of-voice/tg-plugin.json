@@ -1,0 +1,27 @@
+{
+  "$schema": "https://better-tg-cli.com/schemas/tg-plugin/2026-11-21.json",
+  "name": "tone-of-voice",
+  "version": "1.0.0",
+  "description": "Writes messages in the user's own voice when no exact text is given",
+  "author": { "name": "Better-TG-CLI team", "url": "https://github.com/TheVilfer" },
+  "license": "MIT",
+  "main": "code/plugin.js",
+  "files": ["tg-plugin.json", "SKILL.md", "onboarding.md", "templates/style.md", "code/plugin.js"],
+  "permissions": ["messages:read-own", "storage:read"],
+  "network": [],
+  "secrets": [],
+  "settings": {},
+  "resources": { "compose": "SKILL.md#compose", "onboarding": "onboarding.md", "template": "templates/style.md" },
+  "storage": { "keys": ["style"], "quotaBytes": 262144 },
+  "commands": [
+    {
+      "name": "collect",
+      "description": "Collect the user's own messages for style analysis",
+      "effects": [],
+      "input": { "type": "object", "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 2000 }, "types": { "type": "array", "items": { "enum": ["private", "group"] } }, "cursor": { "type": "string" } }, "required": ["limit"], "additionalProperties": false },
+      "output": { "type": "object", "properties": { "messages": { "type": "array" }, "cursor": { "type": ["string", "null"] }, "remaining": { "type": "integer" }, "done": { "type": "boolean" } }, "required": ["messages", "cursor", "remaining", "done"] }
+    }
+  ],
+  "triggers": [ { "id": "compose", "when": "The user asks to write or reply to someone but gives no exact text", "resource": "compose" } ],
+  "onboarding": { "resource": "onboarding", "doneWhen": { "storage": "style" } }
+}

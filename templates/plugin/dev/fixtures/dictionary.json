@@ -1,0 +1,23 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://api.example.com/v1/define?word=plugin"
+    },
+    "response": {
+      "status": 200,
+      "headers": { "cache-control": "max-age=60" },
+      "json": {
+        "word": "plugin",
+        "definition": "A piece of software that adds a feature to another program."
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://api.example.com/v1/define?word=zzz"
+    },
+    "response": { "status": 404, "json": { "error": "not found" } }
+  }
+]

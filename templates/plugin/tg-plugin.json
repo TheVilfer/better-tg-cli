@@ -1,0 +1,126 @@
+{
+  "$schema": "https://better-tg-cli.com/schemas/tg-plugin/2026-11-21.json",
+  "name": "my-plugin",
+  "version": "0.1.0",
+  "description": "Summarises how the user writes in Telegram and looks up words in a dictionary API",
+  "author": {
+    "name": "Your Name",
+    "url": "https://github.com/your-name"
+  },
+  "license": "MIT",
+  "main": "dist/plugin.js",
+  "files": ["tg-plugin.json", "SKILL.md", "dist/plugin.js"],
+  "permissions": ["messages:read-own", "settings:read", "network"],
+  "network": ["https://api.example.com"],
+  "secrets": [
+    {
+      "name": "apikey",
+      "description": "API key of the dictionary at api.example.com",
+      "inject": {
+        "origin": "https://api.example.com",
+        "paths": ["/v1"],
+        "header": "Authorization",
+        "format": "Bearer {value}"
+      }
+    }
+  ],
+  "settings": {
+    "samples": {
+      "type": "integer",
+      "description": "How many of the user's messages the summary quotes",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 3
+    }
+  },
+  "resources": {
+    "summary": "SKILL.md#summary",
+    "define": "SKILL.md#define"
+  },
+  "commands": [
+    {
+      "name": "summary",
+      "description": "Counts the user's own messages by chat type, one page at a time",
+      "effects": [],
+      "input": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "minimum": 1, "maximum": 2000 },
+          "types": {
+            "type": "array",
+            "items": { "enum": ["private", "group"] },
+            "uniqueItems": true
+          },
+          "cursor": { "type": "string" }
+        },
+        "required": ["limit"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "count": { "type": "integer", "minimum": 0 },
+          "chars": { "type": "integer", "minimum": 0 },
+          "byType": {
+            "type": "object",
+            "properties": {
+              "private": { "type": "integer" },
+              "group": { "type": "integer" }
+            },
+            "required": ["private", "group"],
+            "additionalProperties": false
+          },
+          "samples": { "type": "array", "items": { "type": "string" } },
+          "cursor": { "type": ["string", "null"] },
+          "remaining": { "type": "integer", "minimum": 0 },
+          "done": { "type": "boolean" },
+          "retryAfterSeconds": { "type": "integer", "minimum": 0 }
+        },
+        "required": [
+          "count",
+          "chars",
+          "byType",
+          "samples",
+          "cursor",
+          "remaining",
+          "done"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "define",
+      "description": "Looks a word up in the dictionary API (sends the word to api.example.com)",
+      "effects": ["network"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "word": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "required": ["word"],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "word": { "type": "string" },
+          "definition": { "type": ["string", "null"] }
+        },
+        "required": ["word", "definition"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "id": "summary",
+      "when": "The user asks how much or how they write in Telegram",
+      "resource": "summary"
+    },
+    {
+      "id": "define",
+      "when": "The user asks what a word in a message means",
+      "resource": "define"
+    }
+  ]
+}

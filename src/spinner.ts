@@ -1,9 +1,9 @@
-import colors from './colors.js';
+import colors from "./colors.js";
 
 /** True when stdout is an interactive terminal (a human, not an agent/pipe). */
 export const isTTY = !!process.stdout.isTTY;
 
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /**
  * Tiny ora replacement. Animates on a TTY stderr only; off a TTY it prints nothing
@@ -19,7 +19,9 @@ export class Spinner {
   start(): this {
     if (this.live && !this.timer) {
       this.timer = setInterval(() => {
-        process.stderr.write(`\r\x1b[2K${colors.cyan(FRAMES[this.frame++ % FRAMES.length])} ${this.text}`);
+        process.stderr.write(
+          `\r\u001B[2K${colors.cyan(FRAMES[this.frame++ % FRAMES.length])} ${this.text}`
+        );
       }, 80);
       this.timer.unref?.();
     }
@@ -30,7 +32,7 @@ export class Spinner {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
-      process.stderr.write('\r\x1b[2K');
+      process.stderr.write("\r\u001B[2K");
     }
     return this;
   }
@@ -42,19 +44,19 @@ export class Spinner {
   }
 
   succeed(text?: string): this {
-    return this.finish(colors.green('✔'), text);
+    return this.finish(colors.green("✔"), text);
   }
 
   fail(text?: string): this {
-    return this.finish(colors.red('✖'), text);
+    return this.finish(colors.red("✖"), text);
   }
 
   warn(text?: string): this {
-    return this.finish(colors.yellow('⚠'), text);
+    return this.finish(colors.yellow("⚠"), text);
   }
 
   info(text?: string): this {
-    return this.finish(colors.blue('ℹ'), text);
+    return this.finish(colors.blue("ℹ"), text);
   }
 }
 

@@ -8,7 +8,7 @@ name: Release
 # package.json on main still holds the last stable version.
 on:
   push:
-    tags: ['v*.*.*']
+    tags: ["v*.*.*"]
   # Dry run on any branch: verify, every binary and the Windows smoke test, nothing is published
   # (gh workflow run release.yml --ref <branch>)
   workflow_dispatch:
@@ -137,7 +137,7 @@ jobs:
       - name: Run telegram.exe
         shell: pwsh
         env:
-          TG_NO_UPDATE_CHECK: '1'
+          TG_NO_UPDATE_CHECK: "1"
         run: |
           # better-tg-cli-<version>-windows-x64.zip
           $env:VERSION = (Get-ChildItem release/*.zip).Name -replace '^better-tg-cli-(.+)-windows-x64\.zip$', '$1'

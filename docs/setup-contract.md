@@ -40,28 +40,35 @@ A contract command run with `--json` prints one JSON object and nothing else on 
       "id": "skill_outdated",
       "severity": "warning",
       "message": "The Codex skill is older than this version of telegram.",
-      "fix": { "run": ["skill", "install", "--agent", "codex"], "profile": null, "expect": { "exit": 0 } }
+      "fix": {
+        "run": ["skill", "install", "--agent", "codex"],
+        "profile": null,
+        "expect": { "exit": 0 }
+      }
     },
     {
       "id": "not_logged_in",
       "severity": "error",
       "message": "This profile has no Telegram login.",
-      "fix": { "human": "Open the page and log in with a QR code from your phone.", "url": "https://better-tg-cli.com/login" }
+      "fix": {
+        "human": "Open the page and log in with a QR code from your phone.",
+        "url": "https://better-tg-cli.com/login"
+      }
     }
   ]
 }
 ```
 
-| Field | Meaning |
-|---|---|
-| `schema` | Always `1` for this version. Any change to the shape gets a new number, a new optional field included: a schema 1 reader refuses fields it does not know. The content of `data` is the exception: it belongs to the command. |
-| `ok` | `true` exactly when no problem has severity `error`. |
-| `problems` | Empty when there is nothing to report. |
-| `problems[].id` | Stable snake_case id, unique within a result. Agents may match on it, so an id never changes meaning. |
-| `problems[].severity` | `error` (setup does not work), `warning` (works, but should be fixed), `info`. |
-| `problems[].message` | One line in English, for the agent and the person. |
-| `problems[].fix` | Exactly one of the three kinds below. |
-| `data` | Optional. A JSON object with content specific to the command (see below). |
+| Field                 | Meaning                                                                                                                                                                                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`              | Always `1` for this version. Any change to the shape gets a new number, a new optional field included: a schema 1 reader refuses fields it does not know. The content of `data` is the exception: it belongs to the command. |
+| `ok`                  | `true` exactly when no problem has severity `error`.                                                                                                                                                                         |
+| `problems`            | Empty when there is nothing to report.                                                                                                                                                                                       |
+| `problems[].id`       | Stable snake_case id, unique within a result. Agents may match on it, so an id never changes meaning.                                                                                                                        |
+| `problems[].severity` | `error` (setup does not work), `warning` (works, but should be fixed), `info`.                                                                                                                                               |
+| `problems[].message`  | One line in English, for the agent and the person.                                                                                                                                                                           |
+| `problems[].fix`      | Exactly one of the three kinds below.                                                                                                                                                                                        |
+| `data`                | Optional. A JSON object with content specific to the command (see below).                                                                                                                                                    |
 
 No other fields are allowed at any level in schema 1.
 
@@ -71,8 +78,16 @@ No other fields are allowed at any level in schema 1.
 an install path, version and target, as the installer reports them:
 
 ```json
-{ "schema": 1, "ok": true, "problems": [],
-  "data": { "path": "/home/u/.local/bin/telegram", "version": "1.2.3", "target": "linux-x64" } }
+{
+  "schema": 1,
+  "ok": true,
+  "problems": [],
+  "data": {
+    "path": "/home/u/.local/bin/telegram",
+    "version": "1.2.3",
+    "target": "linux-x64"
+  }
+}
 ```
 
 The generic checker only requires `data` to be a JSON object (not an array, not `null`) and does
@@ -83,10 +98,22 @@ closed: a new field there still needs a new schema number.
 ### `fix`: run a command
 
 ```json
-{ "schema": 1, "ok": false, "problems": [
-  { "id": "skill_missing", "severity": "error", "message": "Claude Code has no Better-TG-CLI skill.",
-    "fix": { "run": ["skill", "install", "--agent", "claude-code"], "profile": null, "expect": { "exit": 0 } } }
-] }
+{
+  "schema": 1,
+  "ok": false,
+  "problems": [
+    {
+      "id": "skill_missing",
+      "severity": "error",
+      "message": "Claude Code has no Better-TG-CLI skill.",
+      "fix": {
+        "run": ["skill", "install", "--agent", "claude-code"],
+        "profile": null,
+        "expect": { "exit": 0 }
+      }
+    }
+  ]
+}
 ```
 
 - `run` is the argv **after** the `telegram` binary, never a shell string and never the binary
@@ -117,10 +144,22 @@ else's files alone, reports `"action": "skipped"` for that agent and still exits
 The check that follows still reports the problem, so it is not fixed:
 
 ```json
-{ "schema": 1, "ok": false, "problems": [
-  { "id": "skill_missing", "severity": "error", "message": "Claude Code has no Better-TG-CLI skill.",
-    "fix": { "run": ["skill", "install", "--agent", "claude-code"], "profile": null, "expect": { "exit": 0 } } }
-] }
+{
+  "schema": 1,
+  "ok": false,
+  "problems": [
+    {
+      "id": "skill_missing",
+      "severity": "error",
+      "message": "Claude Code has no Better-TG-CLI skill.",
+      "fix": {
+        "run": ["skill", "install", "--agent", "claude-code"],
+        "profile": null,
+        "expect": { "exit": 0 }
+      }
+    }
+  ]
+}
 ```
 
 `fixOutcome()` in the checker states this rule, and `fixRuns` in the fixtures holds the cases.
@@ -136,10 +175,20 @@ write, `skill install --force`.
 ### `fix`: the person has to do it
 
 ```json
-{ "schema": 1, "ok": false, "problems": [
-  { "id": "session_revoked", "severity": "error", "message": "Telegram ended this login.",
-    "fix": { "human": "Log in again: run telegram onboard and scan the QR code with your phone." } }
-] }
+{
+  "schema": 1,
+  "ok": false,
+  "problems": [
+    {
+      "id": "session_revoked",
+      "severity": "error",
+      "message": "Telegram ended this login.",
+      "fix": {
+        "human": "Log in again: run telegram onboard and scan the QR code with your phone."
+      }
+    }
+  ]
+}
 ```
 
 `human` is a sentence the agent passes on. `url`, when present, is an `https` string. A result
@@ -149,10 +198,20 @@ can change the write mode.
 ### `fix`: nothing can fix it here
 
 ```json
-{ "schema": 1, "ok": false, "problems": [
-  { "id": "secret_store_missing", "severity": "error", "message": "No secret store is available.",
-    "fix": { "unavailable": "This Linux machine has no Secret Service and file storage is turned off by policy." } }
-] }
+{
+  "schema": 1,
+  "ok": false,
+  "problems": [
+    {
+      "id": "secret_store_missing",
+      "severity": "error",
+      "message": "No secret store is available.",
+      "fix": {
+        "unavailable": "This Linux machine has no Secret Service and file storage is turned off by policy."
+      }
+    }
+  ]
+}
 ```
 
 ## Exit codes
@@ -163,12 +222,12 @@ For commands that emit this contract. Every other command follows the general ta
 disabled, `5` not logged in or session ended. The two tables agree on `0`, `1` and `3`; `2` means
 "a person is needed" only in a contract result, and "fix the command line" everywhere else.
 
-| Code | Meaning | From a result |
-|---|---|---|
-| `0` | All good | `ok: true` |
-| `1` | Error | some `error` has `fix.run`, or one has `fix.unavailable` |
-| `2` | A person is needed | every `error` has `fix.human` |
-| `3` | Write approval needed | never from a result: only the write guard exits 3 (`EXIT_NEEDS_APPROVAL`) |
+| Code | Meaning               | From a result                                                             |
+| ---- | --------------------- | ------------------------------------------------------------------------- |
+| `0`  | All good              | `ok: true`                                                                |
+| `1`  | Error                 | some `error` has `fix.run`, or one has `fix.unavailable`                  |
+| `2`  | A person is needed    | every `error` has `fix.human`                                             |
+| `3`  | Write approval needed | never from a result: only the write guard exits 3 (`EXIT_NEEDS_APPROVAL`) |
 
 The exit code follows from the result (`setupExitCode()` in the checker), so a command that
 computes it the same way cannot print one thing and exit with another.

@@ -1,23 +1,30 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { configFile } from '../paths.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+import { configFile } from "../paths.js";
 
 /**
  * The mock account as plain data: it is what TG_MOCK serves instead of Telegram, what the state
  * file stores between commands, and what a custom scenario file contains. `src/mock/client.ts`
  * turns it into real `Api.*` objects on every call, so the CLI's own code runs unchanged.
+ *
+ * - `me`: `users[].id` of the logged-in account.
+ * - `stars`: Telegram Stars balance (for `stars`).
  */
 export interface MockWorld {
   version: 1;
-  /** `users[].id` of the logged-in account. */
   me: number;
   users: MockUser[];
   chats: MockChat[];
   folders?: MockFolder[];
-  /** Telegram Stars balance (for `stars`). */
   stars?: number;
 }
 
+/**
+ * - `forumView`: Bots only: the private chat is shown as forum topics (botForumView).
+ * - `profilePhotos`: How many profile photos this user has (for `profile-photos`); synthesized deterministically.
+ * - `commands`: Bots only: what the bot answers to a message with exactly this text (e.g. "/start").
+ */
 export interface MockUser {
   id: number;
   firstName: string;
@@ -25,50 +32,64 @@ export interface MockUser {
   username?: string;
   phone?: string;
   bot?: boolean;
-  /** Bots only: the private chat is shown as forum topics (botForumView). */
   forumView?: boolean;
   contact?: boolean;
   mutual?: boolean;
   about?: string;
   blocked?: boolean;
-  /** How many profile photos this user has (for `profile-photos`); synthesized deterministically. */
   profilePhotos?: number;
-  /** Bots only: what the bot answers to a message with exactly this text (e.g. "/start"). */
   commands?: Record<string, MockReply>;
 }
 
+/**
+ * - `keyboard`: `buttons` are a reply keyboard (pressing sends the label) instead of inline buttons.
+ */
 export interface MockReply {
   text: string;
   buttons?: MockButton[][];
-  /** `buttons` are a reply keyboard (pressing sends the label) instead of inline buttons. */
   keyboard?: boolean;
 }
 
+/**
+ * - `data`: Callback button payload. Without `data` and `url` the button is a reply-keyboard button.
+ * - `answer`: Toast the bot answers with when the button is pressed.
+ * - `edit`: The bot edits the pressed message to this. A string names one of the bot's `commands`.
+ * - `reply`: The bot sends this as a new message. A string names one of the bot's `commands`.
+ */
 export interface MockButton {
   text: string;
-  /** Callback button payload. Without `data` and `url` the button is a reply-keyboard button. */
   data?: string;
   url?: string;
-  /** Toast the bot answers with when the button is pressed. */
   answer?: string;
   alert?: boolean;
-  /** The bot edits the pressed message to this. A string names one of the bot's `commands`. */
   edit?: MockReply | string;
-  /** The bot sends this as a new message. A string names one of the bot's `commands`. */
   reply?: MockReply | string;
 }
 
+/**
+ * - `id`: Bare ID: the user ID for a private chat, otherwise the group/channel ID without -100.
+ * - `role`: Our role in a group/channel.
+ * - `stats`: This account may view aggregate statistics for this chat (otherwise CHAT_ADMIN_REQUIRED).
+ * - `mutedUntil`: Unix time the chat is muted until.
+ * - `pinnedDialog`: Pinned in the dialog list (for `pin-chat` / `unpin-chat`).
+ * - `markedUnread`: Marked unread with no unread messages (for `mark-unread`).
+ * - `draft`: A saved but unsent draft message (for `drafts`).
+ * - `adminLog`: Recent admin-log entries (for `admin-log`), newest last.
+ * - `joinRequests`: Pending join requests (for `invites --requests`).
+ * - `defaultBannedFlags`: Default restrictions set by `edit-permissions` (denied right names).
+ * - `bannedUsers`: Per-user restrictions set by `edit-permissions` (channels.EditBanned).
+ * - `linkedChatId`: Channel → its discussion group (bare ID), where post comments live.
+ * - `scheduled`: Messages queued to send later (listed by `scheduled`).
+ */
 export interface MockChat {
-  /** Bare ID: the user ID for a private chat, otherwise the group/channel ID without -100. */
   id: number;
-  kind: 'user' | 'group' | 'supergroup' | 'channel';
+  kind: "user" | "group" | "supergroup" | "channel";
   title?: string;
   username?: string;
   about?: string;
   forum?: boolean;
-  /** Our role in a group/channel. */
-  role?: 'creator' | 'admin';
-  members?: { userId: number; role?: 'creator' | 'admin' }[];
+  role?: "creator" | "admin";
+  members?: { userId: number; role?: "creator" | "admin" }[];
   membersCount?: number;
   onlineCount?: number;
   kickedCount?: number;
@@ -77,103 +98,147 @@ export interface MockChat {
   verified?: boolean;
   scam?: boolean;
   fake?: boolean;
-  /** This account may view aggregate statistics for this chat (otherwise CHAT_ADMIN_REQUIRED). */
   stats?: boolean;
   unread?: number;
   readInboxMaxId?: number;
-  /** Unix time the chat is muted until. */
   mutedUntil?: number;
   archived?: boolean;
-  /** Pinned in the dialog list (for `pin-chat` / `unpin-chat`). */
   pinnedDialog?: boolean;
-  /** Marked unread with no unread messages (for `mark-unread`). */
   markedUnread?: boolean;
-  /** A saved but unsent draft message (for `drafts`). */
   draft?: string;
-  /** Recent admin-log entries (for `admin-log`), newest last. */
-  adminLog?: { id: number; userId: number; action: 'join' | 'leave' | 'title'; prev?: string; now?: string; ago?: number }[];
-  /** Pending join requests (for `invites --requests`). */
+  adminLog?: {
+    id: number;
+    userId: number;
+    action: "join" | "leave" | "title";
+    prev?: string;
+    now?: string;
+    ago?: number;
+  }[];
   joinRequests?: { userId: number; about?: string; ago?: number }[];
-  topics?: { id: number; title: string; unread?: number; closed?: boolean; pinned?: boolean; hidden?: boolean }[];
-  /** Default restrictions set by `edit-permissions` (denied right names). */
+  topics?: {
+    id: number;
+    title: string;
+    unread?: number;
+    closed?: boolean;
+    pinned?: boolean;
+    hidden?: boolean;
+  }[];
   defaultBannedFlags?: string[];
-  /** Per-user restrictions set by `edit-permissions` (channels.EditBanned). */
   bannedUsers?: { userId: number; flags: string[]; until?: number }[];
-  /** Channel → its discussion group (bare ID), where post comments live. */
   linkedChatId?: number;
   messages: MockMessage[];
-  /** Messages queued to send later (listed by `scheduled`). */
   scheduled?: MockMessage[];
 }
 
+/**
+ * - `ago`: Age in seconds, counted from now on every load, so the seed never goes stale.
+ * - `date`: Unix time; set on messages created while running (they do not age with the seed).
+ * - `from`: Sender user ID. Missing: us when `out`, otherwise the chat itself (private chat peer, channel).
+ * - `thread`: Forum topic or comment thread root this message belongs to.
+ * - `media`: `downloadFails`: downloading this media throws (a file Telegram no longer serves, a dropped connection).
+ * - `reactions`: A reaction: a standard `emoji`, a `customEmojiId`, or a `paid` (star) reaction.
+ * - `replies`: Comment count shown on a channel post or thread root.
+ * - `savedFrom`: Saved to Saved Messages from this user's chat (`fwdFrom.savedFromPeer`); with `forwardedFrom` the author, with `quoteFrom` the quote header's saved-from chat instead of its author.
+ * - `quoteFrom`: A reply that quotes a message of this user's chat elsewhere (the reply header names it as its source).
+ * - `views`: --full stats.
+ * - `groupedId`: Album group id (shared by messages in the same album).
+ * - `poll`: A poll attached to this message (for `--full` media detail).
+ * - `scheduledFor`: Unix time this message is scheduled to send (listed by `scheduled`, not in normal history).
+ */
 export interface MockMessage {
   id: number;
-  /** Age in seconds, counted from now on every load, so the seed never goes stale. */
   ago?: number;
-  /** Unix time; set on messages created while running (they do not age with the seed). */
   date?: number;
-  /** Sender user ID. Missing: us when `out`, otherwise the chat itself (private chat peer, channel). */
   from?: number;
   out?: boolean;
   text: string;
   replyTo?: number;
-  /** Forum topic or comment thread root this message belongs to. */
   thread?: number;
-  /** `downloadFails`: downloading this media throws (a file Telegram no longer serves, a dropped connection). */
-  media?: { kind: 'photo' | 'document' | 'video' | 'voice'; fileName?: string; mimeType?: string; size?: number; duration?: number; downloadFails?: boolean };
+  media?: {
+    kind: "photo" | "document" | "video" | "voice";
+    fileName?: string;
+    mimeType?: string;
+    size?: number;
+    duration?: number;
+    downloadFails?: boolean;
+  };
   buttons?: MockButton[][];
   keyboard?: boolean;
   pinned?: boolean;
   edited?: boolean;
-  /** A reaction: a standard `emoji`, a `customEmojiId`, or a `paid` (star) reaction. */
-  reactions?: { userId: number; emoji?: string; customEmojiId?: string; paid?: boolean }[];
-  /** Comment count shown on a channel post or thread root. */
+  reactions?: {
+    userId: number;
+    emoji?: string;
+    customEmojiId?: string;
+    paid?: boolean;
+  }[];
   replies?: number;
   forwardedFrom?: number;
-  /** --full stats. */
+  savedFrom?: number;
+  quoteFrom?: number;
+  quoteText?: string;
   views?: number;
   forwards?: number;
   viaBotId?: number;
-  /** Album group id (shared by messages in the same album). */
   groupedId?: number;
   postAuthor?: string;
   ttlPeriod?: number;
   silent?: boolean;
   noforwards?: boolean;
-  /** A poll attached to this message (for `--full` media detail). */
-  poll?: { question: string; options: { text: string; voters?: number; chosen?: boolean; correct?: boolean }[]; quiz?: boolean; multiple?: boolean; closed?: boolean; totalVoters?: number };
-  /** Unix time this message is scheduled to send (listed by `scheduled`, not in normal history). */
+  poll?: {
+    question: string;
+    options: {
+      text: string;
+      voters?: number;
+      chosen?: boolean;
+      correct?: boolean;
+    }[];
+    quiz?: boolean;
+    multiple?: boolean;
+    closed?: boolean;
+    totalVoters?: number;
+  };
   scheduledFor?: number;
 }
 
+/**
+ * - `include`: Bare chat IDs.
+ */
 export interface MockFolder {
   id: number;
   title: string;
   emoticon?: string;
-  /** Bare chat IDs. */
   include: number[];
   exclude?: number[];
 }
 
 const MIN = 60;
 const HOUR = 3600;
-const DAY = 86400;
+const DAY = 86_400;
 
-/** The demo bot's main menu: an edit-in-place flow, a toast, a URL button and an alert with a new message. */
 const START_MENU: MockReply = {
-  text: 'Welcome! Pick a section.',
+  text: "Welcome! Pick a section.",
   buttons: [
     [
       {
-        text: 'Catalog',
-        data: 'catalog',
-        edit: { text: 'Catalog: 3 items', buttons: [[{ text: '« Back', data: 'back', edit: '/start' }]] },
+        text: "Catalog",
+        data: "catalog",
+        edit: {
+          text: "Catalog: 3 items",
+          buttons: [[{ text: "« Back", data: "back", edit: "/start" }]],
+        },
       },
-      { text: 'Status', data: 'status', answer: 'All systems normal' },
+      { text: "Status", data: "status", answer: "All systems normal" },
     ],
     [
-      { text: 'Docs', url: 'https://example.com/docs' },
-      { text: 'Order', data: 'order', answer: 'Order created', alert: true, reply: { text: 'Order #42 is confirmed.' } },
+      { text: "Docs", url: "https://example.com/docs" },
+      {
+        text: "Order",
+        data: "order",
+        answer: "Order created",
+        alert: true,
+        reply: { text: "Order #42 is confirmed." },
+      },
     ],
   ],
 };
@@ -184,158 +249,344 @@ export function seedWorld(): MockWorld {
     version: 1,
     me: 1000,
     users: [
-      { id: 1000, firstName: 'Mock', lastName: 'Owner', username: 'mock_owner', phone: '15550000000', about: 'The account TG_MOCK logs you in as' },
-      { id: 1001, firstName: 'Alice', lastName: 'Example', username: 'alice_example', phone: '15550000001', contact: true, mutual: true, about: 'Designer. Replies slowly on Fridays.', profilePhotos: 2 },
-      { id: 1002, firstName: 'Bob', lastName: 'Sample', username: 'bob_sample', contact: true },
-      { id: 1003, firstName: 'Carol', phone: '15550000003', contact: true, mutual: true },
+      {
+        id: 1000,
+        firstName: "Mock",
+        lastName: "Owner",
+        username: "mock_owner",
+        phone: "15550000000",
+        about: "The account TG_MOCK logs you in as",
+      },
+      {
+        id: 1001,
+        firstName: "Alice",
+        lastName: "Example",
+        username: "alice_example",
+        phone: "15550000001",
+        contact: true,
+        mutual: true,
+        about: "Designer. Replies slowly on Fridays.",
+        profilePhotos: 2,
+      },
+      {
+        id: 1002,
+        firstName: "Bob",
+        lastName: "Sample",
+        username: "bob_sample",
+        contact: true,
+      },
+      {
+        id: 1003,
+        firstName: "Carol",
+        phone: "15550000003",
+        contact: true,
+        mutual: true,
+      },
       {
         id: 2001,
-        firstName: 'Demo Bot',
-        username: 'demo_bot',
+        firstName: "Demo Bot",
+        username: "demo_bot",
         bot: true,
-        about: 'A scripted bot: /start, /menu, /keyboard',
+        about: "A scripted bot: /start, /menu, /keyboard",
         commands: {
-          '/start': START_MENU,
-          '/menu': { text: 'Menu', buttons: [[{ text: 'Status', data: 'status', answer: 'All systems normal' }]] },
-          '/keyboard': { text: 'Choose an option', keyboard: true, buttons: [[{ text: 'Yes' }, { text: 'No' }]] },
-          Yes: { text: 'You said yes.' },
-          No: { text: 'You said no.' },
+          "/start": START_MENU,
+          "/menu": {
+            text: "Menu",
+            buttons: [
+              [
+                {
+                  text: "Status",
+                  data: "status",
+                  answer: "All systems normal",
+                },
+              ],
+            ],
+          },
+          "/keyboard": {
+            text: "Choose an option",
+            keyboard: true,
+            buttons: [[{ text: "Yes" }, { text: "No" }]],
+          },
+          Yes: { text: "You said yes." },
+          No: { text: "You said no." },
         },
       },
     ],
     chats: [
       {
         id: 1000,
-        kind: 'user',
+        kind: "user",
         messages: [
-          { id: 1, ago: 6 * DAY, out: true, text: 'Note to self: renew the domain' },
-          { id: 2, ago: 2 * DAY, out: true, text: 'Draft: https://example.com/draft', media: { kind: 'document', fileName: 'draft.pdf', mimeType: 'application/pdf', size: 48213 } },
+          {
+            id: 1,
+            ago: 6 * DAY,
+            out: true,
+            text: "Note to self: renew the domain",
+          },
+          {
+            id: 2,
+            ago: 2 * DAY,
+            out: true,
+            text: "Draft: https://example.com/draft",
+            media: {
+              kind: "document",
+              fileName: "draft.pdf",
+              mimeType: "application/pdf",
+              size: 48_213,
+            },
+          },
         ],
       },
       {
         id: 1001,
-        kind: 'user',
+        kind: "user",
         unread: 2,
         readInboxMaxId: 3,
-        draft: 'Let us pick the deadline on the call tomorrow',
+        draft: "Let us pick the deadline on the call tomorrow",
         messages: [
-          { id: 1, ago: 3 * DAY, text: 'Hi! Did you get the mockups?' },
-          { id: 2, ago: 3 * DAY - 5 * MIN, out: true, text: 'Yes, looking now', replyTo: 1 },
-          { id: 3, ago: 1 * DAY, text: 'Here is the new header', media: { kind: 'photo' } },
-          { id: 4, ago: 2 * HOUR, text: 'Can we talk about the deadline tomorrow?' },
-          { id: 5, ago: 25 * MIN, text: 'Ping me when you are free', edited: true, reactions: [
-            { userId: 1000, emoji: '👍' },
-            { userId: 1002, emoji: '👍' },
-            { userId: 1003, emoji: '❤️' },
-            { userId: 1001, customEmojiId: '5201' },
-            { userId: 1002, paid: true },
-          ] },
+          { id: 1, ago: 3 * DAY, text: "Hi! Did you get the mockups?" },
+          {
+            id: 2,
+            ago: 3 * DAY - 5 * MIN,
+            out: true,
+            text: "Yes, looking now",
+            replyTo: 1,
+          },
+          {
+            id: 3,
+            ago: 1 * DAY,
+            text: "Here is the new header",
+            media: { kind: "photo" },
+          },
+          {
+            id: 4,
+            ago: 2 * HOUR,
+            text: "Can we talk about the deadline tomorrow?",
+          },
+          {
+            id: 5,
+            ago: 25 * MIN,
+            text: "Ping me when you are free",
+            edited: true,
+            reactions: [
+              { userId: 1000, emoji: "👍" },
+              { userId: 1002, emoji: "👍" },
+              { userId: 1003, emoji: "❤️" },
+              { userId: 1001, customEmojiId: "5201" },
+              { userId: 1002, paid: true },
+            ],
+          },
         ],
         scheduled: [
-          { id: 1001, date: 4102444800, out: true, text: 'Happy New Year! 🎉' },
+          {
+            id: 1001,
+            date: 4_102_444_800,
+            out: true,
+            text: "Happy New Year! 🎉",
+          },
         ],
       },
       {
         id: 1002,
-        kind: 'user',
-        mutedUntil: 4102444800,
+        kind: "user",
+        mutedUntil: 4_102_444_800,
         unread: 1,
         readInboxMaxId: 1,
         messages: [
-          { id: 1, ago: 9 * DAY, text: 'Voice note', media: { kind: 'voice', mimeType: 'audio/ogg', size: 20480, duration: 12 } },
-          { id: 2, ago: 5 * HOUR, text: 'lol look at this' },
+          {
+            id: 1,
+            ago: 9 * DAY,
+            text: "Voice note",
+            media: {
+              kind: "voice",
+              mimeType: "audio/ogg",
+              size: 20_480,
+              duration: 12,
+            },
+          },
+          { id: 2, ago: 5 * HOUR, text: "lol look at this" },
         ],
       },
       {
         id: 2001,
-        kind: 'user',
+        kind: "user",
         messages: [
-          { id: 1, ago: 4 * DAY, out: true, text: '/start' },
+          { id: 1, ago: 4 * DAY, out: true, text: "/start" },
           { id: 2, ago: 4 * DAY - 2, ...START_MENU },
         ],
       },
       {
         id: 3001,
-        kind: 'group',
-        title: 'Family',
-        role: 'admin',
-        about: 'Weekend plans',
-        members: [{ userId: 1003, role: 'creator' }, { userId: 1000, role: 'admin' }, { userId: 1001 }],
+        kind: "group",
+        title: "Family",
+        role: "admin",
+        about: "Weekend plans",
+        members: [
+          { userId: 1003, role: "creator" },
+          { userId: 1000, role: "admin" },
+          { userId: 1001 },
+        ],
         unread: 3,
         readInboxMaxId: 2,
         messages: [
-          { id: 1, ago: 2 * DAY, from: 1003, text: 'Dinner on Saturday?' },
-          { id: 2, ago: 2 * DAY - 10 * MIN, out: true, text: 'I am in' },
-          { id: 3, ago: 3 * HOUR, from: 1001, text: 'Me too, 7pm works' },
-          { id: 4, ago: 2 * HOUR, from: 1003, text: 'Booked a table', pinned: true },
-          { id: 5, ago: 90 * MIN, from: 1003, text: 'Who is bringing dessert?' },
+          { id: 1, ago: 2 * DAY, from: 1003, text: "Dinner on Saturday?" },
+          { id: 2, ago: 2 * DAY - 10 * MIN, out: true, text: "I am in" },
+          { id: 3, ago: 3 * HOUR, from: 1001, text: "Me too, 7pm works" },
+          {
+            id: 4,
+            ago: 2 * HOUR,
+            from: 1003,
+            text: "Booked a table",
+            pinned: true,
+          },
+          {
+            id: 5,
+            ago: 90 * MIN,
+            from: 1003,
+            text: "Who is bringing dessert?",
+          },
         ],
       },
       {
         id: 4001,
-        kind: 'supergroup',
-        title: 'Team',
-        username: 'mock_team',
-        role: 'creator',
-        about: 'Work chat',
+        kind: "supergroup",
+        title: "Team",
+        username: "mock_team",
+        role: "creator",
+        about: "Work chat",
         membersCount: 4,
         onlineCount: 2,
         slowModeSeconds: 10,
         stats: true,
-        members: [{ userId: 1000, role: 'creator' }, { userId: 1001, role: 'admin' }, { userId: 1002 }, { userId: 1003 }],
+        members: [
+          { userId: 1000, role: "creator" },
+          { userId: 1001, role: "admin" },
+          { userId: 1002 },
+          { userId: 1003 },
+        ],
         unread: 1,
         readInboxMaxId: 2,
         adminLog: [
-          { id: 1, userId: 1000, action: 'title', prev: 'Project', now: 'Team', ago: 9 * DAY },
-          { id: 2, userId: 1002, action: 'join', ago: 5 * DAY },
-          { id: 3, userId: 1003, action: 'leave', ago: 2 * HOUR },
+          {
+            id: 1,
+            userId: 1000,
+            action: "title",
+            prev: "Project",
+            now: "Team",
+            ago: 9 * DAY,
+          },
+          { id: 2, userId: 1002, action: "join", ago: 5 * DAY },
+          { id: 3, userId: 1003, action: "leave", ago: 2 * HOUR },
         ],
-        joinRequests: [{ userId: 1003, about: 'Please add me', ago: 3 * HOUR }],
+        joinRequests: [{ userId: 1003, about: "Please add me", ago: 3 * HOUR }],
         messages: [
-          { id: 1, ago: 5 * DAY, from: 1001, text: 'Release checklist is in the doc: https://example.com/checklist', viaBotId: 2001, groupedId: 7001, reactions: [{ userId: 1000, emoji: '🚀' }, { userId: 1002, emoji: '🚀' }] },
-          { id: 2, ago: 4 * DAY, out: true, text: 'Shipping on Thursday', pinned: true, silent: true },
-          { id: 3, ago: 40 * MIN, from: 1002, text: 'CI is green again' },
+          {
+            id: 1,
+            ago: 5 * DAY,
+            from: 1001,
+            text: "Release checklist is in the doc: https://example.com/checklist",
+            viaBotId: 2001,
+            groupedId: 7001,
+            reactions: [
+              { userId: 1000, emoji: "🚀" },
+              { userId: 1002, emoji: "🚀" },
+            ],
+          },
+          {
+            id: 2,
+            ago: 4 * DAY,
+            out: true,
+            text: "Shipping on Thursday",
+            pinned: true,
+            silent: true,
+          },
+          { id: 3, ago: 40 * MIN, from: 1002, text: "CI is green again" },
         ],
       },
       {
         id: 4002,
-        kind: 'supergroup',
-        title: 'Team Design',
+        kind: "supergroup",
+        title: "Team Design",
         membersCount: 2,
-        members: [{ userId: 1001, role: 'creator' }, { userId: 1000 }],
-        messages: [{ id: 1, ago: 8 * DAY, from: 1001, text: 'New palette attached', media: { kind: 'document', fileName: 'palette.zip', mimeType: 'application/zip', size: 1048576 } }],
+        members: [{ userId: 1001, role: "creator" }, { userId: 1000 }],
+        messages: [
+          {
+            id: 1,
+            ago: 8 * DAY,
+            from: 1001,
+            text: "New palette attached",
+            media: {
+              kind: "document",
+              fileName: "palette.zip",
+              mimeType: "application/zip",
+              size: 1_048_576,
+            },
+          },
+        ],
       },
       {
         id: 4003,
-        kind: 'supergroup',
-        title: 'Dev Forum',
-        username: 'mock_forum',
+        kind: "supergroup",
+        title: "Dev Forum",
+        username: "mock_forum",
         forum: true,
         membersCount: 120,
-        members: [{ userId: 1002, role: 'creator' }, { userId: 1000 }, { userId: 1001 }],
+        members: [
+          { userId: 1002, role: "creator" },
+          { userId: 1000 },
+          { userId: 1001 },
+        ],
         topics: [
-          { id: 1, title: 'General', pinned: true },
-          { id: 10, title: 'Bugs', unread: 2 },
-          { id: 20, title: 'Ideas', closed: true },
+          { id: 1, title: "General", pinned: true },
+          { id: 10, title: "Bugs", unread: 2 },
+          { id: 20, title: "Ideas", closed: true },
         ],
         unread: 2,
         readInboxMaxId: 22,
         messages: [
-          { id: 10, ago: 7 * DAY, from: 1002, text: 'Bugs' },
-          { id: 20, ago: 7 * DAY - MIN, from: 1002, text: 'Ideas' },
-          { id: 21, ago: 6 * DAY + 2 * HOUR, from: 1003, text: 'Dark theme for the dashboard', thread: 20, replyTo: 20 },
-          { id: 22, ago: 6 * DAY, from: 1001, text: 'Login fails on the second device', thread: 10, replyTo: 10 },
-          { id: 23, ago: 4 * HOUR, from: 1002, text: 'Reproduced, looking into it', thread: 10, replyTo: 22 },
-          { id: 24, ago: 1 * HOUR, from: 1001, text: 'Thanks! Any ETA?', thread: 10, replyTo: 23 },
+          { id: 10, ago: 7 * DAY, from: 1002, text: "Bugs" },
+          { id: 20, ago: 7 * DAY - MIN, from: 1002, text: "Ideas" },
+          {
+            id: 21,
+            ago: 6 * DAY + 2 * HOUR,
+            from: 1003,
+            text: "Dark theme for the dashboard",
+            thread: 20,
+            replyTo: 20,
+          },
+          {
+            id: 22,
+            ago: 6 * DAY,
+            from: 1001,
+            text: "Login fails on the second device",
+            thread: 10,
+            replyTo: 10,
+          },
+          {
+            id: 23,
+            ago: 4 * HOUR,
+            from: 1002,
+            text: "Reproduced, looking into it",
+            thread: 10,
+            replyTo: 22,
+          },
+          {
+            id: 24,
+            ago: 1 * HOUR,
+            from: 1001,
+            text: "Thanks! Any ETA?",
+            thread: 10,
+            replyTo: 23,
+          },
         ],
       },
       {
         id: 5001,
-        kind: 'channel',
-        title: 'Mock News',
-        username: 'mock_news',
-        about: 'Announcements',
-        membersCount: 15230,
+        kind: "channel",
+        title: "Mock News",
+        username: "mock_news",
+        about: "Announcements",
+        membersCount: 15_230,
         onlineCount: 320,
         kickedCount: 4,
         bannedCount: 1,
@@ -345,26 +596,88 @@ export function seedWorld(): MockWorld {
         unread: 2,
         readInboxMaxId: 1,
         messages: [
-          { id: 1, ago: 6 * DAY, text: 'Version 1.0 is out', replies: 2, pinned: true, views: 15230, forwards: 42, postAuthor: 'Editor', reactions: [{ userId: 1001, emoji: '🎉' }, { userId: 1002, emoji: '🎉' }, { userId: 1003, emoji: '👍' }] },
-          { id: 2, ago: 1 * DAY, text: 'Maintenance window on Sunday', media: { kind: 'photo' }, replies: 0, views: 9800, forwards: 5 },
-          { id: 3, ago: 3 * HOUR, text: 'Weekly digest: three things shipped', views: 12044, forwards: 18, media: { kind: 'video', fileName: 'digest.mp4', mimeType: 'video/mp4', size: 5242880, duration: 34 } },
+          {
+            id: 1,
+            ago: 6 * DAY,
+            text: "Version 1.0 is out",
+            replies: 2,
+            pinned: true,
+            views: 15_230,
+            forwards: 42,
+            postAuthor: "Editor",
+            reactions: [
+              { userId: 1001, emoji: "🎉" },
+              { userId: 1002, emoji: "🎉" },
+              { userId: 1003, emoji: "👍" },
+            ],
+          },
+          {
+            id: 2,
+            ago: 1 * DAY,
+            text: "Maintenance window on Sunday",
+            media: { kind: "photo" },
+            replies: 0,
+            views: 9800,
+            forwards: 5,
+          },
+          {
+            id: 3,
+            ago: 3 * HOUR,
+            text: "Weekly digest: three things shipped",
+            views: 12_044,
+            forwards: 18,
+            media: {
+              kind: "video",
+              fileName: "digest.mp4",
+              mimeType: "video/mp4",
+              size: 5_242_880,
+              duration: 34,
+            },
+          },
         ],
       },
       {
         id: 5002,
-        kind: 'supergroup',
-        title: 'Mock News Chat',
+        kind: "supergroup",
+        title: "Mock News Chat",
         archived: true,
         membersCount: 310,
-        members: [{ userId: 1002, role: 'creator' }, { userId: 1000 }],
+        members: [{ userId: 1002, role: "creator" }, { userId: 1000 }],
         messages: [
-          { id: 1, ago: 6 * DAY, text: 'Version 1.0 is out', forwardedFrom: 5001 },
-          { id: 2, ago: 6 * DAY - HOUR, from: 1001, text: 'Congrats!', thread: 1, replyTo: 1 },
-          { id: 3, ago: 5 * DAY, from: 1003, text: 'Finally', thread: 1, replyTo: 1 },
+          {
+            id: 1,
+            ago: 6 * DAY,
+            text: "Version 1.0 is out",
+            forwardedFrom: 5001,
+          },
+          {
+            id: 2,
+            ago: 6 * DAY - HOUR,
+            from: 1001,
+            text: "Congrats!",
+            thread: 1,
+            replyTo: 1,
+          },
+          {
+            id: 3,
+            ago: 5 * DAY,
+            from: 1003,
+            text: "Finally",
+            thread: 1,
+            replyTo: 1,
+          },
         ],
       },
     ],
-    folders: [{ id: 2, title: 'Work', emoticon: '💼', include: [4001, 4002, 1001], exclude: [5002] }],
+    folders: [
+      {
+        id: 2,
+        title: "Work",
+        emoticon: "💼",
+        include: [4001, 4002, 1001],
+        exclude: [5002],
+      },
+    ],
     stars: 250,
   };
 }
@@ -374,15 +687,23 @@ export function seedWorld(): MockWorld {
  * config dir; any other value is a path to a state/scenario file (created from the seed if
  * missing). Delete the file to start over.
  */
-export function mockStatePath(value = process.env.TG_MOCK ?? ''): string {
-  return /^(1|true|yes|on)$/i.test(value) ? configFile('mock-state.json') : value;
+export function mockStatePath(value = process.env.TG_MOCK ?? ""): string {
+  return /^(1|true|yes|on)$/i.test(value)
+    ? configFile("mock-state.json")
+    : value;
 }
 
 export function loadWorld(path = mockStatePath()): MockWorld {
   if (existsSync(path)) {
-    const world = JSON.parse(readFileSync(path, 'utf8')) as MockWorld;
-    if (world?.version !== 1 || !Array.isArray(world.chats) || !Array.isArray(world.users)) {
-      throw new Error(`${path} is not a mock state file (expected {"version":1,"me":…,"users":[…],"chats":[…]}). Delete it to start from the built-in account.`);
+    const world = JSON.parse(readFileSync(path, "utf-8")) as MockWorld;
+    if (
+      world?.version !== 1 ||
+      !Array.isArray(world.chats) ||
+      !Array.isArray(world.users)
+    ) {
+      throw new Error(
+        `${path} is not a mock state file (expected {"version":1,"me":…,"users":[…],"chats":[…]}). Delete it to start from the built-in account.`
+      );
     }
     return world;
   }
@@ -391,5 +712,8 @@ export function loadWorld(path = mockStatePath()): MockWorld {
 
 export function saveWorld(world: MockWorld, path = mockStatePath()): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(world, null, 1) + '\n', { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(path, `${JSON.stringify(world, null, 1)}\n`, {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
 }

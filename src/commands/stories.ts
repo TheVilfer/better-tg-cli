@@ -1,14 +1,15 @@
-import { Command } from 'commander';
-import { getClient, getUserStories, disconnectClient } from '../client.js';
-import { formatJson } from '../formatters/json.js';
-import chalk from '../colors.js';
-import ora from '../spinner.js';
-import { fail } from '../errors.js';
+import { Command } from "commander";
 
-export const storiesCommand = new Command('stories')
+import { getClient, getUserStories, disconnectClient } from "../client.js";
+import chalk from "../colors.js";
+import { fail } from "../errors.js";
+import { formatJson } from "../formatters/json.js";
+import ora from "../spinner.js";
+
+export const storiesCommand = new Command("stories")
   .description("List a user's currently active stories")
-  .argument('<user>', 'Username (@user), name, or ID')
-  .option('--json', 'Output as JSON')
+  .argument("<user>", "Username (@user), name, or ID")
+  .option("--json", "Output as JSON")
   .action(async (user, options) => {
     const spinner = ora(`Fetching stories for "${user}"...`).start();
     try {
@@ -20,14 +21,20 @@ export const storiesCommand = new Command('stories')
       } else if (result.stories.length === 0) {
         console.log(chalk.gray(`"${result.name}" has no active stories.`));
       } else {
-        console.log(chalk.bold(`${result.stories.length} active story/stories from "${result.name}":\n`));
+        console.log(
+          chalk.bold(
+            `${result.stories.length} active story/stories from "${result.name}":\n`
+          )
+        );
         for (const s of result.stories) {
-          const cap = s.caption ? ` — ${s.caption}` : '';
-          console.log(`  ${chalk.gray(s.date.toLocaleString())}  #${s.id}${cap}`);
+          const cap = s.caption ? ` — ${s.caption}` : "";
+          console.log(
+            `  ${chalk.gray(s.date.toLocaleString())}  #${s.id}${cap}`
+          );
         }
       }
       await disconnectClient();
     } catch (error) {
-      fail(error, spinner, 'Failed to fetch stories');
+      fail(error, spinner, "Failed to fetch stories");
     }
   });

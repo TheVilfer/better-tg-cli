@@ -1,0 +1,65 @@
+{
+  "name": "@better-tg/plugin-sdk",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Write, build and test Better-TG-CLI plugins: host and manifest types, definePlugin(), a bundler to dist/plugin.js and a test host on mock data.",
+  "keywords": [
+    "better-tg-cli",
+    "plugin",
+    "quickjs",
+    "sdk",
+    "telegram"
+  ],
+  "homepage": "https://github.com/TheVilfer/better-tg-cli/tree/main/packages/plugin-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/TheVilfer/better-tg-cli/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Sergei Polin",
+    "url": "https://github.com/TheVilfer"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheVilfer/better-tg-cli.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "bin": {
+    "tg-plugin": "dist/bin.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "sideEffects": [
+    "./dist/test.mjs",
+    "./dist/bin.mjs"
+  ],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./build": {
+      "types": "./dist/build.d.ts",
+      "default": "./dist/build.mjs"
+    },
+    "./test": {
+      "types": "./dist/test.d.ts",
+      "default": "./dist/test.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

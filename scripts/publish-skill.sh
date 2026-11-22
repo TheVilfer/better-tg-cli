@@ -1,22 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Publish tg skill to ClawdHub
-# Usage:
-#   ./scripts/publish-skill.sh              # Use version from package.json
-#   ./scripts/publish-skill.sh 0.2.0        # Specify version
-#   ./scripts/publish-skill.sh patch        # Bump patch (0.1.0 -> 0.1.1)
-#   ./scripts/publish-skill.sh minor        # Bump minor (0.1.0 -> 0.2.0)
-#   ./scripts/publish-skill.sh major        # Bump major (0.1.0 -> 1.0.0)
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
 
-# Read current version from package.json
 CURRENT_VERSION=$(node -p "require('./package.json').version")
 
-# Determine target version
 if [[ $# -eq 0 ]]; then
     VERSION="$CURRENT_VERSION"
 elif [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
