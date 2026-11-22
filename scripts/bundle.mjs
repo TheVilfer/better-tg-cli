@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { runtimePaths } from "./bundle-paths.mjs";
 import { shrink } from "./bundle-shrink.mjs";
 
 const [mode, outfile] = process.argv.slice(2);
@@ -13,6 +14,7 @@ const result = await Bun.build({
   format: "cjs",
   minify: true,
   plugins: [shrink],
+  ...runtimePaths("cjs"),
   metafile: !!process.env.BUNDLE_META,
 });
 if (!result.success) {
@@ -77,6 +79,7 @@ if (mode === "node") {
       : undefined;
     const bin = await Bun.build({
       entrypoints: [join(dir, "telegram.mjs")],
+      minify: { whitespace: true },
       compile: { target: mode, outfile, windows },
     });
     if (!bin.success) {

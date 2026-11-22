@@ -64,10 +64,23 @@ file says why.
   localStorage warning), socks/ip-address/smart-buffer are dropped (no proxy support) and `mime`
   is a stub with common extensions (teleproto calls `getType` to pick photo/document/audio and
   `getExtension` to name downloads). cifrante never looks up its optional native addon: none is
-  shipped, and the bundled `__filename` (the builder's path) would make it search directories on
-  the user's machine. The Windows version resource has four numeric parts only (a release
+  shipped, and the lookup would search the node_modules folders around the installed CLI. The Windows version resource has four numeric parts only (a release
   candidate carries the version it leads to), because code signing checks product name and
   version; Bun appends `.exe` for Windows targets.
+- **No build-machine paths in a bundle.** Bun replaces `__filename` and `__dirname` of every bundled
+  module, and in a CommonJS bundle also `import.meta.url`/`dirname`/`filename`/`dir`/`path`, with
+  the absolute path of its source file (cifrante's `createRequire(__filename)`, quickjs-emscripten's
+  `createRequire(import.meta.url)`), which put the builder's home folder into `dist/telegram.mjs` and
+  the SDK's `test.mjs`. `bundle-paths.mjs` `define`s them as `__bundleFilename`, `__bundleDirname`
+  and `__bundleUrl`, and its banner sets those at run time from the bundle's own file: in the CLI
+  from the loader's `__filename` (its `new Function` wrapper passes it), in an ES module from
+  `import.meta.url`. The compiled binary's build uses `minify.whitespace`, because Bun otherwise
+  keeps a `// <path>` comment naming the temporary stage folder (under `C:\Users\<name>` on
+  Windows). `tg-plugin build` defines both as fixed strings (the output's path in the plugin
+  folder, `/dist/plugin.js`), since a plugin runs in QuickJS without a file of its own.
+  `test/bundle-paths.test.ts` and the SDK build tests fail on the repository root, the home
+  folder, the user name as a path segment or any `/Users/`, `/home/`, `C:\Users` in the bundles
+  (the CLI payload decompressed). `/home/web_user` is allowed: emscripten's virtual home in quickjs.
 - **`next-version.mjs`**: `Add …` or a breaking marker (`!`, `BREAKING`) → minor (breaking is still
   minor before 1.0), anything else → patch, only `Release v…` commits → nothing. Release
   candidates are tagged too, so the level is always counted from the last stable tag.
