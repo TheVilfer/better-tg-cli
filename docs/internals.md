@@ -467,6 +467,16 @@ file says why.
   retry). A read shows chat content with gift links masked only. stderr diagnostics (such as the
   MOCK MODE banner) stay out of a JSON text so the model can parse it. Error messages may quote
   what the model sent and are masked too.
+- **Structured results.** Every `tools/call` result has `structuredContent` with `output`, the
+  exact text of `content` (already masked and capped), next to `exitCode`/`stderr`, `status` or
+  `code`; every tool declares `TOOL_OUTPUT_SCHEMA` as its `outputSchema`. The MCP spec makes
+  `structuredContent` the result, and some clients show the model only that: Claude Code did, and
+  before `output` it passed on `{"exitCode":0}` alone, so reads, help and writes came back empty.
+  `withOutput()` is applied once, at the `tools/call` reply, so stdio, Streamable HTTP, child
+  processes, worker threads, refusals and setup all get it. `output` is a string even for
+  `--json`: a capped or JSON Lines output would not parse, and a client validating the schema
+  needs one type. With a declared `outputSchema` a result without `structuredContent` would be
+  refused by a validating client, so no path may skip `withOutput()`.
 - **Masking rules** (`src/mcp-output.ts`): a login-code label is "code"/"код" with at most one
   known word before it ("Your login code:", "Ваш код:"), so "Promo code:" and "exit code:" stay;
   Russian may put the rest of the label after "код". The separator may be whitespace, the `| ` of

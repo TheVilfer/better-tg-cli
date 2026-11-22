@@ -755,7 +755,7 @@ function byMethod(
   return { group: isApiReadMethod(method) ? "read" : "write", label };
 }
 
-export const TOOLS = [
+const TOOL_DEFS = [
   {
     name: "telegram_help",
     title: "Telegram CLI reference",
@@ -851,6 +851,41 @@ export const TOOLS = [
   },
 ];
 
+/**
+ * The `structuredContent` of every tool result. `output` is exactly the text in `content` (masked
+ * and capped the same way), so a client that shows the model only the structured result still
+ * passes on the whole answer. The other keys say how the call ended: `exitCode` and `stderr` for a
+ * CLI run, `status` for approval, plugin management and setup, `code` for a stable error code.
+ */
+export const TOOL_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    output: {
+      type: "string",
+      description:
+        "The result as the model reads it: the command's output (its JSON as text with --json), an error or what to do next. The same text as content.",
+    },
+    exitCode: {
+      type: "integer",
+      description:
+        "The CLI's exit code (0 ok, 1 runtime, 2 usage, 4 writes off, 5 not logged in)",
+    },
+    stderr: { type: "string", description: "What the CLI printed on stderr" },
+    status: {
+      type: "string",
+      description:
+        "approval_required, human_required, nothing_to_do, done, open_page or ready",
+    },
+  },
+  required: ["output"],
+} as const;
+
+/** The MCP tools, each with TOOL_OUTPUT_SCHEMA as its outputSchema. */
+export const TOOLS = TOOL_DEFS.map((t) => ({
+  ...t,
+  outputSchema: TOOL_OUTPUT_SCHEMA,
+}));
+
 interface ToolResult {
   content: { type: "text"; text: string }[];
   isError?: boolean;
@@ -861,6 +896,18 @@ const text = (t: string, isError = false): ToolResult => ({
   content: [{ type: "text", text: t }],
   ...(isError ? { isError } : {}),
 });
+
+/**
+ * A tools/call result as it is sent: its structuredContent gets `output`, the same text as its
+ * content, next to the keys it already has (see TOOL_OUTPUT_SCHEMA).
+ */
+export function withOutput(res: ToolResult): ToolResult {
+  const output = res.content.map((c) => c.text).join("\n");
+  return {
+    ...res,
+    structuredContent: { ...res.structuredContent, output },
+  };
+}
 
 /** Validates a tool call and returns the CLI argv, or an error message for the model. */
 export function planCall(
@@ -1738,6 +1785,7 @@ export async function handleMessage(
   options: McpOptions = {}
 ): Promise<object | undefined> {
   const reply = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
+  const answer = (res: ToolResult) => reply(withOutput(res));
   const fail = (code: number, message: string) => ({
     jsonrpc: "2.0",
     id: msg.id ?? null,
@@ -1786,13 +1834,13 @@ export async function handleMessage(
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
       if (options.readOnly && name === "telegram_write") {
-        return reply(
+        return answer(
           text("This server is read-only (started with --read-only)", true)
         );
       }
       const input = (msg.params?.arguments ?? {}) as Record<string, unknown>;
       if (name === "telegram_setup") {
-        return reply(
+        return answer(
           await (
             options.setup ?? (() => runSetup({ readOnly: options.readOnly }))
           )()
@@ -1800,7 +1848,7 @@ export async function handleMessage(
       }
       const plan: Plan | string = planCall(name, input);
       if (typeof plan === "string") {
-        return reply(text(maskForModel(plan, "echo"), true));
+        return answer(text(maskForModel(plan, "echo"), true));
       }
       const runs =
         options.runs && (isPluginRun(plan.argv) || plan.manage)
@@ -1816,7 +1864,7 @@ export async function handleMessage(
         }
         if (plan.manage) {
           const out = await handleManage(plan.manage, options, signal);
-          return out && !signal?.aborted ? reply(out) : undefined;
+          return out && !signal?.aborted ? answer(out) : undefined;
         }
         if (!plan.readOnly) {
           const refused = await gateWrite(
@@ -1831,10 +1879,10 @@ export async function handleMessage(
           if (refused) {
             const failed = plan.refusedRun;
             if (failed && failed.code !== null && failed.code !== 0) {
-              return reply(describeFailure(failed));
+              return answer(describeFailure(failed));
             }
             const exitCode = plan.refusedExit;
-            return reply({
+            return answer({
               ...text(cap(refused, "echo"), true),
               ...(exitCode === undefined
                 ? {}
@@ -1843,7 +1891,7 @@ export async function handleMessage(
           }
         }
         const out = await run(plan);
-        return signal?.aborted ? undefined : reply(out);
+        return signal?.aborted ? undefined : answer(out);
       } finally {
         if (signal) {
           runs!.end(msg.id);

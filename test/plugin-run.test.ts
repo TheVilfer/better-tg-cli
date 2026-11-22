@@ -714,6 +714,12 @@ describe(
         )) as Reply;
         expect(got.result.content[0].text).toContain("[login code hidden]");
         expect(got.result.content[0].text).not.toContain("12345");
+        expect(got.result.structuredContent!.output).toBe(
+          got.result.content[0].text
+        );
+        expect(JSON.stringify(got.result.structuredContent)).not.toContain(
+          "12345"
+        );
       });
     });
 
@@ -750,6 +756,7 @@ describe(
           run
         )) as Reply;
         expect(ok.result.content[0].text).toContain('"saved":8');
+        expect(ok.result.structuredContent!.output).toContain('"saved":8');
         const again = (
           (await handleMessage(
             call("telegram_write", { args, stdin: '{"value":"swapped"}' }),
