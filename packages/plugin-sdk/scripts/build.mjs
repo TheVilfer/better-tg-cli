@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { runtimePaths } from "../../../scripts/bundle-paths.mjs";
 import { shrink } from "../../../scripts/bundle-shrink.mjs";
 
 const pkg = resolve(import.meta.dirname, "..");
@@ -100,7 +101,11 @@ function declarations() {
 try {
   await bundle(["index", "build"], { minify: false });
   await bundle(["bin"], { minify: false });
-  await bundle(["test"], { minify: true, plugins: [shrink] });
+  await bundle(["test"], {
+    minify: true,
+    plugins: [shrink],
+    ...runtimePaths("esm"),
+  });
   declarations();
   const bin = join(stage, "bin.mjs");
   const text = readFileSync(bin, "utf-8");
